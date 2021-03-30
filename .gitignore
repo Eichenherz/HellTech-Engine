@@ -1,0 +1,16 @@
+
+x64/
+
+*.spv
+
+*.glb
+
+desktop.ini
+
+vk_generator.py
+
+QiY.vcxproj
+
+QiY.vcxproj.filters
+
+QiY.vcxproj.user

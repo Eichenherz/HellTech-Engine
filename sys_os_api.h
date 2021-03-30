@@ -1,0 +1,59 @@
+#pragma once
+
+#include "core_types.h"
+
+//////////////////////////////////////
+// MACROS
+//////////////////////////////////////
+#define STRINGIZE(x) STRINGIZE2(x)
+#define STRINGIZE2(x) #x
+#define LINE_STR STRINGIZE(__LINE__)
+
+// NOTE: doesn't work with arrays passed as pointers in args
+#define POPULATION( arr ) (u64) sizeof( arr )/ sizeof( arr[0] )
+
+#define GB (u64)( 1 << 30 );
+#define KB (u64)( 1 << 10 )
+
+#ifdef _WIN32
+//////////////////////////////////////
+//  WRITE WIN ABSTRACTIONS HERE
+// TO AVOID include WIN every where
+//////////////////////////////////////
+
+
+#endif // WIN32
+
+struct cull_info;
+struct global_data;
+
+//////////////////////////////////////
+// CONSTS
+//////////////////////////////////////
+constexpr u32 SCREEN_WIDTH = 960;
+constexpr u32 SCREEN_HEIGHT = 600;
+constexpr u64 SYS_MEM_BYTES = 1 * GB;
+
+//////////////////////////////////////
+// ENGINE -> PLATFORM
+//////////////////////////////////////
+void			CoreLoop();
+
+extern void		VkBackendInit();
+extern void		HostFrames( const global_data* globs, cull_info cullInfo, b32 freezePyramid );
+extern void		VkBackendKill();
+
+//////////////////////////////////////
+// PLATFORM -> ENGINE
+//////////////////////////////////////
+extern double	SysGetCPUPeriod();
+extern double	SysTicks();
+extern u64		SysDllLoad( const char* name );
+extern void		SysDllUnload( u64 hDll );
+extern void*	SysGetProcAddr( u64 hDll, const char* procName );
+extern void		SysDbgPrint( const char* str );
+extern void		SysErrMsgBox( const char* str );
+extern u32		SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize );
+extern b32		SysIsPathRelative( const char* path );
+extern u8*		SysReadOnlyMemMapFile( const char* file );
+extern void		SysCloseMemMapFile( void* mmFile );
