@@ -474,7 +474,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		// TODO: re-make passing data to Gfx
 		
 		// RENDER( state )
-		HostFrames( &globs, cullData, kbd.o );
+		HostFrames( &globs, cullData, kbd.o, dt );
 	}
 
 

@@ -10,6 +10,8 @@
 
 #extension GL_GOOGLE_include_directive: require
 
+#define GLOBAL_RESOURCES
+
 #include "..\r_data_structs.h"
 
 #define WAVE_OPS 0

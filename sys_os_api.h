@@ -40,7 +40,7 @@ constexpr u64 SYS_MEM_BYTES = 1 * GB;
 void			CoreLoop();
 
 extern void		VkBackendInit();
-extern void		HostFrames( const global_data* globs, cull_info cullInfo, b32 freezePyramid );
+extern void		HostFrames( const global_data* globs, cull_info cullInfo, b32 bvDraw, float dt );
 extern void		VkBackendKill();
 
 //////////////////////////////////////

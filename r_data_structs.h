@@ -186,8 +186,16 @@ struct downsample_info
 	vec2 invRes;
 };
 
+struct avg_luminance_info
+{
+	float minLogLum;
+	float invLogLumRange;
+	float dt;
+};
+
 #ifndef __cplusplus
 
+#ifdef GLOBAL_RESOURCES
 //layout( set = 1, binding = 0, scalar ) readonly buffer pos_buffer{ vec3 positions[ 0 ]; } posBuffer[];
 //layout( set = 1, binding = 0, scalar ) readonly buffer norm_buffer{ vec3 normals[ 0 ]; } normBuffer[];
 layout( set = 1, binding = 1, std430 ) uniform global{ global_data g; } globalsCam[];
@@ -197,4 +205,7 @@ layout( set = 1, binding = 3 ) uniform sampler samplers[];
 
 global_data cam = globalsCam[ 0 ].g;
 geometry_buffer_info g = globalsGeom[ 1 ].g;
+
+#endif
+
 #endif // !__cplusplus

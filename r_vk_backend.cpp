@@ -211,6 +211,7 @@ struct render_context
 	VkPipeline		compHiZPipeline;
 	VkPipeline		gfxBVDbgDrawPipeline;
 	VkPipeline		gfxTranspPipe;
+	VkPipeline		compAvgLumPipe;
 
 	VkRenderPass	renderPass;
 	VkRenderPass	render2ndPass;
@@ -225,7 +226,7 @@ struct render_context
 	u32				depthPyramidHeight;
 	u8				depthPyramidMipCount;
 	VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	VkFormat		desiredColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+	VkFormat		desiredColorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
 	VkFramebuffer	offscreenFbo;
 	
 	virtual_frame	vrtFrames[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
@@ -552,14 +553,14 @@ VkCreateAllocBindBuffer(
 // TODO: pass aspect mask ? ?
 inline static VkImageView
 VkMakeImgView(
-	VkDevice	vkDevice,
-	VkImage		vkImg,
-	VkFormat	imgFormat,
-	u32			mipLevel,
-	u32			levelCount,
+	VkDevice		vkDevice,
+	VkImage			vkImg,
+	VkFormat		imgFormat,
+	u32				mipLevel,
+	u32				levelCount,
 	VkImageViewType imgViewType = VK_IMAGE_VIEW_TYPE_2D,
-	u32			arrayLayer = 0,
-	u32			layerCount = 1 )
+	u32				arrayLayer = 0,
+	u32				layerCount = 1 )
 {
 	VkImageAspectFlags aspectMask =
 		( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -589,31 +590,33 @@ VkCreateAllocBindImage(
 	VkExtent3D			extent,
 	u32					mipCount,
 	vk_mem_arena*		vkArena,
+	VkImageType			vkImgType = VK_IMAGE_TYPE_2D,
 	VkPhysicalDevice	gpu = dc.gpu )
 {
-	VkFormatFeatureFlags imgType = VK_FORMAT_FEATURE_FLAG_BITS_MAX_ENUM;
+	// TODO: should or and check all 
+	VkFormatFeatureFlags formatFeatures = VK_FORMAT_FEATURE_FLAG_BITS_MAX_ENUM;
 	switch( usageFlags ){
-	case VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT: imgType = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+	case VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT: formatFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
 	break;
 
-	case VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT: imgType = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	case VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT: formatFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
 	break;
 
 	case VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT: 
-	imgType = VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+	formatFeatures = VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 	break;
 	}
 
 	VkFormatProperties formatProps;
 	vkGetPhysicalDeviceFormatProperties( gpu, format, &formatProps );
-	VK_CHECK( VK_INTERNAL_ERROR( !( formatProps.optimalTilingFeatures & imgType ) ) );
+	VK_CHECK( VK_INTERNAL_ERROR( !( formatProps.optimalTilingFeatures & formatFeatures ) ) );
 
 
 	image img = {};
 
 	VkImageCreateInfo imgInfo = {};
 	imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-	imgInfo.imageType = VK_IMAGE_TYPE_2D;
+	imgInfo.imageType = vkImgType;
 	imgInfo.format = img.nativeFormat = format;
 	imgInfo.extent = img.nativeRes = extent;
 	imgInfo.mipLevels = mipCount;
@@ -1027,7 +1030,6 @@ inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
 	*program = {};
 }
 
-// NOTE: std::vector with size==0 can't be plucked for data with &name[0], must use .data()
 __forceinline static VkSpecializationInfo
 VkMakeSpecializationInfo(
 	vector<VkSpecializationMapEntry>& specializations,
@@ -1974,7 +1976,7 @@ LoadGlbModel(
 					u64 imgOffset = pbrBaseColor->image->buffer_view->offset;
 					u64 imgSize = pbrBaseColor->image->buffer_view->size;
 					raw_image_info imgInfo = StbLoadImageFromMem( pBin + imgOffset, imgSize, textureData );
-					imgInfo.format = VK_FORMAT_B8G8R8A8_SRGB;
+					imgInfo.format = VK_FORMAT_R8G8B8A8_SRGB;// VK_FORMAT_B8G8R8A8_SRGB;
 					album.emplace_back( imgInfo );
 					mtl.diffuseIdx = std::size( album ) - 1;
 
@@ -1992,7 +1994,7 @@ LoadGlbModel(
 					u64 imgOffset = normalMap->image->buffer_view->offset;
 					u64 imgSize = normalMap->image->buffer_view->size;
 					raw_image_info imgInfo = StbLoadImageFromMem( pBin + imgOffset, imgSize, textureData );
-					imgInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+					imgInfo.format = VK_FORMAT_R8G8B8A8_UNORM;//VK_FORMAT_B8G8R8A8_UNORM;
 					album.emplace_back( imgInfo );
 					mtl.bumpIdx = std::size( album ) - 1;
 
@@ -2129,7 +2131,7 @@ b32 LoadObjModel(
 	const char*				path, 
 	vector<vertex>&			vertices, 
 	vector<u8>&				textureData, 
-	vector<raw_image_info>&		album, 
+	vector<raw_image_info>&	album, 
 	vector<material_data>&	materials )
 {
 	fastObjMesh* obj = fast_obj_read( path );
@@ -2398,6 +2400,7 @@ static constexpr b32 IsLeftHanded( vec3 a, vec3 b, vec3 c )
 }
 static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
 {
+	assert( count % 3 == 0 );
 	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
 }
 // TODO: memory stuff
@@ -2675,6 +2678,10 @@ static buffer_data dispatchCmdBuff;
 
 static buffer_data drawIdxBuff;
 
+static buffer_data avgLumBuff;
+static buffer_data shaderGlobalsBuff;
+static buffer_data shaderGlobalSyncCounterBuff;
+
 static buffer_data drawCmdBuff;
 static buffer_data drawCountBuff;
 
@@ -2880,6 +2887,24 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 											  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 											  &vkRscArena );
+
+	// TODO: seems overkill
+	avgLumBuff = VkCreateAllocBindBuffer( 4,
+										  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+										  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+										  &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) avgLumBuff.hndl, "avgLumBuff" );
+	
+	// TODO: seems overkill
+	shaderGlobalsBuff = VkCreateAllocBindBuffer( 8,
+												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+												 &vkRscArena );
+	// TODO: seems overkill
+	shaderGlobalSyncCounterBuff = VkCreateAllocBindBuffer( 4,
+														   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+														   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+														   &vkRscArena );
 	// TODO: seems overkill
 	drawCountDbgBuff = VkCreateAllocBindBuffer( 4,
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
@@ -3011,11 +3036,13 @@ static vk_program	gfxOpaqueProgram = {};
 static vk_program	debugGfxProgram = {};
 static vk_program	drawcullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
+static vk_program	avgLumCompProgram = {};
 
 static vk_shader	vs = {};
 static vk_shader	fs = {};
 static vk_shader	drawCullCs = {};
 static vk_shader	depthPyramidCs = {};
+static vk_shader	avgLumCs = {};
 
 static vk_program	depthPyramidMultiProgram = {};
 static vk_shader	depthMultiCs = {};
@@ -3149,43 +3176,40 @@ static void VkBackendInit()
 	constexpr char drawCullPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\draw_cull.comp.spv";
 	constexpr char depthPyramidPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv";
 	constexpr char pow2DownsamplerPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pow2_downsampler.comp.spv";
+	constexpr char avgLumPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\avg_luminance.comp.spv";
 
 	vs = VkLoadShader( vertPath, dc.device );
 	fs = VkLoadShader( fragPath, dc.device );
 	drawCullCs = VkLoadShader( drawCullPath, dc.device );
 	depthPyramidCs = VkLoadShader( depthPyramidPath, dc.device );
+	avgLumCs = VkLoadShader( avgLumPath, dc.device );
+
 
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
 
 	gfxOpaqueProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vs, &fs } );
 	drawcullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCullCs } );
 	depthPyramidCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthPyramidCs } );
+	avgLumCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLumCs } );
 
 
 	rndCtx.gfxPipeline = VkMakeGfxPipeline( dc.device, pipelineCache, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, vs.module, fs.module );
-	rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 
-												 pipelineCache, 
-												 drawcullCompProgram.pipeLayout, 
-												 drawCullCs.module, 
-												 {OBJ_CULL_WORKSIZE,0 } );
-	rndCtx.compLatePipeline = VkMakeComputePipeline( dc.device, 
-													 pipelineCache, 
-													 drawcullCompProgram.pipeLayout, 
-													 drawCullCs.module, 
-													 {OBJ_CULL_WORKSIZE,1 } );
+	rndCtx.compPipeline = 
+		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, drawCullCs.module, {OBJ_CULL_WORKSIZE,0 } );
+	rndCtx.compLatePipeline = 
+		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, drawCullCs.module, {OBJ_CULL_WORKSIZE,1 } );
 
-	if constexpr( !multiShaderDepthPyramid ){
-		rndCtx.compHiZPipeline = VkMakeComputePipeline( dc.device, 
-													  pipelineCache, 
-													  depthPyramidCompProgram.pipeLayout, 
-													  depthPyramidCs.module, {} );
-	} else{
+	if constexpr( !multiShaderDepthPyramid )
+	{
+		rndCtx.compHiZPipeline =
+			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidCompProgram.pipeLayout, depthPyramidCs.module, {} );
+	}
+	else
+	{
 		depthMultiCs = VkLoadShader( pow2DownsamplerPath, dc.device );
 		depthPyramidMultiProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthMultiCs } );
-		rndCtx.compHiZPipeline = VkMakeComputePipeline( dc.device,
-														pipelineCache,
-														depthPyramidMultiProgram.pipeLayout,
-														depthMultiCs.module, {} );
+		rndCtx.compHiZPipeline = 
+			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidMultiProgram.pipeLayout, depthMultiCs.module, {} );
 	}
 
 	debugGfxProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vs, &fs } );
@@ -3197,6 +3221,9 @@ static void VkBackendInit()
 												 fs.module,
 												 VK_POLYGON_MODE_FILL,
 												 1,0 );
+
+	rndCtx.compAvgLumPipe = 
+		VkMakeComputePipeline( dc.device, pipelineCache, avgLumCompProgram.pipeLayout, avgLumCs.module, { dc.waveSize } );
 
 	VkInitVirutalFrames( dc.device, dc.gfxQueueIdx, rndCtx.vrtFrames, rndCtx.framesInFlight );
 
@@ -3236,9 +3263,9 @@ VkMakeImgBarrier(
 	return imgMemBarrier;
 }
 
-__forceinline u64 VkGetGroupCount( u64 invocationCount, u64 subgroupSize )
+__forceinline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
 {
-	return ( invocationCount + subgroupSize - 1 ) / subgroupSize;
+	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
 
 #include <intrin.h>
@@ -3405,11 +3432,11 @@ DrawIndirectPass(
 
 inline static void
 DepthPyramidPass(
-	VkCommandBuffer cmdBuff,
-	VkPipeline		vkPipeline,
-	u64				mipLevelsCount,
-	VkSampler		linearMinSampler,
-	VkImageView		( &depthMips )[ MAX_MIP_LEVELS ],
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline,
+	u64						mipLevelsCount,
+	VkSampler				linearMinSampler,
+	VkImageView				( &depthMips )[ MAX_MIP_LEVELS ],
 	const image&			depthTarget,
 	const vk_program&		program )
 {
@@ -3476,12 +3503,12 @@ DepthPyramidPass(
 
 inline static void
 DepthPyramidMultiPass(
-	VkCommandBuffer cmdBuff,
-	VkPipeline		vkPipeline,
-	VkExtent2D		depthTargetExt,
-	u64				mipLevelsCount,
-	VkSampler		linearMinSampler,
-	VkImageView		( &depthMips )[ MAX_MIP_LEVELS ],
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline,
+	VkExtent2D				depthTargetExt,
+	u64						mipLevelsCount,
+	VkSampler				linearMinSampler,
+	VkImageView				( &depthMips )[ MAX_MIP_LEVELS ],
 	const image&			depthTarget,
 	const vk_program&		program )
 {
@@ -3561,10 +3588,72 @@ DepthPyramidMultiPass(
 						  1, &depthWriteBarrier );
 }
 
+inline static void
+AvgLuminancePass(
+	VkCommandBuffer		cmdBuff,
+	VkPipeline			vkPipeline,
+	const vk_program&	program,
+	const image&		fboHdrColTrg,
+	float				dt )
+{
+	// NOTE: inspired by http://www.alextardif.com/HistogramLuminance.html
+	avg_luminance_info avgLumInfo;
+	avgLumInfo.minLogLum = -10.0f;
+	avgLumInfo.invLogLumRange = 1.0f / 12.0f;
+	avgLumInfo.dt = dt;
+
+	VkImageMemoryBarrier hdrColTrgAcquireBarrier = VkMakeImgBarrier( fboHdrColTrg.img,
+																	 VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+																	 VK_ACCESS_SHADER_READ_BIT,
+																	 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+																	 VK_IMAGE_LAYOUT_GENERAL ,//VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+																	 VK_IMAGE_ASPECT_COLOR_BIT,
+																	 0, 0 );
+
+	vkCmdPipelineBarrier( cmdBuff,
+						  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
+						  1, &hdrColTrgAcquireBarrier );
+
+	vkCmdBindPipeline( cmdBuff, program.bindPoint, vkPipeline );
+
+	VkDescriptorImageInfo hdrColTrgInfo = { 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_GENERAL };// VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+	vk_descriptor_info avgLumDescs[] = { 
+		hdrColTrgInfo, 
+		avgLumBuff.descriptor(), 
+		shaderGlobalsBuff.descriptor(),
+		shaderGlobalSyncCounterBuff.descriptor() 
+	};
+
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, &avgLumDescs[ 0 ] );
+
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( avgLumInfo ), &avgLumInfo );
+
+	vkCmdDispatch( cmdBuff, 
+				   VkGetGroupCount( fboHdrColTrg.nativeRes.width, program.groupSize.localSizeX ), 
+				   VkGetGroupCount( fboHdrColTrg.nativeRes.height, program.groupSize.localSizeY ), 
+				   1 );
+
+	VkImageMemoryBarrier hdrColTrgReleaseBarrier = VkMakeImgBarrier( fboHdrColTrg.img,
+																	 VK_ACCESS_SHADER_READ_BIT,
+																	 VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+																	 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+																	 VK_IMAGE_LAYOUT_GENERAL ,//VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+																	 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+																	 VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
+
+	vkCmdPipelineBarrier( cmdBuff,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,//VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
+						  1, &hdrColTrgReleaseBarrier );
+}
+
 // TODO: submit/flush queues earlier ?
 // TODO: no cull_info param
 // TODO: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT  ?
-static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDraw )
+static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDraw, float dt )
 {
 	//VkSemaphoreWaitInfo semaWaitInfo = {};
 	//semaWaitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
@@ -3597,12 +3686,15 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 														 VK_IMAGE_USAGE_SAMPLED_BIT,
 														 VkExtent3D{ sc.imgWidth, sc.imgHeight, 1 }, 1,
 														 &vkAlbumArena );
+			// TODO: place depth pyr elsewhere 
 			if constexpr( !multiShaderDepthPyramid ){
 				// TODO: make conservative ?
 				rndCtx.depthPyramidWidth = ( sc.imgWidth ) / 2;
 				rndCtx.depthPyramidHeight = ( sc.imgHeight ) / 2;
 				rndCtx.depthPyramidMipCount = GetImgMipCount( rndCtx.depthPyramidWidth, rndCtx.depthPyramidHeight );
-			} else{
+			}
+			else
+			{
 				rndCtx.depthPyramidWidth = FloorPowOf2( sc.imgWidth );
 				rndCtx.depthPyramidHeight = FloorPowOf2( sc.imgHeight );
 				rndCtx.depthPyramidMipCount = GetImgMipCountForPow2( rndCtx.depthPyramidWidth, rndCtx.depthPyramidHeight );
@@ -3618,17 +3710,20 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 
 			VkDbgNameObj( dc.device, VK_OBJECT_TYPE_IMAGE, (u64) rndCtx.depthPyramid.img, "Depth_Pyramid" );
 
-			for( u64 i = 0; i < rndCtx.depthPyramidMipCount; ++i ){
-				rndCtx.depthPyramidChain[ i ] =
-					VkMakeImgView( dc.device, rndCtx.depthPyramid.img, VK_FORMAT_R32_SFLOAT, i, 1 );
-			}
+			for( u64 i = 0; i < rndCtx.depthPyramidMipCount; ++i )
+			{
+				rndCtx.depthPyramidChain[ i ] = VkMakeImgView( dc.device, rndCtx.depthPyramid.img, VK_FORMAT_R32_SFLOAT, i, 1 );
+			};
 
 			rndCtx.linearMinSampler = VkMakeSampler( dc.device, rndCtx.depthPyramidMipCount, VK_SAMPLER_REDUCTION_MODE_MIN );
 		}
 
 		if( !rndCtx.colorTarget.img )
 			rndCtx.colorTarget = VkCreateAllocBindImage( rndCtx.desiredColorFormat,
-														 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+														 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
+														 VK_IMAGE_USAGE_SAMPLED_BIT | 
+														 VK_IMAGE_USAGE_STORAGE_BIT |
+														 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 														 VkExtent3D{ sc.imgWidth, sc.imgHeight, 1 }, 1,
 														 &vkAlbumArena );
 
@@ -3875,6 +3970,8 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 	}
 
 
+	AvgLuminancePass( currentVFrame.cmdBuf, rndCtx.compAvgLumPipe, avgLumCompProgram, rndCtx.colorTarget, dt );
+
 	VkImageMemoryBarrier copyBarriers[] =
 	{
 		VkMakeImgBarrier(
@@ -3899,20 +3996,32 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 						  POPULATION( copyBarriers ), 
 						  copyBarriers );
 
-	// TODO: use render pass attch if MSAA, else output from compute shader ( VRS, CMAA2, and post processing ) 
-	VkImageCopy copyRegion = {};
-	copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	copyRegion.srcSubresource.layerCount = 1;
-	copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	copyRegion.dstSubresource.layerCount = 1;
-	copyRegion.extent = { sc.imgWidth, sc.imgHeight, 1 };
+	// NOTE: for both imgs
+	VkImageSubresourceLayers imgSubrscLayers = {};
+	imgSubrscLayers.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	imgSubrscLayers.mipLevel = 0;
+	imgSubrscLayers.baseArrayLayer = 0;
+	imgSubrscLayers.layerCount = 1;
 
-	vkCmdCopyImage( currentVFrame.cmdBuf,
-					rndCtx.colorTarget.img, 
+	VkOffset3D imgExt;
+	imgExt.x = sc.imgWidth;
+	imgExt.y = sc.imgHeight;
+	imgExt.z = 1;
+
+	VkImageBlit imgRegionBlit = {};
+	imgRegionBlit.srcSubresource = imgSubrscLayers;
+	imgRegionBlit.srcOffsets[ 0 ] = {};
+	imgRegionBlit.srcOffsets[ 1 ] = imgExt;
+	imgRegionBlit.dstSubresource = imgSubrscLayers;
+	imgRegionBlit.dstOffsets[ 0 ] = {};
+	imgRegionBlit.dstOffsets[ 1 ] = imgExt;
+
+	vkCmdBlitImage( currentVFrame.cmdBuf,
+					rndCtx.colorTarget.img,
 					VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 
 					sc.imgs[ imgIdx ],
-					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, 
-					&copyRegion );
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+					1, &imgRegionBlit, VK_FILTER_NEAREST );
 
 	VkImageMemoryBarrier presentBarrier = VkMakeImgBarrier( sc.imgs[ imgIdx ], 
 															VK_ACCESS_TRANSFER_WRITE_BIT, 0, 

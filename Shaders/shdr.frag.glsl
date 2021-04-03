@@ -2,6 +2,8 @@
 
 #extension GL_GOOGLE_include_directive : require
 
+#define GLOBAL_RESOURCES
+
 #include "..\r_data_structs.h"
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mtl_ref{
