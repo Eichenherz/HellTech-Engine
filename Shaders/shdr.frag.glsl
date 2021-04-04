@@ -19,6 +19,15 @@ layout( location = 2 ) in flat vertex_stage_data vtxVars;
 
 layout( location = 0 ) out vec4 oCol;
 
+vec4 SrgbToLinear( vec4 srgb )
+{
+	bvec4 cutoff = lessThan( srgb, vec4( 0.04045 ) );
+	vec4 higher = pow( ( srgb + vec4( 0.055 ) ) / vec4( 1.055 ), vec4( 2.4 ) );
+	vec4 lower = srgb * vec4( 1.0 / 12.92 );
+
+	return mix( higher, lower, cutoff );
+}
+
 void main()
 {
 	//if( TEXTURED_OUTPUT )
@@ -26,6 +35,7 @@ void main()
 		material_data mtl = mtl_ref( g.addr + g.materialsOffset ).materials[ vtxVars.mtlIdx ];
 
 		vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.diffuseIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv.xy );
+		baseCol = SrgbToLinear( baseCol );
 		vec3 bumpCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.bumpIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv.xy ).rgb;
 		bumpCol = bumpCol * 2.0 - vec3( 1 );
 		bumpCol = normalize( vtxVars.tbn * bumpCol );
@@ -38,7 +48,7 @@ void main()
 		intensity = clamp( intensity, 0, 1.0 );
 
 
-		float ambientFactor = 0.2;
+		float ambientFactor = 0.1;
 		float lambertFactor = 0;
 		float diffuseFactor = 0;
 		if( lightSpotCosine > lightSpotOuterThreshold )

@@ -45,7 +45,7 @@ using namespace std;
 #include "core_lib_api.h"
 
 // TODO: gen from VkResult
-__forceinline std::string_view VkResErrorString( VkResult errorCode )
+inline std::string_view VkResErrorString( VkResult errorCode )
 {
 	switch( errorCode )			{
 #define STR(r) case VK_ ##r: return #r
@@ -93,7 +93,7 @@ __forceinline std::string_view VkResErrorString( VkResult errorCode )
 	}
 }
 
-__forceinline VkResult VkResFromStatemen( b32 statement )
+inline VkResult VkResFromStatemen( b32 statement )
 {
 	return !statement ? VK_SUCCESS : VkResult( int( 0x8FFFFFFF ) );
 }
@@ -156,16 +156,6 @@ inline void VkDbgNameObj( VkDevice vkDevice, VkObjectType objType, u64 objHandle
 #endif
 }
 
-struct swapchain
-{
-	VkSwapchainKHR	swapchain;
-	VkImageView		imgViews[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
-	VkImage			imgs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
-	VkFormat		imgFormat;
-	u32				imgWidth;
-	u32				imgHeight;
-	u8				imgCount;
-};
 // TODO: separate GPU and logical device ?
 struct device
 {
@@ -192,16 +182,27 @@ struct virtual_frame
 
 // TODO: add more data ?
 // TODO: VkDescriptorImageInfo 
+// TODO: rsc don't directly store the memory, rsc manager refrences it ?
 struct image
 {
 	VkImage			img;
 	VkImageView		view;
 	VkDeviceMemory	mem;
-	VkImageLayout	usageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	VkFormat		nativeFormat;
 	VkExtent3D		nativeRes;
 };
 
+struct swapchain
+{
+	VkSwapchainKHR	swapchain;
+	VkImageView		imgViews[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
+	VkImage			imgs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
+	VkFormat		imgFormat;
+	VkExtent3D		scRes;
+	//u32				imgWidth;
+	//u32				imgHeight;
+	u8				imgCount;
+};
 // TODO: remake
 struct render_context
 {
@@ -212,7 +213,7 @@ struct render_context
 	VkPipeline		gfxBVDbgDrawPipeline;
 	VkPipeline		gfxTranspPipe;
 	VkPipeline		compAvgLumPipe;
-
+	VkPipeline		compTonemapPipe;
 	VkRenderPass	renderPass;
 	VkRenderPass	render2ndPass;
 
@@ -220,6 +221,7 @@ struct render_context
 	VkSampler		linearTextureSampler;
 	image			depthTarget;
 	image			colorTarget;
+	image			colorCache;
 	image			depthPyramid;
 	VkImageView		depthPyramidChain[ MAX_MIP_LEVELS ];
 	u32				depthPyramidWidth;
@@ -247,11 +249,11 @@ static device dc;
 static render_context rndCtx;
 
 
-__forceinline b32 IsPowOf2( u64 addr )
+inline b32 IsPowOf2( u64 addr )
 {
 	return !( addr & ( addr - 1 ) );
 }
-__forceinline static u64 FwdAlign( u64 addr, u64 alignment )
+inline static u64 FwdAlign( u64 addr, u64 alignment )
 {
 	assert( IsPowOf2( alignment ) );
 	u64 mod = addr & ( alignment - 1 );
@@ -269,7 +271,7 @@ struct buffer_data
 	u8*				hostVisible = 0;
 	u64				devicePointer = 0;
 
-	__forceinline VkDescriptorBufferInfo descriptor() const
+	inline VkDescriptorBufferInfo descriptor() const
 	{
 		return VkDescriptorBufferInfo{ hndl,offset,size };
 	}
@@ -469,7 +471,7 @@ VkInitMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
 
 }
 
-__forceinline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
+inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
 {
 #ifdef _VK_DEBUG_
 	static_assert( std::is_same<VkDeviceAddress, u64>::value );
@@ -692,6 +694,8 @@ struct group_size
 	u32 localSizeZ;
 };
 
+// TODO: remove bindpoint from here
+
 // TODO: vk_shader_program ?
 // TODO: put shader module inside ?
 struct vk_program
@@ -836,7 +840,7 @@ static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 }
 
 template<typename T>
-__forceinline VkWriteDescriptorSet VkMakeBindlessGlobalUpdate( 
+inline VkWriteDescriptorSet VkMakeBindlessGlobalUpdate( 
 	const T*					descInfo, 
 	u64							descInfoCount,
 	vk_global_descriptor_slot	bindingSlot,
@@ -864,6 +868,7 @@ __forceinline VkWriteDescriptorSet VkMakeBindlessGlobalUpdate(
 constexpr char shaderPathPrefix[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\";
 constexpr char shaderPathSuffix[] = ".spv";
 // TODO: no std::vector
+// TODO: don't cast to u32
 inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
 {
 	FILE* fpSpvShader = 0;
@@ -873,13 +878,13 @@ inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice 
 	const u32 size = ftell( fpSpvShader );
 	rewind( fpSpvShader );
 	vector<char> binSpvShader( size );
-	fread( binSpvShader.data(), size, 1, fpSpvShader );
+	fread( std::data( binSpvShader ), size, 1, fpSpvShader );
 	fclose( fpSpvShader );
 
 	VkShaderModuleCreateInfo shaderModuleInfo = {};
 	shaderModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 	shaderModuleInfo.codeSize = size;
-	shaderModuleInfo.pCode = (const u32*) binSpvShader.data();
+	shaderModuleInfo.pCode = (const u32*) std::data( binSpvShader );
 
 	vk_shader shader = {};
 	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &shader.module ) );
@@ -1030,7 +1035,7 @@ inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
 	*program = {};
 }
 
-__forceinline static VkSpecializationInfo
+inline static VkSpecializationInfo
 VkMakeSpecializationInfo(
 	vector<VkSpecializationMapEntry>& specializations,
 	vk_specializations& consts )
@@ -1388,7 +1393,8 @@ inline static void VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, 
 	dc->waveSize = subgroupProperties.subgroupSize;
 }
 
-// TODO: sep initial validation form sc creation when resize
+// TODO: sep initial validation form sc creation when resize ?
+// TODO: tweak settings/config
 inline static swapchain
 VkMakeSwapchain( 
 	VkDevice			vkDevice, 
@@ -1469,34 +1475,21 @@ VkMakeSwapchain(
 	scInfo.presentMode = presentMode;
 	scInfo.queueFamilyIndexCount = 1;
 	scInfo.pQueueFamilyIndices = &queueFamIdx;
-	scInfo.clipped = VK_TRUE; //TODO: change according to perf/user experience
+	scInfo.clipped = VK_TRUE;
 	scInfo.oldSwapchain = 0;
 	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &sc.swapchain ) );
 
-	// TODO: sc resize
-	sc.imgWidth = scInfo.imageExtent.width;
-	sc.imgHeight = scInfo.imageExtent.height;
-
+	sc.scRes = { scInfo.imageExtent.width, scInfo.imageExtent.height , 1 };
+	
 	u32 scImgsNum = 0;
 	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, sc.swapchain, &scImgsNum, 0 ) );
 	VK_CHECK( VK_INTERNAL_ERROR( !( scImgsNum == scInfo.minImageCount ) ) );
 	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, sc.swapchain, &scImgsNum, sc.imgs ) );
 
-
-	// TODO: ImgView only for MSAA 
-
-	//VkImageViewCreateInfo imgViewInfo = {};
-	//imgViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	//imgViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	//imgViewInfo.format = scInfo.imageFormat;
-	//imgViewInfo.components = { 
-	//	VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A            
-	//};
-	//imgViewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-	//for( u64 i = 0; i < scImgNum; ++i ){
-	//	imgViewInfo.image = scImgs[ i ];
-	//	VK_CHECK( vkCreateImageView( vkDevice, &imgViewInfo, 0, &sc->imgViews[ i ] ) );
-	//}
+	for( u64 i = 0; i < scImgsNum; ++i )
+	{
+		sc.imgViews[i] = VkMakeImgView( vkDevice, sc.imgs[ i ], scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
+	}
 
 	return sc;
 }
@@ -1798,7 +1791,7 @@ inline static raw_image_info StbLoadImageFromMem( u8 const* imgData, u32 imgSize
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
 
-__forceinline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
+inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
 {
 	XMMATRIX t = {};
 	if( node->has_rotation || node->has_translation || node->has_scale )
@@ -2621,7 +2614,7 @@ static void GenerateBox(
 }
 
 // TODO: pass buff_data ?
-__forceinline VkBufferMemoryBarrier
+inline VkBufferMemoryBarrier
 VkMakeBufferBarrier( 
 	VkBuffer		hBuff,
 	VkAccessFlags	srcAccess, 
@@ -2999,7 +2992,7 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 	}
 }
 
-__forceinline VkSampler VkMakeSampler( 
+inline VkSampler VkMakeSampler( 
 	VkDevice				vkDevice, 
 	float					lodCount = 1.0f, 
 	VkSamplerReductionMode	reductionMode = VK_SAMPLER_REDUCTION_MODE_MAX_ENUM,
@@ -3037,12 +3030,14 @@ static vk_program	debugGfxProgram = {};
 static vk_program	drawcullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
+static vk_program	tonemapCompProgram = {};
 
 static vk_shader	vs = {};
 static vk_shader	fs = {};
 static vk_shader	drawCullCs = {};
 static vk_shader	depthPyramidCs = {};
 static vk_shader	avgLumCs = {};
+static vk_shader	tonemapCs = {};
 
 static vk_program	depthPyramidMultiProgram = {};
 static vk_shader	depthMultiCs = {};
@@ -3177,12 +3172,14 @@ static void VkBackendInit()
 	constexpr char depthPyramidPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv";
 	constexpr char pow2DownsamplerPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pow2_downsampler.comp.spv";
 	constexpr char avgLumPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\avg_luminance.comp.spv";
+	constexpr char tonemapPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\tonemap_gamma.comp.spv";
 
 	vs = VkLoadShader( vertPath, dc.device );
 	fs = VkLoadShader( fragPath, dc.device );
 	drawCullCs = VkLoadShader( drawCullPath, dc.device );
 	depthPyramidCs = VkLoadShader( depthPyramidPath, dc.device );
 	avgLumCs = VkLoadShader( avgLumPath, dc.device );
+	tonemapCs = VkLoadShader( tonemapPath, dc.device );
 
 
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
@@ -3191,6 +3188,7 @@ static void VkBackendInit()
 	drawcullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCullCs } );
 	depthPyramidCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthPyramidCs } );
 	avgLumCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLumCs } );
+	tonemapCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &tonemapCs } );
 
 
 	rndCtx.gfxPipeline = VkMakeGfxPipeline( dc.device, pipelineCache, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, vs.module, fs.module );
@@ -3224,13 +3222,15 @@ static void VkBackendInit()
 
 	rndCtx.compAvgLumPipe = 
 		VkMakeComputePipeline( dc.device, pipelineCache, avgLumCompProgram.pipeLayout, avgLumCs.module, { dc.waveSize } );
+	rndCtx.compTonemapPipe =
+		VkMakeComputePipeline( dc.device, pipelineCache, tonemapCompProgram.pipeLayout, tonemapCs.module, {} );
 
 	VkInitVirutalFrames( dc.device, dc.gfxQueueIdx, rndCtx.vrtFrames, rndCtx.framesInFlight );
 
 	VkInitAndUploadResources( dc.device );
 }
 
-__forceinline VkImageMemoryBarrier
+inline VkImageMemoryBarrier
 VkMakeImgBarrier(
 	VkImage				image,
 	VkAccessFlags		srcAccessMask,
@@ -3263,20 +3263,20 @@ VkMakeImgBarrier(
 	return imgMemBarrier;
 }
 
-__forceinline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
+inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
 {
 	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
 
 #include <intrin.h>
 // TODO: math_uitl file
-__forceinline u64 FloorPowOf2( u64 size )
+inline u64 FloorPowOf2( u64 size )
 {
 	// NOTE: use Hacker's Delight for bit-tickery
 	constexpr u64 ONE_LEFT_MOST = u64( 1ULL << ( sizeof( u64 ) * 8 - 1 ) );
 	return ( size ) ? ONE_LEFT_MOST >> __lzcnt64( size ) : 0;
 }
-__forceinline u64 GetImgMipCountForPow2( u64 width, u64 height )
+inline u64 GetImgMipCountForPow2( u64 width, u64 height )
 {
 	// NOTE: log2 == position of the highest bit set (or most significant bit set, MSB)
 	// NOTE: https://graphics.stanford.edu/~seander/bithacks.html#IntegerLogObvious
@@ -3288,7 +3288,7 @@ __forceinline u64 GetImgMipCountForPow2( u64 width, u64 height )
 
 	return min( log2MaxDim, MAX_MIP_LEVELS );
 }
-__forceinline u64 GetImgMipCount( u64 width, u64 height )
+inline u64 GetImgMipCount( u64 width, u64 height )
 {
 	assert( width && height );
 	u64 maxDim = max( width, height );
@@ -3388,8 +3388,8 @@ DrawIndirectPass(
 	const VkClearValue*		clearVals,
 	vk_program&				program )
 {
-	VkViewport viewport = { 0, (float) sc.imgHeight, (float) sc.imgWidth, -(float) sc.imgHeight, 0, 1.0f };
-	VkRect2D scissor = { { 0, 0 }, { sc.imgWidth, sc.imgHeight } };
+	VkViewport viewport = { 0, (float) sc.scRes.height, (float) sc.scRes.width, -(float) sc.scRes.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.scRes.width, sc.scRes.height } };
 
 	VkRenderPassBeginInfo rndPassBegInfo = {};
 	rndPassBegInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3589,11 +3589,14 @@ DepthPyramidMultiPass(
 }
 
 inline static void
-AvgLuminancePass(
+ToneMappingWithSrgb(
 	VkCommandBuffer		cmdBuff,
-	VkPipeline			vkPipeline,
-	const vk_program&	program,
+	VkPipeline			avgPipe,
+	VkPipeline			tonePipe,
+	const vk_program&	avgProg,
 	const image&		fboHdrColTrg,
+	const vk_program&	tonemapProg,
+	const image&		colCache,
 	float				dt )
 {
 	// NOTE: inspired by http://www.alextardif.com/HistogramLuminance.html
@@ -3603,22 +3606,23 @@ AvgLuminancePass(
 	avgLumInfo.dt = dt;
 
 	VkImageMemoryBarrier hdrColTrgAcquireBarrier = VkMakeImgBarrier( fboHdrColTrg.img,
-																	 VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+																	 0,
 																	 VK_ACCESS_SHADER_READ_BIT,
 																	 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-																	 VK_IMAGE_LAYOUT_GENERAL ,//VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+																	 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 																	 VK_IMAGE_ASPECT_COLOR_BIT,
 																	 0, 0 );
 
+	// AVERAGE LUM
 	vkCmdPipelineBarrier( cmdBuff,
 						  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
 						  1, &hdrColTrgAcquireBarrier );
 
-	vkCmdBindPipeline( cmdBuff, program.bindPoint, vkPipeline );
+	vkCmdBindPipeline( cmdBuff, avgProg.bindPoint, avgPipe );
 
-	VkDescriptorImageInfo hdrColTrgInfo = { 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_GENERAL };// VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+	VkDescriptorImageInfo hdrColTrgInfo = { 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	vk_descriptor_info avgLumDescs[] = { 
 		hdrColTrgInfo, 
 		avgLumBuff.descriptor(), 
@@ -3626,28 +3630,76 @@ AvgLuminancePass(
 		shaderGlobalSyncCounterBuff.descriptor() 
 	};
 
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, &avgLumDescs[ 0 ] );
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, avgProg.descUpdateTemplate, avgProg.pipeLayout, 0, &avgLumDescs[ 0 ] );
 
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( avgLumInfo ), &avgLumInfo );
+	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, avgProg.pushConstStages, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
 	vkCmdDispatch( cmdBuff, 
-				   VkGetGroupCount( fboHdrColTrg.nativeRes.width, program.groupSize.localSizeX ), 
-				   VkGetGroupCount( fboHdrColTrg.nativeRes.height, program.groupSize.localSizeY ), 
+				   VkGetGroupCount( fboHdrColTrg.nativeRes.width, avgProg.groupSize.localSizeX ), 
+				   VkGetGroupCount( fboHdrColTrg.nativeRes.height, avgProg.groupSize.localSizeY ), 
 				   1 );
 
-	VkImageMemoryBarrier hdrColTrgReleaseBarrier = VkMakeImgBarrier( fboHdrColTrg.img,
-																	 VK_ACCESS_SHADER_READ_BIT,
-																	 VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-																	 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-																	 VK_IMAGE_LAYOUT_GENERAL ,//VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-																	 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-																	 VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
+	// TONEMAPPING w/ GAMMA sRGB
+	VkImageMemoryBarrier scDestAcquireBarrier = VkMakeImgBarrier( colCache.img, 0,
+																  VK_ACCESS_SHADER_WRITE_BIT,
+																  VK_IMAGE_LAYOUT_UNDEFINED,
+																  VK_IMAGE_LAYOUT_GENERAL,
+																  VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
+
+	vkCmdPipelineBarrier( cmdBuff,
+						  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
+						  1, &scDestAcquireBarrier );
+
+	VkBufferMemoryBarrier avgLumAcquireBarrier = VkMakeBufferBarrier( avgLumBuff.hndl,
+																	  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+																	  VK_ACCESS_SHADER_READ_BIT );
 
 	vkCmdPipelineBarrier( cmdBuff,
 						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-						  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,//VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
-						  1, &hdrColTrgReleaseBarrier );
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 
+						  1, &avgLumAcquireBarrier, 0, 0 );
+
+
+
+	vkCmdBindPipeline( cmdBuff, tonemapProg.bindPoint, tonePipe );
+
+	VkDescriptorImageInfo sdrColScInfo = { 0, colCache.view,VK_IMAGE_LAYOUT_GENERAL };
+	vk_descriptor_info tonemapDescs[] = {
+		hdrColTrgInfo,
+		sdrColScInfo,
+		avgLumBuff.descriptor()
+	};
+
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, 
+										   tonemapProg.descUpdateTemplate, 
+										   tonemapProg.pipeLayout, 0,
+										   &tonemapDescs[ 0 ] );
+
+	assert( fboHdrColTrg.nativeRes.width == sc.scRes.width );
+	assert( fboHdrColTrg.nativeRes.height == sc.scRes.height );
+	vkCmdDispatch( cmdBuff,
+				   VkGetGroupCount( fboHdrColTrg.nativeRes.width, avgProg.groupSize.localSizeX ),
+				   VkGetGroupCount( fboHdrColTrg.nativeRes.height, avgProg.groupSize.localSizeY ),
+				   1 );
+
+	//VkImageMemoryBarrier hdrColTrgReleaseBarrier = VkMakeImgBarrier( fboHdrColTrg.img,
+	//																 VK_ACCESS_SHADER_READ_BIT,
+	//																 VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+	//																 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+	//																 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	//																 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	//																 VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
+	//
+	//vkCmdPipelineBarrier( cmdBuff,
+	//					  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+	//					  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+	//					  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
+	//					  1, &hdrColTrgReleaseBarrier );
+
+
 }
 
 // TODO: submit/flush queues earlier ?
@@ -3684,19 +3736,19 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 			rndCtx.depthTarget = VkCreateAllocBindImage( rndCtx.desiredDepthFormat,
 														 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
 														 VK_IMAGE_USAGE_SAMPLED_BIT,
-														 VkExtent3D{ sc.imgWidth, sc.imgHeight, 1 }, 1,
+														 sc.scRes, 1,
 														 &vkAlbumArena );
 			// TODO: place depth pyr elsewhere 
 			if constexpr( !multiShaderDepthPyramid ){
 				// TODO: make conservative ?
-				rndCtx.depthPyramidWidth = ( sc.imgWidth ) / 2;
-				rndCtx.depthPyramidHeight = ( sc.imgHeight ) / 2;
+				rndCtx.depthPyramidWidth = ( sc.scRes.width ) / 2;
+				rndCtx.depthPyramidHeight = ( sc.scRes.height ) / 2;
 				rndCtx.depthPyramidMipCount = GetImgMipCount( rndCtx.depthPyramidWidth, rndCtx.depthPyramidHeight );
 			}
 			else
 			{
-				rndCtx.depthPyramidWidth = FloorPowOf2( sc.imgWidth );
-				rndCtx.depthPyramidHeight = FloorPowOf2( sc.imgHeight );
+				rndCtx.depthPyramidWidth = FloorPowOf2( sc.scRes.width );
+				rndCtx.depthPyramidHeight = FloorPowOf2( sc.scRes.height );
 				rndCtx.depthPyramidMipCount = GetImgMipCountForPow2( rndCtx.depthPyramidWidth, rndCtx.depthPyramidHeight );
 			}
 			VK_CHECK( VK_INTERNAL_ERROR( !( rndCtx.depthPyramidMipCount < MAX_MIP_LEVELS ) ) );
@@ -3719,21 +3771,32 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 		}
 
 		if( !rndCtx.colorTarget.img )
+		{
 			rndCtx.colorTarget = VkCreateAllocBindImage( rndCtx.desiredColorFormat,
-														 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
-														 VK_IMAGE_USAGE_SAMPLED_BIT | 
-														 VK_IMAGE_USAGE_STORAGE_BIT |
+														 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+														 VK_IMAGE_USAGE_SAMPLED_BIT |
 														 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-														 VkExtent3D{ sc.imgWidth, sc.imgHeight, 1 }, 1,
+														 sc.scRes, 1,
 														 &vkAlbumArena );
+
+			rndCtx.colorCache = VkCreateAllocBindImage( VK_FORMAT_R8G8B8A8_UNORM,
+														VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+														VK_IMAGE_USAGE_STORAGE_BIT |
+														VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+														sc.scRes, 1,
+														&vkAlbumArena );
+		}
+			
+
+
 
 		VkImageView attachements[] = { rndCtx.colorTarget.view, rndCtx.depthTarget.view };
 		rndCtx.offscreenFbo = VkMakeFramebuffer( dc.device,
 												 rndCtx.renderPass,
 												 attachements,
 												 POPULATION( attachements ),
-												 sc.imgWidth,
-												 sc.imgHeight );
+												 sc.scRes.width,
+												 sc.scRes.height );
 	}
 
 	assert( ( currentFrameIdx == 0 ) || ( currentFrameIdx == 1 ) );
@@ -3906,6 +3969,8 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 			  cullInfo );
 
 	VkClearValue clearVals[ 2 ] = {};
+	//clearVals[ 0 ].color = { 100,100,100 };
+	//clearVals[ 1 ].depthStencil = {};
 	DrawIndirectPass( currentVFrame.cmdBuf,
 					  rndCtx.gfxPipeline,
 					  rndCtx.renderPass,
@@ -3970,15 +4035,47 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 	}
 
 
-	AvgLuminancePass( currentVFrame.cmdBuf, rndCtx.compAvgLumPipe, avgLumCompProgram, rndCtx.colorTarget, dt );
+	ToneMappingWithSrgb( currentVFrame.cmdBuf, 
+						 rndCtx.compAvgLumPipe, 
+						 rndCtx.compTonemapPipe,
+						 avgLumCompProgram, 
+						 rndCtx.colorTarget,
+						 tonemapCompProgram,
+						 rndCtx.colorCache,
+						 dt );
+
+	//VkImageMemoryBarrier copyBarriers[] =
+	//{
+	//	VkMakeImgBarrier(
+	//		rndCtx.colorTarget.img,
+	//		VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+	//		VK_ACCESS_TRANSFER_READ_BIT,
+	//		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	//		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	//		VK_IMAGE_ASPECT_COLOR_BIT,0,0 ),
+	//	VkMakeImgBarrier(
+	//		sc.imgs[ imgIdx ], 0,
+	//		VK_ACCESS_TRANSFER_WRITE_BIT,
+	//		VK_IMAGE_LAYOUT_UNDEFINED,
+	//		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	//		VK_IMAGE_ASPECT_COLOR_BIT,0,0 ),
+	//};
+	//
+	//vkCmdPipelineBarrier( currentVFrame.cmdBuf, 
+	//					  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 
+	//					  VK_PIPELINE_STAGE_TRANSFER_BIT, 
+	//					  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 
+	//					  POPULATION( copyBarriers ), 
+	//					  copyBarriers );
+
 
 	VkImageMemoryBarrier copyBarriers[] =
 	{
 		VkMakeImgBarrier(
-			rndCtx.colorTarget.img,
-			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			rndCtx.colorCache.img,
+			VK_ACCESS_SHADER_WRITE_BIT,
 			VK_ACCESS_TRANSFER_READ_BIT,
-			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_IMAGE_LAYOUT_GENERAL,
 			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 			VK_IMAGE_ASPECT_COLOR_BIT,0,0 ),
 		VkMakeImgBarrier(
@@ -3989,25 +4086,25 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 			VK_IMAGE_ASPECT_COLOR_BIT,0,0 ),
 	};
 
-	vkCmdPipelineBarrier( currentVFrame.cmdBuf, 
-						  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 
-						  VK_PIPELINE_STAGE_TRANSFER_BIT, 
-						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 
-						  POPULATION( copyBarriers ), 
+	vkCmdPipelineBarrier( currentVFrame.cmdBuf,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						  VK_PIPELINE_STAGE_TRANSFER_BIT,
+						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
+						  POPULATION( copyBarriers ),
 						  copyBarriers );
-
+	
 	// NOTE: for both imgs
 	VkImageSubresourceLayers imgSubrscLayers = {};
 	imgSubrscLayers.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	imgSubrscLayers.mipLevel = 0;
 	imgSubrscLayers.baseArrayLayer = 0;
 	imgSubrscLayers.layerCount = 1;
-
+	
 	VkOffset3D imgExt;
-	imgExt.x = sc.imgWidth;
-	imgExt.y = sc.imgHeight;
-	imgExt.z = 1;
-
+	imgExt.x = sc.scRes.width;
+	imgExt.y = sc.scRes.height;
+	imgExt.z = sc.scRes.depth;
+	
 	VkImageBlit imgRegionBlit = {};
 	imgRegionBlit.srcSubresource = imgSubrscLayers;
 	imgRegionBlit.srcOffsets[ 0 ] = {};
@@ -4015,14 +4112,14 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 	imgRegionBlit.dstSubresource = imgSubrscLayers;
 	imgRegionBlit.dstOffsets[ 0 ] = {};
 	imgRegionBlit.dstOffsets[ 1 ] = imgExt;
-
+	
 	vkCmdBlitImage( currentVFrame.cmdBuf,
-					rndCtx.colorTarget.img,
+					rndCtx.colorCache.img,
 					VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 
 					sc.imgs[ imgIdx ],
 					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
 					1, &imgRegionBlit, VK_FILTER_NEAREST );
-
+	
 	VkImageMemoryBarrier presentBarrier = VkMakeImgBarrier( sc.imgs[ imgIdx ], 
 															VK_ACCESS_TRANSFER_WRITE_BIT, 0, 
 															VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,

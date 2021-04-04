@@ -2,6 +2,8 @@
 
 
 #extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_samplerless_texture_functions : require
+
 
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
@@ -17,7 +19,7 @@ layout( push_constant ) uniform block
 	avg_luminance_info avgLumInfo;
 };
 
-layout( binding = 0, rgba32f ) readonly uniform coherent image2D hdrColTrg;
+layout( binding = 0 ) uniform texture2D hdrColTrg;
 layout( binding = 1 ) buffer avg_luminance
 {
 	float avgLuminance;
@@ -45,7 +47,7 @@ shared uint tooDarkPixelsCountLDS[ SubgroupSize ];
 layout( local_size_x = 16, local_size_y = 16, local_size_z = 1 ) in;
 void main()
 {
-	uvec2 hdrColTrgSize = imageSize( hdrColTrg ).xy;
+	uvec2 hdrColTrgSize = textureSize( hdrColTrg, 0 ).xy;
 	if( gl_GlobalInvocationID.x > hdrColTrgSize.x || gl_GlobalInvocationID.y > hdrColTrgSize.y ) return;
 
 	if( gl_GlobalInvocationID.x == 0 && gl_GlobalInvocationID.y == 0 )
@@ -54,10 +56,11 @@ void main()
 		finalTooDarkPixelsCount = 0;
 		globSyncCounter = 0;
 	}
+	barrier();
 
 	uint histoBinIdx = 0;
 
-	vec3 hdrCol = imageLoad( hdrColTrg, ivec2( gl_GlobalInvocationID.xy ) ).xyz;
+	vec3 hdrCol = texelFetch( hdrColTrg, ivec2( gl_GlobalInvocationID.xy ), 0 ).xyz;
 	float lum = dot( hdrCol, RGB_TO_LUM );
 	// NOTE: avoid log2( 0 )
 	if( lum > EPSILON )
@@ -97,11 +100,12 @@ void main()
 
 	barrier();
 
-	if( globSyncCounter == ( gl_NumWorkGroups.x + gl_NumWorkGroups.y - 1 ) )
+	if( globSyncCounter == ( gl_NumWorkGroups.x + gl_NumWorkGroups.y - 2 ) )
 	{
 		uint numPixels = hdrColTrgSize.x * hdrColTrgSize.y;
 		float weightedLogAverage = 
-			( float( finalLumSum ) / max( numPixels - float( finalTooDarkPixelsCount ), 1.0 ) ) - 1.0;
+			//( float( finalLumSum ) / max( numPixels - float( finalTooDarkPixelsCount ), 1.0 ) ) - 1.0;
+			( float( finalLumSum ) / max( numPixels, 1.0 ) ) - 1.0;
 
 		float logLumRange = avgLumInfo.invLogLumRange;
 		float weightedAvgLum = exp2( ( ( weightedLogAverage / 254.0 ) * logLumRange ) + avgLumInfo.minLogLum );
