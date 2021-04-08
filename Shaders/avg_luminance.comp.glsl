@@ -27,7 +27,7 @@ layout( binding = 1 ) buffer avg_luminance
 layout( binding = 2 ) buffer global_vars
 {
 	uint finalLumSum;
-	uint finalTooDarkPixelsCount;
+	uint finalTailValsCount;
 };
 layout( binding = 3 ) buffer global_sync_counter
 {
@@ -38,7 +38,7 @@ layout( constant_id = 0 ) const uint SubgroupSize = 32;
 
 
 shared uint partialSumLDS[ SubgroupSize ];
-shared uint tooDarkPixelsCountLDS[ SubgroupSize ];
+shared uint tailValsCountLDS[ SubgroupSize ];
 
 #define EPSILON 0.005
 // NOTE: taken from: https://bruop.github.io/exposure/
@@ -50,10 +50,11 @@ void main()
 	uvec2 hdrColTrgSize = textureSize( hdrColTrg, 0 ).xy;
 	if( gl_GlobalInvocationID.x > hdrColTrgSize.x || gl_GlobalInvocationID.y > hdrColTrgSize.y ) return;
 
+
 	if( gl_GlobalInvocationID.x == 0 && gl_GlobalInvocationID.y == 0 )
 	{
 		finalLumSum = 0;
-		finalTooDarkPixelsCount = 0;
+		finalTailValsCount = 0;
 		globSyncCounter = 0;
 	}
 	barrier();
@@ -69,13 +70,17 @@ void main()
 		histoBinIdx = uint( logLum * 254.0 + 1.0 );
 	}
 
-	uint tooDarkPixelsPartialCount = gl_SubgroupSize - subgroupBallotBitCount( subgroupBallot( bool( histoBinIdx ) ) );
+	bool discardPixel = ( histoBinIdx < 128 ) || ( histoBinIdx > 230 );
+
+	histoBinIdx *= uint( !discardPixel );
+
+	uint tailValsPartialCount = subgroupBallotBitCount( subgroupBallot( !bool( histoBinIdx ) ) );
 	uint partialLumSum = subgroupAdd( histoBinIdx );
 
 	if( gl_SubgroupInvocationID == 0 )
 	{
 		partialSumLDS[ gl_SubgroupID ] = partialLumSum;
-		tooDarkPixelsCountLDS[ gl_SubgroupID ] = tooDarkPixelsPartialCount;
+		tailValsCountLDS[ gl_SubgroupID ] = tailValsPartialCount;
 	}
 
 	barrier();
@@ -86,15 +91,15 @@ void main()
 			gl_SubgroupInvocationID < gl_NumSubgroups ? partialSumLDS[ gl_SubgroupInvocationID ] : 0;
 		partialLumSum = subgroupAdd( partialLumSum );
 
-		tooDarkPixelsPartialCount =
-			gl_SubgroupInvocationID < gl_NumSubgroups ? tooDarkPixelsCountLDS[ gl_SubgroupInvocationID ] : 0;
-		tooDarkPixelsPartialCount = subgroupAdd( tooDarkPixelsPartialCount );
+		tailValsPartialCount =
+			gl_SubgroupInvocationID < gl_NumSubgroups ? tailValsCountLDS[ gl_SubgroupInvocationID ] : 0;
+		tailValsPartialCount = subgroupAdd( tailValsPartialCount );
 	}
 
 	if( gl_LocalInvocationIndex == 0 )
 	{
 		atomicAdd( finalLumSum, partialLumSum );
-		atomicAdd( finalTooDarkPixelsCount, tooDarkPixelsPartialCount );
+		atomicAdd( finalTailValsCount, tailValsPartialCount );
 		atomicAdd( globSyncCounter, 1 );
 	}
 
@@ -102,11 +107,10 @@ void main()
 
 	if( globSyncCounter == ( gl_NumWorkGroups.x + gl_NumWorkGroups.y - 2 ) )
 	{
-		uint numPixels = hdrColTrgSize.x * hdrColTrgSize.y;
+		float numPixels = hdrColTrgSize.x * hdrColTrgSize.y;
 		float weightedLogAverage = 
-			//( float( finalLumSum ) / max( numPixels - float( finalTooDarkPixelsCount ), 1.0 ) ) - 1.0;
-			( float( finalLumSum ) / max( numPixels, 1.0 ) ) - 1.0;
-
+			( float( finalLumSum ) / max( numPixels - float( finalTailValsCount ), 1.0 ) ) - 1.0;
+			
 		float logLumRange = avgLumInfo.invLogLumRange;
 		float weightedAvgLum = exp2( ( ( weightedLogAverage / 254.0 ) * logLumRange ) + avgLumInfo.minLogLum );
 

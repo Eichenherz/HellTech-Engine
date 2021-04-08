@@ -48,7 +48,8 @@ layout( binding = 1 ) readonly buffer draw_cmd_buffer{
 
 layout( location = 0 ) out vec3 normal;
 layout( location = 1 ) out vec2 uv;
-layout( location = 2 ) out vertex_stage_data vtxVars;
+layout( location = 2 ) out vec3 fragWorldPos;
+layout( location = 3 ) out vertex_stage_data vtxVars;
 
 float Snorm8Dequant( int x )
 {
@@ -108,9 +109,9 @@ void main()
 
 	t = normalize( t - dot( t, n ) * n );
 
-	vtxVars.tbn = mat3( t, b, n );
-	vtxVars.fragWorldPos = worldPos;
-	vtxVars.mtlIdx = uint( texMatCoord.z );
 	normal = RotateQuat( norm.xyz, args.rot );
 	uv = texMatCoord.xy;
+	fragWorldPos = worldPos;
+	vtxVars.tbn = mat3( t, b, n );
+	vtxVars.mtlIdx = uint( texMatCoord.z );
 }

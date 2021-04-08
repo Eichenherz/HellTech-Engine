@@ -41,6 +41,26 @@ float TonemapLottesCurve( float hdrLum )
     return pow( hdrLum, a ) / ( pow( hdrLum, a * d ) * b + c );
 }
 
+float LumTonemapAcesFilmCurve( float x )
+{
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return clamp( ( x * ( a * x + b ) ) / ( x * ( c * x + d ) + e ), 0.0, 1.0 );
+}
+
+vec3 RgbTonemapAcesFilmCurve( vec3 x )
+{
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return clamp( ( x * ( a * x + b ) ) / ( x * ( c * x + d ) + e ), 0.0, 1.0 );
+}
+
 // NOTE: taken from https://github.com/CesiumGS/cesium/tree/master/Source/Shaders/Builtin/Functions
 // NOTE: vals taken from http://www.brucelindbloom.com/index.html?Math.html
 // NOTE: x is luminance
@@ -78,7 +98,7 @@ vec3 YxyToRgb( vec3 Yxy )
 // NOTE: taken from https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
 vec4 LinearToSrgb( vec4 rgb )
 {
-    bvec4 cutoff = lessThan( rgb, vec4( 0.0031308 ) );
+    bvec4 cutoff = lessThanEqual( rgb, vec4( 0.0031308 ) );
     vec4 higher = vec4( 1.055 ) * pow( rgb, vec4( 1.0 / 2.4 ) ) - vec4( 0.055 );
     vec4 lower = rgb * vec4( 12.92 );
 
@@ -95,12 +115,15 @@ void main()
 
 	vec3 rgb = texelFetch( hdrColSrc, ivec2( gl_GlobalInvocationID.xy ), 0 ).rgb;
     vec3 yxy = RgbToYxy( rgb );
-
+    
     float lum = yxy.x / ( 9.6 * avgLum + 0.0001 );
-
-    yxy.x = TonemapLottesCurve( lum );
-
+    
+    //yxy.x = TonemapLottesCurve( lum );
+    yxy.x = LumTonemapAcesFilmCurve( lum );
+    
     rgb = YxyToRgb( yxy );
+
+    //rgb = RgbTonemapAcesFilmCurve( rgb );
 
     //imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), LinearToSrgb( vec4( rgb, 1 ) ) );
     imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), vec4( rgb, 1 ) );

@@ -1,8 +1,5 @@
 #version 460
 
-
-#extension GL_EXT_control_flow_attributes: require
-
 #extension GL_KHR_shader_subgroup_basic: require
 #extension GL_KHR_shader_subgroup_arithmetic: require
 #extension GL_KHR_shader_subgroup_ballot: require

@@ -29,6 +29,7 @@ using uint = u32;
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_control_flow_attributes : require
 
 #define ALIGNAS( x )
 
@@ -38,7 +39,6 @@ using uint = u32;
 struct vertex_stage_data
 {
 	mat3 tbn;
-	vec3 fragWorldPos;
 	uint mtlIdx;
 };
 
@@ -78,16 +78,29 @@ ALIGNAS( 16 ) struct draw_data
 	uint meshIdx;
 	uint bndVolMeshIdx;
 };
-
+//ALIGNAS( 16 ) struct light_data
+//{
+//	vec3 pos;
+//	float radius;
+//	vec3 col;
+//};
+struct light_data
+{
+	vec3 pos;
+	vec3 col;
+	float radius;
+};
 // TODO: mip-mapping
 // TODO: pbr renaming
 struct material_data
 {
-	vec3 diffuseK;
-	float dissolve;
-	float shininess;
-	uint diffuseIdx;
-	uint bumpIdx;
+	vec3 baseColFactor;
+	float metallicFactor;
+	float roughnessFactor;
+	uint baseColIdx;
+	uint metalRoughIdx;
+	uint normalMapIdx;
+	uint aoMapIdx;
 	uint hash;
 };
 //constexpr u64 a = alignof( material_data );

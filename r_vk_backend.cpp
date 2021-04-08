@@ -107,7 +107,7 @@ do{																											\
 	if( res ){																								\
 		char dbgStr[256] = {};																				\
 		strcat_s( dbgStr, sizeof( dbgStr ), VK_DEV_ERR_STR );												\
-		strcat_s( dbgStr, sizeof( dbgStr ), VkResErrorString( res ).data() );					\
+		strcat_s( dbgStr, sizeof( dbgStr ), std::data( VkResErrorString( res ) ) );							\
 		SysErrMsgBox( dbgStr );																				\
 		abort();																							\
 	}																										\
@@ -228,7 +228,7 @@ struct render_context
 	u32				depthPyramidHeight;
 	u8				depthPyramidMipCount;
 	VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	VkFormat		desiredColorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+	VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;// VK_FORMAT_R32G32B32A32_SFLOAT;
 	VkFramebuffer	offscreenFbo;
 	
 	virtual_frame	vrtFrames[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
@@ -1739,76 +1739,8 @@ inline void DeinterleaveVertexBuffer( const vector<vertex>& vtx, vertex_attribut
 	}
 }
 
-// TODO: rename
-// TODO: enum type ?
-struct raw_image_info
-{
-	constexpr static i32 desiredChannels = STBI_rgb_alpha;
-
-	i32 width;
-	i32 height;
-	i32 texChannels;
-	u64 sizeInBytes;
-	u64 bufferOffset;
-	VkFormat format;
-};
-
-// TODO: use own mem api
-// TODO: write data inplace in a mega-buffer
-// TODO: assert ?
-inline static raw_image_info StbLoadImageFromFileToBuffer( FILE* imgFile, std::vector<u8>& bin )
-{
-	raw_image_info img = {};
-
-	u8* data = stbi_load_from_file( imgFile, &img.width, &img.height, &img.texChannels, img.desiredChannels );
-	assert( data );
-	img.sizeInBytes = u64( img.width * img.height * img.texChannels );
-	img.bufferOffset = std::size( bin );
-
-	bin.resize( img.bufferOffset + img.sizeInBytes );
-	std::memcpy( &bin[ 0 ] + img.bufferOffset, data, img.sizeInBytes );
-
-	stbi_image_free( data );
-	return img;
-}
-
-inline static raw_image_info StbLoadImageFromMem( u8 const* imgData, u32 imgSize, std::vector<u8>& bin )
-{
-	raw_image_info img = {};
-
-	u8* data = stbi_load_from_memory( imgData, imgSize, &img.width, &img.height, &img.texChannels, img.desiredChannels );
-	assert( data );
-	img.sizeInBytes = u64( img.width * img.height * img.texChannels );
-	img.bufferOffset = std::size( bin );
-
-	bin.resize( img.bufferOffset + img.sizeInBytes );
-	std::memcpy( std::data( bin ) + img.bufferOffset, data, img.sizeInBytes );
-
-	stbi_image_free( data );
-	return img;
-}
-
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
-
-inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
-{
-	XMMATRIX t = {};
-	if( node->has_rotation || node->has_translation || node->has_scale )
-	{
-		XMVECTOR move = XMLoadFloat3( (const XMFLOAT3*) node->translation );
-		XMVECTOR rot = XMLoadFloat4( (const XMFLOAT4*) node->rotation );
-		XMVECTOR scale = XMLoadFloat3( (const XMFLOAT3*) node->scale );
-		t = XMMatrixAffineTransformation( scale, XMVectorSet( 0, 0, 0, 1 ), rot, move );
-	}
-	else if( node->has_matrix )
-	{
-		// NOTE: gltf matrices are stored in col maj
-		t = XMMatrixTranspose( XMLoadFloat4x4( (const XMFLOAT4X4*) node->matrix ) );
-	}
-
-	return t;
-}
 
 // TODO: improve
 enum gltf_sampler_filter : u16
@@ -1841,7 +1773,7 @@ inline VkFilter VkGetFilterTypeFromGltf( cgltf_int f )
 	case GLTF_SAMPLER_FILTER_LINEAR:
 	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_NEAREST:
 	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR:
-	default: 
+	default:
 	return VK_FILTER_LINEAR;
 	}
 }
@@ -1849,28 +1781,27 @@ inline VkSamplerMipmapMode VkGetMipmapTypeFromGltf( cgltf_int m )
 {
 	switch( m )
 	{
-	case GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_LINEAR:
-	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR:
-	return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-
 	case GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_NEAREST:
 	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_NEAREST:
-	default:
 	return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+
+	case GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_LINEAR:
+	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR:
+	default:
+	return VK_SAMPLER_MIPMAP_MODE_LINEAR;
 	}
 }
 inline VkSamplerAddressMode VkGetAddressModeFromGltf( cgltf_int a )
 {
 	switch( a )
 	{
-	case GLTF_SAMPLER_ADDRESS_MODE_REPEAT: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
 	case GLTF_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-	case GLTF_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE:
-	default: 
-	return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	case GLTF_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	case GLTF_SAMPLER_ADDRESS_MODE_REPEAT: default: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
 	}
 }
 
+// TODO: make smaller
 struct vk_sampler_config
 {
 	VkFilter				min; // 2 bits
@@ -1891,6 +1822,117 @@ struct vk_sampler_config
 		addrV{ VkGetAddressModeFromGltf( v ) }
 	{}
 };
+
+// TODO: rename
+// TODO: enum type ?
+struct raw_image_info
+{
+	vk_sampler_config	samplerConfig;
+	u64					sizeInBytes;
+	u64					bufferOffset;
+	i32					width;
+	i32					height;
+	VkFormat			format;
+	
+};
+
+// TODO: use own mem api
+// TODO: write data inplace in a mega-buffer
+// TODO: assert ?
+inline static raw_image_info StbLoadImageFromMem( u8 const* imgData, u32 imgSize, std::vector<u8>& bin )
+{
+	raw_image_info img = {};
+
+	i32 texChannels = 0;
+	u8* data = stbi_load_from_memory( imgData, imgSize, &img.width, &img.height, &texChannels, STBI_rgb_alpha );
+	assert( data );
+	assert( u64( STBI_rgb_alpha ) >= texChannels );
+	img.sizeInBytes = u64( img.width * img.height * u64( STBI_rgb_alpha ) );
+	img.bufferOffset = std::size( bin );
+
+	bin.resize( img.bufferOffset + img.sizeInBytes );
+	std::memcpy( std::data( bin ) + img.bufferOffset, data, img.sizeInBytes );
+
+	stbi_image_free( data );
+	return img;
+}
+
+
+enum gltf_texture_type : u8
+{
+	GLTF_BASE_COLOR = 0,
+	GLTF_METALLIC_ROUGHNESS = 1,
+	GLTF_NORMAL_MAP = 2,
+	GLTF_AMBIENT_OCCLUSION_MAP = 3,
+	GLTF_COUNT = 4
+};
+
+constexpr VkFormat VkFormatFromGltfTextureType( gltf_texture_type t )
+{
+	switch( t )
+	{
+	case GLTF_BASE_COLOR:				return VK_FORMAT_R8G8B8A8_SRGB;
+	case GLTF_METALLIC_ROUGHNESS:		return VK_FORMAT_R8G8B8A8_UNORM;
+	case GLTF_NORMAL_MAP:				return VK_FORMAT_R8G8B8A8_UNORM;
+	case GLTF_AMBIENT_OCCLUSION_MAP:	return VK_FORMAT_R8G8B8A8_UNORM;
+	}
+}
+inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
+{
+	XMMATRIX t = {};
+	if( node->has_rotation || node->has_translation || node->has_scale )
+	{
+		XMVECTOR move = XMLoadFloat3( (const XMFLOAT3*) node->translation );
+		XMVECTOR rot = XMLoadFloat4( (const XMFLOAT4*) node->rotation );
+		XMVECTOR scale = XMLoadFloat3( (const XMFLOAT3*) node->scale );
+		t = XMMatrixAffineTransformation( scale, XMVectorSet( 0, 0, 0, 1 ), rot, move );
+	}
+	else if( node->has_matrix )
+	{
+		// NOTE: gltf matrices are stored in col maj
+		t = XMMatrixTranspose( XMLoadFloat4x4( (const XMFLOAT4X4*) node->matrix ) );
+	}
+
+	return t;
+}
+// TODO: separate vk, stb, gltf
+// TODO: account for compressed/decompressed images
+// TODO: change stb
+// TODO: no string view compare ?
+inline raw_image_info MakeTextureFromGlb(
+	const cgltf_texture*	t,
+	const u8*				pBin,
+	vector<u8>&				textureData,
+	gltf_texture_type		textureType )
+{
+	u64 imgOffset = t->image->buffer_view->offset;
+	u64 imgSize = t->image->buffer_view->size;
+
+	raw_image_info imgInfo = {};
+	std::string_view mimeType = { t->image->mime_type };
+	if( ( mimeType == "image/png"sv ) || ( mimeType == "image/jpeg"sv ) )
+	{
+		imgInfo = StbLoadImageFromMem( pBin + imgOffset, imgSize, textureData );
+	}
+	else if( mimeType == "image/ktx2"sv )
+	{
+
+	}
+	
+	imgInfo.format = VkFormatFromGltfTextureType( textureType );
+
+	if( t->sampler )
+	{
+		imgInfo.samplerConfig = {
+			t->sampler->min_filter,
+			t->sampler->mag_filter,
+			t->sampler->wrap_s,
+			t->sampler->wrap_t
+		}; 
+	}
+
+	return imgInfo;
+}
 // TODO: use u16 idx
 // TODO: pass samplers
 // TODO: better file api
@@ -1955,49 +1997,41 @@ LoadGlbModel(
 
 			const cgltf_primitive& prim = mesh.primitives[ p ];
 
-			// TODO: after prim.material ?
+			// NOTE: follow unreal pbr model
 			u64 materialsOffset = std::size( materials );
 			if( prim.material )
 			{
 				materials.push_back( {} );
 				material_data& mtl = materials[ materialsOffset ];
-				// TODO: check mimeType ?
-				vk_sampler_config samplerConfig = {};
-				const cgltf_texture* pbrBaseColor = prim.material->pbr_metallic_roughness.base_color_texture.texture;
-				if( pbrBaseColor )
+				
+				const cgltf_pbr_metallic_roughness& pbrMetallicRoughness = prim.material->pbr_metallic_roughness;
+				if( const cgltf_texture* pbrBaseCol = pbrMetallicRoughness.base_color_texture.texture )
 				{
-					u64 imgOffset = pbrBaseColor->image->buffer_view->offset;
-					u64 imgSize = pbrBaseColor->image->buffer_view->size;
-					raw_image_info imgInfo = StbLoadImageFromMem( pBin + imgOffset, imgSize, textureData );
-					imgInfo.format = VK_FORMAT_R8G8B8A8_SRGB;// VK_FORMAT_B8G8R8A8_SRGB;
+					raw_image_info imgInfo = MakeTextureFromGlb( pbrBaseCol, pBin, textureData, GLTF_BASE_COLOR );
 					album.emplace_back( imgInfo );
-					mtl.diffuseIdx = std::size( album ) - 1;
-
-					//samplerConfig = {
-					//	pbrMetallicRoughnessMap->sampler->min_filter,
-					//		pbrMetallicRoughnessMap->sampler->mag_filter,
-					//		pbrMetallicRoughnessMap->sampler->wrap_s,
-					//		pbrMetallicRoughnessMap->sampler->wrap_t
-					//};
+					mtl.baseColIdx = std::size( album ) - 1;
+					mtl.baseColFactor = *(const vec3*) pbrMetallicRoughness.base_color_factor;
 				}
-
-				const cgltf_texture* normalMap = prim.material->normal_texture.texture;
-				if( normalMap )
+				if( const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture )
 				{
-					u64 imgOffset = normalMap->image->buffer_view->offset;
-					u64 imgSize = normalMap->image->buffer_view->size;
-					raw_image_info imgInfo = StbLoadImageFromMem( pBin + imgOffset, imgSize, textureData );
-					imgInfo.format = VK_FORMAT_R8G8B8A8_UNORM;//VK_FORMAT_B8G8R8A8_UNORM;
+					raw_image_info imgInfo = MakeTextureFromGlb( metalRoughMap, pBin, textureData, GLTF_METALLIC_ROUGHNESS );
 					album.emplace_back( imgInfo );
-					mtl.bumpIdx = std::size( album ) - 1;
-
-					//samplerConfig = {
-					//	pbrMetallicRoughnessMap->sampler->min_filter,
-					//		pbrMetallicRoughnessMap->sampler->mag_filter,
-					//		pbrMetallicRoughnessMap->sampler->wrap_s,
-					//		pbrMetallicRoughnessMap->sampler->wrap_t
-					//};
+					mtl.metalRoughIdx = std::size( album ) - 1;
+					mtl.metallicFactor = pbrMetallicRoughness.metallic_factor;
+					mtl.roughnessFactor = pbrMetallicRoughness.roughness_factor;
 				}
+				if( const cgltf_texture* normalMap = prim.material->normal_texture.texture )
+				{
+					raw_image_info imgInfo = MakeTextureFromGlb( normalMap, pBin, textureData, GLTF_NORMAL_MAP );
+					album.emplace_back( imgInfo );
+					mtl.normalMapIdx = std::size( album ) - 1;
+				}
+				//if( const cgltf_texture* aoMap = prim.material->occlusion_texture.texture )
+				//{
+				//	raw_image_info imgInfo = MakeTextureFromGlb( aoMap, pBin, textureData, GLTF_AMBIENT_OCCLUSION_MAP );
+				//	album.emplace_back( imgInfo );
+				//	mtl.aoMapIdx = std::size( album ) - 1;
+				//}
 			}
 
 
@@ -2181,27 +2215,27 @@ b32 LoadObjModel(
 
 	FILE* imgFile = 0;
 	for( u64 i = 0; i < obj->material_count; ++i ){
-		fastObjMaterial& mtl = obj->materials[ i ];
-		mtlData[ i ].diffuseK = *(const DirectX::XMFLOAT3*) mtl.Kd;
-		mtlData[ i ].shininess = mtl.Ns;
-		mtlData[ i ].dissolve = mtl.d;
-
-		if( mtl.map_Kd.path ){
-			fopen_s( &imgFile, mtl.map_Kd.path, "rb" );
-
-			album.emplace_back( StbLoadImageFromFileToBuffer( imgFile, imageBin ) );
-			mtlData[ i ].diffuseIdx = std::size( album ) - 1;
-
-			fclose( imgFile );
-		}
-		if( mtl.map_bump.path ){
-			fopen_s( &imgFile, mtl.map_bump.path, "rb" );
-
-			album.emplace_back( StbLoadImageFromFileToBuffer( imgFile, imageBin ) );
-			mtlData[ i ].bumpIdx = std::size( album ) - 1;
-
-			fclose( imgFile );
-		}
+		//fastObjMaterial& mtl = obj->materials[ i ];
+		//mtlData[ i ].diffuseK = *(const DirectX::XMFLOAT3*) mtl.Kd;
+		//mtlData[ i ].shininess = mtl.Ns;
+		//mtlData[ i ].dissolve = mtl.d;
+		//
+		//if( mtl.map_Kd.path ){
+		//	fopen_s( &imgFile, mtl.map_Kd.path, "rb" );
+		//
+		//	album.emplace_back( StbLoadImageFromFileToBuffer( imgFile, imageBin ) );
+		//	mtlData[ i ].diffuseIdx = std::size( album ) - 1;
+		//
+		//	fclose( imgFile );
+		//}
+		//if( mtl.map_bump.path ){
+		//	fopen_s( &imgFile, mtl.map_bump.path, "rb" );
+		//
+		//	album.emplace_back( StbLoadImageFromFileToBuffer( imgFile, imageBin ) );
+		//	mtlData[ i ].bumpIdx = std::size( album ) - 1;
+		//
+		//	fclose( imgFile );
+		//}
 	}
 
 	textureData.insert( textureData.end(), imageBin.begin(), imageBin.end() );
@@ -2666,6 +2700,9 @@ static buffer_data materialsBuff;
 static buffer_data drawArgsBuff;
 
 
+static buffer_data lightsBuff;
+
+
 // TODO: mega-buff ?
 static buffer_data dispatchCmdBuff;
 
@@ -2771,8 +2808,8 @@ struct buffer_region
 		data( (void*) &buff[ 0 ] ){}
 };
 
-constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\0.glb";
-//constexpr char glbPath[] = "WaterBottle.glb";
+//constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\0.glb";
+constexpr char glbPath[] = "WaterBottle.glb";
 
 static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& stagingBuff )
 {
@@ -2811,7 +2848,7 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 	constexpr u32 meshCount = 1;// std::size( MODEL_FILES );
 
 	u32 drawCount = 4;
-	float sceneRadius = 60.0f;
+	float sceneRadius = 40.0f;
 
 	vector<draw_data> drawArgs( drawCount );
 
@@ -2824,7 +2861,7 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 		d.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		d.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		d.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius + 40;
-		d.scale = 40.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+		d.scale = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
 
 		DirectX::XMVECTOR axis = DirectX::XMVector3Normalize( 
 			DirectX::XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
@@ -2848,6 +2885,16 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 
 		DirectX::XMVECTOR quat = DirectX::XMQuaternionRotationNormal( DirectX::XMVectorSet( 1, 0, 0, 0 ), 0 );
 		DirectX::XMStoreFloat4( &d.rot, quat );
+	}
+
+	light_data lights[ 4 ] = {};
+	for( light_data& l : lights )
+	{
+		l.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		l.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		l.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		l.radius = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+		l.col = { 500.0f,200.0f,200.0f };
 	}
 
 	// TODO: based on what ?
@@ -2889,7 +2936,7 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) avgLumBuff.hndl, "avgLumBuff" );
 	
 	// TODO: seems overkill
-	shaderGlobalsBuff = VkCreateAllocBindBuffer( 8,
+	shaderGlobalsBuff = VkCreateAllocBindBuffer( 64,
 												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 												 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 												 &vkRscArena );
@@ -2948,6 +2995,11 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 											&vkRscArena );
 	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, u64( geometryBuff.hndl ), "Geometry_Buff" );
 
+	lightsBuff = VkCreateAllocBindBuffer( sizeof( lights ),
+										  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+										  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+										  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+										  &vkRscArena );
 	// TODO: make sexyer
 	// TODO: enforce order somehow
 	geoMegaBuffPtrs = {
@@ -2969,7 +3021,10 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 
 	// TODO: find better soln
 	u64 stagingOffset = geoBuffSize;
-	std::memcpy( stagingBuff.hostVisible + stagingOffset, textureData.data(), textureData.size() );
+	std::memcpy( stagingBuff.hostVisible + stagingOffset, lights, sizeof( lights ) );
+
+	stagingOffset += sizeof( lights );
+	std::memcpy( stagingBuff.hostVisible + stagingOffset, std::data( textureData ), std::size( textureData ) );
 
 	imgCopyRegions.resize( std::size( album ) );
 	textures.resize( std::size( album ) );
@@ -3167,7 +3222,7 @@ static void VkBackendInit()
 	VkPipelineCache pipelineCache = 0;
 
 	constexpr char vertPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\shdr.vert.glsl.spv";
-	constexpr char fragPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\shdr.frag.glsl.spv";
+	constexpr char fragPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl.spv";
 	constexpr char drawCullPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\draw_cull.comp.spv";
 	constexpr char depthPyramidPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv";
 	constexpr char pow2DownsamplerPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pow2_downsampler.comp.spv";
@@ -3417,6 +3472,12 @@ DrawIndirectPass(
 	};
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
+
+	vkCmdPushConstants( cmdBuff, 
+						program.pipeLayout, 
+						program.pushConstStages, 0, 
+						sizeof( lightsBuff.devicePointer ), 
+						&lightsBuff.devicePointer );
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, indexBuff.offset, VK_INDEX_TYPE_UINT32 );
 
@@ -3778,7 +3839,8 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 														 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 														 sc.scRes, 1,
 														 &vkAlbumArena );
-
+														
+			// TODO: use fp16 for intermediate for color corrections on hdr output ?
 			rndCtx.colorCache = VkCreateAllocBindImage( VK_FORMAT_R8G8B8A8_UNORM,
 														VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
 														VK_IMAGE_USAGE_STORAGE_BIT |
@@ -3821,11 +3883,16 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 	// TODO: must framebuffer staging
 	static b32 rescUploaded = 0;
 	if( !rescUploaded ){
-		VkBufferMemoryBarrier copyBarrier = 
-			VkMakeBufferBarrier( geometryBuff.hndl, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT );
-
+		VkBufferMemoryBarrier buffBarriers[] = {
+			VkMakeBufferBarrier( geometryBuff.hndl, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT ),
+			VkMakeBufferBarrier( lightsBuff.hndl, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT )
+		};
+			
 		VkBufferCopy geometryBuffCopyRegion = { 0,0,geometryBuff.size };
 		vkCmdCopyBuffer( currentVFrame.cmdBuf, stagingBuff.hndl, geometryBuff.hndl, 1, &geometryBuffCopyRegion );
+
+		VkBufferCopy lightsBuffCopyRegion = { geometryBuff.size, 0, lightsBuff.size };
+		vkCmdCopyBuffer( currentVFrame.cmdBuf, stagingBuff.hndl, lightsBuff.hndl, 1, &lightsBuffCopyRegion );
 
 		vector<VkImageMemoryBarrier> barriers( std::size( textures ) );
 		for( u64 i = 0; i < std::size( textures ); ++i ){
@@ -3836,11 +3903,12 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 											  VK_IMAGE_ASPECT_COLOR_BIT );
 		}
 
+		// TODO: remove this ?
 		vkCmdPipelineBarrier( currentVFrame.cmdBuf,
 							  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 							  VK_PIPELINE_STAGE_TRANSFER_BIT,
 							  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
-							  std::size( barriers ), barriers.data() );
+							  std::size( barriers ), std::data( barriers ) );
 
 		for( u64 i = 0; i < std::size( textures ); ++i ){
 			vkCmdCopyBufferToImage( currentVFrame.cmdBuf,
@@ -3863,7 +3931,7 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 							  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
 							  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 							  VK_DEPENDENCY_BY_REGION_BIT, 0, 0,
-							  1, &copyBarrier,
+							  std::size( buffBarriers ), buffBarriers,
 							  std::size( barriers ), std::data( barriers ) );
 
 		// TODO: use push consts ?
@@ -3884,14 +3952,16 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 		VkDescriptorBufferInfo geomUbo = { 
 			hostComBuff.hndl,
 			VK_MAX_FRAMES_IN_FLIGHT_ALLOWED * doubleBufferOffset,
-			sizeof( geomBuffInfo ) };
+			sizeof( geomBuffInfo ) 
+		};
 
 		vector<VkDescriptorImageInfo> texDesc;
 		texDesc.reserve( std::size( textures ) );
 		for( const image& t : textures ) texDesc.push_back( { 0, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } );
 
 		rndCtx.linearTextureSampler = VkMakeSampler( dc.device, 1, 
-													 VK_SAMPLER_REDUCTION_MODE_MAX_ENUM, VK_FILTER_LINEAR, 
+													 VK_SAMPLER_REDUCTION_MODE_MAX_ENUM, 
+													 VK_FILTER_LINEAR, 
 													 VK_SAMPLER_ADDRESS_MODE_REPEAT );
 		VkDescriptorImageInfo samplerDesc = {};
 		samplerDesc.sampler = rndCtx.linearTextureSampler;
@@ -4120,6 +4190,19 @@ static void HostFrames( const global_data* globs,  cull_info cullInfo, b32 bvDra
 					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
 					1, &imgRegionBlit, VK_FILTER_NEAREST );
 	
+	//VkImageCopy fboToSwapchainCopy = {};
+	//fboToSwapchainCopy.srcSubresource = imgSubrscLayers;
+	//fboToSwapchainCopy.dstSubresource = imgSubrscLayers;
+	//fboToSwapchainCopy.extent = sc.scRes;
+
+
+	//vkCmdCopyImage( currentVFrame.cmdBuf,
+	//				rndCtx.colorCache.img,
+	//				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	//				sc.imgs[ imgIdx ],
+	//				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	//				1, &fboToSwapchainCopy );
+
 	VkImageMemoryBarrier presentBarrier = VkMakeImgBarrier( sc.imgs[ imgIdx ], 
 															VK_ACCESS_TRANSFER_WRITE_BIT, 0, 
 															VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
