@@ -24,7 +24,7 @@
 
 #endif // WIN32
 
-struct cull_info;
+struct cam_frustum;
 struct global_data;
 
 //////////////////////////////////////
@@ -40,14 +40,14 @@ constexpr u64 SYS_MEM_BYTES = 1 * GB;
 void			CoreLoop();
 
 extern void		VkBackendInit();
-extern void		HostFrames( const global_data* globs, cull_info cullInfo, b32 bvDraw, float dt );
+extern void		HostFrames( const global_data* globs, const cam_frustum& camFrust, b32 bvDraw, float dt );
 extern void		VkBackendKill();
 
 //////////////////////////////////////
 // PLATFORM -> ENGINE
 //////////////////////////////////////
-extern double	SysGetCPUPeriod();
-extern double	SysTicks();
+extern u64		SysGetCpuFreq();
+extern u64		SysTicks();
 extern u64		SysDllLoad( const char* name );
 extern void		SysDllUnload( u64 hDll );
 extern void*	SysGetProcAddr( u64 hDll, const char* procName );

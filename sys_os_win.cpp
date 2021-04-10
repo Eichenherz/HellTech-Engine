@@ -179,11 +179,11 @@ struct keyboard
 	b32 f, o;
 };
 
-static inline u64		SysDllLoad( const char* name )
+static inline u64	SysDllLoad( const char* name )
 {
 	return (u64) LoadLibrary( name );
 }
-static inline void		SysDllUnload( u64 hDll )
+static inline void	SysDllUnload( u64 hDll )
 {
 	if( !hDll ) return;
 	if( !FreeLibrary( (HMODULE) hDll ) )
@@ -191,25 +191,25 @@ static inline void		SysDllUnload( u64 hDll )
 		//handle err
 	}
 }
-static inline void*		SysGetProcAddr( u64 hDll, const char* procName )
+static inline void*	SysGetProcAddr( u64 hDll, const char* procName )
 {
 	return (void*)GetProcAddress( (HMODULE) hDll, procName );
 }
 
-static inline double	SysGetCPUPeriod()
+static inline u64	SysGetCpuFreq()
 {
 	LARGE_INTEGER freq;
 	QueryPerformanceFrequency( &freq );
-	return 1.0 / double( freq.QuadPart );
+	return freq.QuadPart;
 }
-static inline double	SysTicks()
+static inline u64	SysTicks()
 {
 	LARGE_INTEGER tick;
 	QueryPerformanceCounter( &tick );
 	return double( tick.QuadPart );
 }
 // TODO: remake
-static inline b32		SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
+static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 {
 	MSG msg;
 	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) ){
@@ -256,7 +256,7 @@ static inline b32		SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 	return true;
 }
 
-static inline u8*		SysReadOnlyMemMapFile( const char* file )
+static inline u8*	SysReadOnlyMemMapFile( const char* file )
 {
 	// TODO: for final version we don't share files
 	HANDLE hFileToMap =  CreateFileA( file,
@@ -274,13 +274,13 @@ static inline u8*		SysReadOnlyMemMapFile( const char* file )
 	CloseHandle( hFileToMap );
 	return (u8*)mmFile;
 }
-static inline void		SysCloseMemMapFile( void* mmFile )
+static inline void	SysCloseMemMapFile( void* mmFile )
 {
 	UnmapViewOfFile( mmFile );
 	//mmFile = 0;
 }
 
-LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+LRESULT CALLBACK	MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
 	switch( uMsg )	{
 	case WM_CLOSE:
@@ -289,6 +289,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	}
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }						 
+
 
 INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
@@ -331,6 +332,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	hid[ 0 ].hwndTarget = hWnd;
 	// TODO: no legacy causes cam to move weirdly
 	hid[ 0 ].dwFlags = 0;// RIDEV_NOLEGACY;
+
 	hid[ 1 ].usUsage = HID_USAGE_GENERIC_KEYBOARD;
 	hid[ 1 ].usUsagePage = HID_USAGE_PAGE_GENERIC;
 	hid[ 1 ].hwndTarget = hWnd;
@@ -344,8 +346,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	keyboard kbd = {};
 
 	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
-	float mouseSensitivity = 0.1f;
-	float camSpeed = 150.0f;
+	float mouseSensitivity = 0.05f;
+	float camSpeed = 1.0f;
 	float moveThreshold = 0.0001f;
 
 	float zNear = 0.5f;
@@ -360,64 +362,63 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
 	XMFLOAT3 camWorldPos = { 0,0,0 };
 	
+	cam_frustum	camFrust = {};
 
 	VkBackendInit();
 
+	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
 	BOOL				isRunning = true;
-	const double		PERIOD = SysGetCPUPeriod();
-	constexpr double	dt = 0.01;
-	double				t = double( UINT64( 1ULL << 32 ) );
-	double				currentTime = SysTicks() * PERIOD;
-	double				accumulator = 0;
-
-	// TODO: re think this 
-	cull_info cullData = {};
+	const u64			FREQ = SysGetCpuFreq();
+	//constexpr double	dt = 0.01;
+	//double				t = double( UINT64( 1ULL << 32 ) );
+	//double				accumulator = 0;
+	u64					currentTicks = SysTicks();
 
 	// TODO: QUIT immediately ?
-	while( isRunning ){
-		const double newTime = SysTicks() * PERIOD;
-		const double frameTime = newTime - currentTime;
-		currentTime = newTime;
-		accumulator += frameTime;
+	while( isRunning )
+	{
+		const u64 newTicks = SysTicks();
+		const double elapsedSecs = double( newTicks - currentTicks ) / double( FREQ );
+		currentTicks = newTicks;
+		//accumulator += elapsedSecs;
 
-		// TODO: 
-		//POINT cursorPos;
-		//GetCursorPos( &cursorPos );
-		//
-		//b32 cursorInside = cursorPos.x >= wr.left && cursorPos.x <= wr.right &&
-		//	cursorPos.y >= wr.top && cursorPos.y <= wr.bottom;
 
 		isRunning = SysPumpUserInput( &m, &kbd, 1 );
 
-		// PROC INPUT
-		
-		// TODO: smooth camera some more ?
+		// SIMULATION( state, t, dt );
+		//while( accumulator >= dt )
+		//{
+		//	accumulator -= dt;
+		//	t += dt;
+		//}
 
-		float moveSpeed = camSpeed * dt;
+		// TODO: smooth camera some more ?
+		// TODO: wtf Newton ?
+		float moveSpeed = camSpeed;// *elapsedSecs;
 
 		XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
 		if( kbd.w ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, 1, 0 ) );
 		if( kbd.a ) camMove = XMVectorAdd( camMove, XMVectorSet( -1, 0, 0, 0 ) );
 		if( kbd.s ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, -1, 0 ) );
 		if( kbd.d ) camMove = XMVectorAdd( camMove, XMVectorSet( 1, 0, 0, 0 ) );
-		if( kbd.space ) camMove = XMVectorAdd( camMove,  XMVectorSet( 0, 1, 0, 0 ) );
-		if( kbd.c ) camMove =  XMVectorAdd( camMove,  XMVectorSet( 0, -1, 0, 0 ) );
+		if( kbd.space ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
+		if( kbd.c ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
 
 		camMove = XMVector3Transform( XMVector3Normalize( camMove ),
 									  XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) *
 									  XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed ) );
 
 		XMVECTOR camPos = XMLoadFloat3( &camWorldPos );
-		XMVECTOR smoothNewCamPos = XMVectorLerp( camPos, XMVectorAdd( camPos, camMove ), 0.18f * dt / 0.0166f );
+		XMVECTOR smoothNewCamPos = XMVectorLerp( camPos, XMVectorAdd( camPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
 
 		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
 		//smoothNewCamPos = ( moveLen > moveThreshold ) ? smoothNewCamPos : XMVectorSet( 0, 0, 0, 0 );
 
 		//XMVECTOR oldPose = XMQuaternionRotationRollPitchYaw( pitch, yaw, 0 );
-		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * dt );
-		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * dt ), -almostPiDiv2, almostPiDiv2 );
+		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
+		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
 
 		//XMVECTOR smoothRot = XMQuaternionSlerp( oldPose, XMQuaternionRotationRollPitchYaw( pitch, yaw, 0 ), 0.18f * dt / 0.0166f );
 
@@ -440,41 +441,32 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 		// NOTE: transpose for row-major matrices
 		XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
-		
+
 		XMVECTOR planes[ 4 ];
 		planes[ 0 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
 		planes[ 1 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
 		planes[ 2 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
 		planes[ 3 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
-		if( !kbd.f ){
-			for( u64 i = 0; i < 4; ++i ) XMStoreFloat4( (XMFLOAT4*) &cullData.planes[ i ], planes[ i ] );
+		if( !kbd.f )
+		{
+			for( u64 i = 0; i < 4; ++i ) XMStoreFloat4( (XMFLOAT4*) &camFrust.planes[ i ], planes[ i ] );
 		}
 
 		DirectX::XMVECTOR frustumX = XMVector3Normalize( XMVectorAdd( proj.r[ 3 ], proj.r[ 0 ] ) );
 		DirectX::XMVECTOR frustumY = XMVector3Normalize( XMVectorAdd( proj.r[ 3 ], proj.r[ 1 ] ) );
-		cullData.frustum[ 0 ] = XMVectorGetX( frustumX );
-		cullData.frustum[ 1 ] = XMVectorGetZ( frustumX );
-		cullData.frustum[ 2 ] = XMVectorGetY( frustumY );
-		cullData.frustum[ 3 ] = XMVectorGetZ( frustumY );
-		// TODO: re think this 
+		camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
+		camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );
+		camFrust.frustum[ 2 ] = XMVectorGetY( frustumY );
+		camFrust.frustum[ 3 ] = XMVectorGetZ( frustumY );
 		// TODO: get this from matrix directly ?
-		//cull_info cullData = {};
-		cullData.zNear = zNear;
-		cullData.drawDistance = drawDistance;
-		cullData.projWidth = XMVectorGetX( proj.r[ 0 ] );
-		cullData.projHeight = XMVectorGetY( proj.r[ 1 ] );
-		// TODO: get from view matrix ( + world ) ?
-		cullData.camPos = camWorldPos;
-		// SIMULATION( state, t, dt );
-		while( accumulator >= dt ){
-			accumulator -= dt;
-			t += dt;
-		}
+		camFrust.zNear = zNear;
+		camFrust.drawDistance = drawDistance;
+		camFrust.projWidth = XMVectorGetX( proj.r[ 0 ] );
+		camFrust.projHeight = XMVectorGetY( proj.r[ 1 ] );
 
-		// TODO: re-make passing data to Gfx
-		
-		// RENDER( state )
-		HostFrames( &globs, cullData, kbd.o, dt );
+
+
+		HostFrames( &globs, camFrust, kbd.o, elapsedSecs );
 	}
 
 
