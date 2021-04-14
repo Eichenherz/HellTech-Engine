@@ -76,7 +76,6 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 		STR( ERROR_INCOMPATIBLE_DISPLAY_KHR );
 		STR( ERROR_VALIDATION_FAILED_EXT );
 		STR( ERROR_INVALID_SHADER_NV );
-		STR( ERROR_INCOMPATIBLE_VERSION_KHR );
 		STR( ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT );
 		STR( ERROR_NOT_PERMITTED_EXT );
 		STR( ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT );
@@ -91,12 +90,12 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 	}
 }
 
-inline VkResult VkResFromStatemen( b32 statement )
+inline VkResult VkResFromStatement( b32 statement )
 {
 	return !statement ? VK_SUCCESS : VkResult( int( 0x8FFFFFFF ) );
 }
 
-#define VK_INTERNAL_ERROR( vk ) VkResFromStatemen( b32( vk ) )
+#define VK_INTERNAL_ERROR( vk ) VkResFromStatement( b32( vk ) )
 
 #define VK_CHECK( vk )																						\
 do{																											\
@@ -1253,6 +1252,8 @@ inline static void VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, 
 	{
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 
+		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 		
 		VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
@@ -2084,7 +2085,7 @@ LoadGlbModel(
 					case cgltf_attribute_type_normal:
 					{
 						vec3 normal = *(const vec3*) attrData;
-						vtx.nx = normal.x;
+						vtx.nx = -normal.x;
 						vtx.ny = normal.y;
 						vtx.nz = normal.z;
 					} break;

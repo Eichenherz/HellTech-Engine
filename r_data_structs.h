@@ -35,13 +35,6 @@ using uint = u32;
 
 #endif
 
-// TODO: trim , change, etc ?
-struct vertex_stage_data
-{
-	mat3 tbn;
-	uint mtlIdx;
-};
-
 struct global_data
 {
 	mat4 proj;
@@ -169,14 +162,13 @@ struct draw_command
 // TODO: align
 struct cull_info
 {	
-	uint64_t geometryBufferAddress;
-	uint64_t drawArgsOffset;
-	uint64_t meshDataOffset;
+	//uint64_t geometryBufferAddress;
+	//uint64_t drawArgsOffset;
+	//uint64_t meshDataOffset;
 
-	vec4 planes[ 4 ];
+	vec4	planes[ 4 ];
 
 	float	frustum[ 4 ];
-	vec3	camPos;
 
 	float	zNear;
 	float	drawDistance;
@@ -190,6 +182,18 @@ struct cull_info
 
 	uint	drawCallsCount;
 	uint	dbgMeshIdx;
+};
+
+struct cam_frustum
+{
+	vec4	planes[ 4 ];
+
+	float	frustum[ 4 ];
+
+	float	zNear;
+	float	drawDistance;
+	float	projWidth;
+	float	projHeight;
 };
 
 struct downsample_info

@@ -151,10 +151,27 @@ void main()
 		}
 	}
 	
+//#if GLSL_DBG
+//	if( ( di > cullInfo.dbgMeshIdx ) && visible && ( !LATE_PASS || drawVisibility[ di ] == 0 ) )
+//	{
+//		mesh bndVolMesh = mesh_ref( g.addr + g.meshesOffset ).meshes[ currentDraw.bndVolMeshIdx ];
+//
+//		uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
+//
+//		dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
+//		dbgDrawCmd[ dbgDrawCallIdx ].indexCount = bndVolMesh.lods[ 0 ].indexCount;
+//		dbgDrawCmd[ dbgDrawCallIdx ].firstIndex = bndVolMesh.lods[ 0 ].indexOffset;
+//		dbgDrawCmd[ dbgDrawCallIdx ].vertexOffset = bndVolMesh.vertexOffset;
+//		dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
+//		dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
+//		return;
+//	}
+//#endif
+
 	// TODO: use global data for cam pos
-	float lodLevel = log2( max( 1, distance( center.xyz, cullInfo.camPos ) - radius ) );
+	float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - radius ) );
 	uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
-	mesh_lod lod = currentMesh.lods[ lodIdx ];
+	mesh_lod lod = currentMesh.lods[ 0 ];
 
 #if WAVE_OPS
 	uint mletsCount = subgroupAdd( visible ? lod.meshletCount : 0 );
@@ -184,9 +201,9 @@ void main()
 
 	#if GLSL_DBG
 		mesh bndVolMesh = mesh_ref( g.addr + g.meshesOffset ).meshes[ currentDraw.bndVolMeshIdx ];
-
+	
 		uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
-
+	
 		dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
 		dbgDrawCmd[ dbgDrawCallIdx ].indexCount = bndVolMesh.lods[ 0 ].indexCount;
 		dbgDrawCmd[ dbgDrawCallIdx ].firstIndex = bndVolMesh.lods[ 0 ].indexOffset;

@@ -346,8 +346,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	keyboard kbd = {};
 
 	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
-	float mouseSensitivity = 0.05f;
-	float camSpeed = 1.0f;
+	float mouseSensitivity = 0.1f;
+	float camSpeed = 1.5f;
 	float moveThreshold = 0.0001f;
 
 	float zNear = 0.5f;

@@ -20,17 +20,18 @@ layout( push_constant ) uniform block{
 //layout( constant_id = 0 ) const bool TEXTURED_OUTPUT = false;
 
 layout( location = 0 ) in vec3 normal;
-layout( location = 1 ) in vec2 uv;
-layout( location = 2 ) in vec3 worldPos;
-layout( location = 3 ) in flat vertex_stage_data vtxVars;
+layout( location = 1 ) in vec3 tan;
+layout( location = 2 ) in vec3 bitan;
+layout( location = 3 ) in vec3 worldPos;
+layout( location = 4 ) in vec2 uv;
+layout( location = 5 ) in flat uint mtlIdx;
 
 layout( location = 0 ) out vec4 oCol;
 
 
 
-const float oneOverPi = 0.31830988618;
-const float pi = 3.14159265359;
-
+const float invPi = 0.31830988618;
+const float PI  = 3.14159265359;
 
 
 vec4 SrgbToLinear( vec4 srgb )
@@ -42,137 +43,151 @@ vec4 SrgbToLinear( vec4 srgb )
 	return mix( higher, lower, cutoff );
 }
 // NOTE: inspired by Unreal 2013
-float InvSquareLightFalloff( float dist, float lightRad )
+float RadiusFalloffAttenuation( float distSq, float lightRad )
 {
-	float distOverRad = dist / lightRad;
-	float denom = clamp( 1.0 - pow( distOverRad, 4 ), 0.0, 1.0 );
+	float invRadius = 1.0 / lightRad;
+	float invRadiusSq = invRadius * invRadius;
 
-	return denom * denom / ( dist * dist + 1.0 );
-}
-float DistributeGGX( float normalHalfvecAngle, float roughness )
-{
-	// NOTE: mickey mouse reparam: alpha = roughness * roughness
-	float mickeyMouseAlphaSq = ( roughness * roughness ) * ( roughness * roughness );
-	float denom = normalHalfvecAngle * normalHalfvecAngle * ( mickeyMouseAlphaSq - 1.0 ) + 1.0;
-	return oneOverPi * mickeyMouseAlphaSq / ( denom * denom );
-}
-// NOTE: don't apply for IBL
-float GeometrySchlickGGX( float nDotView, float nDotLight, float roughness )
-{
-	// NOTE: mickey mouse reparam: alpha = ( roughness + 1 ) / 2
-	float mickeyMouseK = ( roughness + 1 ) * ( roughness + 1 ) * 0.125;
-	float gV = nDotView / ( nDotView * ( 1 - mickeyMouseK ) + mickeyMouseK );
-	float gL = nDotLight / ( nDotLight * ( 1 - mickeyMouseK ) + mickeyMouseK );
+	float factor = distSq * invRadiusSq;
+	float smoothFactor = clamp( 1.0 - factor * factor, 0.0, 1.0 );
 
-	return gV * gL;
+	return ( smoothFactor * smoothFactor ) / ( distSq + 1.0 );
 }
-vec3 FresnelSchlickUnreal( vec3 baseReflect, float viewHalfvecAngle )
+float SpotAngleAttenuation( float spotLightCos, float cosInner, float cosOuter )
 {
-	float gaussianApprox = ( -5.55473 * viewHalfvecAngle - 6.98316 ) * viewHalfvecAngle;
-	return baseReflect + ( vec3( 1.0 ) - baseReflect ) * pow( 2, gaussianApprox );
+	float spotRange = 1.0 / max( cosInner - cosOuter, 1e-4 );
+	float spotOffset = -cosOuter / spotRange;
+
+	float attenuation = clamp( spotLightCos * spotRange + spotOffset, 0, 1 );
+	return attenuation * attenuation;
 }
-// TODO: light rad param
+float DistributionGGX( float nDotH, float roughnessParam )
+{
+	float alphaSq = roughnessParam * roughnessParam;
+	float denom = ( nDotH * alphaSq - nDotH ) * nDotH + 1.0;
+	return invPi * alphaSq / ( denom * denom );
+}
+// NOTE: from Frostbite PBR
+float VisibilitySmtihGGXCorr( float NdotL, float NdotV, float roughnessParam )
+{
+	float alphaSq = roughnessParam * roughnessParam;
+	// NOTE: "NdotL *" and "NdotV *" inversed on purpose
+	// TODO: lambdaV can be pre-computed for all the lights, it should be moved out of this function
+	float lambdaV = NdotL * sqrt( ( -NdotV * alphaSq + NdotV ) * NdotV + alphaSq );
+	float lambdaL = NdotV * sqrt( ( -NdotL * alphaSq + NdotL ) * NdotL + alphaSq );
+	return  0.5 / ( lambdaV + lambdaL );
+}
+vec3 FresnelSchlickUnreal( vec3 refl0, float refl90, float VdotH )
+{
+	float gaussianApprox = ( -5.55473 * VdotH - 6.98316 ) * VdotH;
+	return refl0 + ( refl90 - refl0 ) * pow( 2, gaussianApprox );
+}
+vec3 FresnelSchlick( vec3 refl0, float refl90, float VdotH )
+{
+	return refl0 + ( vec3( refl90 ) - refl0 ) * pow( 1.0 - VdotH, 5 );
+}
+
 vec3 ComputeBrdfReflectance( 
-	light_data	lightData,
-	vec3		baseCol, 
-	vec3		baseReflectivity,
-	vec3		viewDir, 
-	vec3		worldPos, 
-	vec3		normal, 
-	float		metalness, 
-	float		roughness )
+	vec3	lightDir,
+	vec3	diffCol, 
+	vec3	baseReflectivity,
+	vec3	viewDir,  
+	vec3	normal, 
+	float	linearRoughness )
 {
-	vec3 lightDir = normalize( lightData.pos - worldPos );
-	float distToLight = length( lightData.pos - worldPos );
-	vec3 radiance = lightData.col * InvSquareLightFalloff( distToLight, lightData.radius );
-	//vec3 radiance = lightData.col / ( distToLight * distToLight );
-
 	vec3 halfVec = normalize( viewDir + lightDir );
-	float nDotView = max( dot( normal, viewDir ), 0 );
-	float nDotLight = max( dot( normal, lightDir ), 0 );
+	float NdotV = abs( dot( normal, viewDir ) ) + 1e-5;
+	float NdotL = clamp( dot( normal, lightDir ), 0, 1 );
+	float NdotH = clamp( dot( normal, halfVec ), 0, 1 );
+	float LdotH = clamp( dot( lightDir, halfVec ), 0, 1 );
+	
+	float roughness = linearRoughness * linearRoughness;
+	//float alphaSq = roughness * roughness;
+	float distr = DistributionGGX( NdotH, roughness );
+	float vis = VisibilitySmtihGGXCorr( NdotV, NdotL, roughness );
+	vec3 specularRefl = FresnelSchlick( baseReflectivity, 1, LdotH );
+	vec3 specularBrdf = ( distr * vis ) * specularRefl;
 
-	float specularD = DistributeGGX( max( dot( normal, halfVec ), 0 ), roughness );
-	float specularG = GeometrySchlickGGX( nDotView, nDotLight, roughness );
-	vec3 specularTerm = FresnelSchlickUnreal( baseReflectivity, max( dot( viewDir, halfVec ), 0 ) );
-	vec3 diffuseTerm = ( vec3( 1.0 ) - specularTerm ) * ( 1.0 - metalness );
-
-	vec3 cookTorranceBrdf = specularD * specularG * specularTerm / max( 4 * nDotView * nDotLight, 0.001 );
-	//vec3 cookTorranceBrdf = 0.25 * specularD * specularG * specularTerm / max( nDotView * nDotLight, 0.001 );
-	vec3 lambertBrdf = diffuseTerm * baseCol * oneOverPi;
-
-	return ( cookTorranceBrdf + lambertBrdf ) * radiance * max( dot( normal, lightDir ), 0 );
+	vec3 diffuseRefl = 1.0 - specularRefl;
+	// NOTE: lambertian diffuse
+	vec3 diffuseBrdf = diffuseRefl * diffCol * invPi;
+	
+	return ( specularBrdf + diffuseBrdf ) * NdotL;
 }
+
 
 void main()
 {
-	//if( TEXTURED_OUTPUT )
-	//{
-		material_data mtl = mtl_ref( g.addr + g.materialsOffset ).materials[ vtxVars.mtlIdx ];
+	material_data mtl = mtl_ref( g.addr + g.materialsOffset ).materials[ mtlIdx ];
 
-		vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), 
-								uv.xy );
-		// TODO: when using baseCol.alpha sRGB->linear ?
-		baseCol = SrgbToLinear( baseCol );
-		vec3 metalRough = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.metalRoughIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
-								   uv.xy ).rgb;
-		vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), 
-									  uv.xy ).rgb;
-		normalFromMap = normalFromMap * 2.0 - vec3( 1 );
-		// TODO: pass tbn transformed data to the frag, not tbn itself ?
-		normalFromMap = normalize( vtxVars.tbn * normalFromMap );
+	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), 
+							uv );
+	vec3 metalRough = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.metalRoughIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
+							   uv ).rgb;
+	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), 
+								  uv ).rgb;
 
-		float surfMetalness = metalRough.b * mtl.metallicFactor;
-		float surfRoughness = metalRough.g * mtl.roughnessFactor;
+	// TODO: when using baseCol.alpha sRGB->linear ?
+	baseCol = SrgbToLinear( baseCol );
 
-		vec3 viewDir = normalize( cam.camPos - worldPos );
-		vec3 baseReflectivity = mix( vec3( 0.04 ), baseCol.rgb, surfMetalness );
-		vec3 reflectance = vec3( 0 );
+	vec3 t = normalize( tan );
+	vec3 b = normalize( bitan );
+	vec3 n = normalize( normal );
 
-		[[unroll]] for( uint i = 0; i < 4; ++i )
-		{
-			reflectance += ComputeBrdfReflectance( light_ref( lightsBuffAddr ).lights[ i ],
-												   baseCol.rgb,
+	mat3 tbn = mat3( t, b, n );
+	vec3 bumpN = normalize( tbn * ( normalFromMap * 2.0 - 1.0 ) );
+
+	float surfMetalness = metalRough.b * mtl.metallicFactor;
+	float surfRoughness = metalRough.g * mtl.roughnessFactor;
+
+	// TODO: draw lights bounding vol to find out
+	vec3 viewDir = normalize( cam.camPos - worldPos );
+	//vec3 viewDir = normalize( worldPos - cam.camPos );
+
+	vec3 baseReflectivity = mix( vec3( 0.04 ), baseCol.rgb, surfMetalness );
+	vec3 diffCol = baseCol.rgb * ( 1.0 - surfMetalness );
+
+	vec3 reflectance = vec3( 0 );
+
+	float ambientFactor = 0.0025;
+	oCol = vec4( baseCol.rgb * ambientFactor, 1 );
+
+	[[unroll]] for( uint i = 0; i < 4; ++i )
+	{
+		light_data l = light_ref( lightsBuffAddr ).lights[ i ];
+		vec3 posToLight = l.pos - worldPos;
+		vec3 radiance = l.col * RadiusFalloffAttenuation( dot( posToLight, posToLight ), l.radius );
+
+		reflectance += ComputeBrdfReflectance( normalize( posToLight ),
+											   diffCol,
+											   baseReflectivity,
+											   viewDir,
+											   bumpN,
+											   surfRoughness ) * radiance;
+	}
+	oCol += vec4( reflectance, 1 );
+	
+
+	{
+		light_data flashlight = { cam.camPos, vec3( 500.0 ), 50.0 };
+		const vec2 spotCosInOut = cos( vec2( radians( 12.5 ), radians( 17.5 ) ) );
+		float spotCos = dot( viewDir, normalize( cam.camViewDir ) );
+
+		vec3 posToLight = flashlight.pos - worldPos;
+		vec3 radiance = flashlight.col *
+			RadiusFalloffAttenuation( dot( posToLight, posToLight ), flashlight.radius ) *
+			SpotAngleAttenuation( spotCos, spotCosInOut.x, spotCosInOut.y );
+		vec3 flashReflectance = vec3( 0 );
+
+		flashReflectance = ComputeBrdfReflectance( normalize( posToLight ),
+												   diffCol,
 												   baseReflectivity,
-												   viewDir, 
-												   worldPos,
-												   normal,
-												   surfMetalness,
+												   viewDir,
+												   bumpN,
 												   surfRoughness );
-		}
 
-		float ambientFactor = 0.0025;
-		oCol = vec4( baseCol.rgb * ambientFactor, 1 );
-		oCol += vec4( reflectance, 1 );
-		//vec3 directionalLightDir = vec3( 1, 0, 0 );
-		//float diffDirectionalLight = max( dot( directionalLightDir, normalFromMap ), 0.0 );
-		//float directionalIntensity = 0.5;
+		oCol += vec4( flashReflectance * radiance * uint( spotCos > spotCosInOut.y ), 1 );
+	}
 
-		light_data flashlight = { viewDir, vec3( 1000.0 ), 40 };
-		vec3 flashReflectance = ComputeBrdfReflectance( flashlight,
-														baseCol.rgb,
-														baseReflectivity,
-														viewDir,
-														worldPos,
-														normal,//normalFromMap,
-														surfMetalness,
-														surfRoughness );
-
-		const float spotLightInnerThreshold = cos( 0.2181662 ); // 12.5 degs
-		const float spotLightOuterThreshold = cos( 0.3054326 ); // 17.5 degs
-		float spotLightCosine = dot( viewDir, normalize( cam.camViewDir ) );
-		float intensity = ( spotLightCosine - spotLightOuterThreshold ) / ( spotLightInnerThreshold - spotLightOuterThreshold );
-		intensity = clamp( intensity, 0, 1.0 );
-
-		if( spotLightCosine > spotLightOuterThreshold )
-		{
-			//oCol += vec4( flashReflectance, 1 );
-		}
-		
-
-		
-	//}
-	//else
-	//{
-		//oCol = vec4( normal * 0.5 + vec3( 0.5 ), 1.0 );
-	//}
+	//oCol = vec4( ( n * 0.5 + 0.5 ) * 0.005, 1 );
 }

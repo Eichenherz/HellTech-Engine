@@ -26,18 +26,6 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer m
 //};
 
 
-//layout( binding = 0, scalar ) readonly buffer pos_buffer{
-//	vec3 positions[];
-//};
-//
-//layout( binding = 1, scalar ) readonly buffer norm_buffer{
-//	vec3 normals[];
-//};
-//
-//layout( binding = 2, scalar ) readonly buffer uvm_buffer{
-//	vec3 uvms[];
-//};
-
 layout( binding = 0 ) readonly buffer draw_args_buffer{
 	draw_data drawArgs[];
 };
@@ -47,9 +35,11 @@ layout( binding = 1 ) readonly buffer draw_cmd_buffer{
 };
 
 layout( location = 0 ) out vec3 normal;
-layout( location = 1 ) out vec2 uv;
-layout( location = 2 ) out vec3 fragWorldPos;
-layout( location = 3 ) out vertex_stage_data vtxVars;
+layout( location = 1 ) out vec3 tan;
+layout( location = 2 ) out vec3 bitan;
+layout( location = 3 ) out vec3 fragWorldPos;
+layout( location = 4 ) out vec2 uv;
+layout( location = 5 ) out uint mtlIdx;
 
 float Snorm8Dequant( int x )
 {
@@ -82,10 +72,6 @@ vec3 DecodeTanFromAngle( vec3 n, float tanAngle )
 
 void main() 
 {
-	//vec3 pos = positions[ gl_VertexIndex ];
-	//vec3 norm = normals[ gl_VertexIndex ];
-	//vec3 texMatCoord = uvms[ gl_VertexIndex ];
-
 	vec3 pos = pos_ref( g.addr + g.posOffset ).positions[ gl_VertexIndex ];
 	//int16_t encNorm = norm_ref( g.addr + g.normOffset ).normals[ gl_VertexIndex ];
 	//vec3 norm = Snorm8OctahedronDecode( encNorm );
@@ -99,19 +85,21 @@ void main()
 	vec3 worldPos = RotateQuat( pos * args.scale, args.rot ) + args.pos;
 	gl_Position = cam.proj * cam.view * vec4( worldPos, 1.0 );
 
-	vec3 n = norm.xyz;
+	vec3 n = normalize( norm.xyz );
 	vec3 t = DecodeTanFromAngle( norm.xyz, norm.w );
 	vec3 b = cross( n, t );
 
-	t = normalize( RotateQuat( t * args.scale, args.rot ) + args.pos );
-	b = normalize( RotateQuat( b * args.scale, args.rot ) + args.pos );
-	n = normalize( RotateQuat( n * args.scale, args.rot ) + args.pos );
+	t = normalize( RotateQuat( t, args.rot ) );
+	b = normalize( RotateQuat( b, args.rot ) );
+	n = normalize( RotateQuat( n, args.rot ) );
 
-	t = normalize( t - dot( t, n ) * n );
+	// NOTE: orthonormalization ?
+	//t = normalize( t - dot( t, n ) * n );
 
-	normal = RotateQuat( norm.xyz, args.rot );
-	uv = texMatCoord.xy;
+	normal = n;// normalize( norm.xyz );
+	tan = t;
+	bitan = b;
 	fragWorldPos = worldPos;
-	vtxVars.tbn = mat3( t, b, n );
-	vtxVars.mtlIdx = uint( texMatCoord.z );
+	uv = texMatCoord.xy;
+	mtlIdx = uint( texMatCoord.z );
 }

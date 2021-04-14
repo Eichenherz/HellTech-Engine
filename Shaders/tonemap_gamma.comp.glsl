@@ -125,6 +125,6 @@ void main()
 
     //rgb = RgbTonemapAcesFilmCurve( rgb );
 
-    //imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), LinearToSrgb( vec4( rgb, 1 ) ) );
-    imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), vec4( rgb, 1 ) );
+    imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), LinearToSrgb( vec4( rgb, 1 ) ) );
+    //imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), vec4( rgb, 1 ) );
 }
