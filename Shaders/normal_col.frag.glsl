@@ -6,10 +6,9 @@
 
 layout( location = 0 ) in vec3 normal;
 layout( location = 1 ) in vec3 tan;
-layout( location = 2 ) in vec3 bitan;
-layout( location = 3 ) in vec3 worldPos;
-layout( location = 4 ) in vec2 uv;
-layout( location = 5 ) in flat uint mtlIdx;
+layout( location = 2 ) in vec3 worldPos;
+layout( location = 3 ) in vec2 uv;
+layout( location = 4 ) in flat uint mtlIdx;
 
 layout( location = 0 ) out vec4 oCol;
 

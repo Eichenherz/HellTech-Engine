@@ -2,6 +2,9 @@
 #include <Windows.h>
 #include <hidusage.h>
 #include <shlwapi.h>
+#include <fileapi.h>
+#include <errhandlingapi.h>
+#include <strsafe.h>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -23,9 +26,40 @@ using namespace std;
 
 #include "r_data_structs.h"
 
-// TODO: msg errors
+inline void Win32WriteLastErr( LPTSTR lpsLineFile )
+{
+	LPVOID lpMsgBuf;
+	LPVOID lpDisplayBuf;
+	DWORD dw = GetLastError();
+
+	FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+				   0, dw,
+				   MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
+				   (LPTSTR) &lpMsgBuf, 0, 0 );
+
+	lpDisplayBuf = 
+		(LPVOID) LocalAlloc( LMEM_ZEROINIT, ( lstrlen( (LPCTSTR) lpMsgBuf ) + lstrlen( (LPCTSTR) lpsLineFile ) + 40 ) );
+	StringCchPrintf( (LPTSTR) lpDisplayBuf,
+					 LocalSize( lpDisplayBuf ),
+					 TEXT( "%s code %d: %s" ),
+					 lpsLineFile, dw, lpMsgBuf );
+	MessageBox( 0, (LPCTSTR) lpDisplayBuf, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
+
+	LocalFree( lpMsgBuf );
+	LocalFree( lpDisplayBuf );
+}
+
+#define WIN_CHECK( win )													\
+do{																			\
+	constexpr char WIN_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";		\
+	if( win )																\
+	{																		\
+		Win32WriteLastErr( ( LPSTR ) WIN_ERR_STR );							\
+		abort();															\
+	}																		\
+}while( 0 )	
+
 // TODO: handle debug func better
-// TODO: macro for winapi errors 
 // TODO: all streams to console  
 // TODO: customize console  
 static inline void SysBindIOStreamToConsole()
@@ -65,10 +99,7 @@ static inline void SysOsCreateConsole()
 {
 #ifdef _DEBUG
 
-	if( !AllocConsole() ){
-		OutputDebugString( "Couldn't create console !" );
-		quick_exit( EXIT_FAILURE );
-	}
+	WIN_CHECK( !AllocConsole() );
 	SysBindIOStreamToConsole();
 
 #endif // _DEBUG
@@ -94,8 +125,47 @@ static inline u32 SysGetFileAbsPath( const char* fileName, char* buffer, u64 buf
 	return GetFullPathNameA( fileName, buffSize, buffer, 0 );
 }
 
-constexpr char	QIY[] = "DiY";
-constexpr char	WINDOW_TITLE[] = "Quake id Yourself";
+static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
+{
+	DWORD accessMode = GENERIC_READ;
+	DWORD shareMode = FILE_SHARE_READ;
+	DWORD creationDisp = OPEN_EXISTING;
+	DWORD flagsAndAttrs = FILE_ATTRIBUTE_READONLY;
+	return CreateFile( fileName, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
+}
+// TODO: use own mem
+static inline std::vector<u8> SysReadFile( const char* fileName )
+{
+	HANDLE hfile = WinGetReadOnlyFileHandle( fileName );
+	WIN_CHECK( hfile == INVALID_HANDLE_VALUE );
+
+	LARGE_INTEGER fileSize = {};
+	WIN_CHECK( !GetFileSizeEx( hfile, &fileSize ) );
+
+	std::vector<u8> fileData( fileSize.QuadPart );
+
+	OVERLAPPED asyncIo = {};
+	WIN_CHECK( !ReadFileEx( hfile, std::data( fileData ), fileSize.QuadPart, &asyncIo, 0 ) );
+	CloseHandle( hfile );
+
+	return fileData;
+}
+// TODO: can be any kind of handle
+static inline u64 SysGetFileTimestamp( const char* filename )
+{
+	HANDLE hfile = WinGetReadOnlyFileHandle( filename );
+	FILETIME fileTime = {};
+	WIN_CHECK( !GetFileTime( hfile, 0, 0, &fileTime ) );
+
+	ULARGE_INTEGER timestamp = { .HighPart = fileTime.dwHighDateTime,  .LowPart = fileTime.dwLowDateTime };
+
+	CloseHandle( hfile );
+
+	return u64( timestamp.QuadPart );
+}
+
+constexpr char	ENGINE_NAME[] = "helltech_engine";
+constexpr char	WINDOW_TITLE[] = "HellTech Engine";
 
 SYSTEM_INFO		sysInfo = {};
 HINSTANCE		hInst = 0;
@@ -186,10 +256,7 @@ static inline u64	SysDllLoad( const char* name )
 static inline void	SysDllUnload( u64 hDll )
 {
 	if( !hDll ) return;
-	if( !FreeLibrary( (HMODULE) hDll ) )
-	{
-		//handle err
-	}
+	WIN_CHECK( !FreeLibrary( (HMODULE) hDll ) );
 }
 static inline void*	SysGetProcAddr( u64 hDll, const char* procName )
 {
@@ -230,7 +297,8 @@ static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 								 &rawDataSize,
 								 sizeof( RAWINPUTHEADER ) ) == (UINT) -1 ) continue;
 
-			if( ri.header.dwType == RIM_TYPEKEYBOARD ){
+			if( ri.header.dwType == RIM_TYPEKEYBOARD )
+			{
 				b32 isPressed = !( ri.data.keyboard.Flags & RI_KEY_BREAK );
 				b32 isE0 = ( ri.data.keyboard.Flags & RI_KEY_E0 );
 				b32 isE1 = ( ri.data.keyboard.Flags & RI_KEY_E1 );
@@ -245,8 +313,9 @@ static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 				if( ( ri.data.keyboard.VKey == VK_F ) && isPressed ) kbd->f = ~kbd->f;
 				if( ( ri.data.keyboard.VKey == VK_O ) && isPressed ) kbd->o = ~kbd->o;
 
-			} 
-			if( ( ri.header.dwType == RIM_TYPEMOUSE ) && insideWnd ){
+			}
+			if( ( ri.header.dwType == RIM_TYPEMOUSE ) && insideWnd )
+			{
 				m->dx = ri.data.mouse.lLastX;
 				m->dy = ri.data.mouse.lLastY;
 			}
@@ -282,10 +351,9 @@ static inline void	SysCloseMemMapFile( void* mmFile )
 
 LRESULT CALLBACK	MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
-	switch( uMsg )	{
-	case WM_CLOSE:
-	case WM_DESTROY:  PostQuitMessage( 0 ); 
-		break;
+	switch( uMsg )
+	{
+	case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); break;
 	}
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }						 
@@ -308,8 +376,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	wc.lpfnWndProc = MainWndProc;
 	wc.hInstance = hInst;
 	wc.hCursor = LoadCursor( 0, IDC_ARROW );
-	wc.lpszClassName = QIY;
-	if( !RegisterClassEx( &wc ) ) quick_exit( EXIT_FAILURE );
+	wc.lpszClassName = ENGINE_NAME;
+	WIN_CHECK( !RegisterClassEx( &wc ) );
 	
 
 	RECT wr = {};
@@ -322,7 +390,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle,
 						 wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0,
 						 hInst, 0 );
-	if( !hWnd ) quick_exit( EXIT_FAILURE );
+	WIN_CHECK(  !hWnd );
+
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
 
@@ -338,8 +407,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	hid[ 1 ].hwndTarget = hWnd;
 	// NOTE: won't pass msgs like PtrSc
 	hid[ 1 ].dwFlags = 0;// RIDEV_NOLEGACY;
-	if( !RegisterRawInputDevices( hid, POPULATION( hid ), sizeof( RAWINPUTDEVICE ) ) )
-		quick_exit( EXIT_FAILURE );
+	WIN_CHECK( !RegisterRawInputDevices( hid, POPULATION( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
 
 	mouse m = {};

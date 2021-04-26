@@ -97,17 +97,17 @@ inline VkResult VkResFromStatement( b32 statement )
 
 #define VK_INTERNAL_ERROR( vk ) VkResFromStatement( b32( vk ) )
 
-#define VK_CHECK( vk )																						\
-do{																											\
-	constexpr char VK_DEV_ERR_STR[] = ">>>RUNTIME_ERROR<<<\nLine: " LINE_STR", File: " __FILE__"\nERR: ";	\
-	VkResult res = vk;																						\
-	if( res ){																								\
-		char dbgStr[256] = {};																				\
-		strcat_s( dbgStr, sizeof( dbgStr ), VK_DEV_ERR_STR );												\
-		strcat_s( dbgStr, sizeof( dbgStr ), std::data( VkResErrorString( res ) ) );							\
-		SysErrMsgBox( dbgStr );																				\
-		abort();																							\
-	}																										\
+#define VK_CHECK( vk )																\
+do{																					\
+	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";				\
+	VkResult res = vk;																\
+	if( res ){																		\
+		char dbgStr[256] = {};														\
+		strcat_s( dbgStr, sizeof( dbgStr ), DEV_ERR_STR );							\
+		strcat_s( dbgStr, sizeof( dbgStr ), std::data( VkResErrorString( res ) ) );	\
+		SysErrMsgBox( dbgStr );														\
+		abort();																	\
+	}																				\
 }while( 0 )		
 
 //====================CONSTS====================//
@@ -185,6 +185,16 @@ struct image
 	VkDeviceMemory	mem;
 	VkFormat		nativeFormat;
 	VkExtent3D		nativeRes;
+	u32				magicNum;
+	u16				width;
+	u16				height;
+	u8				layerCount;
+	u8				mipCount;
+
+	inline VkExtent3D Extent3D() const
+	{
+		return { width,height,1 };
+	}
 };
 
 struct swapchain
@@ -214,7 +224,9 @@ struct render_context
 	VkSampler		linearTextureSampler;
 	image			depthTarget;
 	image			colorTarget;
+
 	image			colorCache;
+
 	image			depthPyramid;
 	VkImageView		depthPyramidChain[ MAX_MIP_LEVELS ];
 	u32				depthPyramidWidth;
@@ -228,6 +240,8 @@ struct render_context
 	u32				vFrameIdx = 0;
 	u8				framesInFlight = VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 };
+
+
 
 static VkInstance				vkInst = 0;
 static VkSurfaceKHR				vkSurf = 0;
@@ -263,6 +277,7 @@ struct buffer_data
 	u64				offset = 0;
 	u8*				hostVisible = 0;
 	u64				devicePointer = 0;
+	u32				magicNum;
 
 	inline VkDescriptorBufferInfo descriptor() const
 	{
@@ -277,6 +292,8 @@ struct buffer_data
 // TODO: redesign ?
 // TODO: who should check memType match ?
 // TODO: polish min block size ?
+// TODO: cache device requirements/limits/shit ?
+// TODO: per mem-block flags
 struct vk_mem_view
 {
 	VkDeviceMemory	device;
@@ -477,22 +494,21 @@ inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
 	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
 }
 
-// TODO: pass device requirements/limits/shit ?
-// TODO: return/use alignmed size ?
 static buffer_data
 VkCreateAllocBindBuffer(
 	u64					sizeInBytes,
 	VkBufferUsageFlags	usage,
-	vk_mem_arena*		vkArena )
+	vk_mem_arena*		vkArena,
+	const VkPhysicalDeviceLimits& gpuLims = dc.gpuProps.limits )
 {
 	buffer_data buffData;
 
 	u64 offsetAlignmnet = 0;
 	if( usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT ){
-		offsetAlignmnet = dc.gpuProps.limits.minStorageBufferOffsetAlignment;
+		offsetAlignmnet = gpuLims.minStorageBufferOffsetAlignment;
 		sizeInBytes = FwdAlign( sizeInBytes, offsetAlignmnet );
 	}
-	else if( usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT ) offsetAlignmnet = dc.gpuProps.limits.minUniformBufferOffsetAlignment;
+	else if( usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT ) offsetAlignmnet = gpuLims.minUniformBufferOffsetAlignment;
 
 	
 
@@ -544,7 +560,6 @@ VkCreateAllocBindBuffer(
 	return buffData;
 }
 
-// TODO: account for more formats/aspect masks ?
 // TODO: pass aspect mask ? ?
 inline static VkImageView
 VkMakeImgView(
@@ -588,23 +603,15 @@ VkCreateAllocBindImage(
 	VkImageType			vkImgType = VK_IMAGE_TYPE_2D,
 	VkPhysicalDevice	gpu = dc.gpu )
 {
-	// TODO: should or and check all 
-	VkFormatFeatureFlags formatFeatures = VK_FORMAT_FEATURE_FLAG_BITS_MAX_ENUM;
-	switch( usageFlags ){
-	case VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT: formatFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-	break;
-
-	case VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT: formatFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-	break;
-
-	case VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT: 
-	formatFeatures = VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-	break;
-	}
+	VkFormatFeatureFlags formatFeatures = 0;
+	if( usageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+	if( usageFlags & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	if( usageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+	if( usageFlags & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 
 	VkFormatProperties formatProps;
 	vkGetPhysicalDeviceFormatProperties( gpu, format, &formatProps );
-	VK_CHECK( VK_INTERNAL_ERROR( !( formatProps.optimalTilingFeatures & formatFeatures ) ) );
+	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
 
 
 	image img = {};
@@ -613,9 +620,12 @@ VkCreateAllocBindImage(
 	imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 	imgInfo.imageType = vkImgType;
 	imgInfo.format = img.nativeFormat = format;
+
+	img.width = extent.width;
+	img.height = extent.height;
 	imgInfo.extent = img.nativeRes = extent;
-	imgInfo.mipLevels = mipCount;
-	imgInfo.arrayLayers = 1;
+	imgInfo.mipLevels = img.mipCount = mipCount;
+	imgInfo.arrayLayers = img.layerCount = 1;
 	imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 	imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 	imgInfo.usage = usageFlags;
@@ -674,9 +684,10 @@ constexpr char SHADER_ENTRY_POINT[] = "main";
 struct vk_shader
 {
 	VkShaderModule			module;
-	vector<char>			spvByteCode;
+	vector<u8>				spvByteCode;
 	// TODO: use this ? or keep hardcoded in MakePipeline func
-	VkShaderStageFlagBits	stage;
+	//VkShaderStageFlagBits	stage;
+	u64						timestamp;
 };
 
 // TODO: where to place this ?
@@ -854,35 +865,93 @@ inline VkWriteDescriptorSet VkMakeBindlessGlobalUpdate(
 	return update;
 }
 
-// TODO: 
-constexpr char shaderPathPrefix[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\";
-constexpr char shaderPathSuffix[] = ".spv";
-// TODO: no std::vector
-// TODO: don't cast to u32
-inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
+// NOTE: from https://mostlymangling.blogspot.com/2019/12/stronger-better-morer-moremur-better.html
+inline u64 Moremur( u64 x )
 {
-	FILE* fpSpvShader = 0;
-	fopen_s( &fpSpvShader, shaderPath, "rb" );
-	VK_CHECK( VK_INTERNAL_ERROR( !fpSpvShader ) );
-	fseek( fpSpvShader, 0L, SEEK_END );
-	const u32 size = ftell( fpSpvShader );
-	rewind( fpSpvShader );
-	vector<char> binSpvShader( size );
-	fread( std::data( binSpvShader ), size, 1, fpSpvShader );
-	fclose( fpSpvShader );
+	x ^= x >> 27;
+	x *= 0x3C79AC492BA7B653ULL;
+	x ^= x >> 33;
+	x *= 0x1C69B3F74AC4AE35ULL;
+	x ^= x >> 27;
 
+	return x;
+}
+// TODO: make faster ?
+// NOTE: MurmurHash2, 64-bit version, by Austin Appleby
+u64 MurmurHash64A( const void* key, i32 len, u64 seed )
+{
+	constexpr u64 m = 0xC6A4A7935BD1E995ULL;
+	constexpr i32 r = 47;
+
+	u64 h = seed ^ ( len * m );
+
+	const u64* data = (const u64*) key;
+	const u64* end = data + ( len / 8 );
+
+	while( data != end )
+	{
+		u64 k = *data++;
+
+		k *= m;
+		k ^= k >> r;
+		k *= m;
+
+		h ^= k;
+		h *= m;
+	}
+
+	const u8* data2 = (const u8*) data;
+
+	switch( len & 7 )
+	{
+	case 7: h ^= u64( data2[ 6 ] ) << 48;
+	case 6: h ^= u64( data2[ 5 ] ) << 40;
+	case 5: h ^= u64( data2[ 4 ] ) << 32;
+	case 4: h ^= u64( data2[ 3 ] ) << 24;
+	case 3: h ^= u64( data2[ 2 ] ) << 16;
+	case 2: h ^= u64( data2[ 1 ] ) << 8;
+	case 1: h ^= u64( data2[ 0 ] );
+		h *= m;
+	};
+
+	h ^= h >> r;
+	h *= m;
+	h ^= h >> r;
+
+	return h;
+}
+
+
+// TODO: 
+constexpr std::string_view shadersFolder = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\"sv;
+constexpr std::string_view shaderExtension = ".spv"sv;
+
+inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
+{
 	VkShaderModuleCreateInfo shaderModuleInfo = {};
 	shaderModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 	shaderModuleInfo.codeSize = size;
-	shaderModuleInfo.pCode = (const u32*) std::data( binSpvShader );
+	shaderModuleInfo.pCode = spv;
+
+	VkShaderModule sm = {};
+	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &sm ) );
+	return sm;
+}
+
+// TODO: fuck C++ and vector
+inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
+{
+	vector<u8> binSpvShader = SysReadFile( shaderPath );
 
 	vk_shader shader = {};
-	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &shader.module ) );
 	shader.spvByteCode = std::move( binSpvShader );
+	shader.module = VkMakeShaderModule( vkDevice, 
+										  (const u32*) std::data( shader.spvByteCode ), 
+										  std::size( shader.spvByteCode ) );
 	
 	std::string_view shaderName = { shaderPath };
-	shaderName.remove_prefix( std::size( shaderPathPrefix ) - 1 );
-	shaderName.remove_suffix( std::size( shaderPathSuffix ) - 1 );
+	shaderName.remove_prefix( std::size( shadersFolder ) - 1 );
+	shaderName.remove_suffix( std::size( shaderExtension ) - 1 );
 	VkDbgNameObj( vkDevice, VK_OBJECT_TYPE_SHADER_MODULE, (u64) shader.module, &shaderName[ 0 ] );
 
 	return shader;
@@ -891,14 +960,14 @@ inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice 
 // TODO: rewrite 
 inline static void VkReflectShaderLayout(
 	const VkPhysicalDeviceProperties&			gpuProps,
-	const vk_shader*							s,
+	const vector<u8>&							spvByteCode,
 	vector<VkDescriptorSetLayoutBinding>&		descSetBindings,
 	vector<VkPushConstantRange>&				pushConstRanges,
 	group_size&									gs )
 {
 	SpvReflectShaderModule shaderReflection;
-	VK_CHECK( (VkResult) spvReflectCreateShaderModule( std::size( s->spvByteCode ) * sizeof( s->spvByteCode[ 0 ] ),
-													   std::data( s-> spvByteCode ),
+	VK_CHECK( (VkResult) spvReflectCreateShaderModule( std::size( spvByteCode ) * sizeof( spvByteCode[ 0 ] ),
+													   std::data( spvByteCode ),
 													   &shaderReflection ) );
 
 	SpvReflectDescriptorSet& set = shaderReflection.descriptor_sets[ 0 ];
@@ -964,7 +1033,7 @@ vk_program VkMakePipelineProgram(
 	vector<VkPushConstantRange>	pushConstRanges;
 	group_size gs = {};
 	
-	for( const vk_shader* s : shaders ) VkReflectShaderLayout( gpuProps, s, bindings, pushConstRanges, gs );
+	for( const vk_shader* s : shaders ) VkReflectShaderLayout( gpuProps, s->spvByteCode, bindings, pushConstRanges, gs );
 
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {};
 	descSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1625,78 +1694,10 @@ static void VkInitVirutalFrames(
 	//VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, hostSyncTimeline ) );
 }
 
-
 // TODO: more locallity ?
-#include "r_data_structs.h"
+//#include "r_data_structs.h"
 
-#include "asset_pipe.h"
-
-//#define STBI_MALLOC()
-//#define STBI_REALLOC()
-//#define STBI_FREE()
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
-#include <meshoptimizer.h>
-
-using namespace DirectX;
-
-// TODO: use DirectXMath ?
-// TODO: fast ?
-inline i16 Snorm8OctahedronEncode( vec3 n, u64 precision = 8 )
-{
-	float invAbsNorm = 1.0f / ( std::abs( n.x ) + std::abs( n.y ) + std::abs( n.z ) );
-	n.x *= invAbsNorm;
-	n.y *= invAbsNorm;
-	n.z *= invAbsNorm;
-
-	if( n.z < 0 ){
-		n.x = std::copysign( 1.0f - std::abs( n.y ), n.x );
-		n.y = std::copysign( 1.0f - std::abs( n.x ), n.y );
-	}
-
-	n.x = n.x * 0.5f + 0.5f;
-	n.y = n.y * 0.5f + 0.5f;
-	
-#ifdef FAST
-	XMVECTOR _n128 = XMLoadFloat3( &n );
-	float invAbsNorm = 1.0f / XMVectorGetX( XMVector3Dot( XMVectorAbs( _n128 ), { 1,1,1,0 } ) );
-	_n128 = XMVectorScale( _n128, invAbsNorm );
-
-	if( XMVectorGetZ( _n128 ) < 0 ){
-
-	}
-#endif // FAST
-
-	i16 res = 
-		( meshopt_quantizeSnorm( n.y, precision ) << precision ) | 
-		meshopt_quantizeSnorm( n.x, precision );
-	return res;
-}
-
-inline float EncodeTanToAngle( vec3 n, vec3 t )
-{
-	// NOTE: inspired by Doom Eternal
-	vec3 tanRef = ( std::abs( n.x ) > std::abs( n.z ) ) ?
-		vec3{ -n.y, n.x, 0.0f } :
-		vec3{ 0.0f, -n.z, n.y };
-
-	// TODO: use angle between normals ?
-	float tanRefAngle = XMVectorGetX( XMVector3AngleBetweenVectors( XMLoadFloat3( &t ), 
-																	XMLoadFloat3( &tanRef ) ) );
-	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
-}
-
-// TODO: compressed coords u8, u16
-struct vertex
-{
-	float px, py, pz;
-	float nx, ny, nz;// i16 n;
-	float tnx, tny, tnz;
-	//float tangentAngle;
-	float tu, tv;
-	u32 mi;
-};
+#include "asset_compiler.h"
 
 struct meshlets_data
 {
@@ -1705,60 +1706,8 @@ struct meshlets_data
 	std::vector<u8> triangleBuf;
 };
 
-// TODO: better way to handle materials ?
-// TODO: compress
-struct vertex_attributes
-{
-	vector<vec3> positions;
-	vector<vec4> normals;
-	vector<vec3> uvms;
-	u64 count = 0;
-
-	vertex_attributes() = default;
-	vertex_attributes( u64 size ) 
-		: positions( size ), normals( size ), uvms( size ){}
-};
-
-inline void DeinterleaveVertexBuffer( const vector<vertex>& vtx, vertex_attributes& verts )
-{
-	verts.count += std::size( vtx );
-	verts.positions.reserve( verts.count );
-	verts.normals.reserve( verts.count );
-	verts.uvms.reserve( verts.count );
-
-	for( const vertex& v : vtx ){
-		verts.positions.push_back( { v.px, v.py, v.pz } );
-
-		float tanAngle = EncodeTanToAngle( { v.nx,v.ny,v.nz }, { v.tnx,v.tny,v.tnz } );
-
-		verts.normals.push_back( { v.nx,v.ny,v.nz, tanAngle } );
-		verts.uvms.push_back( vec3( v.tu, v.tv, v.mi ) );
-	}
-}
-
-#define CGLTF_IMPLEMENTATION
-#include "cgltf.h"
-
-// TODO: improve
-enum gltf_sampler_filter : u16
-{
-	GLTF_SAMPLER_FILTER_NEAREST = 9728,
-	GLTF_SAMPLER_FILTER_LINEAR = 9729,
-	GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_NEAREST = 9984,
-	GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_NEAREST = 9985,
-	GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_LINEAR = 9986,
-	GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR = 9987
-};
-
-enum gltf_sampler_address_mode : u16
-{
-	GLTF_SAMPLER_ADDRESS_MODE_REPEAT = 10497,
-	GLTF_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE = 33071,
-	GLTF_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT = 33648
-};
-
 // TODO: default types ?
-inline VkFilter VkGetFilterTypeFromGltf( cgltf_int f )
+inline VkFilter VkGetFilterTypeFromGltf( gltf_sampler_filter f )
 {
 	switch( f )
 	{
@@ -1774,7 +1723,7 @@ inline VkFilter VkGetFilterTypeFromGltf( cgltf_int f )
 	return VK_FILTER_LINEAR;
 	}
 }
-inline VkSamplerMipmapMode VkGetMipmapTypeFromGltf( cgltf_int m )
+inline VkSamplerMipmapMode VkGetMipmapTypeFromGltf( gltf_sampler_filter m )
 {
 	switch( m )
 	{
@@ -1788,7 +1737,7 @@ inline VkSamplerMipmapMode VkGetMipmapTypeFromGltf( cgltf_int m )
 	return VK_SAMPLER_MIPMAP_MODE_LINEAR;
 	}
 }
-inline VkSamplerAddressMode VkGetAddressModeFromGltf( cgltf_int a )
+inline VkSamplerAddressMode VkGetAddressModeFromGltf( gltf_sampler_address_mode a )
 {
 	switch( a )
 	{
@@ -1797,522 +1746,24 @@ inline VkSamplerAddressMode VkGetAddressModeFromGltf( cgltf_int a )
 	case GLTF_SAMPLER_ADDRESS_MODE_REPEAT: default: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
 	}
 }
-
-// TODO: make smaller
-struct vk_sampler_config
+// TODO: ensure mipmapMode in assetcmpl
+// TODO: addrModeW ?
+// TODO: more stuff ?
+inline VkSamplerCreateInfo VkMakeSamplerInfo( sampler_config config )
 {
-	VkFilter				min; // 2 bits
-	VkFilter				mag; // 2 bits
-	VkSamplerMipmapMode		mipMode; // 1 bit
-	VkSamplerAddressMode	addrU; // 3 bits
-	VkSamplerAddressMode	addrV; // 3 bits
-	//VkSamplerAddressMode	addrW;
+	VkSamplerCreateInfo vkSamplerInfo = {};
+	vkSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	vkSamplerInfo.minFilter = VkGetFilterTypeFromGltf( config.min );
+	vkSamplerInfo.magFilter = VkGetFilterTypeFromGltf( config.mag );
+	vkSamplerInfo.mipmapMode =  VkGetMipmapTypeFromGltf( config.min );
+	vkSamplerInfo.addressModeU = VkGetAddressModeFromGltf( config.addrU );
+	vkSamplerInfo.addressModeV = VkGetAddressModeFromGltf( config.addrV );
+	//vkSamplerInfo.addressModeW = 
 
-	vk_sampler_config() = default;
-	vk_sampler_config( cgltf_int minF, cgltf_int magF,
-					   cgltf_int u, cgltf_int v )
-		:
-		min{ VkGetFilterTypeFromGltf( minF ) },
-		mag{ VkGetFilterTypeFromGltf( magF ) },
-		mipMode{ VkGetMipmapTypeFromGltf( std::max( minF,magF ) ) },
-		addrU{ VkGetAddressModeFromGltf( u ) },
-		addrV{ VkGetAddressModeFromGltf( v ) }
-	{}
-};
-
-// TODO: rename
-// TODO: enum type ?
-struct raw_image_info
-{
-	vk_sampler_config	samplerConfig;
-	u64					sizeInBytes;
-	u64					bufferOffset;
-	i32					width;
-	i32					height;
-	VkFormat			format;
-};
-
-// TODO: use own mem api
-// TODO: write data inplace in a mega-buffer
-// TODO: assert ?
-inline static raw_image_info StbLoadImageFromMem( u8 const* imgData, u32 imgSize, std::vector<u8>& bin )
-{
-	raw_image_info img = {};
-
-	i32 texChannels = 0;
-	u8* data = stbi_load_from_memory( imgData, imgSize, &img.width, &img.height, &texChannels, STBI_rgb_alpha );
-	assert( data );
-	assert( u64( STBI_rgb_alpha ) >= texChannels );
-	img.sizeInBytes = u64( img.width * img.height * u64( STBI_rgb_alpha ) );
-	img.bufferOffset = std::size( bin );
-
-	bin.resize( img.bufferOffset + img.sizeInBytes );
-	std::memcpy( std::data( bin ) + img.bufferOffset, data, img.sizeInBytes );
-
-	stbi_image_free( data );
-	return img;
+	return vkSamplerInfo;
 }
 
-
-enum gltf_texture_type : u8
-{
-	GLTF_BASE_COLOR = 0,
-	GLTF_METALLIC_ROUGHNESS = 1,
-	GLTF_NORMAL_MAP = 2,
-	GLTF_AMBIENT_OCCLUSION_MAP = 3,
-	GLTF_COUNT = 4
-};
-
-constexpr VkFormat VkFormatFromGltfTextureType( gltf_texture_type t )
-{
-	switch( t )
-	{
-	case GLTF_BASE_COLOR:				return VK_FORMAT_R8G8B8A8_SRGB;
-	case GLTF_METALLIC_ROUGHNESS:		return VK_FORMAT_R8G8B8A8_UNORM;
-	case GLTF_NORMAL_MAP:				return VK_FORMAT_R8G8B8A8_UNORM;
-	case GLTF_AMBIENT_OCCLUSION_MAP:	return VK_FORMAT_R8G8B8A8_UNORM;
-	}
-}
-inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
-{
-	XMMATRIX t = {};
-	if( node->has_rotation || node->has_translation || node->has_scale )
-	{
-		XMVECTOR move = XMLoadFloat3( (const XMFLOAT3*) node->translation );
-		XMVECTOR rot = XMLoadFloat4( (const XMFLOAT4*) node->rotation );
-		XMVECTOR scale = XMLoadFloat3( (const XMFLOAT3*) node->scale );
-		t = XMMatrixAffineTransformation( scale, XMVectorSet( 0, 0, 0, 1 ), rot, move );
-	}
-	else if( node->has_matrix )
-	{
-		// NOTE: gltf matrices are stored in col maj
-		t = XMMatrixTranspose( XMLoadFloat4x4( (const XMFLOAT4X4*) node->matrix ) );
-	}
-
-	return t;
-}
-// TODO: separate vk, stb, gltf
-// TODO: account for compressed/decompressed images
-// TODO: change stb
-// TODO: no string view compare ?
-inline raw_image_info MakeTextureFromGlb(
-	const cgltf_texture*	t,
-	const u8*				pBin,
-	vector<u8>&				textureData,
-	gltf_texture_type		textureType )
-{
-	u64 imgOffset = t->image->buffer_view->offset;
-	u64 imgSize = t->image->buffer_view->size;
-
-	raw_image_info imgInfo = {};
-	std::string_view mimeType = { t->image->mime_type };
-	if( ( mimeType == "image/png"sv ) || ( mimeType == "image/jpeg"sv ) )
-	{
-		imgInfo = StbLoadImageFromMem( pBin + imgOffset, imgSize, textureData );
-	}
-	else if( mimeType == "image/ktx2"sv )
-	{
-
-	}
-	
-	imgInfo.format = VkFormatFromGltfTextureType( textureType );
-
-	if( t->sampler )
-	{
-		imgInfo.samplerConfig = {
-			t->sampler->min_filter,
-			t->sampler->mag_filter,
-			t->sampler->wrap_s,
-			t->sampler->wrap_t
-		}; 
-	}
-
-	return imgInfo;
-}
-// TODO: ao textrue
-// TODO: different channels different params
-// TODO: use u16 idx
-// TODO: pass samplers
-// TODO: better file api
-// TODO: use own mem
-// TODO: deinterleave from the start ?
-// TODO: quantize data
-// TODO: sampler
-static void
-LoadGlbModel(
-	const char*				path,
-
-	vector<vertex>&			vertices,
-	vector<u32>&			indices,
-	vector<u8>&				textureData,
-	vector<raw_image_info>&	album,
-	vector<material_data>&	materials,
-	DirectX::BoundingBox&	box )
-{
-	FILE* fpGlbData = 0;
-	VK_CHECK( VK_INTERNAL_ERROR( fopen_s( &fpGlbData, path, "rb" ) ) );
-	fseek( fpGlbData, 0L, SEEK_END );
-	u32 size = ftell( fpGlbData );
-	rewind( fpGlbData );
-
-	vector<u8> glbData( size );
-	fread( std::data( glbData ), std::size( glbData ), 1, fpGlbData );
-	fclose( fpGlbData );
-
-
-	cgltf_options options = {};
-	cgltf_data* data = 0;
-	VK_CHECK( VK_INTERNAL_ERROR( cgltf_parse( &options, &glbData[ 0 ], std::size( glbData ), &data ) ) );
-	VK_CHECK( VK_INTERNAL_ERROR( cgltf_validate( data ) ) );
-
-	const u8* pBin = (const u8*) data->bin;
-
-	// TODO: completely ignore nodes ?
-	std::vector<DirectX::XMFLOAT4X4> nodeTransf( data->nodes_count );
-	for( u64 n = 0; n < data->nodes_count; ++n )
-	{
-		const cgltf_node* node = data->nodes + n;
-
-		XMMATRIX t = CgltfNodeGetTransf( node );
-
-		for( const cgltf_node* parent = node->parent; 
-			 parent; 
-			 parent = parent->parent )
-		{
-			t = XMMatrixMultiply( t, CgltfNodeGetTransf( parent ) );
-		}
-		XMStoreFloat4x4( &nodeTransf[ n ], t );
-	}
-
-	std::vector<DirectX::BoundingBox> aabbs( data->meshes_count );
-	for( u64 m = 0; m < data->meshes_count; ++m )
-	{
-		const cgltf_mesh& mesh = data->meshes[ m ];
-
-		// TODO: rewrite this loop
-		for( u64 p = 0; p < mesh.primitives_count; ++p )
-		{
-			assert( mesh.primitives_count == 1 );
-
-			const cgltf_primitive& prim = mesh.primitives[ p ];
-
-			// NOTE: follow unreal pbr model
-			u64 materialsOffset = std::size( materials );
-			if( prim.material )
-			{
-				materials.push_back( {} );
-				material_data& mtl = materials[ materialsOffset ];
-				
-				const cgltf_pbr_metallic_roughness& pbrMetallicRoughness = prim.material->pbr_metallic_roughness;
-				if( const cgltf_texture* pbrBaseCol = pbrMetallicRoughness.base_color_texture.texture )
-				{
-					raw_image_info imgInfo = MakeTextureFromGlb( pbrBaseCol, pBin, textureData, GLTF_BASE_COLOR );
-					album.emplace_back( imgInfo );
-					mtl.baseColIdx = std::size( album ) - 1;
-					mtl.baseColFactor = *(const vec3*) pbrMetallicRoughness.base_color_factor;
-				}
-				if( const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture )
-				{
-					raw_image_info imgInfo = MakeTextureFromGlb( metalRoughMap, pBin, textureData, GLTF_METALLIC_ROUGHNESS );
-					album.emplace_back( imgInfo );
-					mtl.metalRoughIdx = std::size( album ) - 1;
-					mtl.metallicFactor = pbrMetallicRoughness.metallic_factor;
-					mtl.roughnessFactor = pbrMetallicRoughness.roughness_factor;
-				}
-				if( const cgltf_texture* normalMap = prim.material->normal_texture.texture )
-				{
-					raw_image_info imgInfo = MakeTextureFromGlb( normalMap, pBin, textureData, GLTF_NORMAL_MAP );
-					album.emplace_back( imgInfo );
-					mtl.normalMapIdx = std::size( album ) - 1;
-				}
-				//if( const cgltf_texture* aoMap = prim.material->occlusion_texture.texture )
-				//{
-				//	raw_image_info imgInfo = MakeTextureFromGlb( aoMap, pBin, textureData, GLTF_AMBIENT_OCCLUSION_MAP );
-				//	album.emplace_back( imgInfo );
-				//	mtl.aoMapIdx = std::size( album ) - 1;
-				//}
-			}
-
-
-			u64 vtxDstOffset = std::size( vertices );
-			u64 vtxLocalCount = prim.attributes[ 0 ].data->count;
-			vertices.resize( vtxDstOffset + vtxLocalCount );
-			for( u64 a = 0; a < prim.attributes_count; ++a )
-			{
-				const cgltf_attribute& vtxAttr = prim.attributes[ a ];
-				assert( vtxLocalCount == vtxAttr.data->count );
-
-				u64 attrOffset = vtxAttr.data->offset;
-				u64 vtxSrcOffset = vtxAttr.data->buffer_view->offset;
-				u64 vtxAttrStride = vtxAttr.data->stride;
-
-
-				u64 compSize = cgltf_component_size( vtxAttr.data->component_type );
-				b32 alignmentReq = !( attrOffset % compSize ) && !( ( attrOffset + vtxSrcOffset ) % compSize );
-				assert( alignmentReq );
-
-				// TODO: not all vtx data is float
-				u64 compNum = cgltf_num_components( vtxAttr.data->type );
-
-				if( ( vtxAttr.type == cgltf_attribute_type_position ) && vtxAttr.data->has_min && vtxAttr.data->has_min )
-				{
-					XMVECTOR min = XMLoadFloat3( (const vec3*) vtxAttr.data->min );
-					XMVECTOR max = XMLoadFloat3( (const vec3*) vtxAttr.data->max );
-
-					XMStoreFloat3( &aabbs[ m ].Center, XMVectorScale( XMVectorAdd( max, min ), 0.5f ) );
-					XMStoreFloat3( &aabbs[ m ].Extents, XMVectorScale( XMVectorSubtract( max, min ), 0.5f ) );
-				}
-				else if( vtxAttr.type == cgltf_attribute_type_position )
-				{
-					aabbs.resize( std::size( aabbs ) - 1 );
-				}
-
-				for( u64 v = 0; v < vtxLocalCount; ++v )
-				{
-					vertex& vtx = vertices[ vtxDstOffset + v ];
-
-					const u8* attrData = pBin + vtxSrcOffset + attrOffset + vtxAttrStride * v;
-					// TODO: format checking ?
-					switch( vtxAttr.type )
-					{
-					case cgltf_attribute_type_position:
-					{
-						vec3 pos = *(const vec3*) attrData;
-						vtx.px = -pos.x;
-						vtx.py = pos.y;
-						vtx.pz = pos.z;
-					} break;
-					case cgltf_attribute_type_normal:
-					{
-						vec3 normal = *(const vec3*) attrData;
-						vtx.nx = -normal.x;
-						vtx.ny = normal.y;
-						vtx.nz = normal.z;
-					} break;
-					case cgltf_attribute_type_tangent:
-					{
-						vec4 tan = *(const vec4*) attrData;
-						float handedness = tan.w;
-						vtx.tnx = tan.x * handedness;
-						vtx.tny = tan.y * handedness;
-						vtx.tnz = tan.z * handedness;
-					} break;
-					case cgltf_attribute_type_texcoord:
-					{
-						vec2 uv = *(const vec2*) attrData;
-						vtx.tu = uv.x;
-						vtx.tv = uv.y;
-						vtx.mi = materialsOffset;
-					} break;
-
-					case cgltf_attribute_type_color:
-					case cgltf_attribute_type_joints:
-					case cgltf_attribute_type_weights:
-					case cgltf_attribute_type_invalid: break;
-					}
-				}
-			}
-
-
-			u64 idxDstOffset = std::size( indices );
-			indices.resize( idxDstOffset + prim.indices->count );
-			u64 idxSrcOffset = prim.indices->buffer_view->offset;
-			u64 idxStride = prim.indices->stride;
-			for( u64 i = 0; i < prim.indices->count; ++i )
-			{
-				// TODO: not all indices are u32/u16
-				u64 idx = cgltf_component_read_index( pBin + idxSrcOffset + idxStride * i, prim.indices->component_type );
-				indices[ i + idxDstOffset ] = u32( idx + vtxDstOffset );
-			}
-		}
-	}
-
-	// TODO: transform this
-	// TODO: worldLeftHanded
-
-	// TODO: more elegant soln
-	DirectX::BoundingBox aabb = aabbs[ 0 ];
-	for( u64 b = 1; b < std::size( aabbs ); ++b )
-	{
-		BoundingBox::CreateMerged( aabb, aabb, aabbs[ b ] );
-	}
-		
-	if( std::size( aabbs ) == 0 )
-	{
-		DirectX::BoundingBox::CreateFromPoints( aabb,
-												std::size( vertices ),
-												(const DirectX::XMFLOAT3*) &vertices[ 0 ],
-												sizeof( vertices[ 0 ] ) );
-	}
-	box = aabb;
-
-	cgltf_free( data );
-}
-
-
-u32 MeshoptBuildMeshlets( const vector<vertex>& vtx, vector<u32>& indices, meshlets_data& mlets )
-{
-	constexpr u64 MAX_VERTICES = 128;
-	constexpr u64 MAX_TRIANGLES = 256;
-	constexpr float CONE_WEIGHT = 0.8f;
-
-	u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( indices ), MAX_VERTICES, MAX_TRIANGLES );
-	std::vector<meshopt_Meshlet> meshlets( maxMeshletCount );
-	std::vector<u32> meshletVertices( maxMeshletCount * MAX_VERTICES );
-	std::vector<u8> meshletTriangles( maxMeshletCount * MAX_TRIANGLES * 3 );
-
-	u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), 
-											  std::data( meshletVertices ),
-											  std::data( meshletTriangles ),
-											  std::data( indices ),
-											  std::size( indices ), 
-											  &vtx[ 0 ].px, 
-											  std::size( vtx ),
-											  sizeof( vertex ), 
-											  MAX_VERTICES,
-											  MAX_TRIANGLES,
-											  CONE_WEIGHT );
-
-
-	meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
-	meshletVertices.resize( last.vertex_offset + last.vertex_count );
-	meshletTriangles.resize( last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
-	meshlets.resize( meshletCount );
-
-	mlets.meshlets.reserve( mlets.meshlets.size() + meshletCount );
-
-	for( meshopt_Meshlet& m : meshlets ){
-
-		
-		meshopt_Bounds bounds = meshopt_computeMeshletBounds( &meshletVertices[ m.vertex_offset ], 
-															  &meshletTriangles[ m.triangle_offset ],
-															  m.triangle_count, 
-															  &vtx[ 0 ].px,
-															  std::size( vtx ),
-															  sizeof( vertex ) );
-
-		meshlet data;
-		data.center = vec3( bounds.center );
-		data.radius = bounds.radius;
-		data.coneX = bounds.cone_axis_s8[ 0 ];
-		data.coneY = bounds.cone_axis_s8[ 1 ];
-		data.coneZ = bounds.cone_axis_s8[ 2 ];
-		data.coneCutoff = bounds.cone_cutoff_s8;
-		data.vtxBufOffset = std::size( mlets.vtxIndirBuf );
-		data.triBufOffset = std::size( mlets.triangleBuf );
-		data.vertexCount = m.vertex_count;
-		data.triangleCount = m.triangle_count;
-
-		mlets.meshlets.push_back( data );
-	}
-
-	mlets.vtxIndirBuf.insert( mlets.vtxIndirBuf.end(), meshletVertices.begin(), meshletVertices.end() );
-	mlets.triangleBuf.insert( mlets.triangleBuf.end(), meshletTriangles.begin(), meshletTriangles.end() );
-
-	return meshlets.size();
-}
-
-inline void MeshoptRemapping( vector<vertex>& triCache, vector<u32>& indices )
-{
-	u64 initialSize = std::size( triCache );
-	i64 padding = 3 - std::size( triCache ) % 3;
-	for( i64 i = 0; i < padding; ++i ) triCache.push_back( triCache.back() );
-
-	assert( std::size( triCache ) % 3 == 0 );
-
-	u64 idxCount = std::size( triCache );
-	std::vector<u32> remap( idxCount );
-	u64 vtxCount = meshopt_generateVertexRemap( std::data( remap ), 0,
-												idxCount,
-												std::data( triCache ),
-												idxCount,
-												sizeof( vertex ) );
-
-	if( vtxCount < initialSize )
-	{
-		vector<vertex> vertices( vtxCount );
-		indices.resize( idxCount );
-
-		meshopt_remapVertexBuffer( std::data( vertices ), std::data( triCache ), idxCount, sizeof( vertex ), std::data( remap ) );
-		meshopt_remapIndexBuffer( std::data( indices ), 0, idxCount, std::data( remap ) );
-		triCache = std::move( vertices );
-	}
-	else
-	{
-		triCache.resize( initialSize );
-	}
-}
-
-void MeshoptOptimizeAndLodMesh( 
-	DirectX::BoundingBox box,
-	vector<vertex>&		vertices, 
-	vector<u32>&		indices,
-	vertex_attributes&	vtxBuffer, 
-	vector<u32>&		idxBuffer, 
-	vector<mesh>&		meshes, 
-	meshlets_data&		mlets )
-{
-	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), std::size( indices ), std::size( vertices ) );
-	meshopt_optimizeOverdraw( std::data( indices ), 
-							  std::data( indices ), 
-							  std::size( indices ), 
-							  &vertices[ 0 ].px, 
-							  std::size( vertices ), 
-							  sizeof( vertex ), 
-							  1.05f );
-	meshopt_optimizeVertexFetch( std::data( vertices ), 
-								 std::data( indices ),
-								 std::size( indices ),
-								 std::data( vertices ), 
-								 std::size( vertices ),
-								 sizeof( vertex ) );
-
-	mesh m = {};
-	m.vertexCount = std::size( vertices );
-	m.vertexOffset = vtxBuffer.count;
-	m.center = box.Center;
-	m.radius = XMVectorGetX( XMVector3Length( XMLoadFloat3( &box.Extents ) ) );
-
-	constexpr float ERROR_THRESHOLD = 1e-2f;
-	constexpr double expDecay = 0.85;
-	std::vector<u32>& lodIndices = indices;
-	// TODO: loop better
-	for( mesh_lod& lod : m.lods ){
-		++m.lodCount;
-
-		lod.indexOffset = std::size( idxBuffer );
-		lod.indexCount = std::size( lodIndices );
-
-		idxBuffer.insert( idxBuffer.end(), lodIndices.begin(), lodIndices.end() );
-
-		lod.meshletOffset = std::size( mlets.meshlets );
-		// TODO: use last lod for meshlet culling ?
-		lod.meshletCount = MeshoptBuildMeshlets( vertices, lodIndices, mlets );
-
-		if( m.lodCount < std::size( m.lods ) )
-		{
-			u64 nextIndicesTarget = u64( double( std::size( lodIndices ) ) * expDecay );
-			u64 nextIndices = meshopt_simplify( std::data( lodIndices ), 
-												std::data( lodIndices ), 
-												std::size( lodIndices ),
-												&vertices[ 0 ].px, 
-												std::size( vertices ), 
-												sizeof( vertex ), 
-												nextIndicesTarget, 
-												ERROR_THRESHOLD );
-
-			assert( nextIndices <= std::size( lodIndices ) );
-
-			// NOTE: reached the error bound
-			if( nextIndices == std::size( lodIndices ) ) break;
-
-			lodIndices.resize( nextIndices );
-			meshopt_optimizeVertexCache( std::data( lodIndices ), std::data( lodIndices ), std::size( lodIndices ), std::size( vertices ) );
-		}
-	}
-
-	meshes.push_back( m );
-}
+using namespace DirectX;
 
 // TODO:
 static constexpr b32 IsLeftHanded( vec3 a, vec3 b, vec3 c )
@@ -2537,7 +1988,7 @@ static void GenerateBox(
 			20, 21, 23,     21, 22, 23	    // Top
 	};
 
-	if constexpr( !worldLeftHanded ) ReverseTriangleWinding( indices, std::size( indices ) );
+	if constexpr( worldLeftHanded ) ReverseTriangleWinding( indices, std::size( indices ) );
 
 	vtx.insert( vtx.end(), std::begin( vertices ), std::end( vertices ) );
 	idx.insert( idx.end(), std::begin( indices ), std::end( indices ) );
@@ -2578,9 +2029,7 @@ static buffer_data geometryBuff;
 // TODO: struct buffer_view
 // TODO: how many sub-buffers ?
 // TODO: make distinction between parent and child buffer ?
-static buffer_data vtxPosBuff;
-static buffer_data vtxNormBuff;
-static buffer_data vtxUvBuff;
+static buffer_data vertexBuff;
 
 // TODO: use indirect merged index buffer
 static buffer_data indexBuff;
@@ -2628,7 +2077,7 @@ static std::vector<buffer_data*> geoMegaBuffPtrs;
 
 // TODO: make sep buffer for dbg
 // TODO: mesh dbg selector smth
-static void MakeDebugGeometryBuffer( vertex_attributes& vtx, vector<u32>& idx, vector<mesh>& meshes )
+static void MakeDebugGeometryBuffer( vector<vertex>& vtx, vector<u32>& idx, vector<mesh>& meshes )
 {
 	vector<vertex> vtxData;
 	vector<u32> idxData;
@@ -2654,13 +2103,13 @@ static void MakeDebugGeometryBuffer( vertex_attributes& vtx, vector<u32>& idx, v
 			v.pz += mIco.center.z;
 		}
 	}
-	mIco.vertexOffset = vtx.count;
+	mIco.vertexOffset = std::size( vtx );
 	mIco.vertexCount = std::size( vtxData );
 	mIco.lodCount = 1;
 	mIco.lods[ 0 ].indexOffset = std::size( idx );
 	mIco.lods[ 0 ].indexCount = std::size( idxData );
 
-	DeinterleaveVertexBuffer( vtxData, vtx );
+	vtx.insert( std::end( vtx ), std::begin( vtxData ), std::end( vtxData ) );
 	idx.insert( idx.end(), idxData.begin(), idxData.end() );
 	meshes.push_back( mIco );
 
@@ -2674,13 +2123,13 @@ static void MakeDebugGeometryBuffer( vertex_attributes& vtx, vector<u32>& idx, v
 	mesh mBox = {};
 	mBox.center = { 0,0,0 };
 	mBox.radius = 1.0f;
-	mBox.vertexOffset = vtx.count;
+	mBox.vertexOffset = std::size( vtx );
 	mBox.vertexCount = std::size( vtxData );
 	mBox.lodCount = 1;
 	mBox.lods[ 0 ].indexOffset = std::size( idx );
 	mBox.lods[ 0 ].indexCount = std::size( idxData );
 
-	DeinterleaveVertexBuffer( vtxData, vtx );
+	vtx.insert( std::end( vtx ), std::begin( vtxData ), std::end( vtxData ) );
 	idx.insert( idx.end(), idxData.begin(), idxData.end() );
 	meshes.push_back( mBox );
 }
@@ -2702,43 +2151,122 @@ struct buffer_region
 		minStorageBufferOffsetAlignment( dc.gpuProps.limits.minStorageBufferOffsetAlignment ),
 		offset( 0 ), 
 		sizeInBytes( FwdAlign( std::size( buff ) * sizeof( buff[ 0 ] ), minStorageBufferOffsetAlignment ) ),
-		data( (void*) &buff[ 0 ] ){}
+		data( (void*) std::data( buff ) ){}
 };
 
 //constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\0.glb";
-constexpr char glbPath[] = "WaterBottle.glb";
-//constexpr char glbPath[] = "D:\\3d models\\pbr_corinthian_helmet\\corinth_helm.glb";
-//constexpr char glbPath[] = "D:\\3d models\\pbr_corinthian_helmet\\scene.gltf";
-//constexpr char glbPath[] = "D:\\3d models\\spartan_shield_cycles_pbr_test\\shield.glb";
+//constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\1.glb";
+//constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\2.glb";
+constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
+//constexpr char glbPath[] = "D:\\3d models\\cube_test.glb";
+//constexpr char glbPath[] = "WaterBottle.glb";
+//constexpr char glbPath[] = "D:\\3d models\\postwar_city_-_exterior_scene\\city.glb";
+
+template<typename T>
+struct hndl32
+{
+	u32 h = 0;
+
+	hndl32() = default;
+	inline hndl32( u32 magkIdx ) : h{ magkIdx }{}
+	inline operator u32() const { return h; }
+};
+
+template <typename T>
+inline u64 IdxFromHndl32( hndl32<T> h )
+{
+	constexpr u32 standardIndexMask = ( 1 << 16 ) - 1;
+	return h & standardIndexMask;
+}
+template <typename T>
+inline u64 MagicFromHndl32( hndl32<T> h )
+{
+	constexpr u32 standardIndexMask = ( 1 << 16 ) - 1;
+	constexpr u32 standardMagicNumberMask = ~standardIndexMask;
+	return ( h & standardMagicNumberMask ) >> 16;
+}
+template <typename T>
+inline hndl32<T> Hndl32FromMagicAndIdx( u64 m, u64 i )
+{
+	return u32( ( m << 16 ) | i );
+}
+
+template<typename T>
+struct resource_manager
+{
+	std::vector<T> rsc;
+	u32 magicCounter;
+
+	inline const T& GetResourceFromHndl( hndl32<T> h ) const
+	{
+		assert( std::size( rsc ) );
+		assert( h );
+
+		const T& entry = rsc[ IdxFromHndl32( h ) ];
+		assert( entry.magicNum == MagicFromHndl32( h ) );
+
+		return entry;
+	}
+};
+
+struct buffer_manager : resource_manager<buffer_data>
+{
+
+};
+
+struct texture_manager : resource_manager<image>
+{
+
+};
 
 static u32 drawCount;
-static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& stagingBuff )
+static void VkInitAndUploadResources( VkDevice vkDevice )
 {
-	vertex_attributes vertexBuffer;
+	vector<vertex> vertexBuffer;
 	vector<u32> indexBuffer;
 	vector<mesh> meshes;
 	meshlets_data meshlets;
 	vector<u8> textureData = {};
-	vector<raw_image_info> album;
+	vector<pbr_material> catalogue;
 	// TODO: store material offset and count 
 	// TODO: doom eternal style 2 mtls/triangle store in meshlets ?
-	vector<material_data> materials;
-
-	DirectX::BoundingBox aabb = {};
 	vector<vertex> modelVertices;
 	vector<u32> modelIndices;
-
-	LoadGlbModel( glbPath, modelVertices, modelIndices, textureData, album, materials, aabb );
-	//MeshoptRemapping( modelVertices, modelIndices );
-	MeshoptOptimizeAndLodMesh( aabb, modelVertices, modelIndices, vertexBuffer, indexBuffer, meshes, meshlets );
-	DeinterleaveVertexBuffer( modelVertices, vertexBuffer );
-	// TODO: write to file compressed
+	{
+		DirectX::BoundingBox aabb = {};
+		const vector<u8> glbData = SysReadFile( glbPath );
+		LoadGlbFile( glbData, aabb, modelVertices, modelIndices, textureData, catalogue );
+		meshes.push_back( {} );
+		mesh& m = meshes[ std::size( meshes ) - 1 ];
+		m.vertexCount = std::size( modelVertices );
+		m.vertexOffset = std::size( vertexBuffer );
+		m.center = aabb.Center;
+		m.radius = XMVectorGetX( XMVector3Length( XMLoadFloat3( &aabb.Extents ) ) );
+		std::vector<mesh_lod> meshLods;
+		MeshoptMakeLods( modelVertices, std::size( m.lods ), modelIndices, indexBuffer, meshLods );
+		m.lodCount = std::size( meshLods );
+		for( u64 i = 0; i < m.lodCount; ++i )
+		{
+			m.lods[ i ] = meshLods[ i ];
+		}
+	}
+	vector<material_data> materials( std::size( catalogue ) );
+	for( u64 m = 0; m < std::size( materials ); ++m )
+	{
+		materials[ m ].baseColFactor = *(const vec3*) &catalogue[ m ].baseColorFactor;
+		materials[ m ].metallicFactor = catalogue[ m ].metallicFactor;
+		materials[ m ].roughnessFactor = catalogue[ m ].roughnessFactor;
+		materials[ m ].baseColIdx = m + 0;
+		materials[ m ].occRoughMetalIdx = m + 1;
+		materials[ m ].normalMapIdx = m + 2;
+	}
+	vertexBuffer.insert( std::end( vertexBuffer ), std::begin( modelVertices ), std::end( modelVertices ) );
 	// TODO: move to independent buffer 
 	MakeDebugGeometryBuffer( vertexBuffer, indexBuffer, meshes );
 	
 	constexpr u32 meshCount = 1;// std::size( MODEL_FILES );
 
-	drawCount = 4;
+	drawCount = 1;
 	float sceneRadius = 40.0f;
 
 	vector<draw_data> drawArgs( drawCount );
@@ -2746,15 +2274,16 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 	srand( 42 );
 	constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
 
-	for( draw_data& d : drawArgs ){
+	for( draw_data& d : drawArgs )
+	{
 		d.meshIdx = 0;// rand() % meshCount;
 		d.bndVolMeshIdx = 1;
 		d.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		d.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		d.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius + 40;
-		d.scale = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+		d.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		d.scale = 1.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
 
-		DirectX::XMVECTOR axis = DirectX::XMVector3Normalize( 
+		DirectX::XMVECTOR axis = DirectX::XMVector3Normalize(
 			DirectX::XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
 								  float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
 								  float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
@@ -2765,16 +2294,17 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 		DirectX::XMStoreFloat4( &d.rot, quat );
 	}
 	// TODO: draw from transparent only pipe ?
-	if constexpr( 0 ){
-		draw_data& d = drawArgs[ drawArgs.size() - 1 ];
-		d.meshIdx = 5;
+	if constexpr( 0 )
+	{
+		draw_data& d = drawArgs[ std::size( drawArgs ) - 1 ];
+		d.meshIdx = 2;
 
 		d.pos.x = 0;
 		d.pos.y = 0;
 		d.pos.z = -50.0f;
 		d.scale = 100.0f;
 
-		DirectX::XMVECTOR quat = DirectX::XMQuaternionRotationNormal( DirectX::XMVectorSet( 1, 0, 0, 0 ), 0 );
+		DirectX::XMVECTOR quat = DirectX::XMQuaternionIdentity();
 		DirectX::XMStoreFloat4( &d.rot, quat );
 	}
 
@@ -2871,9 +2401,10 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 													  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 													  &vkRscArena );
 
-
+	//const u64 vtxBuffSize = std::size( vertexBuffer ) * sizeof( vertexBuffer[ 0 ] );
+	//const u64 alignedSize = FwdAlign( vtxBuffSize, dc.gpuProps.limits.minStorageBufferOffsetAlignment );
 	buffer_region buffRegs[] = { 
-		vertexBuffer.positions, vertexBuffer.normals, vertexBuffer.uvms,
+		vertexBuffer,
 		indexBuffer, 
 		meshes, 
 		meshlets.meshlets, meshlets.vtxIndirBuf, meshlets.triangleBuf, 
@@ -2903,10 +2434,10 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 										  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
 										  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 										  &vkRscArena );
-	// TODO: make sexyer
-	// TODO: enforce order somehow
+	
+
 	geoMegaBuffPtrs = {
-		&vtxPosBuff, &vtxNormBuff, &vtxUvBuff,
+		&vertexBuff,
 		&indexBuff,
 		&meshBuff,
 		&meshletBuff, &meshletVtxBuff, &meshletTrisBuff,
@@ -2925,29 +2456,38 @@ static void VkInitAndUploadResources( VkDevice vkDevice )// const buffer_data& s
 	// TODO: find better soln
 	u64 stagingOffset = geoBuffSize;
 	std::memcpy( stagingBuff.hostVisible + stagingOffset, lights, sizeof( lights ) );
-
+	
 	stagingOffset += sizeof( lights );
-	assert( std::size( textureData ) );
+	if( std::size( textureData ) == 0 ) return;
 	std::memcpy( stagingBuff.hostVisible + stagingOffset, std::data( textureData ), std::size( textureData ) );
-
-	imgCopyRegions.resize( std::size( album ) );
-	textures.resize( std::size( album ) );
-	for( u64 i = 0; i < std::size( album ); ++i ){
-		VkExtent3D size = { u32( album[ i ].width ), u32( album[ i ].height ), 1 };
-		assert( size.width && size.height );
-		textures[ i ] = ( VkCreateAllocBindImage( album[ i ].format,
-												  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-												  size, 1,
-												  &vkAlbumArena ) );
-		imgCopyRegions[ i ].bufferOffset = stagingOffset + album[ i ].bufferOffset;
-		imgCopyRegions[ i ].bufferRowLength = 0;
-		imgCopyRegions[ i ].bufferImageHeight = 0;
-		imgCopyRegions[ i ].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		imgCopyRegions[ i ].imageSubresource.mipLevel = 0;
-		imgCopyRegions[ i ].imageSubresource.baseArrayLayer = 0;
-		imgCopyRegions[ i ].imageSubresource.layerCount = 1;
-		imgCopyRegions[ i ].imageOffset = VkOffset3D{};
-		imgCopyRegions[ i ].imageExtent = size;
+	
+	imgCopyRegions.resize( std::size( catalogue ) * 3 );
+	textures.resize( std::size( catalogue ) * 3 );
+	for( u64 i = 0; i < std::size( catalogue ); ++i )
+	{
+		u64 imgIdx = 0;
+		for( const image_metadata& meta : catalogue[ i ].textureMeta )
+		{
+			VkExtent3D size = { u32( meta.width ), u32( meta.height ), 1 };
+			assert( size.width && size.height );
+			VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+			textures[ i * 3 + imgIdx ] = ( VkCreateAllocBindImage( format,
+																   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+																   size, 1,
+																   &vkAlbumArena ) );
+	
+			imgCopyRegions[ i * 3 + imgIdx ].bufferOffset = stagingOffset + meta.texBinRange.offset;
+			imgCopyRegions[ i * 3 + imgIdx ].bufferRowLength = 0;
+			imgCopyRegions[ i * 3 + imgIdx ].bufferImageHeight = 0;
+			imgCopyRegions[ i * 3 + imgIdx ].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			imgCopyRegions[ i * 3 + imgIdx ].imageSubresource.mipLevel = 0;
+			imgCopyRegions[ i * 3 + imgIdx ].imageSubresource.baseArrayLayer = 0;
+			imgCopyRegions[ i * 3 + imgIdx ].imageSubresource.layerCount = 1;
+			imgCopyRegions[ i * 3 + imgIdx ].imageOffset = VkOffset3D{};
+			imgCopyRegions[ i * 3 + imgIdx ].imageExtent = size;
+	
+			++imgIdx;
+		}
 	}
 }
 
@@ -2990,17 +2530,32 @@ static vk_program	drawcullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
 static vk_program	tonemapCompProgram = {};
-
-static vk_shader	vs = {};
-static vk_shader	pbrFs = {};
-static vk_shader	normalColFs = {};
-static vk_shader	drawCullCs = {};
-static vk_shader	depthPyramidCs = {};
-static vk_shader	avgLumCs = {};
-static vk_shader	tonemapCs = {};
-
 static vk_program	depthPyramidMultiProgram = {};
-static vk_shader	depthMultiCs = {};
+
+enum shader_idx : u8
+{
+	VERT_BINDLESS = 0,
+	FRAG_PBR = 1,
+	COMP_CULL = 2,
+	COMP_HIZ_MIPS = 3,
+	COMP_HIZ_MIPS_POW2 = 4,
+	COMP_LUMINANCE = 5,
+	COMP_TONE_GAMMA = 6,
+	FRAG_NORMAL_COL = 7
+};
+
+constexpr char* shaderFiles[] =
+{
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\shdr.vert.glsl.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\draw_cull.comp.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\pow2_downsampler.comp.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\avg_luminance.comp.spv",
+	 "D:\\EichenRepos\\QiY\\QiY\\Shaders\\tonemap_gamma.comp.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\normal_col.frag.spv"
+};
+
 
 // TODO: gfx_api_instance ?
 struct vk_instance
@@ -3139,70 +2694,73 @@ static void VkBackendInit()
 
 	VkPipelineCache pipelineCache = 0;
 
-	constexpr char vertPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\shdr.vert.glsl.spv";
-	constexpr char pbrFragPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl.spv";
-	constexpr char drawCullPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\draw_cull.comp.spv";
-	constexpr char depthPyramidPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv";
-	constexpr char pow2DownsamplerPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pow2_downsampler.comp.spv";
-	constexpr char avgLumPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\avg_luminance.comp.spv";
-	constexpr char tonemapPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\tonemap_gamma.comp.spv";
-	constexpr char normalColPath[] = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\normal_col.frag.spv";
-
-	vs = VkLoadShader( vertPath, dc.device );
-	pbrFs = VkLoadShader( pbrFragPath, dc.device );
-	drawCullCs = VkLoadShader( drawCullPath, dc.device );
-	depthPyramidCs = VkLoadShader( depthPyramidPath, dc.device );
-	avgLumCs = VkLoadShader( avgLumPath, dc.device );
-	tonemapCs = VkLoadShader( tonemapPath, dc.device );
-	normalColFs = VkLoadShader( normalColPath, dc.device );
+	vector<vk_shader> shaders( std::size( shaderFiles ) );
+	for( u64 i = 0; i < std::size( shaders ); ++i ) shaders[ i ] = VkLoadShader( shaderFiles[ i ], dc.device );
 
 
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
 
-	gfxOpaqueProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vs, &pbrFs } );
-	drawcullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCullCs } );
-	depthPyramidCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthPyramidCs } );
-	avgLumCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLumCs } );
-	tonemapCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &tonemapCs } );
+	gfxOpaqueProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS,
+											  { &shaders[ VERT_BINDLESS ], &shaders[ FRAG_PBR ] } );
+	drawcullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE,
+												 { &shaders[ COMP_CULL ] } );
+	depthPyramidCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, 
+													 { &shaders[ COMP_HIZ_MIPS ] } );
+	avgLumCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, 
+											   { &shaders[ COMP_LUMINANCE ] } );
+	tonemapCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, 
+												{ &shaders[ COMP_TONE_GAMMA ] } );
 
 
-	rndCtx.gfxPipeline = VkMakeGfxPipeline( dc.device, pipelineCache, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, vs.module, pbrFs.module );
+	rndCtx.gfxPipeline = 
+		VkMakeGfxPipeline( dc.device, pipelineCache, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, 
+						   shaders[ VERT_BINDLESS ].module, shaders[ FRAG_PBR ].module );
 	rndCtx.compPipeline = 
-		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, drawCullCs.module, {OBJ_CULL_WORKSIZE,0 } );
+		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, 
+							   shaders[ COMP_CULL ].module, {OBJ_CULL_WORKSIZE,0 } );
 	rndCtx.compLatePipeline = 
-		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, drawCullCs.module, {OBJ_CULL_WORKSIZE,1 } );
+		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, 
+							   shaders[ COMP_CULL ].module, {OBJ_CULL_WORKSIZE,1 } );
 
 	if constexpr( !multiShaderDepthPyramid )
 	{
 		rndCtx.compHiZPipeline =
-			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidCompProgram.pipeLayout, depthPyramidCs.module, {} );
+			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidCompProgram.pipeLayout, 
+								   shaders[ COMP_HIZ_MIPS ].module, {} );
 	}
 	else
 	{
-		depthMultiCs = VkLoadShader( pow2DownsamplerPath, dc.device );
-		depthPyramidMultiProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &depthMultiCs } );
+		depthPyramidMultiProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, 
+														  { &shaders[ COMP_HIZ_MIPS_POW2 ] } );
 		rndCtx.compHiZPipeline = 
-			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidMultiProgram.pipeLayout, depthMultiCs.module, {} );
+			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidMultiProgram.pipeLayout, 
+								   shaders[ COMP_HIZ_MIPS_POW2 ].module, {} );
 	}
 
-	debugGfxProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vs, &normalColFs } );
+	debugGfxProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, 
+											 { &shaders[ VERT_BINDLESS ], &shaders[ FRAG_NORMAL_COL ] } );
 	rndCtx.gfxBVDbgDrawPipeline = VkMakeGfxPipeline( dc.device,
 													 pipelineCache,
 													 rndCtx.renderPass,
 													 debugGfxProgram.pipeLayout,
-													 vs.module,
-													 normalColFs.module,
+													 shaders[ VERT_BINDLESS ].module,
+													 shaders[ FRAG_NORMAL_COL ].module,
 													 VK_POLYGON_MODE_FILL,
 													 1, 0 );
 
 	rndCtx.compAvgLumPipe = 
-		VkMakeComputePipeline( dc.device, pipelineCache, avgLumCompProgram.pipeLayout, avgLumCs.module, { dc.waveSize } );
+		VkMakeComputePipeline( dc.device, pipelineCache, avgLumCompProgram.pipeLayout, 
+							   shaders[ COMP_LUMINANCE ].module, { dc.waveSize } );
 	rndCtx.compTonemapPipe =
-		VkMakeComputePipeline( dc.device, pipelineCache, tonemapCompProgram.pipeLayout, tonemapCs.module, {} );
+		VkMakeComputePipeline( dc.device, pipelineCache, tonemapCompProgram.pipeLayout, 
+							   shaders[ COMP_TONE_GAMMA ].module, {} );
 
 	VkInitVirutalFrames( dc.device, dc.gfxQueueIdx, rndCtx.vrtFrames, rndCtx.framesInFlight );
 
 	VkInitAndUploadResources( dc.device );
+
+
+	for( vk_shader& s : shaders ) vkDestroyShaderModule( dc.device, s.module, 0 );
 }
 
 inline VkImageMemoryBarrier
@@ -3697,6 +3255,8 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	//VkResult hostSync = vkWaitSemaphores( dc.device, &semaWaitInfo, 1'000'000'000 );
 	//VK_CHECK( ( hostSync - VK_TIMEOUT ) > 0 );
 
+	u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
+
 	u64 currentFrameIdx = rndCtx.vFrameIdx;
 	virtual_frame& currentVFrame = rndCtx.vrtFrames[ rndCtx.vFrameIdx ];
 	rndCtx.vFrameIdx = ( rndCtx.vFrameIdx + 1 ) % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
@@ -3718,6 +3278,9 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 														 VK_IMAGE_USAGE_SAMPLED_BIT,
 														 sc.scRes, 1,
 														 &vkAlbumArena );
+			u32 depthPyrWidth = 0;
+			u32 depthPyrHeight = 0;
+			u32 depthPyrMipCount = 0;
 			// TODO: place depth pyr elsewhere 
 			if constexpr( !multiShaderDepthPyramid ){
 				// TODO: make conservative ?

@@ -9,6 +9,8 @@
 #define STRINGIZE2(x) #x
 #define LINE_STR STRINGIZE(__LINE__)
 
+#define RUNTIME_ERR_LINE_FILE_STR ">>>RUNTIME_ERROR<<<\nLine: " LINE_STR", File: " __FILE__
+
 // NOTE: doesn't work with arrays passed as pointers in args
 #define POPULATION( arr ) (u64) sizeof( arr )/ sizeof( arr[0] )
 
@@ -26,6 +28,10 @@
 
 struct cam_frustum;
 struct global_data;
+namespace std
+{
+	template<class, class> class vector;
+}
 
 //////////////////////////////////////
 // CONSTS
@@ -54,6 +60,7 @@ extern void*	SysGetProcAddr( u64 hDll, const char* procName );
 extern void		SysDbgPrint( const char* str );
 extern void		SysErrMsgBox( const char* str );
 extern u32		SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize );
-extern b32		SysIsPathRelative( const char* path );
 extern u8*		SysReadOnlyMemMapFile( const char* file );
 extern void		SysCloseMemMapFile( void* mmFile );
+extern std::vector<u8> SysReadFile( const char* fileName );
+extern u64		SysGetFileTimestamp( const char* filename );

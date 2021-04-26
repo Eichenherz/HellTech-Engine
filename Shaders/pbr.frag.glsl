@@ -21,17 +21,11 @@ layout( push_constant ) uniform block{
 
 layout( location = 0 ) in vec3 normal;
 layout( location = 1 ) in vec3 tan;
-layout( location = 2 ) in vec3 bitan;
-layout( location = 3 ) in vec3 worldPos;
-layout( location = 4 ) in vec2 uv;
-layout( location = 5 ) in flat uint mtlIdx;
+layout( location = 2 ) in vec3 worldPos;
+layout( location = 3 ) in vec2 uv;
+layout( location = 4 ) in flat uint mtlIdx;
 
 layout( location = 0 ) out vec4 oCol;
-
-
-
-const float invPi = 0.31830988618;
-const float PI  = 3.14159265359;
 
 
 vec4 SrgbToLinear( vec4 srgb )
@@ -43,7 +37,7 @@ vec4 SrgbToLinear( vec4 srgb )
 	return mix( higher, lower, cutoff );
 }
 // NOTE: inspired by Unreal 2013
-float RadiusFalloffAttenuation( float distSq, float lightRad )
+float DistRadiusAtten( float distSq, float lightRad )
 {
 	float invRadius = 1.0 / lightRad;
 	float invRadiusSq = invRadius * invRadius;
@@ -53,7 +47,7 @@ float RadiusFalloffAttenuation( float distSq, float lightRad )
 
 	return ( smoothFactor * smoothFactor ) / ( distSq + 1.0 );
 }
-float SpotAngleAttenuation( float spotLightCos, float cosInner, float cosOuter )
+float SpotAngleAtten( float spotLightCos, float cosInner, float cosOuter )
 {
 	float spotRange = 1.0 / max( cosInner - cosOuter, 1e-4 );
 	float spotOffset = -cosOuter / spotRange;
@@ -115,30 +109,33 @@ vec3 ComputeBrdfReflectance(
 	return ( specularBrdf + diffuseBrdf ) * NdotL;
 }
 
-
+  
 void main()
 {
 	material_data mtl = mtl_ref( g.addr + g.materialsOffset ).materials[ mtlIdx ];
 
 	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), 
 							uv );
-	vec3 metalRough = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.metalRoughIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
+	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
 							   uv ).rgb;
-	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), 
+	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
 								  uv ).rgb;
 
 	// TODO: when using baseCol.alpha sRGB->linear ?
 	baseCol = SrgbToLinear( baseCol );
+	baseCol *= vec4( mtl.baseColFactor, 1 );
 
 	vec3 t = normalize( tan );
-	vec3 b = normalize( bitan );
 	vec3 n = normalize( normal );
-
+	// NOTE: orthonormalize t wrt n
+	t = normalize( t - dot( t, n ) * n );
+	vec3 b = cross( n, t );
 	mat3 tbn = mat3( t, b, n );
+
 	vec3 bumpN = normalize( tbn * ( normalFromMap * 2.0 - 1.0 ) );
 
-	float surfMetalness = metalRough.b * mtl.metallicFactor;
-	float surfRoughness = metalRough.g * mtl.roughnessFactor;
+	float surfMetalness = orm.b * mtl.metallicFactor;
+	float surfRoughness = orm.g * mtl.roughnessFactor;
 
 	// TODO: draw lights bounding vol to find out
 	vec3 viewDir = normalize( cam.camPos - worldPos );
@@ -156,7 +153,7 @@ void main()
 	{
 		light_data l = light_ref( lightsBuffAddr ).lights[ i ];
 		vec3 posToLight = l.pos - worldPos;
-		vec3 radiance = l.col * RadiusFalloffAttenuation( dot( posToLight, posToLight ), l.radius );
+		vec3 radiance = l.col * DistRadiusAtten( dot( posToLight, posToLight ), l.radius );
 
 		reflectance += ComputeBrdfReflectance( normalize( posToLight ),
 											   diffCol,
@@ -168,26 +165,28 @@ void main()
 	oCol += vec4( reflectance, 1 );
 	
 
-	{
-		light_data flashlight = { cam.camPos, vec3( 500.0 ), 50.0 };
-		const vec2 spotCosInOut = cos( vec2( radians( 12.5 ), radians( 17.5 ) ) );
-		float spotCos = dot( viewDir, normalize( cam.camViewDir ) );
+	//{
+	//	light_data flashlight = { cam.camPos, vec3( 500.0 ), 50.0 };
+	//	const vec2 spotCosInOut = cos( vec2( radians( 12.5 ), radians( 17.5 ) ) );
+	//	float spotCos = dot( viewDir, normalize( cam.camViewDir ) );
+	//
+	//	vec3 posToLight = flashlight.pos - worldPos;
+	//	vec3 radiance = flashlight.col *
+	//		DistRadiusAtten( dot( posToLight, posToLight ), flashlight.radius ) *
+	//		SpotAngleAtten( spotCos, spotCosInOut.x, spotCosInOut.y );
+	//	vec3 flashReflectance = vec3( 0 );
+	//
+	//	flashReflectance = ComputeBrdfReflectance( normalize( posToLight ),
+	//											   diffCol,
+	//											   baseReflectivity,
+	//											   viewDir,
+	//											   bumpN,
+	//											   surfRoughness );
+	//
+	//	oCol += vec4( flashReflectance * radiance * uint( spotCos > spotCosInOut.y ), 1 );
+	//}
 
-		vec3 posToLight = flashlight.pos - worldPos;
-		vec3 radiance = flashlight.col *
-			RadiusFalloffAttenuation( dot( posToLight, posToLight ), flashlight.radius ) *
-			SpotAngleAttenuation( spotCos, spotCosInOut.x, spotCosInOut.y );
-		vec3 flashReflectance = vec3( 0 );
-
-		flashReflectance = ComputeBrdfReflectance( normalize( posToLight ),
-												   diffCol,
-												   baseReflectivity,
-												   viewDir,
-												   bumpN,
-												   surfRoughness );
-
-		oCol += vec4( flashReflectance * radiance * uint( spotCos > spotCosInOut.y ), 1 );
-	}
-
-	//oCol = vec4( ( n * 0.5 + 0.5 ) * 0.005, 1 );
+	//oCol = vec4( ( bumpN * 0.5 + 0.5 ) * 0.0015, 1 );
+	oCol = vec4( ( n * 0.5 + 0.5 ) * 0.0015, 1 );
+	//oCol = vec4( vec3( 1000 ), 1 );
 }

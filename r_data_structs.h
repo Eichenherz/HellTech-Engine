@@ -31,6 +31,9 @@ using uint = u32;
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_control_flow_attributes : require
 
+const float invPi = 0.31830988618;
+const float PI = 3.14159265359;
+
 #define ALIGNAS( x )
 
 #endif
@@ -47,9 +50,7 @@ struct global_data
 struct geometry_buffer_info
 {
 	uint64_t addr;
-	uint64_t posOffset;
-	uint64_t normOffset;
-	uint64_t uvsOffset;
+	uint64_t vtxOffset;
 	uint64_t idxOffset;
 	uint64_t meshesOffset;
 	uint64_t meshletsOffset;
@@ -58,8 +59,20 @@ struct geometry_buffer_info
 	uint64_t materialsOffset;
 	uint64_t drawArgsOffset;
 };
-//constexpr u64 s = sizeof( geometry_buffer_info );
-
+// TODO: compressed coords u8, u16
+struct vertex
+{
+	float px, py, pz;
+	float nx, ny, nz;
+	float tAngle;
+	float tu, tv;
+	float octaNormalX;
+	float octaNormalY;
+	uint mi;
+	//uint8_t snorm8OctaNormalX;
+	//uint8_t snorm8OctaNormalY;
+	//uint8_t snorm8TanAngle;
+};
 
 // TODO: rename
 ALIGNAS( 16 ) struct draw_data
@@ -84,16 +97,14 @@ struct light_data
 	float radius;
 };
 // TODO: mip-mapping
-// TODO: pbr renaming
 struct material_data
 {
 	vec3 baseColFactor;
 	float metallicFactor;
 	float roughnessFactor;
 	uint baseColIdx;
-	uint metalRoughIdx;
+	uint occRoughMetalIdx;
 	uint normalMapIdx;
-	uint aoMapIdx;
 	uint hash;
 };
 //constexpr u64 a = alignof( material_data );
@@ -131,7 +142,7 @@ struct mesh
 	uint materialOffset;
 
 	uint lodCount;
-	mesh_lod lods[ 8 ];
+	mesh_lod lods[ 4 ];
 };
 
 struct dispatch_command
@@ -213,6 +224,7 @@ struct avg_luminance_info
 #ifndef __cplusplus
 
 #ifdef GLOBAL_RESOURCES
+// TODO: vertex buffer and index buffer via descriptors ?
 //layout( set = 1, binding = 0, scalar ) readonly buffer pos_buffer{ vec3 positions[ 0 ]; } posBuffer[];
 //layout( set = 1, binding = 0, scalar ) readonly buffer norm_buffer{ vec3 normals[ 0 ]; } normBuffer[];
 layout( set = 1, binding = 1, std430 ) uniform global{ global_data g; } globalsCam[];
