@@ -55,18 +55,16 @@ inline float SignNonZero( float e )
 inline vec2 OctaNormalEncode( vec3 n )
 {
 	// NOTE: Project the sphere onto the octahedron, and then onto the xy plane
-	double invAbsNorm = 1.0f / ( std::abs( n.x ) + std::abs( n.y ) + std::abs( n.z ) );
-	float x = n.x * invAbsNorm;
-	float y = n.y * invAbsNorm;
+	float absLen = std::fabs( n.x ) + std::fabs( n.y ) + std::fabs( n.z );
+	float absNorm = ( absLen == 0.0f ) ? 0.0f : 1.0f / absLen;
+	float nx = n.x * absNorm;
+	float ny = n.y * absNorm;
 
 	// NOTE: Reflect the folds of the lower hemisphere over the diagonals
-	if( n.z < 0.0f )
-	{
-		x = SignNonZero( x ) - std::abs( y ) * SignNonZero( x );
-		y = SignNonZero( y ) - std::abs( x ) * SignNonZero( y );
-	}
-	return { x, y };
-	//return { x + y,x - y };
+	float octaX = ( n.z < 0.f ) ? ( 1.0f - std::fabs( ny ) ) * SignNonZero( nx ): nx;
+	float octaY = ( n.z < 0.f ) ? ( 1.0f - std::fabs( nx ) ) * SignNonZero( ny ): ny;
+	
+	return { octaX, octaY };
 }
 inline float EncodeTanToAngle( vec3 n, vec3 t )
 {
@@ -82,7 +80,10 @@ inline float EncodeTanToAngle( vec3 n, vec3 t )
 																	XMLoadFloat3( &tanRef ) ) );
 	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
 }
-
+u8 FloatToSnorm8( float e )
+{
+	return std::round( 127.5f + e * 127.5f );
+}
 
 struct meshlets_data
 {
@@ -154,7 +155,7 @@ inline u64 CountTextureBytesFromGlb( const cgltf_texture* t, const u8* pBin )
 	u64 imgSize = t->image->buffer_view->size;
 
 	u64 byteCount = 0;
-	string_view mimeType = { t->image->mime_type };
+	std::string_view mimeType = { t->image->mime_type };
 	if( mimeType == "image/png"sv )
 	{
 		png_decoder dcd( pBin + imgOffset, imgSize );
@@ -185,7 +186,7 @@ inline image_metadata LoadTextureFromGlb(
 	image_metadata imgInfo = {};
 	imgInfo.format = textureType;
 
-	string_view mimeType = { t->image->mime_type };
+	std::string_view mimeType = { t->image->mime_type };
 	if( mimeType == "image/png"sv )
 	{
 		png_decoder dcd( pBin + imgOffset, imgSize );
@@ -313,6 +314,7 @@ inline u64 CgltfCompTypeByteCount( cgltf_component_type compType )
 	case cgltf_component_type_r_8: case cgltf_component_type_r_8u: return 1;
 	case cgltf_component_type_r_16: case cgltf_component_type_r_16u: return 2;
 	case cgltf_component_type_r_32u: case cgltf_component_type_r_32f: return 4;
+	case cgltf_component_type_invalid: return -1;
 	}
 }
 inline float CgltfReadFloat( const u8* data, cgltf_component_type compType )
@@ -431,7 +433,7 @@ static void fixupIndices( std::vector<unsigned int>& indices, cgltf_primitive_ty
 // TODO: use gltfpack with no quant to merge meshes or do it by hand ?
 // TODO: rename mesh_primitive
 // TODO: use u16 idx
-// TODO: quantize data
+// TODO: quantize pos + uvs
 // TODO: general
 // TODO: improve, make safer ?
 static void
@@ -675,10 +677,11 @@ LoadGlbFile(
 				firstVertex[ i ].nx = nx;
 				firstVertex[ i ].ny = ny;
 				firstVertex[ i ].nz = nz;
-				firstVertex[ i ].tAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
+				firstVertex[ i ].tAngle = tanAngle;
 
-				firstVertex[ i ].octaNormalX = octaNormal.x;
-				firstVertex[ i ].octaNormalY = octaNormal.y;
+				firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
+				firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
+				firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
 			}
 			for( u64 i = 0; i < vtxAttrCount; ++i )
 			{
@@ -693,6 +696,79 @@ LoadGlbFile(
 	outAabb = aabb;
 }
 
+// TODO: mesh triangulate ?
+inline void MeshoptReindexMesh( std::vector<vertex>& vertices, std::vector<u32>& indices )
+{
+	u64 oldVtxCount = std::size( vertices );
+	u64 oldIdxCount = std::size( indices );
+	
+
+	std::vector<u32> remap( oldVtxCount );
+	u64 newVtxCount = meshopt_generateVertexRemap( std::data( remap ),
+												   std::data( indices ),
+												   oldIdxCount,
+												   std::data( vertices ),
+												   oldVtxCount,
+												   sizeof( vertices[ 0 ] ) );
+	assert( newVtxCount <= oldVtxCount );
+	if( newVtxCount == oldVtxCount ) return;
+
+	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), oldIdxCount, std::data( remap ) );
+	meshopt_remapVertexBuffer( std::data( vertices ), std::data( vertices ), oldVtxCount, sizeof( vertices[ 0 ] ), std::data( remap ) );
+	vertices.resize( newVtxCount );
+}
+
+static void MeshoptMakeLods( 
+	const std::vector<vertex>&	vertices,
+	u64							maxLodCount,
+	std::vector<u32>&			lodIndices,
+	std::vector<u32>&			idxBuffer,
+	std::vector<mesh_lod>&		outMeshLods )
+{
+	constexpr float ERROR_THRESHOLD = 1e-2f;
+	constexpr double expDecay = 0.85;
+
+	u64 meshLodsCount = 0;
+	std::vector<mesh_lod> meshLods( maxLodCount );
+	for( mesh_lod& lod : meshLods )
+	{
+		++meshLodsCount;
+		lod.indexOffset = std::size( idxBuffer );
+		lod.indexCount = std::size( lodIndices );
+
+		idxBuffer.insert( std::end( idxBuffer ), std::begin( lodIndices ), std::end( lodIndices ) );
+
+		if( meshLodsCount < maxLodCount )
+		{
+			u64 nextIndicesTarget = u64( double( std::size( lodIndices ) ) * expDecay );
+			u64 nextIndices = meshopt_simplify( std::data( lodIndices ),
+												std::data( lodIndices ),
+												std::size( lodIndices ),
+												&vertices[ 0 ].px,
+												std::size( vertices ),
+												sizeof( vertex ),
+												nextIndicesTarget,
+												ERROR_THRESHOLD );
+
+			assert( nextIndices <= std::size( lodIndices ) );
+
+			// NOTE: reached the error bound
+			if( nextIndices == std::size( lodIndices ) ) break;
+
+			lodIndices.resize( nextIndices );
+			meshopt_optimizeVertexCache( std::data( lodIndices ),
+										 std::data( lodIndices ),
+										 std::size( lodIndices ),
+										 std::size( vertices ) );
+		}
+	}
+	assert( meshLodsCount <= maxLodCount );
+	meshLods.resize( meshLodsCount );
+
+	outMeshLods = std::move( meshLods );
+}
+
+// TODO: meshlets
 u32 MeshoptBuildMeshlets( const std::vector<vertex>& vtx, const std::vector<u32>& indices, meshlets_data& mlets )
 {
 	constexpr u64 MAX_VERTICES = 128;
@@ -756,82 +832,6 @@ u32 MeshoptBuildMeshlets( const std::vector<vertex>& vtx, const std::vector<u32>
 	return std::size( meshlets );
 }
 
-inline void MeshoptReindexMesh( std::vector<vertex>& vertices, std::vector<u32>& indices )
-{
-	u64 initialSize = std::size( vertices );
-	i64 padding = 3 - initialSize % 3;
-	//for( i64 i = 0; i < padding; ++i ) triCache.push_back( triCache.back() );
-
-
-	u64 idxCount = std::size( vertices );
-	std::vector<u32> remap( idxCount );
-	u64 vtxCount = meshopt_generateVertexRemap( std::data( remap ), 0,
-												idxCount,
-												std::data( vertices ),
-												idxCount,
-												sizeof( vertex ) );
-
-	if( vtxCount < initialSize )
-	{
-		std::vector<vertex> verts( vtxCount );
-		indices.resize( idxCount );
-
-		meshopt_remapVertexBuffer( std::data( verts ), std::data( verts ), idxCount, sizeof( vertex ), std::data( remap ) );
-		meshopt_remapIndexBuffer( std::data( indices ), 0, idxCount, std::data( remap ) );
-		vertices = std::move( verts );
-	}
-}
-
-static void MeshoptMakeLods( 
-	const std::vector<vertex>&	vertices,
-	u64							maxLodCount,
-	std::vector<u32>&			lodIndices,
-	std::vector<u32>&			idxBuffer,
-	std::vector<mesh_lod>&		outMeshLods )
-{
-	constexpr float ERROR_THRESHOLD = 1e-2f;
-	constexpr double expDecay = 0.85;
-
-	u64 meshLodsCount = 0;
-	std::vector<mesh_lod> meshLods( maxLodCount );
-	for( mesh_lod& lod : meshLods )
-	{
-		++meshLodsCount;
-		lod.indexOffset = std::size( idxBuffer );
-		lod.indexCount = std::size( lodIndices );
-
-		idxBuffer.insert( std::end( idxBuffer ), std::begin( lodIndices ), std::end( lodIndices ) );
-
-		if( meshLodsCount < maxLodCount )
-		{
-			u64 nextIndicesTarget = u64( double( std::size( lodIndices ) ) * expDecay );
-			u64 nextIndices = meshopt_simplify( std::data( lodIndices ),
-												std::data( lodIndices ),
-												std::size( lodIndices ),
-												&vertices[ 0 ].px,
-												std::size( vertices ),
-												sizeof( vertex ),
-												nextIndicesTarget,
-												ERROR_THRESHOLD );
-
-			assert( nextIndices <= std::size( lodIndices ) );
-
-			// NOTE: reached the error bound
-			if( nextIndices == std::size( lodIndices ) ) break;
-
-			lodIndices.resize( nextIndices );
-			meshopt_optimizeVertexCache( std::data( lodIndices ),
-										 std::data( lodIndices ),
-										 std::size( lodIndices ),
-										 std::size( vertices ) );
-		}
-	}
-	assert( meshLodsCount <= maxLodCount );
-	meshLods.resize( meshLodsCount );
-
-	outMeshLods = std::move( meshLods );
-}
-
 // TODO:
 static void MeshoptMakeMeshlets( 
 	const std::vector<vertex>& vertices, 
@@ -851,26 +851,25 @@ static void MeshoptMakeMeshlets(
 	}
 }
 
-void MeshoptOptimizeAndLodMesh(
+inline void MeshoptOptimizeMesh(
 	std::vector<vertex>& vertices,
-	std::vector<u32>& indices,
-	std::vector<u32>& idxBuffer,
-	meshlets_data& mlets )
+	std::vector<u32>& indices )
 {
-	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), std::size( indices ), std::size( vertices ) );
+	u64 vtxCount = std::size( vertices );
+	u64 idxCount = std::size( indices );
+
+	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), idxCount, vtxCount );
 	meshopt_optimizeOverdraw( std::data( indices ),
 							  std::data( indices ),
-							  std::size( indices ),
+							  idxCount,
 							  &vertices[ 0 ].px,
-							  std::size( vertices ),
-							  sizeof( vertex ),
+							  vtxCount,
+							  sizeof( vertices[ 0 ] ),
 							  1.05f );
 	meshopt_optimizeVertexFetch( std::data( vertices ),
 								 std::data( indices ),
-								 std::size( indices ),
+								 idxCount,
 								 std::data( vertices ),
-								 std::size( vertices ),
-								 sizeof( vertex ) );
-
-
+								 vtxCount,
+								 sizeof( vertices[ 0 ] ) );
 }

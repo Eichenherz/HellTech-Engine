@@ -16,3 +16,11 @@ QiY.vcxproj.filters
 QiY.vcxproj.user
 
 VTune Profiler Results/
+
+miniz.c
+
+miniz.h
+
+spng.c
+
+spng.h

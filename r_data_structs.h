@@ -62,16 +62,20 @@ struct geometry_buffer_info
 // TODO: compressed coords u8, u16
 struct vertex
 {
-	float px, py, pz;
-	float nx, ny, nz;
+	float px;
+	float py;
+	float pz;
+	float nx;
+	float ny;
+	float nz;
 	float tAngle;
-	float tu, tv;
-	float octaNormalX;
-	float octaNormalY;
+	float tu;
+	float tv;
 	uint mi;
-	//uint8_t snorm8OctaNormalX;
-	//uint8_t snorm8OctaNormalY;
-	//uint8_t snorm8TanAngle;
+	uint8_t snorm8octNx;
+	uint8_t snorm8octNy;
+	uint8_t snorm8tanAngle;
+	uint8_t pad;
 };
 
 // TODO: rename

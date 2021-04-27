@@ -2262,7 +2262,7 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 	}
 	vertexBuffer.insert( std::end( vertexBuffer ), std::begin( modelVertices ), std::end( modelVertices ) );
 	// TODO: move to independent buffer 
-	MakeDebugGeometryBuffer( vertexBuffer, indexBuffer, meshes );
+	//MakeDebugGeometryBuffer( vertexBuffer, indexBuffer, meshes );
 	
 	constexpr u32 meshCount = 1;// std::size( MODEL_FILES );
 
