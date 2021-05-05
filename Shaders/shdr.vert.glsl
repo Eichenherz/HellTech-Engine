@@ -40,7 +40,7 @@ vec2 SignNonZero( vec2 e )
 }
 float Snorm8ToFloat( uint8_t x )
 {
-	return float( x ) / 127.0 - 1.0;
+	return float( uint( x ) ) * ( 1.0 / 127.0 ) - 1.0;
 }
 vec3 DecodeOctaNormal( vec2 octa )
 {
@@ -53,8 +53,6 @@ vec3 DecodeOctaNormal( vec2 octa )
 	//n.y += ( n.y > 0.0 ) ? -t : t;                   
 	
 	return normalize( n );
-	//vec2 t = vec2( octa.x + octa.y, octa.x - octa.y );
-	//return normalize( vec3( t, 2.0 - abs( t.x ) - abs( t.y ) ) );
 }
 vec2 EncodeOctaNormal( vec3 n )
 {
@@ -62,8 +60,6 @@ vec2 EncodeOctaNormal( vec3 n )
 	vec2 octa = n.xy * ( 1.0 / ( abs( n.x ) + abs( n.y ) + abs( n.z ) ) );
 	// NOTE: Reflect the folds of the lower hemisphere over the diagonals
 	return ( n.z < 0.0 ) ? ( SignNonZero( octa ) - abs( octa.yx ) * SignNonZero( octa ) ) : octa;
-	//vec2 t = n.xy * ( 1.0 / ( abs( n.x ) + abs( n.y ) + abs( n.z ) ) );
-	//return vec2( t.x + t.y, t.x - t.y );
 }
 
 vec3 DecodeTanFromAngle( vec3 n, float tanAngle )
@@ -81,12 +77,10 @@ void main()
 {
 	vertex vtx = vtx_ref( g.addr + g.vtxOffset ).vertices[ gl_VertexIndex ];
 	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
-	vec3 normal = vec3( vtx.nx, vtx.ny, vtx.nz );
-
+	//vec3 normal = vec3( vtx.nx, vtx.ny, vtx.nz );
+	vec2 octaNormal = vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) );
+	vec3 norm = DecodeOctaNormal( octaNormal );
 	//vec3 norm = normal;
-	vec3 norm = DecodeOctaNormal( EncodeOctaNormal( normal ) );
-	vec2 octaNormal = vec2( vtx.octaNormalX, vtx.octaNormalY );
-	//vec3 norm = DecodeOctaNormal( octaNormal );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
 	uint di = drawCmd[ gl_DrawIDARB ].drawIdx;
@@ -97,7 +91,8 @@ void main()
 	gl_Position = cam.proj * cam.view * vec4( worldPos, 1.0 );
 
 	vec3 n = normalize( norm );
-	vec3 t = DecodeTanFromAngle( norm, vtx.tAngle );
+	//vec3 t = DecodeTanFromAngle( norm, vtx.tAngle );
+	vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
 	t = normalize( RotateQuat( t, args.rot ) );
 	n = normalize( RotateQuat( n, args.rot ) );
 

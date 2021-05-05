@@ -217,6 +217,7 @@ struct render_context
 	VkPipeline		gfxTranspPipe;
 	VkPipeline		compAvgLumPipe;
 	VkPipeline		compTonemapPipe;
+	VkPipeline		compBc7CompressorPipe;
 	VkRenderPass	renderPass;
 	VkRenderPass	render2ndPass;
 
@@ -335,8 +336,7 @@ VkFindMemTypeIdx(
 
 		VkMemoryPropertyFlags props = pVkMemProps->memoryTypes[ memIdx ].propertyFlags;
 		b32 hasRequiredProps = ( props & requiredProps ) == requiredProps;
-		if( isRequiredMemType && hasRequiredProps )
-			return (i32) memIdx;
+		if( isRequiredMemType && hasRequiredProps ) return (i32) memIdx;
 	}
 
 	VK_CHECK( VK_INTERNAL_ERROR( "Memory type unmatch !" ) );
@@ -677,17 +677,18 @@ VkCreateAllocBindImage(
 #define WIN32
 #include "spirv_reflect.h"
 #undef WIN32
-// TODO: convention entry point = "main" ?
+// TODO: variable entry point
 constexpr char SHADER_ENTRY_POINT[] = "main";
 
 // TODO: cache shader ?
 struct vk_shader
 {
-	VkShaderModule			module;
-	vector<u8>				spvByteCode;
+	VkShaderModule	module;
+	vector<u8>		spvByteCode;
 	// TODO: use this ? or keep hardcoded in MakePipeline func
 	//VkShaderStageFlagBits	stage;
-	u64						timestamp;
+	u64				timestamp;
+	char			entryPointName[ 32 ];
 };
 
 // TODO: where to place this ?
@@ -736,14 +737,12 @@ enum vk_global_descriptor_slot : u8
 	VK_GLOBAL_SLOT_SAMPLER = 3,
 	VK_GLOBAL_SLOT_COUNT = 4
 };
-
 constexpr VkDescriptorType globalDescTable[ VK_GLOBAL_SLOT_COUNT ] = {
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 	VK_DESCRIPTOR_TYPE_SAMPLER
 };
-
 constexpr u64 GLOBAL_DESC_SET = 1;
 
 // TODO: add more ?
@@ -957,13 +956,16 @@ inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice 
 	return shader;
 }
 
+// TODO: rewrite the whole shader pipe system
 // TODO: rewrite 
 inline static void VkReflectShaderLayout(
 	const VkPhysicalDeviceProperties&			gpuProps,
 	const vector<u8>&							spvByteCode,
 	vector<VkDescriptorSetLayoutBinding>&		descSetBindings,
 	vector<VkPushConstantRange>&				pushConstRanges,
-	group_size&									gs )
+	group_size&									gs,
+	char*										entryPointName,
+	u64											entryPointNameStrLen )
 {
 	SpvReflectShaderModule shaderReflection;
 	VK_CHECK( (VkResult) spvReflectCreateShaderModule( std::size( spvByteCode ) * sizeof( spvByteCode[ 0 ] ),
@@ -972,12 +974,14 @@ inline static void VkReflectShaderLayout(
 
 	SpvReflectDescriptorSet& set = shaderReflection.descriptor_sets[ 0 ];
 
-	for( u64 bindingIdx = 0; bindingIdx < set.binding_count; ++bindingIdx ){
+	for( u64 bindingIdx = 0; bindingIdx < set.binding_count; ++bindingIdx )
+	{
 		if( set.set > 0 ) continue;
 
-		SpvReflectDescriptorBinding& descBinding = *set.bindings[ bindingIdx ];
+		const SpvReflectDescriptorBinding& descBinding = *set.bindings[ bindingIdx ];
 
-		if( bindingIdx < std::size( descSetBindings ) ){
+		if( bindingIdx < std::size( descSetBindings ) )
+		{
 			// NOTE: if binding matches, assume the same resource will be used in multiple shaders in the same pipeline/program
 			// TODO: should VK_CHECK here ?
 			assert( descSetBindings[ bindingIdx ].descriptorType == VkDescriptorType( descBinding.descriptor_type ) );
@@ -993,8 +997,8 @@ inline static void VkReflectShaderLayout(
 		descSetBindings.push_back( binding );
 	}
 
-	// TODO: more push const blocks ?
-	if( shaderReflection.push_constant_block_count ){
+	if( shaderReflection.push_constant_block_count )
+	{
 		VkPushConstantRange pushConstRange = {};
 		pushConstRange.offset = shaderReflection.push_constant_blocks[ 0 ].offset;
 		pushConstRange.size = shaderReflection.push_constant_blocks[ 0 ].size;
@@ -1004,20 +1008,21 @@ inline static void VkReflectShaderLayout(
 		pushConstRanges.push_back( pushConstRange );
 	}
 
-	if( VkShaderStageFlags( shaderReflection.shader_stage ) == VK_SHADER_STAGE_COMPUTE_BIT ){
-		assert( !( gs.localSizeX && gs.localSizeY && gs.localSizeZ ) );
-		gs = {	shaderReflection.entry_points[ 0 ].local_size.x,
-				shaderReflection.entry_points[ 0 ].local_size.y,
-				shaderReflection.entry_points[ 0 ].local_size.z };
-	}
+	assert( shaderReflection.entry_point_count == 1 );
+	const SpvReflectEntryPoint& entryPoint = shaderReflection.entry_points[ 0 ];
+	assert( std::strlen( entryPoint.name ) <= entryPointNameStrLen );
+	std::memcpy( entryPointName, entryPoint.name, entryPointNameStrLen );
+	if( VkShaderStageFlags( shaderReflection.shader_stage ) == VK_SHADER_STAGE_COMPUTE_BIT )
+		gs = { entryPoint.local_size.x, entryPoint.local_size.y, entryPoint.local_size.z };
+
 	spvReflectDestroyShaderModule( &shaderReflection );
 }
 
 // TODO: map spec consts ?
-using vk_shader_list = std::initializer_list<const vk_shader*>;
+using vk_shader_list = std::initializer_list<vk_shader*>;
 using vk_specializations = std::initializer_list<u64>;
 
-
+// TODO: bindlessLayout only for the shaders that use it ?
 vk_program VkMakePipelineProgram(
 	VkDevice							vkDevice,
 	const VkPhysicalDeviceProperties&	gpuProps,
@@ -1033,7 +1038,14 @@ vk_program VkMakePipelineProgram(
 	vector<VkPushConstantRange>	pushConstRanges;
 	group_size gs = {};
 	
-	for( const vk_shader* s : shaders ) VkReflectShaderLayout( gpuProps, s->spvByteCode, bindings, pushConstRanges, gs );
+	for( vk_shader* s : shaders )
+		VkReflectShaderLayout( gpuProps, 
+							   s->spvByteCode, 
+							   bindings, 
+							   pushConstRanges, 
+							   gs, 
+							   s->entryPointName, 
+							   std::size( s->entryPointName ) );
 
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {};
 	descSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1098,23 +1110,25 @@ inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
 inline static VkSpecializationInfo
 VkMakeSpecializationInfo(
 	vector<VkSpecializationMapEntry>& specializations,
-	vk_specializations& consts )
+	const vk_specializations& consts )
 {
-	specializations.resize( consts.size() );
-	for( u64 i = 0; i < consts.size(); ++i )
-		specializations[ i ] = { u32( i ), u32( i * sizeof( *consts.begin() ) ), u32( sizeof( *consts.begin() ) ) };
+	specializations.resize( std::size( consts ) );
+	u64 sizeOfASpecConst = sizeof( *std::cbegin( consts ) );
+	for( u64 i = 0; i < std::size( consts ); ++i )
+		specializations[ i ] = { u32( i ), u32( i * sizeOfASpecConst ), u32( sizeOfASpecConst ) };
 
 	VkSpecializationInfo specInfo = {};
 	specInfo.mapEntryCount = std::size( specializations );
-	specInfo.pMapEntries = specializations.data();
-	specInfo.dataSize = std::size( consts ) * sizeof( *consts.begin() );
-	specInfo.pData = consts.begin();
+	specInfo.pMapEntries = std::data( specializations );
+	specInfo.dataSize = std::size( consts ) * sizeOfASpecConst;
+	specInfo.pData = std::cbegin( consts );
 
 	return specInfo;
 }
 
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
+// TODO: entry point name
 VkPipeline VkMakeGfxPipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,
@@ -1231,7 +1245,8 @@ VkPipeline VkMakeComputePipeline(
 	VkPipelineCache		vkPipelineCache,
 	VkPipelineLayout	vkPipelineLayout,
 	VkShaderModule		cs,
-	vk_specializations	consts )
+	vk_specializations	consts,
+	const char*			pEntryPointName = SHADER_ENTRY_POINT )
 {
 	vector<VkSpecializationMapEntry> specializations;
 	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
@@ -1240,7 +1255,7 @@ VkPipeline VkMakeComputePipeline(
 	stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
 	stage.module = cs;
-	stage.pName = SHADER_ENTRY_POINT;
+	stage.pName = pEntryPointName;
 	stage.pSpecializationInfo = &specInfo;
 
 	VkComputePipelineCreateInfo compPipelineInfo = {};
@@ -1813,8 +1828,8 @@ static void GenerateIcosphere( vector<vertex>& vtxData, vector<u32>& idxData, u6
 	idxData = { std::begin( triangles ),std::end( triangles ) };
 
 	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * std::exp2( numIters ) );
-	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * std::exp2( 2 * numIters ) );
-	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * std::exp2( 2 * numIters ) );
+	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
+	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
 	
 
 	for( u64 i = 0; i < numIters; ++i ){
@@ -2158,9 +2173,7 @@ struct buffer_region
 //constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\1.glb";
 //constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\2.glb";
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
-//constexpr char glbPath[] = "D:\\3d models\\cube_test.glb";
 //constexpr char glbPath[] = "WaterBottle.glb";
-//constexpr char glbPath[] = "D:\\3d models\\postwar_city_-_exterior_scene\\city.glb";
 
 template<typename T>
 struct hndl32
@@ -2218,6 +2231,17 @@ struct texture_manager : resource_manager<image>
 {
 
 };
+
+inline VkFormat GetVkFormat( texture_format_type t )
+{
+	switch( t )
+	{
+	case TEXTURE_FORMAT_RBGA8_SRGB: return VK_FORMAT_R8G8B8A8_SRGB;
+	case TEXTURE_FORMAT_RBGA8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
+	case TEXTURE_FORMAT_BC1_RGB_SRGB: return VK_FORMAT_BC1_RGB_SRGB_BLOCK;
+	case TEXTURE_FORMAT_BC5_UNORM: return VK_FORMAT_BC5_UNORM_BLOCK;
+	}
+}
 
 static u32 drawCount;
 static void VkInitAndUploadResources( VkDevice vkDevice )
@@ -2390,7 +2414,7 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 												  &vkRscArena );
 
-	objectVisibilityBuff = VkCreateAllocBindBuffer( ( dc.waveSize / 8 ) * std::ceil( float( drawCount ) / dc.waveSize ),
+	objectVisibilityBuff = VkCreateAllocBindBuffer( ( dc.waveSize / 8 ) * ceil( float( drawCount ) / dc.waveSize ),
 													VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 													VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 													&vkRscArena );
@@ -2470,7 +2494,12 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 		{
 			VkExtent3D size = { u32( meta.width ), u32( meta.height ), 1 };
 			assert( size.width && size.height );
-			VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+			// TODO: spec const for frag shaders
+			//VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+			//VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_BC1_RGB_SRGB_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
+			VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+			if( meta.format == PBR_TEXTURE_BASE_COLOR ) format = VK_FORMAT_BC1_RGB_SRGB_BLOCK;
+			else if ( meta.format == PBR_TEXTURE_NORMALS ) format = VK_FORMAT_BC5_UNORM_BLOCK;
 			textures[ i * 3 + imgIdx ] = ( VkCreateAllocBindImage( format,
 																   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 																   size, 1,
@@ -2552,7 +2581,7 @@ constexpr char* shaderFiles[] =
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\pow2_downsampler.comp.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\avg_luminance.comp.spv",
-	 "D:\\EichenRepos\\QiY\\QiY\\Shaders\\tonemap_gamma.comp.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\tonemap_gamma.comp.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\normal_col.frag.spv"
 };
 
@@ -2758,7 +2787,6 @@ static void VkBackendInit()
 	VkInitVirutalFrames( dc.device, dc.gfxQueueIdx, rndCtx.vrtFrames, rndCtx.framesInFlight );
 
 	VkInitAndUploadResources( dc.device );
-
 
 	for( vk_shader& s : shaders ) vkDestroyShaderModule( dc.device, s.module, 0 );
 }
@@ -3422,9 +3450,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 
 		assert( ( sizeof( geomBuffInfo ) / sizeof( u64 ) - 1 ) == std::size( geoMegaBuffPtrs ) );
 		u64* pGeoInfo = (u64*) &geomBuffInfo + 1;
-		for( u64 i = 0; i < std::size( geoMegaBuffPtrs ); ++i ){
-			pGeoInfo[ i ] = geoMegaBuffPtrs[ i ]->offset;
-		}
+		for( u64 i = 0; i < std::size( geoMegaBuffPtrs ); ++i ) pGeoInfo[ i ] = geoMegaBuffPtrs[ i ]->offset;
 		
 		// TODO: barrier ?
 		std::memcpy( hostComBuff.hostVisible + doubleBufferOffset * VK_MAX_FRAMES_IN_FLIGHT_ALLOWED, 
@@ -3450,14 +3476,17 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 
 		u64 updatesCount = 0;
 		VkWriteDescriptorSet updates[ VK_GLOBAL_SLOT_COUNT ] = {};
-		if( geomUbo.buffer ){
+		if( geomUbo.buffer )
+		{
 			updates[ updatesCount++ ] = VkMakeBindlessGlobalUpdate( &geomUbo, 1, VK_GLOBAL_SLOT_UNIFORM_BUFFER, 1 );
 		}
-		if( std::data( texDesc ) ){
-			updates[ updatesCount++ ] = 
+		if( std::data( texDesc ) )
+		{
+			updates[ updatesCount++ ] =
 				VkMakeBindlessGlobalUpdate( std::data( texDesc ), std::size( texDesc ), VK_GLOBAL_SLOT_SAMPLED_IMAGE );
 		}
-		if( samplerDesc.sampler ){
+		if( samplerDesc.sampler )
+		{
 			updates[ updatesCount++ ] = VkMakeBindlessGlobalUpdate( &samplerDesc, 1, VK_GLOBAL_SLOT_SAMPLER );
 		}
 

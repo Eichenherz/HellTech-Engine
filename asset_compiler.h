@@ -34,12 +34,21 @@ struct model
 	u32					flags;
 };
 
+enum texture_format_type : u8
+{
+	TEXTURE_FORMAT_RBGA8_SRGB,
+	TEXTURE_FORMAT_RBGA8_UNORM,
+	TEXTURE_FORMAT_BC1_RGB_SRGB,
+	TEXTURE_FORMAT_BC5_UNORM,
+	TEXTURE_FORMAT_COUNT
+};
+
 enum pbr_texture_type : u8
 {
 	PBR_TEXTURE_BASE_COLOR = 0,
 	PBR_TEXTURE_ORM = 1,
 	PBR_TEXTURE_NORMALS = 2,
-	PBR_TEXTURE_COUNT = 3
+	PBR_TEXTURE_COUNT
 };
 
 // TODO: improve
@@ -50,7 +59,7 @@ enum gltf_sampler_filter : u8
 	GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_NEAREST = 2,
 	GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_NEAREST = 3,
 	GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_LINEAR = 4,
-	GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR = 5
+	GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR
 };
 
 enum gltf_sampler_address_mode : u8
@@ -87,7 +96,6 @@ struct pbr_material
 	float			roughnessFactor;
 };
 
-
 using PfnReadFile = std::vector<u8>( * )( const char* );
 
 void LoadGlbFile(
@@ -105,3 +113,5 @@ void MeshoptMakeLods(
 	std::vector<u32>& lodIndices,
 	std::vector<u32>& idxBuffer,
 	std::vector<mesh_lod>& outMeshLods );
+
+std::vector<u8> CmpCompressTexture( const std::vector<u8>& texBin, u64 widthInBytes, u64 heightInBytes );

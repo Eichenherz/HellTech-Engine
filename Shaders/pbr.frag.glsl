@@ -83,7 +83,7 @@ vec3 FresnelSchlick( vec3 refl0, float refl90, float VdotH )
 
 vec3 ComputeBrdfReflectance( 
 	vec3	lightDir,
-	vec3	diffCol, 
+	vec3	diffColor, 
 	vec3	baseReflectivity,
 	vec3	viewDir,  
 	vec3	normal, 
@@ -104,11 +104,16 @@ vec3 ComputeBrdfReflectance(
 
 	vec3 diffuseRefl = 1.0 - specularRefl;
 	// NOTE: lambertian diffuse
-	vec3 diffuseBrdf = diffuseRefl * diffCol * invPi;
+	vec3 diffuseBrdf = diffuseRefl * diffColor * invPi;
 	
 	return ( specularBrdf + diffuseBrdf ) * NdotL;
 }
 
+//vec3 UnpackNormalFromMap( vec3 normalFromMap )
+//{
+//	normalFromMap = normalFromMap * 2.0 - 1.0;
+//
+//}
   
 void main()
 {
@@ -121,6 +126,9 @@ void main()
 	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
 								  uv ).rgb;
 
+	normalFromMap = normalFromMap * 2.0 - 1.0;
+	normalFromMap.b = sqrt( clamp( 1 - dot( normalFromMap.rg, normalFromMap.rg ), 0, 1 ) );
+
 	// TODO: when using baseCol.alpha sRGB->linear ?
 	baseCol = SrgbToLinear( baseCol );
 	baseCol *= vec4( mtl.baseColFactor, 1 );
@@ -132,7 +140,7 @@ void main()
 	vec3 b = cross( n, t );
 	mat3 tbn = mat3( t, b, n );
 
-	vec3 bumpN = normalize( tbn * ( normalFromMap * 2.0 - 1.0 ) );
+	vec3 bumpN = normalize( tbn * normalFromMap );
 
 	float surfMetalness = orm.b * mtl.metallicFactor;
 	float surfRoughness = orm.g * mtl.roughnessFactor;
@@ -187,6 +195,6 @@ void main()
 	//}
 
 	//oCol = vec4( ( bumpN * 0.5 + 0.5 ) * 0.0015, 1 );
-	oCol = vec4( ( n * 0.5 + 0.5 ) * 0.0015, 1 );
+	//oCol = vec4( ( n * 0.5 + 0.5 ) * 0.0015, 1 );
 	//oCol = vec4( vec3( 1000 ), 1 );
 }

@@ -6,7 +6,6 @@
 #include "cgltf.h"
 #include "spng.h"
 
-
 //#include "r_data_structs.h"
 #include <cmath>
 #include <vector>
@@ -46,6 +45,38 @@ do{																					\
 #include <DirectXCollision.h>
 
 
+#include "bcn_compressor.h"
+
+constexpr u64 blockSizeX = 4;
+constexpr u64 blockSizeY = 4;
+constexpr u64 bc1BytesPerBlock = 8;
+constexpr u64 bc5BytesPerBlock = 16;
+// TODO: type safe ?
+inline u64 GetCompressedTextureByteCount( u64 width, u64 height, u64 bytesPerBlock )
+{
+	u64 xBlocksCount = width / blockSizeX;
+	u64 yBlocksCount = height / blockSizeY;
+	u64 blockCount = xBlocksCount * yBlocksCount;
+	
+	return blockCount * bytesPerBlock;
+}
+
+inline std::vector<u8> CmpCompressTexture( const u8* texBin, u64 width, u64 height )
+{
+	u64 xBlocksCount = width / blockSizeX;
+	u64 yBlocksCount = height / blockSizeY;
+	u64 blockCount = xBlocksCount * yBlocksCount;
+	u64 bc1BytesPerBlock = 8;
+
+	std::vector<u8> compressed( blockCount * bc1BytesPerBlock );
+
+	CompressToBc1_SIMD( texBin, width, height, std::data( compressed ) );
+
+	assert( std::size( compressed ) );
+	return compressed;
+}
+
+
 // TODO: use DirectXMath ?
 // TODO: fast ?
 inline float SignNonZero( float e )
@@ -80,7 +111,7 @@ inline float EncodeTanToAngle( vec3 n, vec3 t )
 																	XMLoadFloat3( &tanRef ) ) );
 	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
 }
-u8 FloatToSnorm8( float e )
+inline u8 FloatToSnorm8( float e )
 {
 	return std::round( 127.5f + e * 127.5f );
 }
@@ -117,7 +148,7 @@ inline u64 PngGetDecodedImageSize( const png_decoder& dcd )
 {
 	spng_ihdr ihdr = {};
 	ACOMPL_ERR( spng_get_ihdr( dcd.ctx, &ihdr ) );
-
+	
 	return u64( ihdr.width ) | ( u64( ihdr.height ) << 32 );
 }
 inline void PngDecodeImageFromMem( const png_decoder& dcd, u8* txBinOut, u64 txSize )
@@ -172,6 +203,7 @@ inline u64 CountTextureBytesFromGlb( const cgltf_texture* t, const u8* pBin )
 
 	return byteCount;
 }
+// TODO: account for jpeg, ktx, dds, etc
 inline image_metadata LoadTextureFromGlb(
 	const cgltf_texture*	t,
 	const u8* 				pBin,
@@ -223,10 +255,6 @@ inline image_metadata LoadTextureFromGlb(
 	return imgInfo;
 }
 
-struct attr
-{
-	float comp[ 4 ];
-};
 // NOTE: will assume: pos,normal,tan are vec3 and uv is vec2
 // TODO: meaningful names/ distictions between size and sizeInBytes
 struct mesh_primitive
@@ -270,6 +298,20 @@ inline pbr_material LoadMetallicPbrMaterial(
 		mtl.baseColorFactor[ 0 ] = pbrMetallicRoughness.base_color_factor[ 0 ];
 		mtl.baseColorFactor[ 1 ] = pbrMetallicRoughness.base_color_factor[ 1 ];
 		mtl.baseColorFactor[ 2 ] = pbrMetallicRoughness.base_color_factor[ 2 ];
+
+		const u8* texBin = std::data( texBinData ) + mtl.textureMeta[ 0 ].texBinRange.offset;
+		u8* texBinOut = std::data( texBinData ) + mtl.textureMeta[ 0 ].texBinRange.offset;
+		u64 width = mtl.textureMeta[ 0 ].width;
+		u64 height = mtl.textureMeta[ 0 ].height;
+		u64 bc1ColByteCount = GetCompressedTextureByteCount( width, height, bc1BytesPerBlock );
+		CompressToBc1_SIMD( texBin, width, height, texBinOut );
+		texBinData.resize( mtl.textureMeta[ 0 ].texBinRange.offset + bc1ColByteCount );
+		mtl.textureMeta[ 0 ].texBinRange.size = bc1ColByteCount;
+		//std::vector<u8> bc1BaseCol = CmpCompressTexture( texBin, width, height );
+		//
+		//texBinData.resize( mtl.textureMeta[ 0 ].texBinRange.offset );
+		//texBinData.insert( std::end( texBinData ), std::cbegin( bc1BaseCol ), std::cend( bc1BaseCol ) );
+		//mtl.textureMeta[ 0 ].texBinRange.size = std::size( bc1BaseCol );
 	}
 	const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture;
 	if( metalRoughMap )
@@ -281,6 +323,14 @@ inline pbr_material LoadMetallicPbrMaterial(
 	if( const cgltf_texture* normalMap = material->normal_texture.texture )
 	{
 		mtl.textureMeta[ 2 ] = LoadTextureFromGlb( normalMap, pBin, PBR_TEXTURE_NORMALS, texBinData );
+		const u8* texBin = std::data( texBinData ) + mtl.textureMeta[ 2 ].texBinRange.offset;
+		u8* texBinOut = std::data( texBinData ) + mtl.textureMeta[ 2 ].texBinRange.offset;
+		u64 width = mtl.textureMeta[ 2 ].width;
+		u64 height = mtl.textureMeta[ 2 ].height;
+		u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
+		CompressNormalMapToBc5_SIMD( texBin, width, height, texBinOut );
+		texBinData.resize( mtl.textureMeta[ 2 ].texBinRange.offset + bc5ColByteCount );
+		mtl.textureMeta[ 2 ].texBinRange.size = bc5ColByteCount;
 	}
 
 	return mtl;
@@ -439,7 +489,6 @@ static void fixupIndices( std::vector<unsigned int>& indices, cgltf_primitive_ty
 static void
 LoadGlbFile(
 	const std::vector<u8>&			glbData,
-
 	DirectX::BoundingBox&			outAabb,
 	std::vector<vertex>&			vertices,
 	std::vector<u32>&				indices,
@@ -662,7 +711,7 @@ LoadGlbFile(
 				// NOTE: for simplicitly we do it in here
 				firstVertex[ i ].mi = firstPrim[ p ].mtlIdx;
 			}
-			// TODO: cache friendlier ?
+			// TODO: cache friendlier ? merge normal and tangent stream
 			for( u64 i = 0; i < vtxAttrCount; ++i )
 			{
 				float nx = -normalStream[ i * 3 + 0 ];
@@ -674,10 +723,10 @@ LoadGlbFile(
 
 				vec2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
 				float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
-				firstVertex[ i ].nx = nx;
-				firstVertex[ i ].ny = ny;
-				firstVertex[ i ].nz = nz;
-				firstVertex[ i ].tAngle = tanAngle;
+				//firstVertex[ i ].nx = nx;
+				//firstVertex[ i ].ny = ny;
+				//firstVertex[ i ].nz = nz;
+				//firstVertex[ i ].tAngle = tanAngle;
 
 				firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
 				firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );

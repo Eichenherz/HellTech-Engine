@@ -157,7 +157,7 @@ static inline u64 SysGetFileTimestamp( const char* filename )
 	FILETIME fileTime = {};
 	WIN_CHECK( !GetFileTime( hfile, 0, 0, &fileTime ) );
 
-	ULARGE_INTEGER timestamp = { .HighPart = fileTime.dwHighDateTime,  .LowPart = fileTime.dwLowDateTime };
+	ULARGE_INTEGER timestamp = { .LowPart = fileTime.dwLowDateTime, .HighPart = fileTime.dwHighDateTime };
 
 	CloseHandle( hfile );
 
