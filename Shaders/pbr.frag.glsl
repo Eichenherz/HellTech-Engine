@@ -119,10 +119,8 @@ void main()
 {
 	material_data mtl = mtl_ref( g.addr + g.materialsOffset ).materials[ mtlIdx ];
 
-	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), 
-							uv );
-	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
-							   uv ).rgb;
+	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv );
+	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv ).rgb;
 	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
 								  uv ).rgb;
 
@@ -142,12 +140,10 @@ void main()
 
 	vec3 bumpN = normalize( tbn * normalFromMap );
 
-	float surfMetalness = orm.b * mtl.metallicFactor;
-	float surfRoughness = orm.g * mtl.roughnessFactor;
+	float surfRoughness = orm.r * mtl.roughnessFactor;
+	float surfMetalness = orm.g * mtl.metallicFactor;
 
-	// TODO: draw lights bounding vol to find out
 	vec3 viewDir = normalize( cam.camPos - worldPos );
-	//vec3 viewDir = normalize( worldPos - cam.camPos );
 
 	vec3 baseReflectivity = mix( vec3( 0.04 ), baseCol.rgb, surfMetalness );
 	vec3 diffCol = baseCol.rgb * ( 1.0 - surfMetalness );

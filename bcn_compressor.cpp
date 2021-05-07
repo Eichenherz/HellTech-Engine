@@ -34,6 +34,14 @@ alignas( 16 ) constexpr u16 SIMD_WORD_insetNormalBc5Mask[ 8 ] = { 0xFFFF, 0xFFFF
 alignas( 16 ) constexpr u16 SIMD_WORD_insetNormalBc5ShiftUp[ 8 ] = { 1 << INSET_ALPHA_SHIFT, 1 << INSET_ALPHA_SHIFT, 1, 1, 1, 1, 1, 1 };
 alignas( 16 ) constexpr u16 SIMD_WORD_insetNormalBc5ShiftDown[ 8 ] = {
 	1 << ( 16 - INSET_ALPHA_SHIFT ), 1 << ( 16 - INSET_ALPHA_SHIFT ), 0, 0, 0, 0, 0, 0 };
+alignas( 16 ) constexpr u16 SIMD_WORD_insetMetalRoughBc5Round[ 8 ] = {
+	( 0, ( 1 << ( INSET_ALPHA_SHIFT - 1 ) ) - 1 ), ( ( 1 << ( INSET_ALPHA_SHIFT - 1 ) ) - 1 ), 0, 0, 0, 0, 0 };
+alignas( 16 ) constexpr u16 SIMD_WORD_insetMetalRoughBc5Mask[ 8 ] = { 0x0000, 0xFFFF, 0xFFFF, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000 };
+alignas( 16 ) constexpr u16 SIMD_WORD_insetMetalRoughBc5ShiftUp[ 8 ] = { 
+	1, 1 << INSET_ALPHA_SHIFT, 1 << INSET_ALPHA_SHIFT, 1, 1, 1, 1, 1 };
+alignas( 16 ) constexpr u16 SIMD_WORD_insetMetalRoughBc5ShiftDown[ 8 ] = {
+	0, 1 << ( 16 - INSET_ALPHA_SHIFT ), 1 << ( 16 - INSET_ALPHA_SHIFT ), 0, 0, 0, 0, 0 };
+
 
 alignas( 16 ) constexpr u8 SIMD_BYTE_colorMask[ 16 ] = {
 	C565_5_MASK, C565_6_MASK, C565_5_MASK, 0x00,
@@ -191,6 +199,41 @@ inline std::pair<i32, i32> InsetNormalMinMaxBc5_SIMD( i32 maxNormal, i32 minNorm
 	i32 maxN = _mm_cvtsi128_si32( temp1 );
 
 	return { maxN,minN };
+}
+inline std::pair<i32, i32> InsetMetalRoughMinMaxBc5_SIMD( i32 blockMax, i32 blockMin )
+{
+	__m128i temp0, temp1, temp2;
+
+	temp0 = _mm_cvtsi32_si128( blockMin );
+	temp1 = _mm_cvtsi32_si128( blockMax );
+
+	temp0 = _mm_unpacklo_epi8( temp0, {} );
+	temp1 = _mm_unpacklo_epi8( temp1, {} );
+
+	temp2 = _mm_sub_epi16( temp1, temp0 );
+	temp2 = _mm_sub_epi16( temp2, *( const __m128i* )SIMD_WORD_insetMetalRoughBc5Round );
+	temp2 = _mm_and_si128( temp2, *( const __m128i* )SIMD_WORD_insetMetalRoughBc5Mask );		// xmm2 = inset (0 & 1)
+
+	temp0 = _mm_mullo_epi16( temp0, *( const __m128i* )SIMD_WORD_insetMetalRoughBc5ShiftUp );
+	temp1 = _mm_mullo_epi16( temp1, *( const __m128i* )SIMD_WORD_insetMetalRoughBc5ShiftUp );
+	temp0 = _mm_add_epi16( temp0, temp2 );
+	temp1 = _mm_sub_epi16( temp1, temp2 );
+	temp0 = _mm_mulhi_epi16( temp0, *( const __m128i* )SIMD_WORD_insetMetalRoughBc5ShiftDown );
+	temp1 = _mm_mulhi_epi16( temp1, *( const __m128i* )SIMD_WORD_insetMetalRoughBc5ShiftDown );
+
+	// mini and maxi must be >= 0 and <= 255
+	temp0 = _mm_max_epi16( temp0, {} );
+	temp1 = _mm_max_epi16( temp1, {} );
+	temp0 = _mm_min_epi16( temp0, *( const __m128i* )SIMD_WORD_255 );
+	temp1 = _mm_min_epi16( temp1, *( const __m128i* )SIMD_WORD_255 );
+
+	temp0 = _mm_packus_epi16( temp0, temp0 );
+	temp1 = _mm_packus_epi16( temp1, temp1 );
+
+	i32 minB = _mm_cvtsi128_si32( temp0 );
+	i32 maxB = _mm_cvtsi128_si32( temp1 );
+
+	return { maxB,minB };
 }
 
 inline u32 CopmuteColorIndicesBc1_SIMD( const u8* colorBlock, i32 maxCol, i32 minCol )
@@ -461,7 +504,6 @@ inline u64 ComputeAlphaIndices_SIMD( const u8* block, u32 channelBitOffset, i32 
 	return ( second3IdxBytes << 24 ) | first3IdxBytes;
 }
 
-// TODO: rename
 void CompressToBc1_SIMD( const u8* texSrc, u64 width, u64 height, u8* outCmpTex )
 {
 	assert( width >= 4 && ( width & 3 ) == 0 );
@@ -517,11 +559,11 @@ void CompressNormalMapToBc5_SIMD( const u8* texSrc, u64 width, u64 height, u8* o
 
 			u8 normalXMax = maxNormal & 0xff;
 			u8 normalXMin = minNormal & 0xff;
-			u64 packedXIndices = ComputeAlphaIndices_SIMD( block, 0, normalXMax, normalXMin );
+			u64 packedXIndices = ComputeAlphaIndices_SIMD( block, 0 * 8, normalXMax, normalXMin );
 
 			u8 normalYMax = ( maxNormal >> 8 ) & 0xff;
 			u8 normalYMin = ( minNormal >> 8 ) & 0xff;
-			u64 packedYIndices = ComputeAlphaIndices_SIMD( block, 1, normalYMax, normalYMin );
+			u64 packedYIndices = ComputeAlphaIndices_SIMD( block, 1 * 8, normalYMax, normalYMin );
 
 			*(u8*) outCmpTex = normalXMax;
 			++outCmpTex;
@@ -534,6 +576,46 @@ void CompressNormalMapToBc5_SIMD( const u8* texSrc, u64 width, u64 height, u8* o
 			*(u8*) outCmpTex = normalYMin;
 			++outCmpTex;
 			*(u64*) outCmpTex = packedYIndices;
+			outCmpTex += 6;
+		}
+	}
+}
+void CompressMetalRoughMapToBc5_SIMD( const u8* texSrc, u64 width, u64 height, u8* outCmpTex )
+{
+	assert( width >= 4 && ( width & 3 ) == 0 );
+	assert( height >= 4 && ( height & 3 ) == 0 );
+
+	alignas( 16 ) u8 block[ 64 ] = {};
+
+	for( u64 j = 0; j < height; j += 4, texSrc += width * 4 * 4 )
+	{
+		for( u64 i = 0; i < width; i += 4 )
+		{
+			Exctract4x4Block_SIMD( texSrc + i * 4, width, block );
+			alignas( 16 ) i32 blockMin = 0, blockMax = 0;
+			// TODO: better way of returning 2 vals ?
+			std::tie( blockMax, blockMin ) = ComputeBlockMinMax_SIMD( block );
+			std::tie( blockMax, blockMin ) = InsetMetalRoughMinMaxBc5_SIMD( blockMax, blockMin );
+
+			u8 redChMax = blockMax >> 8;
+			u8 redChMin = blockMin >> 8;
+			u64 redChIndices = ComputeAlphaIndices_SIMD( block, 1 * 8, redChMax, redChMin );
+
+			u8 greenChMax = blockMax >> 16;
+			u8 greenChMin = blockMin >> 16;
+			u64 greenChIndices = ComputeAlphaIndices_SIMD( block, 2 * 8, greenChMax, greenChMin );
+
+			*(u8*) outCmpTex = redChMax;
+			++outCmpTex;
+			*(u8*) outCmpTex = redChMin;
+			++outCmpTex;
+			*(u64*) outCmpTex = redChIndices;
+			outCmpTex += 6;
+			*(u8*) outCmpTex = greenChMax;
+			++outCmpTex;
+			*(u8*) outCmpTex = greenChMin;
+			++outCmpTex;
+			*(u64*) outCmpTex = greenChIndices;
 			outCmpTex += 6;
 		}
 	}

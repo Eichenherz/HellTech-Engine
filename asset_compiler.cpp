@@ -47,35 +47,6 @@ do{																					\
 
 #include "bcn_compressor.h"
 
-constexpr u64 blockSizeX = 4;
-constexpr u64 blockSizeY = 4;
-constexpr u64 bc1BytesPerBlock = 8;
-constexpr u64 bc5BytesPerBlock = 16;
-// TODO: type safe ?
-inline u64 GetCompressedTextureByteCount( u64 width, u64 height, u64 bytesPerBlock )
-{
-	u64 xBlocksCount = width / blockSizeX;
-	u64 yBlocksCount = height / blockSizeY;
-	u64 blockCount = xBlocksCount * yBlocksCount;
-	
-	return blockCount * bytesPerBlock;
-}
-
-inline std::vector<u8> CmpCompressTexture( const u8* texBin, u64 width, u64 height )
-{
-	u64 xBlocksCount = width / blockSizeX;
-	u64 yBlocksCount = height / blockSizeY;
-	u64 blockCount = xBlocksCount * yBlocksCount;
-	u64 bc1BytesPerBlock = 8;
-
-	std::vector<u8> compressed( blockCount * bc1BytesPerBlock );
-
-	CompressToBc1_SIMD( texBin, width, height, std::data( compressed ) );
-
-	assert( std::size( compressed ) );
-	return compressed;
-}
-
 
 // TODO: use DirectXMath ?
 // TODO: fast ?
@@ -307,11 +278,6 @@ inline pbr_material LoadMetallicPbrMaterial(
 		CompressToBc1_SIMD( texBin, width, height, texBinOut );
 		texBinData.resize( mtl.textureMeta[ 0 ].texBinRange.offset + bc1ColByteCount );
 		mtl.textureMeta[ 0 ].texBinRange.size = bc1ColByteCount;
-		//std::vector<u8> bc1BaseCol = CmpCompressTexture( texBin, width, height );
-		//
-		//texBinData.resize( mtl.textureMeta[ 0 ].texBinRange.offset );
-		//texBinData.insert( std::end( texBinData ), std::cbegin( bc1BaseCol ), std::cend( bc1BaseCol ) );
-		//mtl.textureMeta[ 0 ].texBinRange.size = std::size( bc1BaseCol );
 	}
 	const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture;
 	if( metalRoughMap )
@@ -319,6 +285,14 @@ inline pbr_material LoadMetallicPbrMaterial(
 		mtl.textureMeta[ 1 ] = LoadTextureFromGlb( metalRoughMap, pBin, PBR_TEXTURE_ORM, texBinData );
 		mtl.metallicFactor = pbrMetallicRoughness.metallic_factor;
 		mtl.roughnessFactor = pbrMetallicRoughness.roughness_factor;
+		const u8* texBin = std::data( texBinData ) + mtl.textureMeta[ 1 ].texBinRange.offset;
+		u8* texBinOut = std::data( texBinData ) + mtl.textureMeta[ 1 ].texBinRange.offset;
+		u64 width = mtl.textureMeta[ 1 ].width;
+		u64 height = mtl.textureMeta[ 1 ].height;
+		u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
+		CompressMetalRoughMapToBc5_SIMD( texBin, width, height, texBinOut );
+		texBinData.resize( mtl.textureMeta[ 1 ].texBinRange.offset + bc5ColByteCount );
+		mtl.textureMeta[ 1 ].texBinRange.size = bc5ColByteCount;
 	}
 	if( const cgltf_texture* normalMap = material->normal_texture.texture )
 	{

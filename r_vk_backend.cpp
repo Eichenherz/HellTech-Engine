@@ -2497,9 +2497,9 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 			// TODO: spec const for frag shaders
 			//VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 			//VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_BC1_RGB_SRGB_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
-			VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+			VkFormat format = VK_FORMAT_BC5_UNORM_BLOCK;
 			if( meta.format == PBR_TEXTURE_BASE_COLOR ) format = VK_FORMAT_BC1_RGB_SRGB_BLOCK;
-			else if ( meta.format == PBR_TEXTURE_NORMALS ) format = VK_FORMAT_BC5_UNORM_BLOCK;
+			//else if ( meta.format == PBR_TEXTURE_ORM ) format = VK_FORMAT_R8G8B8A8_UNORM;
 			textures[ i * 3 + imgIdx ] = ( VkCreateAllocBindImage( format,
 																   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 																   size, 1,
@@ -2520,6 +2520,7 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 	}
 }
 
+// TODO: compact sampler thing ?
 inline VkSampler VkMakeSampler( 
 	VkDevice				vkDevice, 
 	float					lodCount = 1.0f, 
@@ -2542,7 +2543,9 @@ inline VkSampler VkMakeSampler(
 	samplerInfo.addressModeV = addressMode;
 	samplerInfo.addressModeW = addressMode;
 	samplerInfo.minLod = 0;
-	samplerInfo.maxLod = lodCount - 1.0f;
+	samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+	samplerInfo.maxAnisotropy = 1.0f;
+	samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 
 	VkSampler sampler;
 	VK_CHECK( vkCreateSampler( vkDevice, &samplerInfo, 0, &sampler ) );
