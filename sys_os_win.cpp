@@ -119,25 +119,30 @@ static inline void SysErrMsgBox( const char* str )
 	UINT behaviour = MB_OK | MB_ICONERROR | MB_APPLMODAL;
 	MessageBox( 0, str, 0, behaviour );
 }
+
+// PLATOFRM_FILE_API
+// TODO: use own memory system 
+// TODO: multithreading
+// TODO: async
+// TODO: streaming
+// TODO: better file api
 static inline u32 SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize )
 {
 	static_assert( sizeof( DWORD ) == sizeof( u32 ) );
 	return GetFullPathNameA( fileName, buffSize, buffer, 0 );
 }
-
 static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
 {
 	DWORD accessMode = GENERIC_READ;
-	DWORD shareMode = FILE_SHARE_READ;
+	DWORD shareMode = 0;
 	DWORD creationDisp = OPEN_EXISTING;
 	DWORD flagsAndAttrs = FILE_ATTRIBUTE_READONLY;
 	return CreateFile( fileName, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
 }
-// TODO: use own mem
 static inline std::vector<u8> SysReadFile( const char* fileName )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( fileName );
-	WIN_CHECK( hfile == INVALID_HANDLE_VALUE );
+	if( hfile == INVALID_HANDLE_VALUE ) return{};
 
 	LARGE_INTEGER fileSize = {};
 	WIN_CHECK( !GetFileSizeEx( hfile, &fileSize ) );
@@ -163,6 +168,23 @@ static inline u64 SysGetFileTimestamp( const char* filename )
 
 	return u64( timestamp.QuadPart );
 }
+
+static inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
+{
+	DWORD accessMode = GENERIC_WRITE;
+	DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+	DWORD creationDisp = OPEN_ALWAYS;
+	DWORD flagsAndAttrs = FILE_ATTRIBUTE_NORMAL;
+	HANDLE hFile = CreateFile( filename, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
+
+	OVERLAPPED asyncIo = {};
+	WIN_CHECK( !WriteFileEx( hFile, data, sizeInBytes, &asyncIo, 0 ) );
+	CloseHandle( hFile );
+
+	return true;
+}
+
+
 
 constexpr char	ENGINE_NAME[] = "helltech_engine";
 constexpr char	WINDOW_TITLE[] = "HellTech Engine";

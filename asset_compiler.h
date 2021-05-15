@@ -2,40 +2,14 @@
 
 #include "core_types.h"
 
-//namespace std
-//{
-//	template<class, class> class vector;
-//}
-
-// TODO: purge this shit
+// TODO: remove these includes
 #include <vector>
 #include "r_data_structs.h"
-#include <DirectXCollision.h>
 
-struct range
-{
-	u64 offset : 32;
-	u64 size : 32;
-};
 
-// TODO: formalzie aabb
-struct model
+enum texture_format : u8
 {
-	std::vector<float>	vertices;
-	std::vector<u32>	indices;
-	range				positionRange;
-	range				normalsRange;
-	range				uvRange;
-	range				tangentsRange;
-	float				aabbMinMax[ 6 ];
-	u32					vtxCount;
-	u32					idxCount;
-	u32					triCount;
-	u32					flags;
-};
-
-enum texture_format_type : u8
-{
+	TEXTURE_FORMAT_UNDEFINED,
 	TEXTURE_FORMAT_RBGA8_SRGB,
 	TEXTURE_FORMAT_RBGA8_UNORM,
 	TEXTURE_FORMAT_BC1_RGB_SRGB,
@@ -43,15 +17,6 @@ enum texture_format_type : u8
 	TEXTURE_FORMAT_COUNT
 };
 
-enum pbr_texture_type : u8
-{
-	PBR_TEXTURE_BASE_COLOR = 0,
-	PBR_TEXTURE_ORM = 1,
-	PBR_TEXTURE_NORMALS = 2,
-	PBR_TEXTURE_COUNT
-};
-
-// TODO: improve
 enum gltf_sampler_filter : u8
 {
 	GLTF_SAMPLER_FILTER_NEAREST = 0,
@@ -82,36 +47,35 @@ struct sampler_config
 struct image_metadata
 {
 	range				texBinRange;
-	sampler_config		samplerConfig;
+	//sampler_config		samplerConfig;
 	u16					width;
 	u16					height;
-	pbr_texture_type	format;
+	texture_format		format;
 };
 
-struct pbr_material
+struct binary_mesh_desc
 {
-	image_metadata	textureMeta[ PBR_TEXTURE_COUNT ];
-	float			baseColorFactor[ 3 ];
-	float			metallicFactor;
-	float			roughnessFactor;
+	//MESH_ATTRIBUTE_TYPE attributeType[ 6 ];
+	float		aabbMinMax[ 6 ];
+	range		vtxRange;
+	range		lodRanges[ 4 ];
+	u32			materialIndex;
+	u8			lodCount = 1;
+};
+
+struct drak_file_desc
+{
+	u32 compressedSize;
+	u32 originalSize;
+	u32 meshesCount;
+	u32 mtrlsCount;
+	u32 texCount;
 };
 
 using PfnReadFile = std::vector<u8>( * )( const char* );
 
-void LoadGlbFile(
-	const std::vector<u8>& glbData,
+vec2 OctaNormalEncode( vec3 n );
+u8 FloatToSnorm8( float e );
 
-	DirectX::BoundingBox& outAabb,
-	std::vector<vertex>& vertices,
-	std::vector<u32>& indices,
-	std::vector<u8>& textureBinData,
-	std::vector<pbr_material>& catalogue );
+drak_file_desc CompileGlbAsset( const std::vector<u8>& glbData, std::vector<u8>& drakBinData );
 
-void MeshoptMakeLods(
-	const std::vector<vertex>& vertices,
-	u64							maxLodCount,
-	std::vector<u32>& lodIndices,
-	std::vector<u32>& idxBuffer,
-	std::vector<mesh_lod>& outMeshLods );
-
-std::vector<u8> CmpCompressTexture( const std::vector<u8>& texBin, u64 widthInBytes, u64 heightInBytes );

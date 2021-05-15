@@ -18,3 +18,5 @@ inline u64 GetCompressedTextureByteCount( u64 width, u64 height, u64 bytesPerBlo
 void CompressToBc1_SIMD( const u8* texSrc, u64 width, u64 height, u8* outCmpTex );
 void CompressNormalMapToBc5_SIMD( const u8* texSrc, u64 width, u64 height, u8* outCmpTex );
 void CompressMetalRoughMapToBc5_SIMD( const u8* texSrc, u64 width, u64 height, u8* outCmpTex );
+
+using PfnBcnCompress_SIMD = void ( * )( const u8* texSrc, u64 width, u64 height, u8* outCmpTex );

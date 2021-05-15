@@ -18,7 +18,7 @@
 
 
 layout( local_size_x_id = 0 ) in;
-layout( constant_id = 1 ) const bool LATE_PASS = false;
+layout( constant_id = 1 ) const bool OCCLUSION_CULLING = false;
 
 
 layout( local_size_x = 64, local_size_y = 1, local_size_z = 1 ) in;
@@ -49,19 +49,15 @@ layout( binding = 2 ) buffer draw_visibility_buffer{
 layout( binding = 3 ) buffer dispatch_cmd{
 	dispatch_command dispatchCmd[];
 };
-layout( binding = 4 ) buffer obj_visibility_buffer
-{
-	uint objVisibilityBits[];
-};
-layout( binding = 5 ) uniform sampler2D minQuadFormDepthPyramid;
+layout( binding = 4 ) uniform sampler2D minQuadFormDepthPyramid;
 
 
 #if GLSL_DBG
 
-layout( binding = 6 ) writeonly buffer dbg_draw_cmd{
+layout( binding = 5 ) writeonly buffer dbg_draw_cmd{
 	draw_command dbgDrawCmd[];
 };
-layout( binding = 7 ) buffer dbg_draw_cmd_count{
+layout( binding = 6 ) buffer dbg_draw_cmd_count{
 	uint dbgDrawCallCount;
 };
 #endif
@@ -115,9 +111,7 @@ void main()
 
 	if( di >= cullInfo.drawCallsCount ) return;
 
-	uint currentObjVisibility = objVisibilityBits[ di / gl_SubgroupSize ] & ( 1 << gl_SubgroupInvocationID );
-
-	if( !LATE_PASS && drawVisibility[ di ] == 0 ) return;
+	if( !OCCLUSION_CULLING && drawVisibility[ di ] == 0 ) return;
 
 	draw_data currentDraw = draw_args_ref( g.addr + g.drawArgsOffset ).drawArgs[ di ];
 	mesh currentMesh = mesh_ref( g.addr + g.meshesOffset ).meshes[ currentDraw.meshIdx ];
@@ -133,7 +127,7 @@ void main()
 	visible = visible && dot( cullInfo.planes[ 2 ], center ) > -radius;
 	visible = visible && dot( cullInfo.planes[ 3 ], center ) > -radius;
 
-	if( visible && LATE_PASS ){
+	if( visible && OCCLUSION_CULLING ){
 		
 		vec3 viewSpaceCenter = ( cam.view * center ).xyz;
 		if( viewSpaceCenter.z > radius + cullInfo.zNear ){
@@ -170,7 +164,7 @@ void main()
 	}
 #endif
 
-	if( visible && ( !LATE_PASS || drawVisibility[ di ] == 0 ) ){ 
+	if( visible && ( !OCCLUSION_CULLING || drawVisibility[ di ] == 0 ) ){
 	#if !WAVE_OPS
 		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 	#endif
@@ -196,5 +190,5 @@ void main()
 	#endif
 	}
 
-	if( LATE_PASS ) drawVisibility[ di ] = visible ? 1 : 0;
+	if( OCCLUSION_CULLING ) drawVisibility[ di ] = visible ? 1 : 0;
 }

@@ -5,10 +5,13 @@
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
 #include "spng.h"
+#include "lz4.h"
 
-//#include "r_data_structs.h"
+
+#include "r_data_structs.h"
 #include <cmath>
 #include <vector>
+#include <span>
 #include <string_view>
 
 #include "sys_os_api.h"
@@ -68,6 +71,7 @@ inline vec2 OctaNormalEncode( vec3 n )
 	
 	return { octaX, octaY };
 }
+// TODO: use angle between normals ?
 inline float EncodeTanToAngle( vec3 n, vec3 t )
 {
 	using namespace DirectX;
@@ -77,9 +81,8 @@ inline float EncodeTanToAngle( vec3 n, vec3 t )
 		vec3{ -n.y, n.x, 0.0f } :
 		vec3{ 0.0f, -n.z, n.y };
 
-	// TODO: use angle between normals ?
-	float tanRefAngle = XMVectorGetX( XMVector3AngleBetweenVectors( XMLoadFloat3( &t ),
-																	XMLoadFloat3( &tanRef ) ) );
+	float tanRefAngle = XMVectorGetX( 
+		XMVector3AngleBetweenVectors( XMLoadFloat3( &t ), XMLoadFloat3( &tanRef ) ) );
 	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
 }
 inline u8 FloatToSnorm8( float e )
@@ -149,86 +152,9 @@ inline gltf_sampler_address_mode GetSamplerAddrMode( i32 code )
 	case 33648: return GLTF_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
 	}
 }
-inline u64 CountTextureBytesFromGlb( const cgltf_texture* t, const u8* pBin )
-{
-	using namespace std;
-
-	u64 imgOffset = t->image->buffer_view->offset;
-	u64 imgSize = t->image->buffer_view->size;
-
-	u64 byteCount = 0;
-	std::string_view mimeType = { t->image->mime_type };
-	if( mimeType == "image/png"sv )
-	{
-		png_decoder dcd( pBin + imgOffset, imgSize );
-		byteCount = PngGetDecodedImageByteCount( dcd );
-	}
-	else if( mimeType == "image/jpeg"sv )
-	{
-		assert( 0 );
-	}
-	else if( mimeType == "image/ktx2"sv )
-	{
-		assert( 0 );
-	}
-
-	return byteCount;
-}
-// TODO: account for jpeg, ktx, dds, etc
-inline image_metadata LoadTextureFromGlb(
-	const cgltf_texture*	t,
-	const u8* 				pBin,
-	pbr_texture_type		textureType,
-	std::vector<u8>&		texBinData )
-{
-	using namespace std;
-
-	u64 imgOffset = t->image->buffer_view->offset;
-	u64 imgSize = t->image->buffer_view->size;
-
-	image_metadata imgInfo = {};
-	imgInfo.format = textureType;
-
-	std::string_view mimeType = { t->image->mime_type };
-	if( mimeType == "image/png"sv )
-	{
-		png_decoder dcd( pBin + imgOffset, imgSize );
-		u64 imageByteCount = PngGetDecodedImageByteCount( dcd );
-		u64 widthHeight = PngGetDecodedImageSize( dcd );
-		u64 texBinDataOffset = std::size( texBinData );
-		u8* textureBinData = std::data( texBinData ) + texBinDataOffset;
-		texBinData.resize( std::size( texBinData ) + imageByteCount );
-		PngDecodeImageFromMem( dcd, textureBinData, imageByteCount );
-
-		imgInfo.texBinRange = { texBinDataOffset,imageByteCount };
-		imgInfo.width = widthHeight & u32( -1 );
-		imgInfo.height = widthHeight >> 32;
-	}
-	else if( mimeType == "image/jpeg"sv )
-	{
-		assert( 0 );
-	}
-	else if( mimeType == "image/ktx2"sv )
-	{
-		assert( 0 );
-	}
-
-	if( t->sampler )
-	{
-		imgInfo.samplerConfig = {
-			GetSamplerFilter( t->sampler->min_filter ),
-			GetSamplerFilter( t->sampler->mag_filter ),
-			GetSamplerAddrMode( t->sampler->wrap_s ),
-			GetSamplerAddrMode( t->sampler->wrap_t )
-		};
-	}
-
-	return imgInfo;
-}
 
 // NOTE: will assume: pos,normal,tan are vec3 and uv is vec2
-// TODO: meaningful names/ distictions between size and sizeInBytes
-struct mesh_primitive
+struct imported_mesh
 {
 	range	posStreamRange;
 	range	normalStreamRange;
@@ -239,77 +165,6 @@ struct mesh_primitive
 	float	aabbMax[ 3 ];
 	u16		mtlIdx;
 };
-
-inline u64 GetMetallicPbrMaterialByteCount( const cgltf_material* material, const u8* pBin )
-{
-	u64 mtlSizeInBytes = 0;
-	const cgltf_pbr_metallic_roughness& pbrMetallicRoughness = material->pbr_metallic_roughness;
-	const cgltf_texture* pbrBaseCol = pbrMetallicRoughness.base_color_texture.texture;
-	const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture;
-	const cgltf_texture* normalMap = material->normal_texture.texture;
-
-	if( pbrBaseCol ) mtlSizeInBytes += CountTextureBytesFromGlb( pbrBaseCol, pBin );
-	if( metalRoughMap ) mtlSizeInBytes += CountTextureBytesFromGlb( metalRoughMap, pBin );
-	if( normalMap ) mtlSizeInBytes += CountTextureBytesFromGlb( normalMap, pBin );
-
-	ACOMPL_ERR( bool( material->occlusion_texture.texture != metalRoughMap ) );
-
-	return mtlSizeInBytes;
-}
-inline pbr_material LoadMetallicPbrMaterial( 
-	const cgltf_material*	material, 
-	const u8*				pBin,
-	std::vector<u8>&		texBinData )
-{
-	pbr_material mtl = {};
-	const cgltf_pbr_metallic_roughness& pbrMetallicRoughness = material->pbr_metallic_roughness;
-	if( const cgltf_texture* pbrBaseCol = pbrMetallicRoughness.base_color_texture.texture )
-	{ 
-		mtl.textureMeta[ 0 ] = LoadTextureFromGlb( pbrBaseCol, pBin, PBR_TEXTURE_BASE_COLOR, texBinData );
-		mtl.baseColorFactor[ 0 ] = pbrMetallicRoughness.base_color_factor[ 0 ];
-		mtl.baseColorFactor[ 1 ] = pbrMetallicRoughness.base_color_factor[ 1 ];
-		mtl.baseColorFactor[ 2 ] = pbrMetallicRoughness.base_color_factor[ 2 ];
-
-		const u8* texBin = std::data( texBinData ) + mtl.textureMeta[ 0 ].texBinRange.offset;
-		u8* texBinOut = std::data( texBinData ) + mtl.textureMeta[ 0 ].texBinRange.offset;
-		u64 width = mtl.textureMeta[ 0 ].width;
-		u64 height = mtl.textureMeta[ 0 ].height;
-		u64 bc1ColByteCount = GetCompressedTextureByteCount( width, height, bc1BytesPerBlock );
-		CompressToBc1_SIMD( texBin, width, height, texBinOut );
-		texBinData.resize( mtl.textureMeta[ 0 ].texBinRange.offset + bc1ColByteCount );
-		mtl.textureMeta[ 0 ].texBinRange.size = bc1ColByteCount;
-	}
-	const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture;
-	if( metalRoughMap )
-	{
-		mtl.textureMeta[ 1 ] = LoadTextureFromGlb( metalRoughMap, pBin, PBR_TEXTURE_ORM, texBinData );
-		mtl.metallicFactor = pbrMetallicRoughness.metallic_factor;
-		mtl.roughnessFactor = pbrMetallicRoughness.roughness_factor;
-		const u8* texBin = std::data( texBinData ) + mtl.textureMeta[ 1 ].texBinRange.offset;
-		u8* texBinOut = std::data( texBinData ) + mtl.textureMeta[ 1 ].texBinRange.offset;
-		u64 width = mtl.textureMeta[ 1 ].width;
-		u64 height = mtl.textureMeta[ 1 ].height;
-		u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
-		CompressMetalRoughMapToBc5_SIMD( texBin, width, height, texBinOut );
-		texBinData.resize( mtl.textureMeta[ 1 ].texBinRange.offset + bc5ColByteCount );
-		mtl.textureMeta[ 1 ].texBinRange.size = bc5ColByteCount;
-	}
-	if( const cgltf_texture* normalMap = material->normal_texture.texture )
-	{
-		mtl.textureMeta[ 2 ] = LoadTextureFromGlb( normalMap, pBin, PBR_TEXTURE_NORMALS, texBinData );
-		const u8* texBin = std::data( texBinData ) + mtl.textureMeta[ 2 ].texBinRange.offset;
-		u8* texBinOut = std::data( texBinData ) + mtl.textureMeta[ 2 ].texBinRange.offset;
-		u64 width = mtl.textureMeta[ 2 ].width;
-		u64 height = mtl.textureMeta[ 2 ].height;
-		u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
-		CompressNormalMapToBc5_SIMD( texBin, width, height, texBinOut );
-		texBinData.resize( mtl.textureMeta[ 2 ].texBinRange.offset + bc5ColByteCount );
-		mtl.textureMeta[ 2 ].texBinRange.size = bc5ColByteCount;
-	}
-
-	return mtl;
-}
-
 
 inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
 {
@@ -355,121 +210,23 @@ inline float CgltfReadFloat( const u8* data, cgltf_component_type compType )
 	}
 }
 
-/*
-static void readAccessor( std::vector<float>& data, const cgltf_accessor* accessor )
-{
-	assert( accessor->type == cgltf_type_scalar );
-
-	data.resize( accessor->count );
-	cgltf_accessor_unpack_floats( accessor, &data[ 0 ], data.size() );
-}
-static void readAccessor( std::vector<Attr>& data, const cgltf_accessor* accessor )
-{
-	size_t components = cgltf_num_components( accessor->type );
-
-	std::vector<float> temp( accessor->count * components );
-	cgltf_accessor_unpack_floats( accessor, &temp[ 0 ], temp.size() );
-
-	data.resize( accessor->count );
-
-	for( size_t i = 0; i < accessor->count; ++i )
-	{
-		for( size_t k = 0; k < components && k < 4; ++k )
-			data[ i ].f[ k ] = temp[ i * components + k ];
-	}
-}
-static void fixupIndices( std::vector<unsigned int>& indices, cgltf_primitive_type& type )
-{
-	if( type == cgltf_primitive_type_line_loop )
-	{
-		std::vector<unsigned int> result;
-		result.reserve( indices.size() * 2 + 2 );
-
-		for( size_t i = 1; i <= indices.size(); ++i )
-		{
-			result.push_back( indices[ i - 1 ] );
-			result.push_back( indices[ i % indices.size() ] );
-		}
-
-		indices.swap( result );
-		type = cgltf_primitive_type_lines;
-	}
-	else if( type == cgltf_primitive_type_line_strip )
-	{
-		std::vector<unsigned int> result;
-		result.reserve( indices.size() * 2 );
-
-		for( size_t i = 1; i < indices.size(); ++i )
-		{
-			result.push_back( indices[ i - 1 ] );
-			result.push_back( indices[ i ] );
-		}
-
-		indices.swap( result );
-		type = cgltf_primitive_type_lines;
-	}
-	else if( type == cgltf_primitive_type_triangle_strip )
-	{
-		std::vector<unsigned int> result;
-		result.reserve( indices.size() * 3 );
-
-		for( size_t i = 2; i < indices.size(); ++i )
-		{
-			int flip = i & 1;
-
-			result.push_back( indices[ i - 2 + flip ] );
-			result.push_back( indices[ i - 1 - flip ] );
-			result.push_back( indices[ i ] );
-		}
-
-		indices.swap( result );
-		type = cgltf_primitive_type_triangles;
-	}
-	else if( type == cgltf_primitive_type_triangle_fan )
-	{
-		std::vector<unsigned int> result;
-		result.reserve( indices.size() * 3 );
-
-		for( size_t i = 2; i < indices.size(); ++i )
-		{
-			result.push_back( indices[ 0 ] );
-			result.push_back( indices[ i - 1 ] );
-			result.push_back( indices[ i ] );
-		}
-
-		indices.swap( result );
-		type = cgltf_primitive_type_triangles;
-	}
-	else if( type == cgltf_primitive_type_lines )
-	{
-		// glTF files don't require that line index count is divisible by 2, but it is obviously critical for scenes to render
-		indices.resize( indices.size() / 2 * 2 );
-	}
-	else if( type == cgltf_primitive_type_triangles )
-	{
-		// glTF files don't require that triangle index count is divisible by 3, but it is obviously critical for scenes to render
-		indices.resize( indices.size() / 3 * 3 );
-	}
-}
-*/
+// TODO: texture processing separately
 // TODO: rethink samplers
 // TODO: use own mem
-// TODO: use gltfpack with no quant to merge meshes or do it by hand ?
-// TODO: rename mesh_primitive
-// TODO: use u16 idx
-// TODO: quantize pos + uvs
-// TODO: general
-// TODO: improve, make safer ?
+// TODO: more ?
+// NOTE: assume model has pre-baked textures and merged primitives
 static void
 LoadGlbFile(
 	const std::vector<u8>&			glbData,
-	DirectX::BoundingBox&			outAabb,
-	std::vector<vertex>&			vertices,
+	std::vector<float>&				meshAttrs,
 	std::vector<u32>&				indices,
-	std::vector<u8>&				textureBinData,
-	std::vector<pbr_material>&		catalogue )
-{
+	std::vector<u8>&				texBin,
+	std::vector<image_metadata>&	imgDescs, 
+	std::vector<material_data>&		mtrlDescs,
+	std::vector<imported_mesh>&		meshDescs
+){
 	using namespace DirectX;
+	using namespace std;
 
 	cgltf_options options = { .type = cgltf_file_type_glb };
 	cgltf_data* data = 0;
@@ -482,9 +239,9 @@ LoadGlbFile(
 	for( u64 n = 0; n < data->nodes_count; ++n )
 	{
 		const cgltf_node* node = data->nodes + n;
-
+	
 		XMMATRIX t = CgltfNodeGetTransf( node );
-
+	
 		for( const cgltf_node* parent = node->parent; 
 			 parent; 
 			 parent = parent->parent )
@@ -495,300 +252,237 @@ LoadGlbFile(
 	}
 
 	std::vector<float> attrStreams;
-	std::vector<range> meshes( data->meshes_count );
-	std::vector<mesh_primitive> meshPrims;
-	std::vector<u16> uniqueMtlIdx( data->materials_count, 0 );
+	std::vector<imported_mesh> rawMeshes;
+	std::vector<image_metadata> rawRbga8Imgs( data->textures_count, image_metadata{} );
+	std::vector<material_data> materials( data->materials_count );
 
+	for( u64 ti = 0; ti < data->textures_count; ++ti )
 	{
-		u64 meshPrimsCount = 0;
-		for( u64 m = 0; m < data->meshes_count; ++m ){ meshPrimsCount += data->meshes[ m ].primitives_count; }
-		meshPrims.reserve( meshPrimsCount );
+		const cgltf_texture& t = data->textures[ ti ];
+		u64 imgOffset = t.image->buffer_view->offset;
+		u64 imgSize = t.image->buffer_view->size;
+
+		std::string_view mimeType = { t.image->mime_type };
+		if( mimeType == "image/png"sv )
+		{
+			png_decoder dcd( pBin + imgOffset, imgSize );
+			u64 imageByteCount = PngGetDecodedImageByteCount( dcd );
+			u64 widthHeight = PngGetDecodedImageSize( dcd );
+			u64 texBinDataOffset = std::size( texBin );
+			u8* textureBinData = std::data( texBin ) + texBinDataOffset;
+			texBin.resize( std::size( texBin ) + imageByteCount );
+			PngDecodeImageFromMem( dcd, textureBinData, imageByteCount );
+
+			rawRbga8Imgs[ ti ].texBinRange = { texBinDataOffset,imageByteCount };
+			rawRbga8Imgs[ ti ].width = widthHeight & u32( -1 );
+			rawRbga8Imgs[ ti ].height = widthHeight >> 32;
+		}
 	}
+
+	for( u64 mi = 0; mi < data->materials_count; ++mi )
+	{
+		const cgltf_material& mtrl = data->materials[ mi ];
+		assert( mtrl.has_pbr_metallic_roughness );
+
+		const cgltf_pbr_metallic_roughness& pbrMetallicRoughness = mtrl.pbr_metallic_roughness;
+		if( const cgltf_texture* pbrBaseCol = pbrMetallicRoughness.base_color_texture.texture )
+		{
+			u64 texDscIdx = u64( pbrBaseCol - data->textures );
+			image_metadata& texInfo = rawRbga8Imgs[ texDscIdx ];
+
+			const u8* imgSrc = std::data( texBin ) + texInfo.texBinRange.offset;
+			u8* texBinOut = std::data( texBin ) + texInfo.texBinRange.offset;
+			u64 width = texInfo.width;
+			u64 height = texInfo.height;
+			u64 bc1ColByteCount = GetCompressedTextureByteCount( width, height, bc1BytesPerBlock );
+			texInfo.texBinRange.size = bc1ColByteCount;
+			texInfo.format = TEXTURE_FORMAT_BC1_RGB_SRGB;
+			CompressToBc1_SIMD( imgSrc, width, height, texBinOut );
+
+			vec3 baseColFactor = { 
+				pbrMetallicRoughness.base_color_factor[ 0 ],
+				pbrMetallicRoughness.base_color_factor[ 1 ],
+				pbrMetallicRoughness.base_color_factor[ 2 ] };
+			materials[ mi ].baseColFactor = baseColFactor;
+			materials[ mi ].baseColIdx = texDscIdx;
+		}
+		
+		if( const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture )
+		{
+			u64 texDscIdx = u64( metalRoughMap - data->textures );
+			image_metadata& texInfo = rawRbga8Imgs[ texDscIdx ];
+			
+			const u8* imgSrc = std::data( texBin ) + texInfo.texBinRange.offset;
+			u8* texBinOut = std::data( texBin ) + texInfo.texBinRange.offset;
+			u64 width = texInfo.width;
+			u64 height = texInfo.height;
+			u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
+			texInfo.texBinRange.size = bc5ColByteCount;
+			texInfo.format = TEXTURE_FORMAT_BC5_UNORM;
+			CompressMetalRoughMapToBc5_SIMD( imgSrc, width, height, texBinOut );
+
+			materials[ mi ].metallicFactor = pbrMetallicRoughness.metallic_factor;
+			materials[ mi ].roughnessFactor = pbrMetallicRoughness.roughness_factor;
+			materials[ mi ].normalMapIdx = texDscIdx;
+		}
+		if( const cgltf_texture* normalMap = mtrl.normal_texture.texture )
+		{
+			u64 texDscIdx = u64( normalMap - data->textures );
+			image_metadata& texInfo = rawRbga8Imgs[ texDscIdx ];
+			
+			const u8* imgSrc = std::data( texBin ) + texInfo.texBinRange.offset;
+			u8* texBinOut = std::data( texBin ) + texInfo.texBinRange.offset;
+			u64 width = texInfo.width;
+			u64 height = texInfo.height;
+			u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
+			texInfo.texBinRange.size = bc5ColByteCount;
+			texInfo.format = TEXTURE_FORMAT_BC5_UNORM;
+			CompressNormalMapToBc5_SIMD( imgSrc, width, height, texBinOut );
+
+			materials[ mi ].occRoughMetalIdx = texDscIdx;
+		}
+	}
+
+	constexpr u64 NumOfFloatPerAttr = 11;
+	constexpr u64 NumOfOnlyCareAttrs = 4;
 
 	for( u64 m = 0; m < data->meshes_count; ++m )
 	{
 		const cgltf_mesh& mesh = data->meshes[ m ];
+		const cgltf_primitive& prim = mesh.primitives[ 0 ];
 
-		meshes[ m ] = { std::size( meshPrims ),mesh.primitives_count };
+		ACOMPL_ERR( mesh.primitives_count - 1 );
 
-		for( u64 p = 0; p < mesh.primitives_count; ++p )
+		rawMeshes.push_back( {} );
+		imported_mesh& rawMesh = rawMeshes[ std::size( rawMeshes ) - 1 ];
+
+		u16 mtlIdx = u16( prim.material - data->materials );
+		rawMesh.mtlIdx = mtlIdx;
+
+		// NOTE: attrs must have the same count 
+		u64 primVtxCount = prim.attributes[ 0 ].data->count;
+		for( u64 a = 0; a < prim.attributes_count; ++a ) assert( primVtxCount == prim.attributes[ a ].data->count );
+
+		attrStreams.reserve( std::size( attrStreams ) + NumOfFloatPerAttr * NumOfOnlyCareAttrs * primVtxCount );
+
+		for( u64 a = 0; a < prim.attributes_count; ++a )
 		{
-			const cgltf_primitive& prim = mesh.primitives[ p ];
+			const cgltf_attribute& vtxAttr = prim.attributes[ a ];
+			if( vtxAttr.type == cgltf_attribute_type_invalid ) continue;
 
-			meshPrims.push_back( {} );
-			mesh_primitive& meshPrim = meshPrims[ std::size( meshPrims ) - 1 ];
 
-			if( prim.material->has_pbr_metallic_roughness )
+			if( vtxAttr.type == cgltf_attribute_type_position )
 			{
-				u16 mtlIdx = u16( prim.material - data->materials );
-				meshPrim.mtlIdx = mtlIdx;
-				++uniqueMtlIdx[ mtlIdx ];
+				assert( vtxAttr.data->has_min && vtxAttr.data->has_min );
+
+				rawMesh.aabbMin[ 0 ] = vtxAttr.data->min[ 0 ];
+				rawMesh.aabbMin[ 1 ] = vtxAttr.data->min[ 1 ];
+				rawMesh.aabbMin[ 2 ] = vtxAttr.data->min[ 2 ];
+
+				rawMesh.aabbMax[ 0 ] = vtxAttr.data->max[ 0 ];
+				rawMesh.aabbMax[ 1 ] = vtxAttr.data->max[ 1 ];
+				rawMesh.aabbMax[ 2 ] = vtxAttr.data->max[ 2 ];
 			}
 
-			// NOTE: attrs must have the same count 
-			u64 primVtxCount = prim.attributes[ 0 ].data->count;
-			for( u64 a = 0; a < prim.attributes_count; ++a ) assert( primVtxCount == prim.attributes[ a ].data->count );
 
-			constexpr u64 NumOfFloatPerAttr = 11;
-			constexpr u64 NumOfOnlyCareAttrs = 4;
-			u64 attrLocalCount = NumOfFloatPerAttr * NumOfOnlyCareAttrs * primVtxCount;
-			attrStreams.reserve( std::size( attrStreams ) + attrLocalCount );
-
-			for( u64 a = 0; a < prim.attributes_count; ++a )
+			u64 attrNumComp = cgltf_num_components( vtxAttr.data->type );
+			switch( vtxAttr.type )
 			{
-				const cgltf_attribute& vtxAttr = prim.attributes[ a ];
-				if( vtxAttr.type == cgltf_attribute_type_invalid ) continue;
-				
-
-				if( vtxAttr.type == cgltf_attribute_type_position )
-				{
-					assert( vtxAttr.data->has_min && vtxAttr.data->has_min );
-
-					meshPrim.aabbMin[ 0 ] = vtxAttr.data->min[ 0 ];
-					meshPrim.aabbMin[ 1 ] = vtxAttr.data->min[ 1 ];
-					meshPrim.aabbMin[ 2 ] = vtxAttr.data->min[ 2 ];
-
-					meshPrim.aabbMax[ 0 ] = vtxAttr.data->max[ 0 ];
-					meshPrim.aabbMax[ 1 ] = vtxAttr.data->max[ 1 ];
-					meshPrim.aabbMax[ 2 ] = vtxAttr.data->max[ 2 ];
-				}
-
-
-				u64 attrNumComp = cgltf_num_components( vtxAttr.data->type );
-				switch( vtxAttr.type )
-				{
-				case cgltf_attribute_type_position: 
-					assert( attrNumComp == 3 );
-					meshPrim.posStreamRange = { std::size( attrStreams ), 3 * vtxAttr.data->count }; break;
-				case cgltf_attribute_type_normal: 
-					assert( attrNumComp == 3 );
-					meshPrim.normalStreamRange = { std::size( attrStreams ), 3 * vtxAttr.data->count }; break;
-				case cgltf_attribute_type_tangent:
-					assert( attrNumComp == 4 );
-					meshPrim.tanStreamRange = { std::size( attrStreams ), 3 * vtxAttr.data->count }; break;
-				case cgltf_attribute_type_texcoord: 
-					assert( attrNumComp == 2 );
-					meshPrim.uvsStreamRange = { std::size( attrStreams ), 2 * vtxAttr.data->count }; break;
-				case cgltf_attribute_type_color: case cgltf_attribute_type_joints: case cgltf_attribute_type_weights: break;
-				}
-
-
-				cgltf_component_type compType = vtxAttr.data->component_type;
-				u64 compByteCount = CgltfCompTypeByteCount( compType );
-				u64 attrStride = vtxAttr.data->stride;
-				u64 attrOffset = vtxAttr.data->offset;
-				u64 attrSrcOffset = vtxAttr.data->buffer_view->offset;
-				switch( vtxAttr.type )
-				{
-				case cgltf_attribute_type_position: case cgltf_attribute_type_normal: case cgltf_attribute_type_texcoord:
-				{
-					for( u64 v = 0; v < primVtxCount; ++v )
-					{
-						const u8* attrData = pBin + attrSrcOffset + attrOffset + attrStride * v;
-
-						for( u64 i = 0; i < attrNumComp; ++i )
-							attrStreams.push_back( CgltfReadFloat( attrData + i * compByteCount, compType ) );
-					}
-				}break;
-				case cgltf_attribute_type_tangent: 
-				{
-					for( u64 v = 0; v < primVtxCount; ++v )
-					{
-						const u8* attrData = pBin + attrSrcOffset + attrOffset + attrStride * v;
-
-						float comps[ 4 ] = {};
-						for( u64 i = 0; i < attrNumComp; ++i ) comps[ i ] = CgltfReadFloat( attrData + i * compByteCount, compType );
-
-						attrStreams.push_back( comps[ 0 ] * comps[ 3 ] );
-						attrStreams.push_back( comps[ 1 ] * comps[ 3 ] );
-						attrStreams.push_back( comps[ 2 ] * comps[ 3 ] );
-					}
-				}break;
-				case cgltf_attribute_type_color: case cgltf_attribute_type_joints: case cgltf_attribute_type_weights: break;
-				}
-				
+			case cgltf_attribute_type_position:
+			assert( attrNumComp == 3 );
+			rawMesh.posStreamRange = { std::size( attrStreams ), 3 * vtxAttr.data->count }; break;
+			case cgltf_attribute_type_normal:
+			assert( attrNumComp == 3 );
+			rawMesh.normalStreamRange = { std::size( attrStreams ), 3 * vtxAttr.data->count }; break;
+			case cgltf_attribute_type_tangent:
+			assert( attrNumComp == 4 );
+			rawMesh.tanStreamRange = { std::size( attrStreams ), 3 * vtxAttr.data->count }; break;
+			case cgltf_attribute_type_texcoord:
+			assert( attrNumComp == 2 );
+			rawMesh.uvsStreamRange = { std::size( attrStreams ), 2 * vtxAttr.data->count }; break;
+			case cgltf_attribute_type_color: case cgltf_attribute_type_joints: case cgltf_attribute_type_weights: break;
 			}
 
-			u64 idxDstOffset = std::size( indices );
-			indices.resize( idxDstOffset + prim.indices->count ); 
-			const u8* idxSrc = pBin + prim.indices->buffer_view->offset;
-			u64 idxStride = prim.indices->stride;
-			meshPrim.idxRange = { idxDstOffset,prim.indices->count };
-			for( u64 i = 0; i < prim.indices->count; ++i )
+
+			cgltf_component_type compType = vtxAttr.data->component_type;
+			u64 compByteCount = CgltfCompTypeByteCount( compType );
+			u64 attrStride = vtxAttr.data->stride;
+			u64 attrOffset = vtxAttr.data->offset;
+			u64 attrSrcOffset = vtxAttr.data->buffer_view->offset;
+			switch( vtxAttr.type )
 			{
-				u64 idx = cgltf_component_read_index( idxSrc + idxStride * i, prim.indices->component_type );
-				indices[ i + idxDstOffset ] = u32( idx );
+			case cgltf_attribute_type_position: case cgltf_attribute_type_normal: case cgltf_attribute_type_texcoord:
+			{
+				for( u64 v = 0; v < primVtxCount; ++v )
+				{
+					const u8* attrData = pBin + attrSrcOffset + attrOffset + attrStride * v;
+
+					for( u64 i = 0; i < attrNumComp; ++i )
+						attrStreams.push_back( CgltfReadFloat( attrData + i * compByteCount, compType ) );
+				}
+			}break;
+			case cgltf_attribute_type_tangent:
+			{
+				for( u64 v = 0; v < primVtxCount; ++v )
+				{
+					const u8* attrData = pBin + attrSrcOffset + attrOffset + attrStride * v;
+
+					float comps[ 4 ] = {};
+					for( u64 i = 0; i < attrNumComp; ++i ) comps[ i ] = CgltfReadFloat( attrData + i * compByteCount, compType );
+
+					attrStreams.push_back( comps[ 0 ] * comps[ 3 ] );
+					attrStreams.push_back( comps[ 1 ] * comps[ 3 ] );
+					attrStreams.push_back( comps[ 2 ] * comps[ 3 ] );
+				}
+			}break;
+			case cgltf_attribute_type_color: case cgltf_attribute_type_joints: case cgltf_attribute_type_weights: break;
 			}
+
 		}
-	}
 
-	// TODO: is it worth it ?
-	u64 reserveTxBinSize = 0;
-	for( u16 mtlIdx = 0; mtlIdx < std::size( uniqueMtlIdx ); ++mtlIdx )
-	{
-		if( uniqueMtlIdx[ mtlIdx ] ) 
-			reserveTxBinSize += GetMetallicPbrMaterialByteCount( &data->materials[ mtlIdx ], pBin );
-	}
-	textureBinData.reserve( std::size( textureBinData ) + reserveTxBinSize );
-
-	for( u16 mtlIdx = 0; mtlIdx < std::size( uniqueMtlIdx ); ++mtlIdx )
-	{
-		if( uniqueMtlIdx[ mtlIdx ] ) 
-			catalogue.push_back( LoadMetallicPbrMaterial( &data->materials[ mtlIdx ], pBin, textureBinData ) );
+		u64 idxDstOffset = std::size( indices );
+		indices.resize( idxDstOffset + prim.indices->count );
+		const u8* idxSrc = pBin + prim.indices->buffer_view->offset;
+		u64 idxStride = prim.indices->stride;
+		rawMesh.idxRange = { idxDstOffset,prim.indices->count };
+		for( u64 i = 0; i < prim.indices->count; ++i )
+		{
+			u64 idx = cgltf_component_read_index( idxSrc + idxStride * i, prim.indices->component_type );
+			indices[ i + idxDstOffset ] = u32( idx );
+		}
 	}
 
 	cgltf_free( data );
 
-
-	// NOTE: assemble meshes
-	// TODO: per mesh
-	BoundingBox aabb = {};
-	for( u64 p = 0; p < std::size( meshPrims ); ++p )
-	{
-		XMVECTOR min = XMLoadFloat3( (const XMFLOAT3*) &meshPrims[ p ].aabbMin[ 0 ] );
-		XMVECTOR max = XMLoadFloat3( (const XMFLOAT3*) &meshPrims[ p ].aabbMax[ 0 ] );
-
-		XMFLOAT3 center;
-		XMFLOAT3 extent;
-
-		XMStoreFloat3( &center, XMVectorScale( XMVectorAdd( max, min ), 0.5 ) );
-		XMStoreFloat3( &extent, XMVectorScale( XMVectorSubtract( max, min ), 0.5 ) );
-
-		BoundingBox aabbPartial = { center,extent };
-		if( p == 0 ) aabb = aabbPartial;
-
-		BoundingBox::CreateMerged( aabb, aabb, aabbPartial );
-	}
-
-	for( range r : meshes )
-	{
-		const mesh_primitive* firstPrim = &meshPrims[ r.offset ];
-		for( u64 p = 0; p < r.size; ++p )
-		{
-			assert( ( ( ( firstPrim[ p ].posStreamRange.size / 3 ) == ( firstPrim[ p ].normalStreamRange.size / 3 ) ) ==
-					  ( ( firstPrim[ p ].tanStreamRange.size / 3 ) == ( firstPrim[ p ].uvsStreamRange.size / 2 ) ) ) );
-
-			u64 vtxAttrCount = firstPrim[ p ].posStreamRange.size / 3;
-			u64 vtxOffset = std::size( vertices );
-			vertices.resize( vtxOffset + vtxAttrCount );
-
-			vertex* firstVertex = &vertices[ vtxOffset ];
-			const float* posStream = std::data( attrStreams ) + firstPrim[ p ].posStreamRange.offset;
-			const float* normalStream = std::data( attrStreams ) + firstPrim[ p ].normalStreamRange.offset;
-			const float* tanStream = std::data( attrStreams ) + firstPrim[ p ].tanStreamRange.offset;
-			const float* uvsStream = std::data( attrStreams ) + firstPrim[ p ].uvsStreamRange.offset;
-			for( u64 i = 0; i < vtxAttrCount; ++i )
-			{
-				firstVertex[ i ].px = -posStream[ i * 3 + 0 ];
-				firstVertex[ i ].py = posStream[ i * 3 + 1 ];
-				firstVertex[ i ].pz = posStream[ i * 3 + 2 ];
-				// NOTE: for simplicitly we do it in here
-				firstVertex[ i ].mi = firstPrim[ p ].mtlIdx;
-			}
-			// TODO: cache friendlier ? merge normal and tangent stream
-			for( u64 i = 0; i < vtxAttrCount; ++i )
-			{
-				float nx = -normalStream[ i * 3 + 0 ];
-				float ny = normalStream[ i * 3 + 1 ];
-				float nz = normalStream[ i * 3 + 2 ];
-				float tx = tanStream[ i * 3 + 0 ];
-				float ty = tanStream[ i * 3 + 1 ];
-				float tz = tanStream[ i * 3 + 2 ];
-
-				vec2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
-				float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
-				//firstVertex[ i ].nx = nx;
-				//firstVertex[ i ].ny = ny;
-				//firstVertex[ i ].nz = nz;
-				//firstVertex[ i ].tAngle = tanAngle;
-
-				firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
-				firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
-				firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
-			}
-			for( u64 i = 0; i < vtxAttrCount; ++i )
-			{
-				firstVertex[ i ].tu = uvsStream[ i * 2 + 0 ];
-				firstVertex[ i ].tv = uvsStream[ i * 2 + 1 ];
-			}
-			for( u64 i = 0; i < firstPrim[ p ].idxRange.size; ++i ) 
-				indices[ firstPrim[ p ].idxRange.offset + i ] += vtxOffset;
-		}
-	}
-
-	outAabb = aabb;
+	meshAttrs = std::move( attrStreams );
+	meshDescs = std::move( rawMeshes );
+	imgDescs = std::move( rawRbga8Imgs );
+	mtrlDescs = std::move( materials );
 }
 
 // TODO: mesh triangulate ?
-inline void MeshoptReindexMesh( std::vector<vertex>& vertices, std::vector<u32>& indices )
-{
-	u64 oldVtxCount = std::size( vertices );
-	u64 oldIdxCount = std::size( indices );
-	
-
-	std::vector<u32> remap( oldVtxCount );
+inline u64 MeshoptReindexMesh( 
+	const std::span<u32>	indicesIn, 
+	std::span<u32>			indicesOut, 
+	std::span<vertex>		vertices 
+){
+	std::vector<u32> remap( std::size( vertices ) );
 	u64 newVtxCount = meshopt_generateVertexRemap( std::data( remap ),
-												   std::data( indices ),
-												   oldIdxCount,
+												   std::data( indicesIn ),
+												   std::size( indicesIn ),
 												   std::data( vertices ),
-												   oldVtxCount,
+												   std::size( vertices ),
 												   sizeof( vertices[ 0 ] ) );
-	assert( newVtxCount <= oldVtxCount );
-	if( newVtxCount == oldVtxCount ) return;
+	assert( newVtxCount <= std::size( vertices ) );
+	if( newVtxCount == std::size( vertices ) ) return newVtxCount;
 
-	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), oldIdxCount, std::data( remap ) );
-	meshopt_remapVertexBuffer( std::data( vertices ), std::data( vertices ), oldVtxCount, sizeof( vertices[ 0 ] ), std::data( remap ) );
-	vertices.resize( newVtxCount );
-}
-
-static void MeshoptMakeLods( 
-	const std::vector<vertex>&	vertices,
-	u64							maxLodCount,
-	std::vector<u32>&			lodIndices,
-	std::vector<u32>&			idxBuffer,
-	std::vector<mesh_lod>&		outMeshLods )
-{
-	constexpr float ERROR_THRESHOLD = 1e-2f;
-	constexpr double expDecay = 0.85;
-
-	u64 meshLodsCount = 0;
-	std::vector<mesh_lod> meshLods( maxLodCount );
-	for( mesh_lod& lod : meshLods )
-	{
-		++meshLodsCount;
-		lod.indexOffset = std::size( idxBuffer );
-		lod.indexCount = std::size( lodIndices );
-
-		idxBuffer.insert( std::end( idxBuffer ), std::begin( lodIndices ), std::end( lodIndices ) );
-
-		if( meshLodsCount < maxLodCount )
-		{
-			u64 nextIndicesTarget = u64( double( std::size( lodIndices ) ) * expDecay );
-			u64 nextIndices = meshopt_simplify( std::data( lodIndices ),
-												std::data( lodIndices ),
-												std::size( lodIndices ),
-												&vertices[ 0 ].px,
-												std::size( vertices ),
-												sizeof( vertex ),
-												nextIndicesTarget,
-												ERROR_THRESHOLD );
-
-			assert( nextIndices <= std::size( lodIndices ) );
-
-			// NOTE: reached the error bound
-			if( nextIndices == std::size( lodIndices ) ) break;
-
-			lodIndices.resize( nextIndices );
-			meshopt_optimizeVertexCache( std::data( lodIndices ),
-										 std::data( lodIndices ),
-										 std::size( lodIndices ),
-										 std::size( vertices ) );
-		}
-	}
-	assert( meshLodsCount <= maxLodCount );
-	meshLods.resize( meshLodsCount );
-
-	outMeshLods = std::move( meshLods );
+	meshopt_remapIndexBuffer( std::data( indicesOut ), std::data( indicesIn ), std::size( indicesIn ), std::data( remap ) );
+	meshopt_remapVertexBuffer( std::data( vertices ), 
+							   std::data( vertices ), 
+							   std::size( vertices ), 
+							   sizeof( vertices[ 0 ] ), 
+							   std::data( remap ) );
+	return newVtxCount;
 }
 
 // TODO: meshlets
@@ -856,9 +550,9 @@ u32 MeshoptBuildMeshlets( const std::vector<vertex>& vtx, const std::vector<u32>
 }
 
 // TODO:
-static void MeshoptMakeMeshlets( 
-	const std::vector<vertex>& vertices, 
-	const std::vector<u32>& lodIndices, 
+static void MeshoptMakeMeshlets(
+	const std::vector<vertex>& vertices,
+	const std::vector<u32>& lodIndices,
 	std::vector<mesh_lod>& meshLods,
 	meshlets_data& mlets )
 {
@@ -874,25 +568,229 @@ static void MeshoptMakeMeshlets(
 	}
 }
 
+// TODO: spans
 inline void MeshoptOptimizeMesh(
-	std::vector<vertex>& vertices,
-	std::vector<u32>& indices )
-{
-	u64 vtxCount = std::size( vertices );
-	u64 idxCount = std::size( indices );
+	const vertex*	vertices,
+	const u32*		indices,
+	u64				vtxCount,
+	u64				idxCount,
+	vertex*			verticesOut,
+	u32*			indicesOut
+){
+	meshopt_optimizeVertexCache( indicesOut, indices, idxCount, vtxCount );
+	meshopt_optimizeOverdraw( indicesOut, indices, idxCount, &vertices[ 0 ].px, vtxCount, sizeof( vertices[ 0 ] ), 1.05f );
+	meshopt_optimizeVertexFetch( verticesOut, indices, idxCount, vertices, vtxCount, sizeof( vertices[ 0 ] ) );
+}
 
-	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), idxCount, vtxCount );
-	meshopt_optimizeOverdraw( std::data( indices ),
-							  std::data( indices ),
-							  idxCount,
-							  &vertices[ 0 ].px,
-							  vtxCount,
-							  sizeof( vertices[ 0 ] ),
-							  1.05f );
-	meshopt_optimizeVertexFetch( std::data( vertices ),
-								 std::data( indices ),
-								 idxCount,
-								 std::data( vertices ),
-								 vtxCount,
-								 sizeof( vertices[ 0 ] ) );
+// TODO: no indicesOffset
+inline void MeshoptMakeMeshLods(
+	const std::span<vertex> verticesView,
+	const std::span<u32> indicesView,
+	u64				indicesOutOffset,
+	u32*			indicesOut,
+	std::vector<mesh_lod>& outMeshLods
+){
+	constexpr float ERROR_THRESHOLD = 1e-2f;
+	constexpr float reductionFactor = 0.85f;
+
+	std::vector<mesh_lod> meshLods( std::size( outMeshLods ) );
+	std::memcpy( indicesOut + indicesOutOffset, std::data( indicesView ), std::size( indicesView ) * sizeof( indicesView[ 0 ] ) );
+	meshLods[ 0 ].indexCount = std::size( indicesView );
+	meshLods[ 0 ].indexOffset = indicesOutOffset;
+
+	u64 meshLodsCount = 1;
+	for( ; meshLodsCount < std::size( meshLods ); ++meshLodsCount )
+	{
+		const mesh_lod& prevLod = meshLods[ meshLodsCount - 1 ];
+		const u32* prevIndices = indicesOut + prevLod.indexOffset;
+		u32* nextIndices = indicesOut + prevLod.indexOffset + prevLod.indexCount;
+
+		u64 nextIndicesCount = meshopt_simplify( nextIndices,
+												 prevIndices,
+												 prevLod.indexCount,
+												 &verticesView[ 0 ].px,
+												 std::size( verticesView ),
+												 sizeof( verticesView[ 0 ] ),
+												 float( prevLod.indexCount ) * reductionFactor,
+												 ERROR_THRESHOLD );
+
+		assert( nextIndicesCount <= prevLod.indexCount );
+
+		meshopt_optimizeVertexCache( nextIndices, nextIndices, nextIndicesCount, std::size( verticesView ) );
+
+		// NOTE: reached the error bound
+		if( nextIndicesCount == prevLod.indexCount ) break;
+	}
+
+	meshLods.resize( meshLodsCount );
+	outMeshLods = std::move( meshLods );
+}
+// TODO: world handedness
+// TODO: remove mtlIndex from vertex
+// TODO: use u16 idx
+// TODO: quantize pos + uvs
+static void AssembleMeshAndOptimize(
+	const std::vector<float>&			attrStreams,
+	const std::vector<imported_mesh>&	rawMeshes,
+	const std::vector<u32>&				importedIndices,
+	std::vector<vertex>&				vertices,
+	std::vector<u32>&					indices,
+	std::vector<binary_mesh_desc>&		meshDescs
+){
+	meshDescs.reserve( std::size( rawMeshes ) );
+
+	for( const imported_mesh& m : rawMeshes )
+	{
+		// NOTE: assemble
+		assert( ( ( ( m.posStreamRange.size / 3 ) == ( m.normalStreamRange.size / 3 ) ) ==
+				  ( ( m.tanStreamRange.size / 3 ) == ( m.uvsStreamRange.size / 2 ) ) ) );
+
+		u64 vtxAttrCount = m.posStreamRange.size / 3;
+		u64 vtxOffset = std::size( vertices );
+		vertices.resize( vtxOffset + vtxAttrCount );
+
+		vertex* firstVertex = &vertices[ vtxOffset ];
+		for( u64 i = 0; i < vtxAttrCount; ++i )
+		{
+			const float* posStream = std::data( attrStreams ) + m.posStreamRange.offset;
+
+			firstVertex[ i ].px = -posStream[ i * 3 + 0 ];
+			firstVertex[ i ].py = posStream[ i * 3 + 1 ];
+			firstVertex[ i ].pz = posStream[ i * 3 + 2 ];
+			// NOTE: for simplicitly we do it in here
+			firstVertex[ i ].mi = m.mtlIdx;
+		}
+		for( u64 i = 0; i < vtxAttrCount; ++i )
+		{
+			const float* normalStream = std::data( attrStreams ) + m.normalStreamRange.offset;
+			const float* tanStream = std::data( attrStreams ) + m.tanStreamRange.offset;
+
+			float nx = -normalStream[ i * 3 + 0 ];
+			float ny = normalStream[ i * 3 + 1 ];
+			float nz = normalStream[ i * 3 + 2 ];
+			float tx = tanStream[ i * 3 + 0 ];
+			float ty = tanStream[ i * 3 + 1 ];
+			float tz = tanStream[ i * 3 + 2 ];
+
+			vec2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
+			float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
+
+			firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
+			firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
+			firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
+		}
+		for( u64 i = 0; i < vtxAttrCount; ++i )
+		{
+			const float* uvsStream = std::data( attrStreams ) + m.uvsStreamRange.offset;
+
+			firstVertex[ i ].tu = uvsStream[ i * 2 + 0 ];
+			firstVertex[ i ].tv = uvsStream[ i * 2 + 1 ];
+		}
+		for( u64 i = 0; i < m.idxRange.size; ++i ) indices[ m.idxRange.offset + i ] += vtxOffset;
+		
+		// NOTE: optimize and lod
+		constexpr u64 lodMaxCount = 4;
+		u64 idxOffset = std::size( indices );
+		indices.resize( idxOffset + m.idxRange.size * lodMaxCount );
+		MeshoptReindexMesh( { const_cast<u32*>( std::data( importedIndices ) + m.idxRange.offset ), m.idxRange.offset },
+							{ std::data( indices ) + idxOffset, m.idxRange.offset },
+							{ std::data( vertices ) + vtxOffset,vtxAttrCount } );
+		MeshoptOptimizeMesh( firstVertex,
+							 std::data( indices ) + idxOffset,
+							 vtxAttrCount,
+							 m.idxRange.size,
+							 firstVertex,
+							 std::data( indices ) + idxOffset );
+
+		
+		std::vector<mesh_lod> meshLods( lodMaxCount );
+		MeshoptMakeMeshLods( { std::data( vertices ) + vtxOffset,vtxAttrCount },
+							 { const_cast<u32*>( std::data( importedIndices ) + m.idxRange.offset ), m.idxRange.offset },
+							 idxOffset,
+							 std::data( indices ),
+							 meshLods );
+
+		meshDescs.push_back( {} );
+		binary_mesh_desc& mesh = meshDescs[ std::size( meshDescs ) - 1 ];
+		mesh.vtxRange = { vtxOffset, u32( std::size( vertices ) - vtxOffset ) };
+		mesh.lodCount = std::size( meshLods );
+		for( u64 l = 0; l < std::size( meshLods ); ++l )
+		{
+			mesh.lodRanges[ l ].offset = meshLods[ l ].indexOffset;
+			mesh.lodRanges[ l ].size = meshLods[ l ].indexCount;
+		}
+		mesh.aabbMinMax[ 0 ] = m.aabbMin[ 0 ];
+		mesh.aabbMinMax[ 1 ] = m.aabbMin[ 1 ];
+		mesh.aabbMinMax[ 2 ] = m.aabbMin[ 2 ];
+		mesh.aabbMinMax[ 3 ] = m.aabbMax[ 0 ];
+		mesh.aabbMinMax[ 4 ] = m.aabbMax[ 1 ];
+		mesh.aabbMinMax[ 5 ] = m.aabbMax[ 2 ];
+		mesh.materialIndex = m.mtlIdx;
+	}
+}
+
+// TODO: impose some ordering on data descriptors
+// TODO: revisit
+struct drak_file_header
+{
+	char magik[ 4 ] = "DRK";
+	u32 drakVer = 0;
+	u32 contentVer = 0;
+};
+
+// TODO: better more efficient copy
+static drak_file_desc CompileGlbAsset( const std::vector<u8>& glbData, std::vector<u8>& drakBinData
+){
+	std::vector<float> meshAttrs;
+	std::vector<u32> rawIndices;
+	std::vector<imported_mesh> rawMeshDescs;
+
+	std::vector<vertex> vertices;
+	std::vector<u32> indices;
+	std::vector<u8> texBin;
+	std::vector<binary_mesh_desc> meshDescs;
+	std::vector<material_data> mtrlDescs;
+	std::vector<image_metadata> imgDescs;
+
+	LoadGlbFile( glbData, meshAttrs, rawIndices, texBin, imgDescs, mtrlDescs, rawMeshDescs );
+	AssembleMeshAndOptimize( meshAttrs, rawMeshDescs, rawIndices, vertices, indices, meshDescs );
+
+	u64 totalFileDescSize = BYTE_COUNT( meshDescs ) + BYTE_COUNT( mtrlDescs ) + BYTE_COUNT( imgDescs );
+	u64 totalContentSize = BYTE_COUNT( vertices ) + BYTE_COUNT( indices ) + BYTE_COUNT( texBin );
+	std::vector<u8> outData;
+	outData.resize( totalFileDescSize + totalContentSize );
+
+	u8* pOutData = std::data( outData );
+
+	std::memcpy( pOutData, std::data( meshDescs ), BYTE_COUNT( meshDescs ) );
+	pOutData += BYTE_COUNT( meshDescs );
+	std::memcpy( pOutData, std::data( mtrlDescs ), BYTE_COUNT( mtrlDescs ) );
+	pOutData += BYTE_COUNT( mtrlDescs );
+	std::memcpy( pOutData, std::data( imgDescs ), BYTE_COUNT( imgDescs ) );
+	pOutData += BYTE_COUNT( imgDescs );
+	std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) );
+	pOutData += BYTE_COUNT( vertices );
+	std::memcpy( pOutData, std::data( indices ), BYTE_COUNT( indices ) );
+	pOutData += BYTE_COUNT( indices );
+	std::memcpy( pOutData, std::data( texBin ), BYTE_COUNT( texBin ) );
+
+	drakBinData = std::move( outData );
+	drak_file_desc fileDesc = {};
+	fileDesc.compressedSize = totalContentSize;
+	fileDesc.originalSize = totalContentSize;
+	fileDesc.meshesCount = std::size( meshDescs );
+	fileDesc.mtrlsCount = std::size( mtrlDescs );
+	fileDesc.texCount = std::size( imgDescs );
+
+	return fileDesc;
+}
+
+// TODO: mem efficient
+// TODO: add compression
+inline void SaveCompressToBinaryFile(
+	const char*								filename
+
+)
+{
+	
 }

@@ -1,5 +1,7 @@
 #ifdef __cplusplus
 
+#pragma once
+
 #include "core_types.h"
 
 // TODO: remove
@@ -65,10 +67,6 @@ struct vertex
 	float px;
 	float py;
 	float pz;
-	float nx;
-	float ny;
-	float nz;
-	float tAngle;
 	float tu;
 	float tv;
 	uint mi;
@@ -135,18 +133,27 @@ struct mesh_lod
 
 struct mesh
 {
-	vec3 center;
-	float radius;
+	vec3		center;
+	float		radius;
 
-	uint vertexCount;
-	uint vertexOffset;
+	uint		vertexCount;
+	uint		vertexOffset;
 
-	// TODO: per lod
-	uint materialCount;
-	uint materialOffset;
+	uint		materialIndex;
 
-	uint lodCount;
-	mesh_lod lods[ 4 ];
+	mesh_lod	lods[ 4 ];
+	uint		lodCount;
+};
+
+struct mesh_data
+{
+	vec3		center;
+	vec3		extent;
+
+	mesh_lod	lods[ 4 ];
+	uint		vertexCount;
+	uint		vertexOffset;
+	uint8_t		lodCount;
 };
 
 struct dispatch_command

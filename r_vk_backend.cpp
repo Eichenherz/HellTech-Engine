@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <string_view>
 #include <charconv>
+#include <span>
 
 // TODO: use own allocator
 // TODO: precompiled header
@@ -123,7 +124,7 @@ constexpr u64 MLET_CULL_WORKSIZE = 256;
 //====================CVARS====================//
 static b32 boundingSphereDbgDraw = 1;
 static b32 colorBlending = 0;
-static b32 occlusionCullingPass = 1;
+static b32 occlusionCullingPass = 0;
 //==============================================//
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
@@ -184,7 +185,6 @@ struct image
 	VkImageView		view;
 	VkDeviceMemory	mem;
 	VkFormat		nativeFormat;
-	VkExtent3D		nativeRes;
 	u32				magicNum;
 	u16				width;
 	u16				height;
@@ -211,13 +211,11 @@ struct render_context
 {
 	VkPipeline		gfxPipeline;
 	VkPipeline		compPipeline;
-	VkPipeline		compLatePipeline;
 	VkPipeline		compHiZPipeline;
 	VkPipeline		gfxBVDbgDrawPipeline;
 	VkPipeline		gfxTranspPipe;
 	VkPipeline		compAvgLumPipe;
 	VkPipeline		compTonemapPipe;
-	VkPipeline		compBc7CompressorPipe;
 	VkRenderPass	renderPass;
 	VkRenderPass	render2ndPass;
 
@@ -226,13 +224,8 @@ struct render_context
 	image			depthTarget;
 	image			colorTarget;
 
-	image			colorCache;
-
 	image			depthPyramid;
 	VkImageView		depthPyramidChain[ MAX_MIP_LEVELS ];
-	u32				depthPyramidWidth;
-	u32				depthPyramidHeight;
-	u8				depthPyramidMipCount;
 	VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
 	VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 	VkFramebuffer	offscreenFbo;
@@ -623,7 +616,7 @@ VkCreateAllocBindImage(
 
 	img.width = extent.width;
 	img.height = extent.height;
-	imgInfo.extent = img.nativeRes = extent;
+	imgInfo.extent = extent;
 	imgInfo.mipLevels = img.mipCount = mipCount;
 	imgInfo.arrayLayers = img.layerCount = 1;
 	imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -864,63 +857,6 @@ inline VkWriteDescriptorSet VkMakeBindlessGlobalUpdate(
 	return update;
 }
 
-// NOTE: from https://mostlymangling.blogspot.com/2019/12/stronger-better-morer-moremur-better.html
-inline u64 Moremur( u64 x )
-{
-	x ^= x >> 27;
-	x *= 0x3C79AC492BA7B653ULL;
-	x ^= x >> 33;
-	x *= 0x1C69B3F74AC4AE35ULL;
-	x ^= x >> 27;
-
-	return x;
-}
-// TODO: make faster ?
-// NOTE: MurmurHash2, 64-bit version, by Austin Appleby
-u64 MurmurHash64A( const void* key, i32 len, u64 seed )
-{
-	constexpr u64 m = 0xC6A4A7935BD1E995ULL;
-	constexpr i32 r = 47;
-
-	u64 h = seed ^ ( len * m );
-
-	const u64* data = (const u64*) key;
-	const u64* end = data + ( len / 8 );
-
-	while( data != end )
-	{
-		u64 k = *data++;
-
-		k *= m;
-		k ^= k >> r;
-		k *= m;
-
-		h ^= k;
-		h *= m;
-	}
-
-	const u8* data2 = (const u8*) data;
-
-	switch( len & 7 )
-	{
-	case 7: h ^= u64( data2[ 6 ] ) << 48;
-	case 6: h ^= u64( data2[ 5 ] ) << 40;
-	case 5: h ^= u64( data2[ 4 ] ) << 32;
-	case 4: h ^= u64( data2[ 3 ] ) << 24;
-	case 3: h ^= u64( data2[ 2 ] ) << 16;
-	case 2: h ^= u64( data2[ 1 ] ) << 8;
-	case 1: h ^= u64( data2[ 0 ] );
-		h *= m;
-	};
-
-	h ^= h >> r;
-	h *= m;
-	h ^= h >> r;
-
-	return h;
-}
-
-
 // TODO: 
 constexpr std::string_view shadersFolder = "D:\\EichenRepos\\QiY\\QiY\\Shaders\\"sv;
 constexpr std::string_view shaderExtension = ".spv"sv;
@@ -949,7 +885,7 @@ inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice 
 										  std::size( shader.spvByteCode ) );
 	
 	std::string_view shaderName = { shaderPath };
-	shaderName.remove_prefix( std::size( shadersFolder ) - 1 );
+	shaderName.remove_prefix( std::size( shadersFolder ) );
 	shaderName.remove_suffix( std::size( shaderExtension ) - 1 );
 	VkDbgNameObj( vkDevice, VK_OBJECT_TYPE_SHADER_MODULE, (u64) shader.module, &shaderName[ 0 ] );
 
@@ -1710,7 +1646,7 @@ static void VkInitVirutalFrames(
 }
 
 // TODO: more locallity ?
-//#include "r_data_structs.h"
+#include "r_data_structs.h"
 
 #include "asset_compiler.h"
 
@@ -1794,7 +1730,7 @@ static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
 	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
 }
 // TODO: memory stuff
-// TODO: faster ?
+// TODO: constexpr special file
 static void GenerateIcosphere( vector<vertex>& vtxData, vector<u32>& idxData, u64 numIters )
 {
 	constexpr u64 ICOSAHEDRON_FACE_NUM = 20;
@@ -1833,7 +1769,7 @@ static void GenerateIcosphere( vector<vertex>& vtxData, vector<u32>& idxData, u6
 	
 
 	for( u64 i = 0; i < numIters; ++i ){
-		for( u64 t = 0; t < idxData.size(); t += 3 ){
+		for( u64 t = 0; t < std::size( idxData ); t += 3 ){
 			u32 i0 = idxData[ t ];
 			u32 i1 = idxData[ t + 1 ];
 			u32 i2 = idxData[ t + 2 ];
@@ -1850,7 +1786,7 @@ static void GenerateIcosphere( vector<vertex>& vtxData, vector<u32>& idxData, u6
 			DirectX::XMStoreFloat3( &m20, DirectX::XMVector3Normalize( DirectX::XMVectorAdd( 
 				DirectX::XMLoadFloat3( &v2 ), DirectX::XMLoadFloat3( &v0 ) ) ) );
 
-			u32 idxOffset = vtxCache.size() - 1;
+			u32 idxOffset = std::size( vtxCache ) - 1;
 
 			vtxCache.push_back( m01 );
 			vtxCache.push_back( m12 );
@@ -1897,7 +1833,7 @@ static void GenerateIcosphere( vector<vertex>& vtxData, vector<u32>& idxData, u6
 	// TODO: 2 normals per vertex ? how ?
 	vector<vec3> normals( std::size( vtxCache ), vec3{} );
 
-	for( u64 t = 0; t < idxData.size(); t += 3 ){
+	for( u64 t = 0; t < std::size( idxData ); t += 3 ){
 		u32 i0 = idxData[ t ];
 		u32 i1 = idxData[ t + 1 ];
 		u32 i2 = idxData[ t + 2 ];
@@ -1919,17 +1855,16 @@ static void GenerateIcosphere( vector<vertex>& vtxData, vector<u32>& idxData, u6
 								DirectX::XMVector3Normalize( DirectX::XMVectorAdd( normal, DirectX::XMLoadFloat3( &normals[ i2 ] ) ) ) );
 	}
 
-	vtxData.resize( vtxCache.size() );
+	vtxData.resize( std::size( vtxCache ) );
 
-	for( u64 i = 0; i < vtxCache.size(); ++i ){
+	for( u64 i = 0; i < std::size( vtxCache ); ++i ){
 		vtxData[ i ] = {};
 		vtxData[ i ].px = vtxCache[ i ].x;
 		vtxData[ i ].py = vtxCache[ i ].y;
 		vtxData[ i ].pz = vtxCache[ i ].z;
-		//vtxData[ i ].n = Snorm8OctahedronEncode( normals[ i ] );
-		vtxData[ i ].nx = normals[ i ].x;
-		vtxData[ i ].ny = normals[ i ].y;
-		vtxData[ i ].nz = normals[ i ].z;
+		vec2 n = OctaNormalEncode( normals[ i ] );
+		vtxData[ i ].snorm8octNx = FloatToSnorm8( n.x );
+		vtxData[ i ].snorm8octNy = FloatToSnorm8( n.y );
 	}
 }
 static void GenerateBox( 
@@ -1939,7 +1874,6 @@ static void GenerateBox(
 	float			height = 1.0f, 
 	float			thickenss = 1.0f )
 {
-#if 1
 	float w = width * 0.5f;
 	float h = height * 0.5f;
 	float t = thickenss * 0.5f;
@@ -1954,44 +1888,44 @@ static void GenerateBox(
 	vec3 c6 = {-w,-h, t };
 	vec3 c7 = { w,-h, t };
 
-	constexpr vec3 u = { 0,1,0 };
-	constexpr vec3 d = { 0,-1,0 };
-	constexpr vec3 f = { 0,0,1 };
-	constexpr vec3 b = { 0,0,-1 };
-	constexpr vec3 l = { -1,0,0 };
-	constexpr vec3 r = { 1,0,0 };
+	/*constexpr*/ vec2 u = OctaNormalEncode( { 0,1,0 } );
+	/*constexpr*/ vec2 d = OctaNormalEncode( { 0,-1,0 } );
+	/*constexpr*/ vec2 f = OctaNormalEncode( { 0,0,1 } );
+	/*constexpr*/ vec2 b = OctaNormalEncode( { 0,0,-1 } );
+	/*constexpr*/ vec2 l = OctaNormalEncode( { -1,0,0 } );
+	/*constexpr*/ vec2 r = OctaNormalEncode( { 1,0,0 } );
 
 	vertex vertices[] = {
 		// Bottom
-		{c0.x,c0.y,c0.z,d.x,d.y,d.z,0,0},
-		{c1.x,c1.y,c1.z,d.x,d.y,d.z,0,0},
-		{c2.x,c2.y,c2.z,d.x,d.y,d.z,0,0},
-		{c3.x,c3.y,c3.z,d.x,d.y,d.z,0,0},
-		// Left
-		{c7.x,c7.y,c7.z,l.x,l.y,l.z,0,0},
-		{c4.x,c4.y,c4.z,l.x,l.y,l.z,0,0},
-		{c0.x,c0.y,c0.z,l.x,l.y,l.z,0,0},
-		{c3.x,c3.y,c3.z,l.x,l.y,l.z,0,0},
-		// Front
-		{c4.x,c4.y,c4.z,f.x,f.y,f.z,0,0},
-		{c5.x,c5.y,c5.z,f.x,f.y,f.z,0,0},
-		{c1.x,c1.y,c1.z,f.x,f.y,f.z,0,0},
-		{c0.x,c0.y,c0.z,f.x,f.y,f.z,0,0},
-		// Back
-		{c6.x,c6.y,c6.z,b.x,b.y,b.z,0,0},
-		{c7.x,c7.y,c7.z,b.x,b.y,b.z,0,0},
-		{c3.x,c3.y,c3.z,b.x,b.y,b.z,0,0},
-		{c2.x,c2.y,c2.z,b.x,b.y,b.z,0,0},
-		// Right
-		{c5.x,c5.y,c5.z,r.x,r.y,r.z,0,0},
-		{c6.x,c6.y,c6.z,r.x,r.y,r.z,0,0},
-		{c2.x,c2.y,c2.z,r.x,r.y,r.z,0,0},
-		{c1.x,c1.y,c1.z,r.x,r.y,r.z,0,0},
-		// Top
-		{c7.x,c7.y,c7.z,u.x,u.y,u.z,0,0},
-		{c6.x,c6.y,c6.z,u.x,u.y,u.z,0,0},
-		{c5.x,c5.y,c5.z,u.x,u.y,u.z,0,0},
-		{c4.x,c4.y,c4.z,u.x,u.y,u.z,0,0},
+		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
+		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
+		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
+		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
+		// Left					
+		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
+		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
+		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
+		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
+		// Front				
+		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
+		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
+		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
+		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
+		// Back					
+		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
+		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
+		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
+		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
+		// Right				
+		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
+		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
+		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
+		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
+		// Top					
+		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
+		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
+		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
+		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
 	};
 
 	u32 indices[] = {
@@ -2005,9 +1939,8 @@ static void GenerateBox(
 
 	if constexpr( worldLeftHanded ) ReverseTriangleWinding( indices, std::size( indices ) );
 
-	vtx.insert( vtx.end(), std::begin( vertices ), std::end( vertices ) );
-	idx.insert( idx.end(), std::begin( indices ), std::end( indices ) );
-#endif
+	vtx.insert( std::end( vtx ), std::begin( vertices ), std::end( vertices ) );
+	idx.insert( std::end( idx ), std::begin( indices ), std::end( indices ) );
 }
 
 // TODO: pass buff_data ?
@@ -2080,7 +2013,6 @@ static buffer_data drawCmdDbgBuff;
 static buffer_data drawCountDbgBuff;
 
 static buffer_data drawVisibilityBuff;
-static buffer_data objectVisibilityBuff;
 
 static buffer_data depthAtomicCounterBuff;
 
@@ -2173,6 +2105,7 @@ struct buffer_region
 //constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\1.glb";
 //constexpr char glbPath[] = "D:\\3d models\\cyberdemon\\2.glb";
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
+constexpr char drakPath[] = "D:\\EichenRepos\\QiY\\QiY\\Assets\\cyberbaron.drak";
 //constexpr char glbPath[] = "WaterBottle.glb";
 
 template<typename T>
@@ -2232,7 +2165,7 @@ struct texture_manager : resource_manager<image>
 
 };
 
-inline VkFormat GetVkFormat( texture_format_type t )
+inline VkFormat GetVkFormat( texture_format t )
 {
 	switch( t )
 	{
@@ -2251,40 +2184,38 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 	vector<mesh> meshes;
 	meshlets_data meshlets;
 	vector<u8> textureData = {};
-	vector<pbr_material> catalogue;
-	// TODO: store material offset and count 
-	// TODO: doom eternal style 2 mtls/triangle store in meshlets ?
-	vector<vertex> modelVertices;
-	vector<u32> modelIndices;
+	vector<material_data> catalogue;
 	{
-		DirectX::BoundingBox aabb = {};
-		const vector<u8> glbData = SysReadFile( glbPath );
-		LoadGlbFile( glbData, aabb, modelVertices, modelIndices, textureData, catalogue );
-		meshes.push_back( {} );
-		mesh& m = meshes[ std::size( meshes ) - 1 ];
-		m.vertexCount = std::size( modelVertices );
-		m.vertexOffset = std::size( vertexBuffer );
-		m.center = aabb.Center;
-		m.radius = XMVectorGetX( XMVector3Length( XMLoadFloat3( &aabb.Extents ) ) );
-		std::vector<mesh_lod> meshLods;
-		MeshoptMakeLods( modelVertices, std::size( m.lods ), modelIndices, indexBuffer, meshLods );
-		m.lodCount = std::size( meshLods );
-		for( u64 i = 0; i < m.lodCount; ++i )
+		vector<u8> binaryData;
+		drak_file_desc fileDesc;
+		vector<u8> fileData = SysReadFile( drakPath );
+		if( std::size( fileData ) == 0 )
 		{
-			m.lods[ i ] = meshLods[ i ];
+			fileData = SysReadFile( glbPath );
+			fileDesc = CompileGlbAsset( fileData, binaryData );
 		}
+
+		u64 offset = 0;
+		std::span<binary_mesh_desc> meshDesc = { (binary_mesh_desc*) std::data( binaryData ) + offset,fileDesc.meshesCount };
+		offset += BYTE_COUNT( meshDesc );
+		std::span<material_data> mtrlDesc = { (material_data*) std::data( binaryData ) + offset,fileDesc.mtrlsCount };
+		offset += BYTE_COUNT( mtrlDesc );
+		std::span<image_metadata> imgDesc = { (image_metadata*) std::data( binaryData )+offset,fileDesc.texCount };
+		offset += BYTE_COUNT( imgDesc );
+
+
 	}
 	vector<material_data> materials( std::size( catalogue ) );
-	for( u64 m = 0; m < std::size( materials ); ++m )
-	{
-		materials[ m ].baseColFactor = *(const vec3*) &catalogue[ m ].baseColorFactor;
-		materials[ m ].metallicFactor = catalogue[ m ].metallicFactor;
-		materials[ m ].roughnessFactor = catalogue[ m ].roughnessFactor;
-		materials[ m ].baseColIdx = m + 0;
-		materials[ m ].occRoughMetalIdx = m + 1;
-		materials[ m ].normalMapIdx = m + 2;
-	}
-	vertexBuffer.insert( std::end( vertexBuffer ), std::begin( modelVertices ), std::end( modelVertices ) );
+	//for( u64 m = 0; m < std::size( materials ); ++m )
+	//{
+	//	materials[ m ].baseColFactor = *(const vec3*) &catalogue[ m ].baseColorFactor;
+	//	materials[ m ].metallicFactor = catalogue[ m ].metallicFactor;
+	//	materials[ m ].roughnessFactor = catalogue[ m ].roughnessFactor;
+	//	materials[ m ].baseColIdx = m + 0;
+	//	materials[ m ].occRoughMetalIdx = m + 1;
+	//	materials[ m ].normalMapIdx = m + 2;
+	//}
+	//vertexBuffer.insert( std::end( vertexBuffer ), std::begin( modelVertices ), std::end( modelVertices ) );
 	// TODO: move to independent buffer 
 	//MakeDebugGeometryBuffer( vertexBuffer, indexBuffer, meshes );
 	
@@ -2414,10 +2345,6 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 												  &vkRscArena );
 
-	objectVisibilityBuff = VkCreateAllocBindBuffer( ( dc.waveSize / 8 ) * ceil( float( drawCount ) / dc.waveSize ),
-													VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-													VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-													&vkRscArena );
 	// TODO: seems overkill
 	// TODO: no transfer bit ?
 	depthAtomicCounterBuff = VkCreateAllocBindBuffer( 4,
@@ -2495,11 +2422,8 @@ static void VkInitAndUploadResources( VkDevice vkDevice )
 			VkExtent3D size = { u32( meta.width ), u32( meta.height ), 1 };
 			assert( size.width && size.height );
 			// TODO: spec const for frag shaders
-			//VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-			//VkFormat format = ( meta.format == PBR_TEXTURE_BASE_COLOR ) ? VK_FORMAT_BC1_RGB_SRGB_BLOCK : VK_FORMAT_R8G8B8A8_UNORM;
 			VkFormat format = VK_FORMAT_BC5_UNORM_BLOCK;
 			if( meta.format == PBR_TEXTURE_BASE_COLOR ) format = VK_FORMAT_BC1_RGB_SRGB_BLOCK;
-			//else if ( meta.format == PBR_TEXTURE_ORM ) format = VK_FORMAT_R8G8B8A8_UNORM;
 			textures[ i * 3 + imgIdx ] = ( VkCreateAllocBindImage( format,
 																   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 																   size, 1,
@@ -2747,12 +2671,9 @@ static void VkBackendInit()
 	rndCtx.gfxPipeline = 
 		VkMakeGfxPipeline( dc.device, pipelineCache, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, 
 						   shaders[ VERT_BINDLESS ].module, shaders[ FRAG_PBR ].module );
-	rndCtx.compPipeline = 
-		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, 
-							   shaders[ COMP_CULL ].module, {OBJ_CULL_WORKSIZE,0 } );
-	rndCtx.compLatePipeline = 
-		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout, 
-							   shaders[ COMP_CULL ].module, {OBJ_CULL_WORKSIZE,1 } );
+	rndCtx.compPipeline =
+		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout,
+							   shaders[ COMP_CULL ].module, { OBJ_CULL_WORKSIZE,occlusionCullingPass } );
 
 	if constexpr( !multiShaderDepthPyramid )
 	{
@@ -2879,8 +2800,8 @@ CullPass(
 	cullInfo.projWidth = camFrust.projWidth;
 	cullInfo.projHeight = camFrust.projHeight;
 
-	cullInfo.pyramidWidthPixels = float( rndCtx.depthPyramid.nativeRes.width );
-	cullInfo.pyramidHeightPixels = float( rndCtx.depthPyramid.nativeRes.height );
+	cullInfo.pyramidWidthPixels = float( rndCtx.depthPyramid.width );
+	cullInfo.pyramidHeightPixels = float( rndCtx.depthPyramid.height );
 	cullInfo.mipLevelsCount = pyramidMipLevels;
 
 	cullInfo.drawCallsCount = drawArgsBuff.size / sizeof( draw_data );
@@ -2927,7 +2848,6 @@ CullPass(
 		drawCountBuff.descriptor(), 
 		drawVisibilityBuff.descriptor(), 
 		dispatchCmdBuff.descriptor(),
-		objectVisibilityBuff.descriptor(),
 		depthPyramidInfo, 
 		drawCmdDbgBuff.descriptor(),
 		drawCountDbgBuff.descriptor() };
@@ -3025,13 +2945,13 @@ DepthPyramidPass(
 	const image&			depthTarget,
 	const vk_program&		program )
 {
-	u32 dispatchGroupX = ( ( depthTarget.nativeRes.width + 63 ) >> 6 );
-	u32 dispatchGroupY = ( ( depthTarget.nativeRes.height + 63 ) >> 6 );
+	u32 dispatchGroupX = ( ( depthTarget.width + 63 ) >> 6 );
+	u32 dispatchGroupY = ( ( depthTarget.height + 63 ) >> 6 );
 
 	downsample_info dsInfo = {};
 	dsInfo.mips = mipLevelsCount;
-	dsInfo.invRes.x = 1.0f / float( depthTarget.nativeRes.width );
-	dsInfo.invRes.y = 1.0f / float( depthTarget.nativeRes.height );
+	dsInfo.invRes.x = 1.0f / float( depthTarget.width );
+	dsInfo.invRes.y = 1.0f / float( depthTarget.height );
 	dsInfo.workGroupCount = dispatchGroupX * dispatchGroupY;
 
 
@@ -3051,20 +2971,16 @@ DepthPyramidPass(
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 
-	VkDescriptorImageInfo srcImgInfo = { 0, depthTarget.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-	VkDescriptorImageInfo samplerInfo = { linearMinSampler, 0, VK_IMAGE_LAYOUT_GENERAL };
-	VkDescriptorBufferInfo counterInfo = { depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size };
-	vector<vk_descriptor_info> depthPyramidDescs( MAX_MIP_LEVELS + 4 );
-	depthPyramidDescs[ 0 ] = srcImgInfo;
-	depthPyramidDescs[ 1 ] = samplerInfo;
-	depthPyramidDescs[ 2 ] = { 0, depthMips[ 4 ], VK_IMAGE_LAYOUT_GENERAL };
-	depthPyramidDescs[ 3 ] = counterInfo;
-	for( u64 i = 0; i < rndCtx.depthPyramidMipCount; ++i ){
-		VkDescriptorImageInfo destImgInfo = { 0, depthMips[ i ], VK_IMAGE_LAYOUT_GENERAL };
-		depthPyramidDescs[ i + 4 ] = destImgInfo;
+	vector<vk_descriptor_info> depthPyramidDescs( MAX_MIP_LEVELS + 3 );
+	depthPyramidDescs[ 0 ] = { 0, depthTarget.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };;
+	depthPyramidDescs[ 1 ] = { linearMinSampler, 0, VK_IMAGE_LAYOUT_GENERAL };
+	depthPyramidDescs[ 2 ] = { depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size };
+	for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
+	{
+		depthPyramidDescs[ i + 3 ] = { 0, depthMips[ i ], VK_IMAGE_LAYOUT_GENERAL };
 	}
 
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, &depthPyramidDescs[ 0 ] );
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, std::data( depthPyramidDescs ) );
 
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dsInfo ), &dsInfo );
 
@@ -3221,8 +3137,8 @@ ToneMappingWithSrgb(
 	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, avgProg.pushConstStages, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
 	vkCmdDispatch( cmdBuff, 
-				   VkGetGroupCount( fboHdrColTrg.nativeRes.width, avgProg.groupSize.localSizeX ), 
-				   VkGetGroupCount( fboHdrColTrg.nativeRes.height, avgProg.groupSize.localSizeY ), 
+				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.localSizeX ), 
+				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.localSizeY ), 
 				   1 );
 
 	// TONEMAPPING w/ GAMMA sRGB
@@ -3264,11 +3180,11 @@ ToneMappingWithSrgb(
 										   tonemapProg.pipeLayout, 0,
 										   &tonemapDescs[ 0 ] );
 
-	assert( fboHdrColTrg.nativeRes.width == sc.scRes.width );
-	assert( fboHdrColTrg.nativeRes.height == sc.scRes.height );
+	assert( fboHdrColTrg.width == sc.scRes.width );
+	assert( fboHdrColTrg.height == sc.scRes.height );
 	vkCmdDispatch( cmdBuff,
-				   VkGetGroupCount( fboHdrColTrg.nativeRes.width, avgProg.groupSize.localSizeX ),
-				   VkGetGroupCount( fboHdrColTrg.nativeRes.height, avgProg.groupSize.localSizeY ),
+				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.localSizeX ),
+				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.localSizeY ),
 				   1 );
 
 }
@@ -3276,17 +3192,7 @@ ToneMappingWithSrgb(
 // TODO: submit/flush queues earlier ?
 static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b32 bvDraw, float dt )
 {
-	//VkSemaphoreWaitInfo semaWaitInfo = {};
-	//semaWaitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
-	//semaWaitInfo.semaphoreCount = 1;
-	//semaWaitInfo.pSemaphores = &rndCtx.hostSyncTimeline;
-	//semaWaitInfo.pValues = &rndCtx.hostSyncWait;
-	//++rndCtx.hostSyncWait;
-	//// TODO: what do we do if it takes too long ? can it take too long ?
-	//VkResult hostSync = vkWaitSemaphores( dc.device, &semaWaitInfo, 1'000'000'000 );
-	//VK_CHECK( ( hostSync - VK_TIMEOUT ) > 0 );
-
-	u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
+	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
 
 	u64 currentFrameIdx = rndCtx.vFrameIdx;
 	virtual_frame& currentVFrame = rndCtx.vrtFrames[ rndCtx.vFrameIdx ];
@@ -3302,8 +3208,10 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, currentVFrame.canGetImgSema, 0, &imgIdx ) );
 
 	// TODO: swapchain resize ?
-	if( !rndCtx.offscreenFbo ){
-		if( !rndCtx.depthTarget.img ){
+	if( !rndCtx.offscreenFbo )
+	{
+		if( !rndCtx.depthTarget.img )
+		{
 			rndCtx.depthTarget = VkCreateAllocBindImage( rndCtx.desiredDepthFormat,
 														 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
 														 VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -3313,35 +3221,36 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 			u32 depthPyrHeight = 0;
 			u32 depthPyrMipCount = 0;
 			// TODO: place depth pyr elsewhere 
-			if constexpr( !multiShaderDepthPyramid ){
+			if constexpr( !multiShaderDepthPyramid )
+			{
 				// TODO: make conservative ?
-				rndCtx.depthPyramidWidth = ( sc.scRes.width ) / 2;
-				rndCtx.depthPyramidHeight = ( sc.scRes.height ) / 2;
-				rndCtx.depthPyramidMipCount = GetImgMipCount( rndCtx.depthPyramidWidth, rndCtx.depthPyramidHeight );
+				rndCtx.depthPyramid.width = ( sc.scRes.width ) / 2;
+				rndCtx.depthPyramid.height = ( sc.scRes.height ) / 2;
+				rndCtx.depthPyramid.mipCount = GetImgMipCount( rndCtx.depthPyramid.width, rndCtx.depthPyramid.height );
 			}
 			else
 			{
-				rndCtx.depthPyramidWidth = FloorPowOf2( sc.scRes.width );
-				rndCtx.depthPyramidHeight = FloorPowOf2( sc.scRes.height );
-				rndCtx.depthPyramidMipCount = GetImgMipCountForPow2( rndCtx.depthPyramidWidth, rndCtx.depthPyramidHeight );
+				rndCtx.depthPyramid.width = FloorPowOf2( sc.scRes.width );
+				rndCtx.depthPyramid.height = FloorPowOf2( sc.scRes.height );
+				rndCtx.depthPyramid.mipCount = GetImgMipCountForPow2( rndCtx.depthPyramid.width, rndCtx.depthPyramid.height );
 			}
-			VK_CHECK( VK_INTERNAL_ERROR( !( rndCtx.depthPyramidMipCount < MAX_MIP_LEVELS ) ) );
+			VK_CHECK( VK_INTERNAL_ERROR( !( rndCtx.depthPyramid.mipCount < MAX_MIP_LEVELS ) ) );
 			rndCtx.depthPyramid = VkCreateAllocBindImage( VK_FORMAT_R32_SFLOAT,
-														  VK_IMAGE_USAGE_SAMPLED_BIT | 
+														  VK_IMAGE_USAGE_SAMPLED_BIT |
 														  VK_IMAGE_USAGE_STORAGE_BIT |
 														  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-														  VkExtent3D{ rndCtx.depthPyramidWidth, rndCtx.depthPyramidHeight,1 },
-														  rndCtx.depthPyramidMipCount,
+														  rndCtx.depthPyramid.Extent3D(),
+														  rndCtx.depthPyramid.mipCount,
 														  &vkAlbumArena );
 
 			VkDbgNameObj( dc.device, VK_OBJECT_TYPE_IMAGE, (u64) rndCtx.depthPyramid.img, "Depth_Pyramid" );
 
-			for( u64 i = 0; i < rndCtx.depthPyramidMipCount; ++i )
+			for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
 			{
 				rndCtx.depthPyramidChain[ i ] = VkMakeImgView( dc.device, rndCtx.depthPyramid.img, VK_FORMAT_R32_SFLOAT, i, 1 );
 			};
 
-			rndCtx.linearMinSampler = VkMakeSampler( dc.device, rndCtx.depthPyramidMipCount, VK_SAMPLER_REDUCTION_MODE_MIN );
+			rndCtx.linearMinSampler = VkMakeSampler( dc.device, rndCtx.depthPyramid.mipCount, VK_SAMPLER_REDUCTION_MODE_MIN );
 		}
 
 		if( !rndCtx.colorTarget.img )
@@ -3352,16 +3261,8 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 														 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 														 sc.scRes, 1,
 														 &vkAlbumArena );
-														
-			// TODO: use fp16 for intermediate for color corrections on hdr output ?
-			rndCtx.colorCache = VkCreateAllocBindImage( VK_FORMAT_R8G8B8A8_UNORM,
-														VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-														VK_IMAGE_USAGE_STORAGE_BIT |
-														VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-														sc.scRes, 1,
-														&vkAlbumArena );
 		}
-			
+
 
 
 
@@ -3501,14 +3402,10 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	static b32 clearedBuffers = 0;
 	if( !clearedBuffers ){
 		vkCmdFillBuffer( currentVFrame.cmdBuf, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
-		vkCmdFillBuffer( currentVFrame.cmdBuf, objectVisibilityBuff.hndl, 0, objectVisibilityBuff.size, 1U  );
 		vkCmdFillBuffer( currentVFrame.cmdBuf, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0 );
 
 		VkBufferMemoryBarrier clearedVisibilityBarrier[] = {
 			VkMakeBufferBarrier( drawVisibilityBuff.hndl,
-								 VK_ACCESS_TRANSFER_WRITE_BIT,
-								 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT ),
-			VkMakeBufferBarrier( objectVisibilityBuff.hndl,
 								 VK_ACCESS_TRANSFER_WRITE_BIT,
 								 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT ),
 			VkMakeBufferBarrier( depthAtomicCounterBuff.hndl,
@@ -3545,12 +3442,11 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 						  renderBeginBarriers );
 
 
-	// FIRST PASS
 	CullPass( currentVFrame.cmdBuf,
 			  rndCtx.compPipeline,
 			  drawcullCompProgram,
 			  camFrust,
-			  rndCtx.depthPyramidMipCount );
+			  rndCtx.depthPyramid.mipCount );
 
 	VkClearValue clearVals[ 2 ] = {};
 	//clearVals[ 0 ].color = { 100,100,100 };
@@ -3570,7 +3466,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	{
 		DepthPyramidPass( currentVFrame.cmdBuf,
 						  rndCtx.compHiZPipeline,
-						  rndCtx.depthPyramidMipCount,
+						  rndCtx.depthPyramid.mipCount,
 						  rndCtx.linearMinSampler,
 						  rndCtx.depthPyramidChain,
 						  rndCtx.depthTarget,
@@ -3581,8 +3477,8 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 		DepthPyramidMultiPass(
 			currentVFrame.cmdBuf,
 			rndCtx.compHiZPipeline,
-			{ rndCtx.depthPyramid.nativeRes.width, rndCtx.depthPyramid.nativeRes.height },
-			rndCtx.depthPyramidMipCount,
+			{ rndCtx.depthPyramid.width, rndCtx.depthPyramid.height },
+			rndCtx.depthPyramid.mipCount,
 			rndCtx.linearMinSampler,
 			rndCtx.depthPyramidChain,
 			rndCtx.depthTarget,
@@ -3599,25 +3495,6 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 						  drawCountDbgBuff.hndl,
 						  0,
 						  debugGfxProgram, 0 );
-	}
-
-	// SECOND PASS
-	if( occlusionCullingPass ){
-		CullPass( currentVFrame.cmdBuf,
-				  rndCtx.compLatePipeline,
-				  drawcullCompProgram,
-				  camFrust,
-				  rndCtx.depthPyramidMipCount );
-
-
-		DrawIndirectPass( currentVFrame.cmdBuf,
-						  rndCtx.gfxPipeline,
-						  rndCtx.render2ndPass,
-						  rndCtx.offscreenFbo,
-						  drawCmdBuff.hndl,
-						  drawCountBuff.hndl,
-						  0,
-						  gfxOpaqueProgram, &lightsBuff );
 	}
 
 
@@ -3665,12 +3542,6 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	presentInfo.pSwapchains = &sc.swapchain;
 	presentInfo.pImageIndices = &imgIdx;
 	VK_CHECK( vkQueuePresentKHR( dc.gfxQueue, &presentInfo ) );
-
-	//VkSemaphoreSignalInfo signalInfo = {};
-	//signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
-	//signalInfo.semaphore = rndCtx.hostSyncTimeline;
-	//signalInfo.value = rndCtx.hostSyncWait;
-	//VK_CHECK( vkSignalSemaphore( dc.device, &signalInfo ) );
 }
 
 static void VkBackendKill()

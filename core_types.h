@@ -20,3 +20,9 @@ using i64 = int64_t;
 using b8 = u8;
 using b16 = u16;
 using b32 = u32;
+
+struct range
+{
+	u64 offset : 32;
+	u64 size : 32;
+};
