@@ -166,6 +166,7 @@ struct imported_mesh
 	u16		mtlIdx;
 };
 
+
 inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
 {
 	using namespace DirectX;
@@ -210,10 +211,39 @@ inline float CgltfReadFloat( const u8* data, cgltf_component_type compType )
 	}
 }
 
-// TODO: texture processing separately
+struct raw_texture_info
+{
+	u32				offset;
+	u16				width;
+	u16				height;
+	texture_type	type;
+};
+
+inline raw_texture_info CgltfDecodeTexture( const cgltf_texture& t, const u8* pBin, std::vector<u8>& texBin )
+{
+	using namespace std;
+	u64 imgOffset = t.image->buffer_view->offset;
+	u64 imgSize = t.image->buffer_view->size;
+
+	std::string_view mimeType = { t.image->mime_type };
+	if( mimeType == "image/png"sv )
+	{
+		png_decoder dcd( pBin + imgOffset, imgSize );
+		u64 imageByteCount = PngGetDecodedImageByteCount( dcd );
+		u64 widthHeight = PngGetDecodedImageSize( dcd );
+		u64 texBinDataOffset = std::size( texBin );
+		texBin.resize( std::size( texBin ) + imageByteCount );
+		PngDecodeImageFromMem( dcd, std::data( texBin ) + texBinDataOffset, imageByteCount );
+
+		return { (u32)texBinDataOffset,u16( widthHeight & u32( -1 ) ), u16( widthHeight >> 32 ) };
+	}
+	assert( 0 );
+}
+
 // TODO: rethink samplers
 // TODO: use own mem
 // TODO: more ?
+// TODO: better tex processing
 // NOTE: assume model has pre-baked textures and merged primitives
 static void
 LoadGlbFile(
@@ -253,31 +283,10 @@ LoadGlbFile(
 
 	std::vector<float> attrStreams;
 	std::vector<imported_mesh> rawMeshes;
-	std::vector<image_metadata> rawRbga8Imgs( data->textures_count, image_metadata{} );
+	std::vector<image_metadata> compressedImgs;
 	std::vector<material_data> materials( data->materials_count );
 
-	for( u64 ti = 0; ti < data->textures_count; ++ti )
-	{
-		const cgltf_texture& t = data->textures[ ti ];
-		u64 imgOffset = t.image->buffer_view->offset;
-		u64 imgSize = t.image->buffer_view->size;
-
-		std::string_view mimeType = { t.image->mime_type };
-		if( mimeType == "image/png"sv )
-		{
-			png_decoder dcd( pBin + imgOffset, imgSize );
-			u64 imageByteCount = PngGetDecodedImageByteCount( dcd );
-			u64 widthHeight = PngGetDecodedImageSize( dcd );
-			u64 texBinDataOffset = std::size( texBin );
-			u8* textureBinData = std::data( texBin ) + texBinDataOffset;
-			texBin.resize( std::size( texBin ) + imageByteCount );
-			PngDecodeImageFromMem( dcd, textureBinData, imageByteCount );
-
-			rawRbga8Imgs[ ti ].texBinRange = { texBinDataOffset,imageByteCount };
-			rawRbga8Imgs[ ti ].width = widthHeight & u32( -1 );
-			rawRbga8Imgs[ ti ].height = widthHeight >> 32;
-		}
-	}
+	std::vector<i32> texProcessingCache( data->textures_count, -1 );
 
 	for( u64 mi = 0; mi < data->materials_count; ++mi )
 	{
@@ -285,61 +294,75 @@ LoadGlbFile(
 		assert( mtrl.has_pbr_metallic_roughness );
 
 		const cgltf_pbr_metallic_roughness& pbrMetallicRoughness = mtrl.pbr_metallic_roughness;
+		materials[ mi ].baseColFactor.x = pbrMetallicRoughness.base_color_factor[ 0 ];
+		materials[ mi ].baseColFactor.y = pbrMetallicRoughness.base_color_factor[ 1 ];
+		materials[ mi ].baseColFactor.z = pbrMetallicRoughness.base_color_factor[ 2 ];
+		materials[ mi ].metallicFactor = pbrMetallicRoughness.metallic_factor;
+		materials[ mi ].roughnessFactor = pbrMetallicRoughness.roughness_factor;
+
 		if( const cgltf_texture* pbrBaseCol = pbrMetallicRoughness.base_color_texture.texture )
 		{
 			u64 texDscIdx = u64( pbrBaseCol - data->textures );
-			image_metadata& texInfo = rawRbga8Imgs[ texDscIdx ];
+			if( texProcessingCache[ texDscIdx ] == -1 )
+			{
+				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				raw_texture_info raw = CgltfDecodeTexture( *pbrBaseCol, pBin, texBin );
 
-			const u8* imgSrc = std::data( texBin ) + texInfo.texBinRange.offset;
-			u8* texBinOut = std::data( texBin ) + texInfo.texBinRange.offset;
-			u64 width = texInfo.width;
-			u64 height = texInfo.height;
-			u64 bc1ColByteCount = GetCompressedTextureByteCount( width, height, bc1BytesPerBlock );
-			texInfo.texBinRange.size = bc1ColByteCount;
-			texInfo.format = TEXTURE_FORMAT_BC1_RGB_SRGB;
-			CompressToBc1_SIMD( imgSrc, width, height, texBinOut );
+				const u8* imgSrc = std::data( texBin ) + raw.offset;
+				u8* texBinOut = std::data( texBin ) + raw.offset;
+				// NOTE: compress in-place
+				CompressToBc1_SIMD( imgSrc, raw.width, raw.height, texBinOut );
 
-			vec3 baseColFactor = { 
-				pbrMetallicRoughness.base_color_factor[ 0 ],
-				pbrMetallicRoughness.base_color_factor[ 1 ],
-				pbrMetallicRoughness.base_color_factor[ 2 ] };
-			materials[ mi ].baseColFactor = baseColFactor;
-			materials[ mi ].baseColIdx = texDscIdx;
+				u64 bcByteCount = GetBCTexByteCount( raw.width, raw.height, bc1BytesPerBlock );
+				texBin.resize( raw.offset + bcByteCount );
+
+				compressedImgs.push_back(
+					{ 0,{ raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC1_RGB_SRGB, TEXTURE_TYPE_2D } );
+			}
+			materials[ mi ].baseColIdx = texProcessingCache[ texDscIdx ];
 		}
 		
 		if( const cgltf_texture* metalRoughMap = pbrMetallicRoughness.metallic_roughness_texture.texture )
 		{
 			u64 texDscIdx = u64( metalRoughMap - data->textures );
-			image_metadata& texInfo = rawRbga8Imgs[ texDscIdx ];
-			
-			const u8* imgSrc = std::data( texBin ) + texInfo.texBinRange.offset;
-			u8* texBinOut = std::data( texBin ) + texInfo.texBinRange.offset;
-			u64 width = texInfo.width;
-			u64 height = texInfo.height;
-			u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
-			texInfo.texBinRange.size = bc5ColByteCount;
-			texInfo.format = TEXTURE_FORMAT_BC5_UNORM;
-			CompressMetalRoughMapToBc5_SIMD( imgSrc, width, height, texBinOut );
+			if( texProcessingCache[ texDscIdx ] == -1 )
+			{
+				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				raw_texture_info raw = CgltfDecodeTexture( *metalRoughMap, pBin, texBin );
 
-			materials[ mi ].metallicFactor = pbrMetallicRoughness.metallic_factor;
-			materials[ mi ].roughnessFactor = pbrMetallicRoughness.roughness_factor;
-			materials[ mi ].normalMapIdx = texDscIdx;
+				const u8* imgSrc = std::data( texBin ) + raw.offset;
+				u8* texBinOut = std::data( texBin ) + raw.offset;
+				// NOTE: compress in-place
+				CompressMetalRoughMapToBc5_SIMD( imgSrc, raw.width, raw.height, texBinOut );
+
+				u64 bcByteCount = GetBCTexByteCount( raw.width, raw.height, bc5BytesPerBlock );
+				texBin.resize( raw.offset + bcByteCount );
+
+				compressedImgs.push_back(
+					{ 0,{ raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC5_UNORM, TEXTURE_TYPE_2D } );
+			}
+			materials[ mi ].occRoughMetalIdx = texProcessingCache[ texDscIdx ];
 		}
 		if( const cgltf_texture* normalMap = mtrl.normal_texture.texture )
 		{
 			u64 texDscIdx = u64( normalMap - data->textures );
-			image_metadata& texInfo = rawRbga8Imgs[ texDscIdx ];
-			
-			const u8* imgSrc = std::data( texBin ) + texInfo.texBinRange.offset;
-			u8* texBinOut = std::data( texBin ) + texInfo.texBinRange.offset;
-			u64 width = texInfo.width;
-			u64 height = texInfo.height;
-			u64 bc5ColByteCount = GetCompressedTextureByteCount( width, height, bc5BytesPerBlock );
-			texInfo.texBinRange.size = bc5ColByteCount;
-			texInfo.format = TEXTURE_FORMAT_BC5_UNORM;
-			CompressNormalMapToBc5_SIMD( imgSrc, width, height, texBinOut );
+			if( texProcessingCache[ texDscIdx ] == -1 )
+			{
+				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				raw_texture_info raw = CgltfDecodeTexture( *normalMap, pBin, texBin );
 
-			materials[ mi ].occRoughMetalIdx = texDscIdx;
+				const u8* imgSrc = std::data( texBin ) + raw.offset;
+				u8* texBinOut = std::data( texBin ) + raw.offset;
+				// NOTE: compress in-place
+				CompressNormalMapToBc5_SIMD( imgSrc, raw.width, raw.height, texBinOut );
+
+				u64 bcByteCount = GetBCTexByteCount( raw.width, raw.height, bc5BytesPerBlock );
+				texBin.resize( raw.offset + bcByteCount );
+
+				compressedImgs.push_back(
+					{ 0, { raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC5_UNORM, TEXTURE_TYPE_2D } );
+			}
+			materials[ mi ].normalMapIdx = texProcessingCache[ texDscIdx ];
 		}
 	}
 
@@ -456,32 +479,30 @@ LoadGlbFile(
 
 	meshAttrs = std::move( attrStreams );
 	meshDescs = std::move( rawMeshes );
-	imgDescs = std::move( rawRbga8Imgs );
+	imgDescs = std::move( compressedImgs );
 	mtrlDescs = std::move( materials );
 }
 
 // TODO: mesh triangulate ?
-inline u64 MeshoptReindexMesh( 
-	const std::span<u32>	indicesIn, 
-	std::span<u32>			indicesOut, 
-	std::span<vertex>		vertices 
-){
-	std::vector<u32> remap( std::size( vertices ) );
-	u64 newVtxCount = meshopt_generateVertexRemap( std::data( remap ),
-												   std::data( indicesIn ),
-												   std::size( indicesIn ),
-												   std::data( vertices ),
-												   std::size( vertices ),
-												   sizeof( vertices[ 0 ] ) );
-	assert( newVtxCount <= std::size( vertices ) );
-	if( newVtxCount == std::size( vertices ) ) return newVtxCount;
+inline u64 MeshoptReindexMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan )
+{
+	vertex* vertices = std::data( vtxSpan );
+	u32*	indices = std::data( idxSpan );
+	u64		vtxCount = std::size( vtxSpan );
+	u64		idxCount = std::size( idxSpan );
 
-	meshopt_remapIndexBuffer( std::data( indicesOut ), std::data( indicesIn ), std::size( indicesIn ), std::data( remap ) );
-	meshopt_remapVertexBuffer( std::data( vertices ), 
-							   std::data( vertices ), 
-							   std::size( vertices ), 
-							   sizeof( vertices[ 0 ] ), 
-							   std::data( remap ) );
+	std::vector<u32> remap( vtxCount );
+	u64 newVtxCount = meshopt_generateVertexRemap( std::data( remap ),
+												   indices,
+												   idxCount,
+												   vertices,
+												   vtxCount,
+												   sizeof( vertices[ 0 ] ) );
+	assert( newVtxCount <= vtxCount );
+	if( newVtxCount == vtxCount ) return newVtxCount;
+
+	meshopt_remapIndexBuffer( indices, indices, idxCount, std::data( remap ) );
+	meshopt_remapVertexBuffer( vertices, vertices, vtxCount, sizeof( vertices[ 0 ] ), std::data( remap ) );
 	return newVtxCount;
 }
 
@@ -568,33 +589,30 @@ static void MeshoptMakeMeshlets(
 	}
 }
 
-// TODO: spans
-inline void MeshoptOptimizeMesh(
-	const vertex*	vertices,
-	const u32*		indices,
-	u64				vtxCount,
-	u64				idxCount,
-	vertex*			verticesOut,
-	u32*			indicesOut
-){
-	meshopt_optimizeVertexCache( indicesOut, indices, idxCount, vtxCount );
-	meshopt_optimizeOverdraw( indicesOut, indices, idxCount, &vertices[ 0 ].px, vtxCount, sizeof( vertices[ 0 ] ), 1.05f );
-	meshopt_optimizeVertexFetch( verticesOut, indices, idxCount, vertices, vtxCount, sizeof( vertices[ 0 ] ) );
+inline void MeshoptOptimizeMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan )
+{
+	vertex* vertices = std::data( vtxSpan );
+	u32*	indices = std::data( idxSpan );
+	u64		vtxCount = std::size( vtxSpan );
+	u64		idxCount = std::size( idxSpan );
+
+	meshopt_optimizeVertexCache( indices, indices, idxCount, vtxCount );
+	meshopt_optimizeOverdraw( indices, indices, idxCount, &vertices[ 0 ].px, vtxCount, sizeof( vertices[ 0 ] ), 1.05f );
+	meshopt_optimizeVertexFetch( vertices, indices, idxCount, vertices, vtxCount, sizeof( vertices[ 0 ] ) );
 }
 
 // TODO: no indicesOffset
-inline void MeshoptMakeMeshLods(
+inline u64 MeshoptMakeMeshLods(
 	const std::span<vertex> verticesView,
-	const std::span<u32> indicesView,
-	u64				indicesOutOffset,
-	u32*			indicesOut,
-	std::vector<mesh_lod>& outMeshLods
+	const std::span<u32>	indicesView,
+	u64						indicesOutOffset,
+	u32*					indicesOut,
+	std::vector<mesh_lod>&	outMeshLods
 ){
 	constexpr float ERROR_THRESHOLD = 1e-2f;
 	constexpr float reductionFactor = 0.85f;
 
 	std::vector<mesh_lod> meshLods( std::size( outMeshLods ) );
-	std::memcpy( indicesOut + indicesOutOffset, std::data( indicesView ), std::size( indicesView ) * sizeof( indicesView[ 0 ] ) );
 	meshLods[ 0 ].indexCount = std::size( indicesView );
 	meshLods[ 0 ].indexOffset = indicesOutOffset;
 
@@ -603,7 +621,8 @@ inline void MeshoptMakeMeshLods(
 	{
 		const mesh_lod& prevLod = meshLods[ meshLodsCount - 1 ];
 		const u32* prevIndices = indicesOut + prevLod.indexOffset;
-		u32* nextIndices = indicesOut + prevLod.indexOffset + prevLod.indexCount;
+		u32 nextIndicesOffset = prevLod.indexOffset + prevLod.indexCount;
+		u32* nextIndices = indicesOut + nextIndicesOffset;
 
 		u64 nextIndicesCount = meshopt_simplify( nextIndices,
 												 prevIndices,
@@ -617,18 +636,25 @@ inline void MeshoptMakeMeshLods(
 		assert( nextIndicesCount <= prevLod.indexCount );
 
 		meshopt_optimizeVertexCache( nextIndices, nextIndices, nextIndicesCount, std::size( verticesView ) );
-
 		// NOTE: reached the error bound
 		if( nextIndicesCount == prevLod.indexCount ) break;
+
+		meshLods[ meshLodsCount ].indexCount = nextIndicesCount;
+		meshLods[ meshLodsCount ].indexOffset = nextIndicesOffset;
 	}
 
 	meshLods.resize( meshLodsCount );
+	u64 totalIndexCount = 0;
+	for( const mesh_lod& l : meshLods ) totalIndexCount += l.indexCount;
+
 	outMeshLods = std::move( meshLods );
+	return totalIndexCount;
 }
 // TODO: world handedness
 // TODO: remove mtlIndex from vertex
 // TODO: use u16 idx
 // TODO: quantize pos + uvs
+// TODO: revisit index offsets and stuff
 static void AssembleMeshAndOptimize(
 	const std::vector<float>&			attrStreams,
 	const std::vector<imported_mesh>&	rawMeshes,
@@ -686,29 +712,31 @@ static void AssembleMeshAndOptimize(
 			firstVertex[ i ].tu = uvsStream[ i * 2 + 0 ];
 			firstVertex[ i ].tv = uvsStream[ i * 2 + 1 ];
 		}
-		for( u64 i = 0; i < m.idxRange.size; ++i ) indices[ m.idxRange.offset + i ] += vtxOffset;
-		
-		// NOTE: optimize and lod
+
+		assert( sizeof( importedIndices[ 0 ] ) == sizeof( indices[ 0 ] ) );
 		constexpr u64 lodMaxCount = 4;
 		u64 idxOffset = std::size( indices );
 		indices.resize( idxOffset + m.idxRange.size * lodMaxCount );
-		MeshoptReindexMesh( { const_cast<u32*>( std::data( importedIndices ) + m.idxRange.offset ), m.idxRange.offset },
-							{ std::data( indices ) + idxOffset, m.idxRange.offset },
-							{ std::data( vertices ) + vtxOffset,vtxAttrCount } );
-		MeshoptOptimizeMesh( firstVertex,
-							 std::data( indices ) + idxOffset,
-							 vtxAttrCount,
-							 m.idxRange.size,
-							 firstVertex,
-							 std::data( indices ) + idxOffset );
 
+		for( u64 i = 0; i < m.idxRange.size; ++i )
+		{
+			indices[ idxOffset + i ] = importedIndices[ m.idxRange.offset + i ] + vtxOffset;
+		}
 		
+		// NOTE: optimize and lod
+		u64 newVtxCount = MeshoptReindexMesh( { std::data( vertices ) + vtxOffset,vtxAttrCount },
+											  { std::data( indices ) + idxOffset, m.idxRange.size } );
+		//vertices.resize( vtxOffset + newVtxCount );
+		MeshoptOptimizeMesh( { firstVertex,vtxAttrCount }, { std::data( indices ) + idxOffset, m.idxRange.size } );
+
 		std::vector<mesh_lod> meshLods( lodMaxCount );
-		MeshoptMakeMeshLods( { std::data( vertices ) + vtxOffset,vtxAttrCount },
-							 { const_cast<u32*>( std::data( importedIndices ) + m.idxRange.offset ), m.idxRange.offset },
-							 idxOffset,
-							 std::data( indices ),
-							 meshLods );
+		u64 totalIndexCount = MeshoptMakeMeshLods( 
+			{ std::data( vertices ) + vtxOffset,vtxAttrCount },
+			{ std::data( indices ) + m.idxRange.offset, m.idxRange.size },
+			idxOffset,
+			std::data( indices ),
+			meshLods );
+		indices.resize( idxOffset + totalIndexCount );
 
 		meshDescs.push_back( {} );
 		binary_mesh_desc& mesh = meshDescs[ std::size( meshDescs ) - 1 ];
@@ -729,38 +757,36 @@ static void AssembleMeshAndOptimize(
 	}
 }
 
-// TODO: impose some ordering on data descriptors
-// TODO: revisit
-struct drak_file_header
-{
-	char magik[ 4 ] = "DRK";
-	u32 drakVer = 0;
-	u32 contentVer = 0;
-};
-
 // TODO: better more efficient copy
-static drak_file_desc CompileGlbAsset( const std::vector<u8>& glbData, std::vector<u8>& drakBinData
+// TODO: better binary file design ?
+static void CompileGlbAssetToBinary( 
+	const std::vector<u8>&	glbData, 
+	std::vector<u8>&		drakAsset
 ){
-	std::vector<float> meshAttrs;
-	std::vector<u32> rawIndices;
-	std::vector<imported_mesh> rawMeshDescs;
+	std::vector<float>				meshAttrs;
+	std::vector<u32>				rawIndices;
+	std::vector<imported_mesh>		rawMeshDescs;
 
-	std::vector<vertex> vertices;
-	std::vector<u32> indices;
-	std::vector<u8> texBin;
-	std::vector<binary_mesh_desc> meshDescs;
-	std::vector<material_data> mtrlDescs;
-	std::vector<image_metadata> imgDescs;
+	std::vector<vertex>				vertices;
+	std::vector<u32>				indices;
+	std::vector<u8>					texBin;
+	std::vector<binary_mesh_desc>	meshDescs;
+	std::vector<material_data>		mtrlDescs;
+	std::vector<image_metadata>		imgDescs;
 
 	LoadGlbFile( glbData, meshAttrs, rawIndices, texBin, imgDescs, mtrlDescs, rawMeshDescs );
 	AssembleMeshAndOptimize( meshAttrs, rawMeshDescs, rawIndices, vertices, indices, meshDescs );
 
+	u64 descOffset = sizeof( drak_file_header ) + sizeof( drak_file_desc );
 	u64 totalFileDescSize = BYTE_COUNT( meshDescs ) + BYTE_COUNT( mtrlDescs ) + BYTE_COUNT( imgDescs );
 	u64 totalContentSize = BYTE_COUNT( vertices ) + BYTE_COUNT( indices ) + BYTE_COUNT( texBin );
-	std::vector<u8> outData;
-	outData.resize( totalFileDescSize + totalContentSize );
+	std::vector<u8> outData( descOffset + totalFileDescSize + totalContentSize );
 
-	u8* pOutData = std::data( outData );
+	u8* pOutData = std::data( outData ) + descOffset;
+	const u8* pDataBegin = pOutData;
+	u64 vtxOffset = 0;
+	u64 idxOffset = 0;
+	u64 texOffset = 0;
 
 	std::memcpy( pOutData, std::data( meshDescs ), BYTE_COUNT( meshDescs ) );
 	pOutData += BYTE_COUNT( meshDescs );
@@ -768,29 +794,31 @@ static drak_file_desc CompileGlbAsset( const std::vector<u8>& glbData, std::vect
 	pOutData += BYTE_COUNT( mtrlDescs );
 	std::memcpy( pOutData, std::data( imgDescs ), BYTE_COUNT( imgDescs ) );
 	pOutData += BYTE_COUNT( imgDescs );
+
+	vtxOffset = pOutData - pDataBegin;
 	std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) );
 	pOutData += BYTE_COUNT( vertices );
+
+	idxOffset = pOutData - pDataBegin;
 	std::memcpy( pOutData, std::data( indices ), BYTE_COUNT( indices ) );
 	pOutData += BYTE_COUNT( indices );
+
+	texOffset = pOutData - pDataBegin;
 	std::memcpy( pOutData, std::data( texBin ), BYTE_COUNT( texBin ) );
 
-	drakBinData = std::move( outData );
+	*(drak_file_header*) std::data( outData ) = {};
+
 	drak_file_desc fileDesc = {};
 	fileDesc.compressedSize = totalContentSize;
 	fileDesc.originalSize = totalContentSize;
 	fileDesc.meshesCount = std::size( meshDescs );
 	fileDesc.mtrlsCount = std::size( mtrlDescs );
 	fileDesc.texCount = std::size( imgDescs );
+	fileDesc.dataOffset = descOffset + totalFileDescSize;
+	fileDesc.vtxRange = { vtxOffset, BYTE_COUNT( vertices ) };
+	fileDesc.idxRange = { idxOffset, BYTE_COUNT( indices ) };
+	fileDesc.texRange = { texOffset, BYTE_COUNT( texBin ) };
+	*(drak_file_desc*) ( std::data( outData ) + sizeof( drak_file_header ) ) = fileDesc;
 
-	return fileDesc;
-}
-
-// TODO: mem efficient
-// TODO: add compression
-inline void SaveCompressToBinaryFile(
-	const char*								filename
-
-)
-{
-	
+	drakAsset = std::move( outData );
 }

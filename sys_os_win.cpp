@@ -168,7 +168,7 @@ static inline u64 SysGetFileTimestamp( const char* filename )
 
 	return u64( timestamp.QuadPart );
 }
-
+// TODO: might not want to crash when file can't be written/read
 static inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
 {
 	DWORD accessMode = GENERIC_WRITE;

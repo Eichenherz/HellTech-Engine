@@ -28,3 +28,5 @@ spng.h
 Shaders/bc7toSpv.bat
 
 Shaders/bc7_encode.cs.hlsl
+
+Assets/

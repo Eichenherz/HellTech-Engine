@@ -1,12 +1,12 @@
 #pragma once
 #include "core_types.h"
 
-constexpr u64 blockSizeX = 4;
-constexpr u64 blockSizeY = 4;
-constexpr u64 bc1BytesPerBlock = 8;
-constexpr u64 bc5BytesPerBlock = 16;
+inline constexpr u64 blockSizeX = 4;
+inline constexpr u64 blockSizeY = 4;
+inline constexpr u64 bc1BytesPerBlock = 8;
+inline constexpr u64 bc5BytesPerBlock = 16;
 // TODO: type safe ?
-inline u64 GetCompressedTextureByteCount( u64 width, u64 height, u64 bytesPerBlock )
+inline u64 GetBCTexByteCount( u64 width, u64 height, u64 bytesPerBlock )
 {
 	u64 xBlocksCount = width / blockSizeX;
 	u64 yBlocksCount = height / blockSizeY;
