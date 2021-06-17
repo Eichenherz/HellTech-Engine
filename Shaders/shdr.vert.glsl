@@ -20,8 +20,8 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer m
 //};
 
 
-layout( binding = 0 ) readonly buffer draw_args_buffer{
-	draw_data drawArgs[];
+layout( binding = 0 ) readonly buffer inst_desc_buffer{
+	instance_desc instDescs[];
 };
 
 layout( binding = 1 ) readonly buffer draw_cmd_buffer{
@@ -32,7 +32,7 @@ layout( location = 0 ) out vec3 oNormal;
 layout( location = 1 ) out vec3 oTan;
 layout( location = 2 ) out vec3 oFragWorldPos;
 layout( location = 3 ) out vec2 oUv;
-layout( location = 4 ) out uint oMtlIdx;
+layout( location = 4 ) out flat uint oMtlIdx;
 
 vec2 SignNonZero( vec2 e )
 {
@@ -75,30 +75,25 @@ vec3 DecodeTanFromAngle( vec3 n, float tanAngle )
 
 void main() 
 {
-	vertex vtx = vtx_ref( g.addr + g.vtxOffset ).vertices[ gl_VertexIndex ];
+	vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ gl_VertexIndex ];
 	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
-	//vec3 normal = vec3( vtx.nx, vtx.ny, vtx.nz );
-	vec2 octaNormal = vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) );
-	vec3 norm = DecodeOctaNormal( octaNormal );
-	//vec3 norm = normal;
+	vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
 	uint di = drawCmd[ gl_DrawIDARB ].drawIdx;
-	draw_data args = drawArgs[ di ];
-	mesh currentMesh = mesh_ref( g.addr + g.meshesOffset ).meshes[ args.meshIdx ];
-
-	vec3 worldPos = RotateQuat( pos * args.scale, args.rot ) + args.pos;
+	instance_desc inst = instDescs[ di ];
+	
+	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
 	gl_Position = cam.proj * cam.view * vec4( worldPos, 1.0 );
 
 	vec3 n = normalize( norm );
-	//vec3 t = DecodeTanFromAngle( norm, vtx.tAngle );
 	vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
-	t = normalize( RotateQuat( t, args.rot ) );
-	n = normalize( RotateQuat( n, args.rot ) );
+	t = normalize( RotateQuat( t, inst.rot ) );
+	n = normalize( RotateQuat( n, inst.rot ) );
 
 	oNormal = n;
 	oTan = t;
 	oFragWorldPos = worldPos;
 	oUv = texCoord;
-	oMtlIdx = vtx.mi;
+	oMtlIdx = inst.mtrlIdx;
 }

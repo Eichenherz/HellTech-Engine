@@ -683,8 +683,6 @@ static void AssembleMeshAndOptimize(
 			firstVertex[ i ].px = -posStream[ i * 3 + 0 ];
 			firstVertex[ i ].py = posStream[ i * 3 + 1 ];
 			firstVertex[ i ].pz = posStream[ i * 3 + 2 ];
-			// NOTE: for simplicitly we do it in here
-			firstVertex[ i ].mi = m.mtlIdx;
 		}
 		for( u64 i = 0; i < vtxAttrCount; ++i )
 		{
@@ -783,10 +781,6 @@ static void CompileGlbAssetToBinary(
 	std::vector<u8> outData( descOffset + totalFileDescSize + totalContentSize );
 
 	u8* pOutData = std::data( outData ) + descOffset;
-	const u8* pDataBegin = pOutData;
-	u64 vtxOffset = 0;
-	u64 idxOffset = 0;
-	u64 texOffset = 0;
 
 	std::memcpy( pOutData, std::data( meshDescs ), BYTE_COUNT( meshDescs ) );
 	pOutData += BYTE_COUNT( meshDescs );
@@ -795,6 +789,10 @@ static void CompileGlbAssetToBinary(
 	std::memcpy( pOutData, std::data( imgDescs ), BYTE_COUNT( imgDescs ) );
 	pOutData += BYTE_COUNT( imgDescs );
 
+	u64 vtxOffset = 0;
+	u64 idxOffset = 0;
+	u64 texOffset = 0;
+	const u8* pDataBegin = pOutData;
 	vtxOffset = pOutData - pDataBegin;
 	std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) );
 	pOutData += BYTE_COUNT( vertices );

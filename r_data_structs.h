@@ -49,17 +49,18 @@ struct global_data
 	vec3 camViewDir;
 };
 
-struct geometry_buffer_info
+// NOTE: bda == buffer device address
+struct global_bdas
 {
-	uint64_t addr;
-	uint64_t vtxOffset;
-	uint64_t idxOffset;
-	uint64_t meshesOffset;
-	uint64_t meshletsOffset;
-	uint64_t meshletsVtxOffset;
-	uint64_t meshletsIdxOffset;
-	uint64_t materialsOffset;
-	uint64_t drawArgsOffset;
+	uint64_t vtxAddr;
+	uint64_t idxAddr;
+	uint64_t meshDescAddr;
+	uint64_t lightsDescAddr;
+	//uint64_t meshletsOffset;
+	//uint64_t meshletsVtxOffset;
+	//uint64_t meshletsIdxOffset;
+	uint64_t mtrlsAddr;
+	uint64_t instDescAddr;
 };
 // TODO: compressed coords u8, u16
 struct vertex
@@ -69,21 +70,22 @@ struct vertex
 	float pz;
 	float tu;
 	float tv;
-	uint mi;
+	//uint mi;
 	uint8_t snorm8octNx;
 	uint8_t snorm8octNy;
 	uint8_t snorm8tanAngle;
 	uint8_t pad;
 };
 
-// TODO: rename
-ALIGNAS( 16 ) struct draw_data
+// TODO: compress data more ?
+ALIGNAS( 16 ) struct instance_desc
 {
 	vec3 pos;
 	float scale;
 	vec4 rot;
 
 	uint meshIdx;
+	uint mtrlIdx;
 	uint bndVolMeshIdx;
 };
 //ALIGNAS( 16 ) struct light_data
@@ -131,6 +133,7 @@ struct mesh_lod
 	uint meshletOffset;
 };
 
+// TODO: remove mtrlIdx
 struct mesh
 {
 	vec3		center;
@@ -139,13 +142,13 @@ struct mesh
 	uint		vertexCount;
 	uint		vertexOffset;
 
-	uint		materialIndex;
+	//uint		materialIndex;
 
 	mesh_lod	lods[ 4 ];
 	uint		lodCount;
 };
 
-struct mesh_data
+struct mesh_desc
 {
 	vec3		center;
 	vec3		extent;
@@ -184,10 +187,6 @@ struct draw_command
 // TODO: align
 struct cull_info
 {	
-	//uint64_t geometryBufferAddress;
-	//uint64_t drawArgsOffset;
-	//uint64_t meshDataOffset;
-
 	vec4	planes[ 4 ];
 
 	float	frustum[ 4 ];
@@ -235,16 +234,14 @@ struct avg_luminance_info
 #ifndef __cplusplus
 
 #ifdef GLOBAL_RESOURCES
-// TODO: vertex buffer and index buffer via descriptors ?
-//layout( set = 1, binding = 0, scalar ) readonly buffer pos_buffer{ vec3 positions[ 0 ]; } posBuffer[];
-//layout( set = 1, binding = 0, scalar ) readonly buffer norm_buffer{ vec3 normals[ 0 ]; } normBuffer[];
+
 layout( set = 1, binding = 1, std430 ) uniform global{ global_data g; } globalsCam[];
-layout( set = 1, binding = 1, std430 ) uniform geom_info{ geometry_buffer_info g; } globalsGeom[];
+layout( set = 1, binding = 1, std430 ) uniform glob_bdas{ global_bdas bdas; } globalsBdas[];
 layout( set = 1, binding = 2 ) uniform texture2D sampledImages[];
 layout( set = 1, binding = 3 ) uniform sampler samplers[];
 
 global_data cam = globalsCam[ 0 ].g;
-geometry_buffer_info g = globalsGeom[ 1 ].g;
+global_bdas bdas = globalsBdas[ 1 ].bdas;
 
 #endif
 

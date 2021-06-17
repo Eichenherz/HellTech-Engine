@@ -12,7 +12,7 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer m
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer light_ref{
 	light_data lights[];
 };
-
+// TODO: remove, use global ubo
 layout( push_constant ) uniform block{
 	uint64_t lightsBuffAddr;
 };
@@ -117,12 +117,12 @@ vec3 ComputeBrdfReflectance(
   
 void main()
 {
-	material_data mtl = mtl_ref( g.addr + g.materialsOffset ).materials[ mtlIdx ];
+	material_data mtl = mtl_ref( bdas.mtrlsAddr ).materials[ mtlIdx ];
 
 	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv );
 	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv ).rgb;
-	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
-								  uv ).rgb;
+	vec3 normalFromMap = 
+		texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv ).rgb;
 
 	normalFromMap = normalFromMap * 2.0 - 1.0;
 	normalFromMap.b = sqrt( clamp( 1 - dot( normalFromMap.rg, normalFromMap.rg ), 0, 1 ) );

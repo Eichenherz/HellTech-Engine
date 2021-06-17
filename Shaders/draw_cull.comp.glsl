@@ -32,8 +32,8 @@ layout( push_constant, scalar ) uniform block{
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_ref{ 
 	mesh meshes[]; 
 };
-layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer draw_args_ref{
-	draw_data drawArgs[];
+layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
+	instance_desc instDescs[];
 };
 
 
@@ -113,12 +113,12 @@ void main()
 
 	if( !OCCLUSION_CULLING && drawVisibility[ di ] == 0 ) return;
 
-	draw_data currentDraw = draw_args_ref( g.addr + g.drawArgsOffset ).drawArgs[ di ];
-	mesh currentMesh = mesh_ref( g.addr + g.meshesOffset ).meshes[ currentDraw.meshIdx ];
+	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
+	mesh currentMesh = mesh_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
 
 	// TODO: fix culling 
-	vec4 center = vec4( currentDraw.pos + RotateQuat( currentMesh.center * currentDraw.scale, currentDraw.rot ), 1 );
-	float radius = currentMesh.radius * currentDraw.scale;
+	vec4 center = vec4( currentInst.pos + RotateQuat( currentMesh.center * currentInst.scale, currentInst.rot ), 1 );
+	float radius = currentMesh.radius * currentInst.scale;
 	
 	// TODO: move to view space ?
 	bool visible = center.z - cullInfo.zNear > -radius;// && ( cullInfo.drawDistance - center.z > -radius );
@@ -177,16 +177,16 @@ void main()
 		drawCmd[ drawCallIdx ].firstInstance = 0;
 
 	#if GLSL_DBG
-		mesh bndVolMesh = mesh_ref( g.addr + g.meshesOffset ).meshes[ currentDraw.bndVolMeshIdx ];
-	
-		uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
-	
-		dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
-		dbgDrawCmd[ dbgDrawCallIdx ].indexCount = bndVolMesh.lods[ 0 ].indexCount;
-		dbgDrawCmd[ dbgDrawCallIdx ].firstIndex = bndVolMesh.lods[ 0 ].indexOffset;
-		dbgDrawCmd[ dbgDrawCallIdx ].vertexOffset = bndVolMesh.vertexOffset;
-		dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
-		dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
+		//mesh bndVolMesh = mesh_ref( bdas.meshDescAddr ).meshes[ currentDraw.bndVolMeshIdx ];
+		//
+		//uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
+		//
+		//dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
+		//dbgDrawCmd[ dbgDrawCallIdx ].indexCount = bndVolMesh.lods[ 0 ].indexCount;
+		//dbgDrawCmd[ dbgDrawCallIdx ].firstIndex = bndVolMesh.lods[ 0 ].indexOffset;
+		//dbgDrawCmd[ dbgDrawCallIdx ].vertexOffset = bndVolMesh.vertexOffset;
+		//dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
+		//dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
 	#endif
 	}
 
