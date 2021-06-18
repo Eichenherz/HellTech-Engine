@@ -111,7 +111,7 @@ struct material_data
 	uint normalMapIdx;
 	uint hash;
 };
-//constexpr u64 a = alignof( material_data );
+
 struct meshlet
 {
 	vec3	center;

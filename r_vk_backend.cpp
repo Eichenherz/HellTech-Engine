@@ -123,7 +123,7 @@ constexpr u64 MLET_CULL_WORKSIZE = 256;
 //====================CVARS====================//
 static b32 boundingSphereDbgDraw = 1;
 static b32 colorBlending = 0;
-static b32 occlusionCullingPass = 0;
+static b32 occlusionCullingPass = 1;
 //==============================================//
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
@@ -591,7 +591,7 @@ inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
 }
 
 // TODO: pass device to rscCreate functions ?
-
+// TODO: no dedicated alloc for buffers at all ?
 static buffer_data
 VkCreateAllocBindBuffer(
 	u64					sizeInBytes,
@@ -626,7 +626,8 @@ VkCreateAllocBindBuffer(
 	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
 	dedicatedAllocateInfo.buffer = buffMemReqs2.buffer;
 
-	b32 dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation; 
+	//b32 dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation; 
+	b32 dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation; 
 
 	vk_allocation bufferMem = VkArenaAlignAlloc( vkArena,
 												 memReqs2.memoryRequirements.size,
@@ -1785,13 +1786,6 @@ static void VkInitVirutalFrames(
 
 #include "asset_compiler.h"
 
-struct meshlets_data
-{
-	std::vector<meshlet> meshlets;
-	std::vector<u32> vtxIndirBuf;
-	std::vector<u8> triangleBuf;
-};
-
 
 inline VkFormat GetVkFormat( texture_format t )
 {
@@ -2514,7 +2508,7 @@ inline static std::vector<instance_desc> SpawnRandomInstances( u64 drawCount, u6
 {
 	assert( mtrlCount == 1 );
 	std::vector<instance_desc> insts( drawCount );
-
+	float scale = 1.0f;
 	for( instance_desc& i : insts )
 	{
 		i.meshIdx = rand() % meshCount;
@@ -2523,7 +2517,9 @@ inline static std::vector<instance_desc> SpawnRandomInstances( u64 drawCount, u6
 		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.scale = 1.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+
+		//scale *= 0.001f;
 
 		DirectX::XMVECTOR axis = DirectX::XMVector3Normalize(
 			DirectX::XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
@@ -2656,7 +2652,7 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 
 	u64 meshCount = std::size( meshes );
 	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 1;
+	constexpr u64 drawCount = 10;
 	constexpr u64 lightCount = 4;
 	constexpr float sceneRadius = 40.0f;
 	std::srand( randSeed );
@@ -2795,6 +2791,7 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 												  &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawVisibilityBuff.hndl, "Buff_Draw_Vis" );
 
 	// NOTE - create and texture uploads
 	{

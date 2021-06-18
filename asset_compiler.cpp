@@ -549,7 +549,7 @@ u32 MeshoptBuildMeshlets( const std::vector<vertex>& vtx, const std::vector<u32>
 															  std::size( vtx ),
 															  sizeof( vertex ) );
 
-		meshlet data;
+		meshlet data = {};
 		data.center = vec3( bounds.center );
 		data.radius = bounds.radius;
 		data.coneX = bounds.cone_axis_s8[ 0 ];

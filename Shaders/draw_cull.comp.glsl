@@ -111,7 +111,7 @@ void main()
 
 	if( di >= cullInfo.drawCallsCount ) return;
 
-	if( !OCCLUSION_CULLING && drawVisibility[ di ] == 0 ) return;
+	//if( !OCCLUSION_CULLING && drawVisibility[ di ] == 0 ) return;
 
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
 	mesh currentMesh = mesh_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
@@ -164,7 +164,8 @@ void main()
 	}
 #endif
 
-	if( visible && ( !OCCLUSION_CULLING || drawVisibility[ di ] == 0 ) ){
+	//if( visible && ( !OCCLUSION_CULLING || drawVisibility[ di ] == 0 ) ){
+	if( visible ){
 	#if !WAVE_OPS
 		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 	#endif
@@ -190,5 +191,5 @@ void main()
 	#endif
 	}
 
-	if( OCCLUSION_CULLING ) drawVisibility[ di ] = visible ? 1 : 0;
+	//if( OCCLUSION_CULLING ) drawVisibility[ di ] = visible ? 1 : 0;
 }
