@@ -29,8 +29,8 @@ layout( push_constant, scalar ) uniform block{
 };
 
 
-layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_ref{ 
-	mesh meshes[]; 
+layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_desc_ref{ 
+	mesh_desc meshes[]; 
 };
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
@@ -54,8 +54,8 @@ layout( binding = 4 ) uniform sampler2D minQuadFormDepthPyramid;
 
 #if GLSL_DBG
 
-layout( binding = 5 ) writeonly buffer dbg_draw_cmd{
-	draw_command dbgDrawCmd[];
+layout( binding = 5, scalar ) writeonly buffer dbg_draw_cmd{
+	draw_indirect dbgDrawCmd[];
 };
 layout( binding = 6 ) buffer dbg_draw_cmd_count{
 	uint dbgDrawCallCount;
@@ -97,7 +97,14 @@ vec3 RotateQuat( vec3 v, vec4 q )
 	return v + q.w * t + cross( q.xyz, t );
 }
 
-// TODO: 
+vec4 SignFlip( vec4 e )
+{
+	return vec4( ( e.x >= 0.0 ) ? 1.0 : -1.0, 
+				 ( e.y >= 0.0 ) ? 1.0 : -1.0, 
+				 ( e.z >= 0.0 ) ? 1.0 : -1.0,
+				 ( e.w >= 0.0 ) ? 1.0 : -1.0 );
+}
+
 void main()
 {
 	uint di = gl_GlobalInvocationID.x;
@@ -114,39 +121,60 @@ void main()
 	//if( !OCCLUSION_CULLING && drawVisibility[ di ] == 0 ) return;
 
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
-	mesh currentMesh = mesh_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
+	mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
 
-	// TODO: fix culling 
+	// NOTE: transform to clip space
+	// NOTE: full model transfrom because BB might not be centered
 	vec4 center = vec4( currentInst.pos + RotateQuat( currentMesh.center * currentInst.scale, currentInst.rot ), 1 );
-	float radius = currentMesh.radius * currentInst.scale;
+	vec4 extent = vec4( RotateQuat( currentMesh.extent * currentInst.scale, currentInst.rot ), 0 ); // dir
+	//center = vec4( RotateQuat( center.xyz, cam.viewQuat ), 1 ) + cam.viewMove;
+	//extent = vec4( RotateQuat( extent.xyz, cam.viewQuat ), 0 );
+	center = cam.view * center;
+	extent = cam.view * extent;
+	center = cam.proj * center;
+	extent = cam.proj * extent;
+
+	bool visible = true;
+	//bool visible = center.z - cullInfo.zNear > -extent.z;// && ( cullInfo.drawDistance - center.z > -extent.z );
+	//visible = visible && center.z * cullData.frustum[ 1 ] - abs( center.x ) * cullData.frustum[ 0 ] > -radius;
+	//visible = visible && center.z * cullData.frustum[ 3 ] - abs( center.y ) * cullData.frustum[ 2 ] > -radius;
+
+	//visible = visible && dot( cullInfo.planes[ 0 ], center ) > -dot( abs( cullInfo.planes[ 0 ] ), extent );
+	//visible = visible && dot( cullInfo.planes[ 1 ], center ) > -dot( abs( cullInfo.planes[ 1 ] ), extent );
+	//visible = visible && dot( cullInfo.planes[ 2 ], center ) > -dot( abs( cullInfo.planes[ 2 ] ), extent );
+	//visible = visible && dot( cullInfo.planes[ 3 ], center ) > -dot( abs( cullInfo.planes[ 3 ] ), extent );
+
+	//visible = visible && ( dot( cullInfo.planes[ 0 ], extent * SignFlip( cullInfo.planes[ 0 ] ) + center ) > -cullInfo.planes[ 0 ].w );
+	//visible = visible && ( dot( cullInfo.planes[ 1 ], extent * SignFlip( cullInfo.planes[ 1 ] ) + center ) > -cullInfo.planes[ 1 ].w );
+	//visible = visible && ( dot( cullInfo.planes[ 2 ], extent * SignFlip( cullInfo.planes[ 2 ] ) + center ) > -cullInfo.planes[ 2 ].w );
+	//visible = visible && ( dot( cullInfo.planes[ 3 ], extent * SignFlip( cullInfo.planes[ 3 ] ) + center ) > -cullInfo.planes[ 3 ].w );
+
+	visible = visible && ( abs( center.x ) < extent.x + center.w );
+	visible = visible && ( abs( center.y ) < extent.y + center.w );
 	
-	// TODO: move to view space ?
-	bool visible = center.z - cullInfo.zNear > -radius;// && ( cullInfo.drawDistance - center.z > -radius );
-	visible = visible && dot( cullInfo.planes[ 0 ], center ) > -radius;
-	visible = visible && dot( cullInfo.planes[ 1 ], center ) > -radius;
-	visible = visible && dot( cullInfo.planes[ 2 ], center ) > -radius;
-	visible = visible && dot( cullInfo.planes[ 3 ], center ) > -radius;
 
-	if( visible && OCCLUSION_CULLING ){
-		
-		vec3 viewSpaceCenter = ( cam.view * center ).xyz;
-		if( viewSpaceCenter.z > radius + cullInfo.zNear ){
-			vec4 aabb = ProjectedSphereToAABB( viewSpaceCenter, radius,
-											   cullInfo.projWidth / cullInfo.zNear,
-											   cullInfo.projHeight / cullInfo.zNear );
+	// DON'T use yet
+	//if( visible && OCCLUSION_CULLING )
+	//{
+	//	vec3 viewSpaceCenter = ( cam.view * center ).xyz;
+	//	if( viewSpaceCenter.z > radius + cullInfo.zNear )
+	//	{
+	//		vec4 aabb = ProjectedSphereToAABB( viewSpaceCenter, radius,
+	//										   cullInfo.projWidth / cullInfo.zNear,
+	//										   cullInfo.projHeight / cullInfo.zNear );
+	//
+	//		float width = abs( aabb.z - aabb.x ) * cullInfo.pyramidWidthPixels;
+	//		float height = abs( aabb.w - aabb.y ) * cullInfo.pyramidHeightPixels;
+	//		float mipLevel = floor( log2( max( width, height ) ) );
+	//		// NOTE: sampler does clamping 
+	//		float depth = textureLod( minQuadFormDepthPyramid, ( aabb.xy + aabb.zw ) * 0.5, mipLevel ).x;
+	//		float closestDepthValOnSphere = cullInfo.zNear / ( viewSpaceCenter.z - radius );
+	//
+	//		visible = visible && ( closestDepthValOnSphere > depth );
+	//	}
+	//}
 
-			float width = abs( aabb.z - aabb.x ) * cullInfo.pyramidWidthPixels;
-			float height = abs( aabb.w - aabb.y ) * cullInfo.pyramidHeightPixels;
-			float mipLevel = floor( log2( max( width, height ) ) );
-			// NOTE: sampler does clamping 
-			float depth = textureLod( minQuadFormDepthPyramid, ( aabb.xy + aabb.zw ) * 0.5, mipLevel ).x;
-			float closestDepthValOnSphere = cullInfo.zNear / ( viewSpaceCenter.z - radius );
-
-			visible = visible && ( closestDepthValOnSphere > depth );
-		}
-	}
-
-	float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - radius ) );
+	float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
 	uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 	mesh_lod lod = currentMesh.lods[ 0 ];
 
@@ -178,16 +206,13 @@ void main()
 		drawCmd[ drawCallIdx ].firstInstance = 0;
 
 	#if GLSL_DBG
-		//mesh bndVolMesh = mesh_ref( bdas.meshDescAddr ).meshes[ currentDraw.bndVolMeshIdx ];
-		//
-		//uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
-		//
-		//dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
-		//dbgDrawCmd[ dbgDrawCallIdx ].indexCount = bndVolMesh.lods[ 0 ].indexCount;
-		//dbgDrawCmd[ dbgDrawCallIdx ].firstIndex = bndVolMesh.lods[ 0 ].indexOffset;
-		//dbgDrawCmd[ dbgDrawCallIdx ].vertexOffset = bndVolMesh.vertexOffset;
-		//dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
-		//dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
+		uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
+		// TODO: box vertex count const
+		dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
+		dbgDrawCmd[ dbgDrawCallIdx ].firstVertex = 0;
+		dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 36;
+		dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
+		dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
 	#endif
 	}
 

@@ -42,11 +42,15 @@ const float PI = 3.14159265359;
 
 struct global_data
 {
-	mat4 proj;
-	mat4 view;
-	vec3 camPos;
-	float pad;
-	vec3 camViewDir;
+	mat4	proj;
+	mat4	view;
+	mat4	dbgCam;
+	vec3	camPos;
+	float	pad0;
+	vec3	camViewDir;
+	float	pad1;
+	vec4	viewMove;
+	vec4	viewQuat;
 };
 
 // NOTE: bda == buffer device address
@@ -86,7 +90,6 @@ ALIGNAS( 16 ) struct instance_desc
 
 	uint meshIdx;
 	uint mtrlIdx;
-	uint bndVolMeshIdx;
 };
 //ALIGNAS( 16 ) struct light_data
 //{
@@ -170,6 +173,7 @@ struct dispatch_command
 #endif
 };
 
+// TODO: rename
 struct draw_command
 {
 	uint	drawIdx;
@@ -180,6 +184,19 @@ struct draw_command
 	uint    instanceCount;
 	uint    firstIndex;
 	uint    vertexOffset;
+	uint    firstInstance;
+#endif
+};
+
+struct draw_indirect
+{
+	uint	drawIdx;
+#if defined( __cplusplus ) && defined( __VK )
+	VkDrawIndirectCommand cmd;
+#else
+	uint    vertexCount;
+	uint    instanceCount;
+	uint    firstVertex;
 	uint    firstInstance;
 #endif
 };
@@ -199,10 +216,7 @@ struct cull_info
 	float	pyramidWidthPixels;
 	float	pyramidHeightPixels;
 
-	uint	mipLevelsCount;
-
 	uint	drawCallsCount;
-	uint	dbgMeshIdx;
 };
 
 struct cam_frustum

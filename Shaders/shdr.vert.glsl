@@ -6,6 +6,8 @@
 
 #define GLOBAL_RESOURCES
 
+#define GLSL_DBG 0
+
 #include "..\r_data_structs.h"
 #include "glsl_func_lib.h"
 
@@ -19,6 +21,11 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer m
 //	draw_data drawArgs[];
 //};
 
+//#if GLSL_DBG
+//layout( push_constant ) uniform dbg_block{
+//	uint freeCam;
+//};
+//#endif
 
 layout( binding = 0 ) readonly buffer inst_desc_buffer{
 	instance_desc instDescs[];
@@ -84,7 +91,11 @@ void main()
 	instance_desc inst = instDescs[ di ];
 	
 	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
-	gl_Position = cam.proj * cam.view * vec4( worldPos, 1.0 );
+	vec4 outScreenPos = cam.view * vec4( worldPos, 1 );
+//#if GLSL_DBG
+//	outScreenPos = bool( freeCam ) ? ( cam.dbgCam * outScreenPos ) : outScreenPos;
+//#endif
+	gl_Position = cam.proj * outScreenPos;
 
 	vec3 n = normalize( norm );
 	vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );

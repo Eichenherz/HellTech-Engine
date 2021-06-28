@@ -301,7 +301,8 @@ static inline u64	SysTicks()
 static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 {
 	MSG msg;
-	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) ){
+	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) )
+	{
 		TranslateMessage( &msg );
 		DispatchMessageA( &msg );
 		if( msg.message == WM_QUIT ) return false;
@@ -309,8 +310,9 @@ static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 		m->dx = 0;
 		m->dy = 0;
 
-		if( msg.message == WM_INPUT ){
-			RAWINPUT ri;
+		if( msg.message == WM_INPUT )
+		{
+			RAWINPUT ri = {};
 			u32 rawDataSize = sizeof( ri );
 			// TODO: how to handle GetRawInputData errors ?
 			if( GetRawInputData( (HRAWINPUT) msg.lParam,
@@ -371,7 +373,7 @@ static inline void	SysCloseMemMapFile( void* mmFile )
 	//mmFile = 0;
 }
 
-LRESULT CALLBACK	MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
 	switch( uMsg )
 	{
@@ -519,35 +521,51 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 										  XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ),
 										  camUpBasis );
 
+		XMVECTOR viewScale = {};
+		XMVECTOR viewQuat = {};
+		XMVECTOR viewMove = {};
+		assert( XMMatrixDecompose( &viewScale, &viewQuat, &viewMove, view ) );
+
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
-		XMMATRIX transpInvView = XMMatrixTranspose( invView );
 
 		global_data globs = {};
 		XMStoreFloat4x4A( &globs.proj, proj );
 		XMStoreFloat4x4A( &globs.view, view );
 		globs.camPos = camWorldPos;
 		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
+		XMStoreFloat4( &globs.viewMove, viewMove );
+		XMStoreFloat4( &globs.viewQuat, viewQuat );
+		
 
 		// NOTE: transpose for row-major matrices
 		XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
+		//XMMATRIX comboMat = XMMatrixTranspose( proj );
 
 		XMVECTOR planes[ 4 ];
 		planes[ 0 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
 		planes[ 1 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
 		planes[ 2 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
 		planes[ 3 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
-		if( !kbd.f )
+
+		XMVECTOR frustumX = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
+		XMVECTOR frustumY = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
+
+		//if( !kbd.f )
 		{
 			for( u64 i = 0; i < 4; ++i ) XMStoreFloat4( (XMFLOAT4*) &camFrust.planes[ i ], planes[ i ] );
+		
+			camFrust.planes[ 0 ] = { 1,0,0,1 };
+			camFrust.planes[ 1 ] = { -1,0,0,1 };
+			camFrust.planes[ 2 ] = { 0,1,0,1 };
+			camFrust.planes[ 3 ] = { 0,-1,0,1 };
+		
+			camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
+			camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );
+			camFrust.frustum[ 2 ] = XMVectorGetY( frustumY );
+			camFrust.frustum[ 3 ] = XMVectorGetZ( frustumY );
 		}
 
-		DirectX::XMVECTOR frustumX = XMVector3Normalize( XMVectorAdd( proj.r[ 3 ], proj.r[ 0 ] ) );
-		DirectX::XMVECTOR frustumY = XMVector3Normalize( XMVectorAdd( proj.r[ 3 ], proj.r[ 1 ] ) );
-		camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
-		camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );
-		camFrust.frustum[ 2 ] = XMVectorGetY( frustumY );
-		camFrust.frustum[ 3 ] = XMVectorGetZ( frustumY );
 		// TODO: get this from matrix directly ?
 		camFrust.zNear = zNear;
 		camFrust.drawDistance = drawDistance;
@@ -556,7 +574,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 
 
-		HostFrames( &globs, camFrust, kbd.o, elapsedSecs );
+		HostFrames( &globs, camFrust, kbd.o, kbd.f, elapsedSecs );
 	}
 
 

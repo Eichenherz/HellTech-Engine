@@ -121,9 +121,9 @@ constexpr u64 MLET_CULL_WORKSIZE = 256;
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
-static b32 boundingSphereDbgDraw = 1;
+static b32 boundingVolDbgDraw = 1;
 static b32 colorBlending = 0;
-static b32 occlusionCullingPass = 1;
+static b32 occlusionCullingPass = 0;
 //==============================================//
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
@@ -133,6 +133,306 @@ constexpr b32 vkValidationLayerFeatures = 1;
 constexpr b32 worldLeftHanded = 1;
 constexpr b32 objectNaming = 1;
 //==============================================//
+
+
+// TODO: make an allocator and let it manage arenas and dedicated allocs
+// TODO: multi gpu ?
+// TODO: multi threaded
+// TODO: better alloc strategy ?
+// TODO: alloc vector for debug only
+// TODO: check alloc num ?
+// TODO: recycle memory ?
+// TODO: redesign ?
+// TODO: per mem-block flags
+struct vk_mem_view
+{
+	VkDeviceMemory	device;
+	void* host = 0;
+};
+
+struct vk_allocation
+{
+	VkDeviceMemory  deviceMem;
+	u8* hostVisible = 0;
+	u64				dataOffset;
+};
+
+struct vk_mem_arena
+{
+	std::vector<vk_mem_view>	mem;
+	std::vector<vk_mem_view>	dedicatedAllocs;
+	u64							maxParentHeapSize;
+	u64							minVkAllocationSize = VK_MIN_DEVICE_BLOCK_SIZE;
+	u64							size;
+	u64							allocated;
+	VkDevice					device;
+	VkMemoryPropertyFlags		memTypeProperties;
+	u32							memTypeIdx;
+};
+
+static vk_mem_arena vkRscArena, vkStagingArena, vkAlbumArena, vkHostComArena, vkDbgArena;
+
+inline b32 IsPowOf2( u64 addr )
+{
+	return !( addr & ( addr - 1 ) );
+}
+inline u64 FwdAlign( u64 addr, u64 alignment )
+{
+	assert( IsPowOf2( alignment ) );
+	u64 mod = addr & ( alignment - 1 );
+	return mod ? addr + ( alignment - mod ) : addr;
+}
+
+
+inline i32
+VkFindMemTypeIdx(
+	const VkPhysicalDeviceMemoryProperties* pVkMemProps,
+	VkMemoryPropertyFlags				requiredProps,
+	u32									memTypeBitsRequirement
+){
+	for( u64 memIdx = 0; memIdx < pVkMemProps->memoryTypeCount; ++memIdx )
+	{
+		u32 memTypeBits = ( 1 << memIdx );
+		b32 isRequiredMemType = memTypeBitsRequirement & memTypeBits;
+
+		VkMemoryPropertyFlags props = pVkMemProps->memoryTypes[ memIdx ].propertyFlags;
+		b32 hasRequiredProps = ( props & requiredProps ) == requiredProps;
+		if( isRequiredMemType && hasRequiredProps ) return (i32) memIdx;
+	}
+
+	VK_CHECK( VK_INTERNAL_ERROR( "Memory type unmatch !" ) );
+
+	return -1;
+}
+
+// TODO: move alloc flags ?
+inline static VkDeviceMemory
+VkTryAllocDeviceMem(
+	VkDevice								vkDevice,
+	u64										size,
+	u32										memTypeIdx,
+	VkMemoryAllocateFlags					allocFlags,
+	const VkMemoryDedicatedAllocateInfo* dedicated
+){
+	VkMemoryAllocateFlagsInfo allocFlagsInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
+	allocFlagsInfo.pNext = dedicated;
+	allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;// allocFlags;
+
+	VkMemoryAllocateInfo memoryAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+	memoryAllocateInfo.pNext = &allocFlagsInfo;
+	memoryAllocateInfo.allocationSize = size;
+	memoryAllocateInfo.memoryTypeIndex = memTypeIdx;
+
+	VkDeviceMemory mem;
+	VK_CHECK( vkAllocateMemory( vkDevice, &memoryAllocateInfo, 0, &mem ) );
+
+	return mem;
+}
+
+inline static void
+VkArenaInit(
+	vk_mem_arena* vkArena,
+	const VkPhysicalDeviceMemoryProperties& memProps,
+	VkMemoryPropertyFlags				memType,
+	VkDevice							vkDevice 
+){
+	i32 i = 0;
+	for( ; i < memProps.memoryTypeCount; ++i )
+	{
+		if( memProps.memoryTypes[ i ].propertyFlags == memType ) break;
+	}
+		
+	VK_CHECK( VK_INTERNAL_ERROR( i == memProps.memoryTypeCount ) );
+
+	VkMemoryHeap backingHeap = memProps.memoryHeaps[ memProps.memoryTypes[ i ].heapIndex ];
+
+	vkArena->allocated = 0;
+	vkArena->size = 0;
+	vkArena->memTypeIdx = i;
+	vkArena->memTypeProperties = memProps.memoryTypes[ i ].propertyFlags;
+	vkArena->maxParentHeapSize = backingHeap.size;
+	vkArena->minVkAllocationSize =
+		( backingHeap.size < VK_MIN_DEVICE_BLOCK_SIZE ) ? ( 1 * MB ) : VK_MIN_DEVICE_BLOCK_SIZE;
+	vkArena->device = vkDevice;
+}
+
+// TODO: assert vs VK_CHECK vs default + warning
+// TODO: must alloc in block with BUFFER_ADDR
+inline vk_allocation
+VkArenaAlignAlloc(
+	vk_mem_arena* vkArena,
+	u64										size,
+	u64										align,
+	u32										memTypeIdx,
+	VkMemoryAllocateFlags					allocFlags,
+	const VkMemoryDedicatedAllocateInfo*	dedicated
+){
+	assert( size <= vkArena->maxParentHeapSize );
+
+	u64 allocatedWithOffset = FwdAlign( vkArena->allocated, align );
+	vkArena->allocated = allocatedWithOffset;
+
+	if( dedicated )
+	{
+		VkDeviceMemory deviceMem = VkTryAllocDeviceMem( vkArena->device, size, memTypeIdx, allocFlags, dedicated );
+		void* hostVisible = 0;
+		if( vkArena->memTypeProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
+		{
+			VK_CHECK( vkMapMemory( vkArena->device, deviceMem, 0, VK_WHOLE_SIZE, 0, &hostVisible ) );
+		}
+		vk_mem_view lastDedicated = { deviceMem,hostVisible };
+		vkArena->dedicatedAllocs.push_back( lastDedicated );
+		return { lastDedicated.device, (u8*) lastDedicated.host, 0 };
+	}
+
+	if( ( vkArena->allocated + size ) > vkArena->size )
+	{
+		u64 newArenaSize = std::max( size, vkArena->minVkAllocationSize );
+		VkDeviceMemory deviceMem = VkTryAllocDeviceMem( vkArena->device, newArenaSize, memTypeIdx, allocFlags, 0 );
+		void* hostVisible = 0;
+		if( vkArena->memTypeProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
+		{
+			VK_CHECK( vkMapMemory( vkArena->device, deviceMem, 0, VK_WHOLE_SIZE, 0, &hostVisible ) );
+		}
+		vkArena->mem.push_back( { deviceMem,hostVisible } );
+		vkArena->size = newArenaSize;
+		vkArena->allocated = 0;
+	}
+
+	assert( ( vkArena->allocated + size ) <= vkArena->size );
+	assert( vkArena->allocated % align == 0 );
+
+	vk_mem_view lastBlock = vkArena->mem[ std::size( vkArena->mem ) - 1 ];
+	vk_allocation allocId = { lastBlock.device, (u8*) lastBlock.host, vkArena->allocated };
+	vkArena->allocated += size;
+
+	return allocId;
+}
+
+inline void
+VkArenaTerimate( vk_mem_arena* vkArena )
+{
+	for( u64 i = 0; i < std::size( vkArena->mem ); ++i )
+		vkFreeMemory( vkArena->device, vkArena->mem[ i ].device, 0 );
+	for( u64 i = 0; i < std::size( vkArena->dedicatedAllocs ); ++i )
+		vkFreeMemory( vkArena->device, vkArena->dedicatedAllocs[ i ].device, 0 );
+}
+
+inline static void
+VkInitMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
+{
+	VkPhysicalDeviceMemoryProperties memProps;
+	vkGetPhysicalDeviceMemoryProperties( vkPhysicalDevice, &memProps );
+
+	VkArenaInit( &vkRscArena,
+				 memProps,
+				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				 vkDevice );
+	VkArenaInit( &vkAlbumArena,
+				 memProps,
+				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				 vkDevice );
+	VkArenaInit( &vkStagingArena,
+				 memProps,
+				 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+				 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				 vkDevice );
+	VkArenaInit( &vkHostComArena,
+				 memProps,
+				 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+				 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				 vkDevice );
+
+	VkArenaInit( &vkDbgArena,
+				 memProps,
+				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				 vkDevice );
+
+}
+
+inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
+{
+	static_assert( std::is_same<VkDeviceAddress, u64>::value );
+
+	VkBufferDeviceAddressInfo deviceAddrInfo = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+	deviceAddrInfo.buffer = hndl;
+
+	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
+}
+
+// TODO: keep memory in buffer ?
+// TODO: use buffer offset ?
+struct buffer_data
+{
+	VkBuffer		hndl = 0;
+	VkDeviceMemory	mem = 0;
+	u64				size = 0;
+	//u64				offset = 0;
+	u8* hostVisible = 0;
+	u64				devicePointer = 0;
+	u32				magicId;
+
+	inline VkDescriptorBufferInfo descriptor() const
+	{
+		//return VkDescriptorBufferInfo{ hndl,offset,size };
+		return VkDescriptorBufferInfo{ hndl,0,size };
+	}
+};
+
+// TODO: use a texture_desc struct
+// TODO: add more data ?
+// TODO: VkDescriptorImageInfo 
+// TODO: rsc don't directly store the memory, rsc manager refrences it ?
+struct image
+{
+	VkImage			img;
+	VkImageView		view;
+	VkDeviceMemory	mem;
+	VkFormat		nativeFormat;
+	u32				magicId;
+	u16				width;
+	u16				height;
+	u8				layerCount;
+	u8				mipCount;
+
+	inline VkExtent3D Extent3D() const
+	{
+		return { width,height,1 };
+	}
+};
+
+// TODO: pass aspect mask ? ?
+inline static VkImageView
+VkMakeImgView(
+	VkDevice		vkDevice,
+	VkImage			vkImg,
+	VkFormat		imgFormat,
+	u32				mipLevel,
+	u32				levelCount,
+	VkImageViewType imgViewType = VK_IMAGE_VIEW_TYPE_2D,
+	u32				arrayLayer = 0,
+	u32				layerCount = 1 
+){
+	VkImageAspectFlags aspectMask =
+		( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+
+	VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+	viewInfo.viewType = imgViewType;
+	viewInfo.format = imgFormat;
+	viewInfo.subresourceRange.aspectMask = aspectMask;
+	viewInfo.subresourceRange.baseMipLevel = mipLevel;
+	viewInfo.subresourceRange.levelCount = levelCount;
+	viewInfo.subresourceRange.baseArrayLayer = arrayLayer;
+	viewInfo.subresourceRange.layerCount = layerCount;
+	viewInfo.image = vkImg;
+
+	VkImageView view;
+	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
+
+	return view;
+}
+
 
 
 // TODO: objType from objHandle ?
@@ -208,16 +508,16 @@ namespace Colors
 	{
 		return ( r << 16 ) | ( g << 8 ) | b;
 	}
-	static constexpr color32 White = MakeRGB( 255u, 255u, 255u );
-	static constexpr color32 Black = MakeRGB( 0u, 0u, 0u );
-	static constexpr color32 Gray = MakeRGB( 0x80u, 0x80u, 0x80u );
-	static constexpr color32 LightGray = MakeRGB( 0xD3u, 0xD3u, 0xD3u );
-	static constexpr color32 Red = MakeRGB( 255u, 0u, 0u );
-	static constexpr color32 Green = MakeRGB( 0u, 255u, 0u );
-	static constexpr color32 Blue = MakeRGB( 0u, 0u, 255u );
-	static constexpr color32 Yellow = MakeRGB( 255u, 255u, 0u );
-	static constexpr color32 Cyan = MakeRGB( 0u, 255u, 255u );
-	static constexpr color32 Magenta = MakeRGB( 255u, 0u, 255u );
+	static constexpr color32 white = MakeRGB( 255u, 255u, 255u );
+	static constexpr color32 black = MakeRGB( 0u, 0u, 0u );
+	static constexpr color32 gray = MakeRGB( 0x80u, 0x80u, 0x80u );
+	static constexpr color32 lightGray = MakeRGB( 0xD3u, 0xD3u, 0xD3u );
+	static constexpr color32 red = MakeRGB( 255u, 0u, 0u );
+	static constexpr color32 green = MakeRGB( 0u, 255u, 0u );
+	static constexpr color32 blue = MakeRGB( 0u, 0u, 255u );
+	static constexpr color32 yellow = MakeRGB( 255u, 255u, 0u );
+	static constexpr color32 cyan = MakeRGB( 0u, 255u, 255u );
+	static constexpr color32 magenta = MakeRGB( 255u, 0u, 255u );
 }
 // TODO: degub-on-off
 struct vk_label
@@ -257,39 +557,15 @@ struct device
 	u8				waveSize;
 };
 
+// TODO: add VkFramebuffer here ?
 struct virtual_frame
 {
+	buffer_data		frameData;
 	VkCommandPool	cmdPool;
 	VkCommandBuffer cmdBuf;
 	VkSemaphore		canGetImgSema;
 	VkSemaphore		canPresentSema;
 	VkFence			hostSyncFence;
-};
-
-// TODO: use a texture_desc struct
-// TODO: add more data ?
-// TODO: VkDescriptorImageInfo 
-// TODO: rsc don't directly store the memory, rsc manager refrences it ?
-struct image
-{
-	VkImage			img;
-	VkImageView		view;
-	VkDeviceMemory	mem;
-	VkFormat		nativeFormat;
-	u32				magicId;
-	u16				width;
-	u16				height;
-	u8				layerCount;
-	u8				mipCount;
-
-	inline VkExtent3D Extent3D() const
-	{
-		return { width,height,1 };
-	}
-};
-
-struct vk_image
-{
 };
 
 struct swapchain
@@ -298,7 +574,8 @@ struct swapchain
 	VkImageView		imgViews[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
 	VkImage			imgs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
 	VkFormat		imgFormat;
-	VkExtent3D		scRes;
+	u16				width;
+	u16				height;
 	u8				imgCount;
 };
 // TODO: remake
@@ -344,251 +621,8 @@ static swapchain sc;
 static device dc;
 static render_context rndCtx;
 
-
-inline b32 IsPowOf2( u64 addr )
-{
-	return !( addr & ( addr - 1 ) );
-}
-inline u64 FwdAlign( u64 addr, u64 alignment )
-{
-	assert( IsPowOf2( alignment ) );
-	u64 mod = addr & ( alignment - 1 );
-	return mod ? addr + ( alignment - mod ) : addr;
-}
-
-
-// TODO: keep memory in buffer ?
-// TODO: use buffer offset ?
-struct buffer_data
-{
-	VkBuffer		hndl = 0;
-	VkDeviceMemory	mem = 0;
-	u64				size = 0;
-	//u64				offset = 0;
-	u8*				hostVisible = 0;
-	u64				devicePointer = 0;
-	u32				magicId;
-
-	inline VkDescriptorBufferInfo descriptor() const
-	{
-		//return VkDescriptorBufferInfo{ hndl,offset,size };
-		return VkDescriptorBufferInfo{ hndl,0,size };
-	}
-};
-
-// TODO: make an allocator and let it manage arenas and dedicated allocs
-// TODO: multi gpu ?
-// TODO: multi threaded
-// TODO: better alloc strategy ?
-// TODO: alloc vector for debug only
-// TODO: check alloc num ?
-// TODO: recycle memory ?
-// TODO: redesign ?
-// TODO: per mem-block flags
-struct vk_mem_view
-{
-	VkDeviceMemory	device;
-	void*			host = 0;
-};
-
-struct vk_allocation
-{
-	VkDeviceMemory  deviceMem;
-	u8*				hostVisible = 0;
-	u64				dataOffset;
-};
-
-struct vk_mem_arena
-{
-	std::vector<vk_mem_view>	mem;
-	std::vector<vk_mem_view>	dedicatedAllocs;
-	u64							maxParentHeapSize;
-	u64							minVkAllocationSize = VK_MIN_DEVICE_BLOCK_SIZE;
-	u64							size;
-	u64							allocated;
-	VkDevice					device;
-	VkMemoryPropertyFlags		memTypeProperties;
-	u32							memTypeIdx;
-};
-
-static vk_mem_arena vkRscArena, vkStagingArena, vkAlbumArena, vkHostComArena, vkDbgArena;
-
-
-inline i32
-VkFindMemTypeIdx(
-	const VkPhysicalDeviceMemoryProperties*  pVkMemProps,
-	VkMemoryPropertyFlags				requiredProps,
-	u32									memTypeBitsRequirement 
-){
-	for( u64 memIdx = 0; memIdx < pVkMemProps->memoryTypeCount; ++memIdx )
-	{
-		u32 memTypeBits = ( 1 << memIdx );
-		b32 isRequiredMemType = memTypeBitsRequirement & memTypeBits;
-
-		VkMemoryPropertyFlags props = pVkMemProps->memoryTypes[ memIdx ].propertyFlags;
-		b32 hasRequiredProps = ( props & requiredProps ) == requiredProps;
-		if( isRequiredMemType && hasRequiredProps ) return (i32) memIdx;
-	}
-
-	VK_CHECK( VK_INTERNAL_ERROR( "Memory type unmatch !" ) );
-
-	return -1;
-}
-
-
-// TODO: move alloc flags ?
-inline static VkDeviceMemory
-VkTryAllocDeviceMem(
-	VkDevice								vkDevice,
-	u64										size,
-	u32										memTypeIdx,
-	VkMemoryAllocateFlags					allocFlags,
-	const VkMemoryDedicatedAllocateInfo*	dedicated 
-){
-	VkMemoryAllocateFlagsInfo allocFlagsInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
-	allocFlagsInfo.pNext = dedicated;
-	allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;// allocFlags;
-
-	VkMemoryAllocateInfo memoryAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-	memoryAllocateInfo.pNext = &allocFlagsInfo;
-	memoryAllocateInfo.allocationSize = size;
-	memoryAllocateInfo.memoryTypeIndex = memTypeIdx;
-
-	VkDeviceMemory mem;
-	VK_CHECK( vkAllocateMemory( vkDevice, &memoryAllocateInfo, 0, &mem ) );
-
-	return mem;
-}
-
-inline static void
-VkArenaInit(
-	vk_mem_arena*						vkArena,
-	const VkPhysicalDeviceMemoryProperties&	memProps,
-	VkMemoryPropertyFlags				memType,
-	VkDevice							vkDevice )
-{
-	i32 i = 0;
-	for( ; i < memProps.memoryTypeCount; ++i )
-		if( memProps.memoryTypes[ i ].propertyFlags == memType ) break;
-
-	VK_CHECK( VK_INTERNAL_ERROR( i == memProps.memoryTypeCount ) );
-
-	VkMemoryHeap backingHeap = memProps.memoryHeaps[ memProps.memoryTypes[ i ].heapIndex ];
-
-	vkArena->allocated = 0;
-	vkArena->size = 0;
-	vkArena->memTypeIdx = i;
-	vkArena->memTypeProperties = memProps.memoryTypes[ i ].propertyFlags;
-	vkArena->maxParentHeapSize = backingHeap.size;
-	vkArena->minVkAllocationSize =
-		( backingHeap.size < VK_MIN_DEVICE_BLOCK_SIZE ) ? ( 1 * MB ) : VK_MIN_DEVICE_BLOCK_SIZE;
-	vkArena->device = vkDevice;
-}
-
-// TODO: assert vs VK_CHECK vs default + warning
-// TODO: must alloc in block with BUFFER_ADDR
-inline vk_allocation
-VkArenaAlignAlloc( 
-	vk_mem_arena*							vkArena, 
-	u64										size, 
-	u64										align, 
-	u32										memTypeIdx,
-	VkMemoryAllocateFlags					allocFlags,
-	const VkMemoryDedicatedAllocateInfo*	dedicated 
-){
-	assert( size <= vkArena->maxParentHeapSize );
-
-	u64 allocatedWithOffset = FwdAlign( vkArena->allocated, align );
-	vkArena->allocated = allocatedWithOffset;
-
-	if( dedicated )
-	{
-		VkDeviceMemory deviceMem = VkTryAllocDeviceMem( vkArena->device, size, memTypeIdx, allocFlags, dedicated );
-		void* hostVisible = 0;
-		if( vkArena->memTypeProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
-		{
-			VK_CHECK( vkMapMemory( vkArena->device, deviceMem, 0, VK_WHOLE_SIZE, 0, &hostVisible ) );
-		}
-		vk_mem_view lastDedicated = { deviceMem,hostVisible };
-		vkArena->dedicatedAllocs.push_back( lastDedicated );
-		return { lastDedicated.device, (u8*) lastDedicated.host, 0 };
-	}
-
-	if( ( vkArena->allocated + size ) > vkArena->size )
-	{
-		u64 newArenaSize = std::max( size, vkArena->minVkAllocationSize );
-		VkDeviceMemory deviceMem = VkTryAllocDeviceMem( vkArena->device, newArenaSize, memTypeIdx, allocFlags, 0 );
-		void* hostVisible = 0;
-		if( vkArena->memTypeProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
-		{
-			VK_CHECK( vkMapMemory( vkArena->device, deviceMem, 0, VK_WHOLE_SIZE, 0, &hostVisible ) );
-		}
-		vkArena->mem.push_back( { deviceMem,hostVisible } );
-		vkArena->size = newArenaSize;
-		vkArena->allocated = 0;
-	}
-
-	assert( ( vkArena->allocated + size ) <= vkArena->size );
-	assert( vkArena->allocated % align == 0 );
-
-	vk_mem_view lastBlock = vkArena->mem[ std::size( vkArena->mem ) - 1 ];
-	vk_allocation allocId = { lastBlock.device, (u8*) lastBlock.host, vkArena->allocated };
-	vkArena->allocated += size;
-
-	return allocId;
-}
-
-inline void
-VkArenaTerimate( vk_mem_arena* vkArena )
-{
-	for( u64 i = 0; i < std::size( vkArena->mem ); ++i )
-		vkFreeMemory( vkArena->device, vkArena->mem[ i ].device, 0 );
-	for( u64 i = 0; i < std::size( vkArena->dedicatedAllocs ); ++i )
-		vkFreeMemory( vkArena->device, vkArena->dedicatedAllocs[ i ].device, 0 );
-}
- 
-inline static void
-VkInitMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
-{
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkPhysicalDevice, &memProps );
-
-	VkArenaInit( &vkRscArena,
-				 memProps,
-				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				 vkDevice );
-	VkArenaInit( &vkAlbumArena,
-				 memProps,
-				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				 vkDevice );
-	VkArenaInit( &vkStagingArena,
-				 memProps,
-				 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-				 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				 vkDevice );
-	VkArenaInit( &vkHostComArena,
-				 memProps,
-				 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-				 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
-				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				 vkDevice );
-
-	VkArenaInit( &vkDbgArena,
-				 memProps,
-				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				 vkDevice );
-
-}
-
-inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
-{
-	static_assert( std::is_same<VkDeviceAddress, u64>::value );
-
-	VkBufferDeviceAddressInfo deviceAddrInfo = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
-	deviceAddrInfo.buffer = hndl;
-
-	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
-}
+// TODO: move to memory section
+// TODO: pass VkPhysicalDevice differently
 
 // TODO: pass device to rscCreate functions ?
 // TODO: no dedicated alloc for buffers at all ?
@@ -596,7 +630,7 @@ static buffer_data
 VkCreateAllocBindBuffer(
 	u64					sizeInBytes,
 	VkBufferUsageFlags	usage,
-	vk_mem_arena*		vkArena 
+	vk_mem_arena*		vkArena
 ){
 	buffer_data buffData = {};
 
@@ -620,14 +654,14 @@ VkCreateAllocBindBuffer(
 	assert( memTypeIdx == vkArena->memTypeIdx );
 #endif
 
-	VkMemoryAllocateFlags allocFlags = 
+	VkMemoryAllocateFlags allocFlags =
 		( usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ) ? VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT : 0;
 
 	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
 	dedicatedAllocateInfo.buffer = buffMemReqs2.buffer;
 
 	//b32 dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation; 
-	b32 dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation; 
+	b32 dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation;
 
 	vk_allocation bufferMem = VkArenaAlignAlloc( vkArena,
 												 memReqs2.memoryRequirements.size,
@@ -648,52 +682,20 @@ VkCreateAllocBindBuffer(
 
 	return buffData;
 }
-
-// TODO: pass aspect mask ? ?
-inline static VkImageView
-VkMakeImgView(
-	VkDevice		vkDevice,
-	VkImage			vkImg,
-	VkFormat		imgFormat,
-	u32				mipLevel,
-	u32				levelCount,
-	VkImageViewType imgViewType = VK_IMAGE_VIEW_TYPE_2D,
-	u32				arrayLayer = 0,
-	u32				layerCount = 1 )
-{
-	VkImageAspectFlags aspectMask =
-		( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-	VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
-	viewInfo.viewType = imgViewType;
-	viewInfo.format = imgFormat;
-	viewInfo.subresourceRange.aspectMask = aspectMask;
-	viewInfo.subresourceRange.baseMipLevel = mipLevel;
-	viewInfo.subresourceRange.levelCount = levelCount;
-	viewInfo.subresourceRange.baseArrayLayer = arrayLayer;
-	viewInfo.subresourceRange.layerCount = layerCount;
-	viewInfo.image = vkImg;
-
-	VkImageView view;
-	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
-
-	return view;
-}
-
 // TODO: better check on resource creation ? 
 // TODO: check elsewhere ? 
 static image
 VkCreateAllocBindImage(
-	const VkImageCreateInfo&	imgInfo,
-	vk_mem_arena*				vkArena = &vkAlbumArena,
-	VkPhysicalDevice			gpu = dc.gpu 
+	const VkImageCreateInfo& imgInfo,
+	vk_mem_arena* vkArena = &vkAlbumArena,
+	VkPhysicalDevice			gpu = dc.gpu
 ){
 	VkFormatFeatureFlags formatFeatures = 0;
 	if( imgInfo.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
 	if( imgInfo.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
 	if( imgInfo.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
 	if( imgInfo.usage & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-	
+
 	VkFormatProperties formatProps;
 	vkGetPhysicalDeviceFormatProperties( gpu, imgInfo.format, &formatProps );
 	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
@@ -754,9 +756,9 @@ VkCreateAllocBindImage(
 	VkImageUsageFlags	usageFlags,
 	VkExtent3D			extent,
 	u32					mipCount,
-	vk_mem_arena*		vkArena,
+	vk_mem_arena* vkArena,
 	VkImageType			vkImgType = VK_IMAGE_TYPE_2D,
-	VkPhysicalDevice	gpu = dc.gpu 
+	VkPhysicalDevice	gpu = dc.gpu
 ){
 	VkFormatFeatureFlags formatFeatures = 0;
 	if( usageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
@@ -809,12 +811,12 @@ VkCreateAllocBindImage(
 	vk_allocation imgMem = VkArenaAlignAlloc( vkArena,
 											  memReqs2.memoryRequirements.size,
 											  memReqs2.memoryRequirements.alignment,
-											  vkArena->memTypeIdx, 
+											  vkArena->memTypeIdx,
 											  0,
 											  dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
 
 	img.mem = imgMem.deviceMem;
-	
+
 	VK_CHECK( vkBindImageMemory( vkArena->device, img.img, img.mem, imgMem.dataOffset ) );
 
 	VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
@@ -1096,11 +1098,12 @@ inline static void VkReflectShaderLayout(
 		descSetBindings.push_back( binding );
 	}
 
-	if( shaderReflection.push_constant_block_count )
+	for( u64 pci = 0; pci < shaderReflection.push_constant_block_count; ++pci )
 	{
 		VkPushConstantRange pushConstRange = {};
-		pushConstRange.offset = shaderReflection.push_constant_blocks[ 0 ].offset;
-		pushConstRange.size = shaderReflection.push_constant_blocks[ 0 ].size;
+		pushConstRange.offset = shaderReflection.push_constant_blocks[ pci ].offset;
+		pushConstRange.size = shaderReflection.push_constant_blocks[ pci ].size;
+		// TODO: what about this ?
 		pushConstRange.stageFlags = shaderReflection.shader_stage;
 		VK_CHECK( VK_INTERNAL_ERROR( pushConstRange.size > gpuProps.limits.maxPushConstantsSize ) );
 
@@ -1138,13 +1141,16 @@ vk_program VkMakePipelineProgram(
 	group_size gs = {};
 	
 	for( vk_shader* s : shaders )
-		VkReflectShaderLayout( gpuProps, 
-							   s->spvByteCode, 
-							   bindings, 
-							   pushConstRanges, 
-							   gs, 
-							   s->entryPointName, 
+	{
+		VkReflectShaderLayout( gpuProps,
+							   s->spvByteCode,
+							   bindings,
+							   pushConstRanges,
+							   gs,
+							   s->entryPointName,
 							   std::size( s->entryPointName ) );
+	}
+		
 
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
 	descSetLayoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
@@ -1165,7 +1171,8 @@ vk_program VkMakePipelineProgram(
 	std::vector<VkDescriptorUpdateTemplateEntry> entries;
 	entries.reserve( std::size( bindings ) );
 	entries.resize( 0 );
-	for( const VkDescriptorSetLayoutBinding& binding : bindings ){
+	for( const VkDescriptorSetLayoutBinding& binding : bindings )
+	{
 		VkDescriptorUpdateTemplateEntry entry = {};
 		entry.dstBinding = binding.binding;
 		entry.dstArrayElement = 0;
@@ -1234,7 +1241,8 @@ VkPipeline VkMakeGfxPipeline(
 	VkShaderModule		fs,
 	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL,
 	b32					blendCol = colorBlending,
-	b32					depthWrite = true 
+	b32					depthWrite = true,
+	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT
 ){
 	VkPipelineShaderStageCreateInfo shaderStagesInfo[ 2 ] = {};
 	shaderStagesInfo[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1266,7 +1274,8 @@ VkPipeline VkMakeGfxPipeline(
 	rasterInfo.rasterizerDiscardEnable = 0;
 	rasterInfo.polygonMode = polyMode;
 
-	rasterInfo.cullMode = worldLeftHanded ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
+	//rasterInfo.cullMode = worldLeftHanded ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
+	rasterInfo.cullMode = cullFlags;
 	rasterInfo.frontFace = worldLeftHanded ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
 
 	rasterInfo.depthBiasEnable = 0;
@@ -1564,11 +1573,11 @@ VkMakeSwapchain(
 	VkPhysicalDevice	vkPhysicalDevice,
 	VkSurfaceKHR		vkSurf,
 	u32					queueFamIdx,
-	VkFormat			scDesiredFormat 
+	VkFormat			scDesiredFormat
 ){
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkPhysicalDevice, vkSurf, &surfaceCaps ) );
-	
+
 	VkCompositeAlphaFlagBitsKHR surfaceComposite =
 		( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR )
 		? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
@@ -1620,21 +1629,19 @@ VkMakeSwapchain(
 
 	VkImageUsageFlags scImgUsage =
 		VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
+		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
 		VK_IMAGE_USAGE_STORAGE_BIT;
 	VK_CHECK( VK_INTERNAL_ERROR( ( surfaceCaps.supportedUsageFlags & scImgUsage ) != scImgUsage ) );
 
 
-	swapchain sc = {};
-
 	VkSwapchainCreateInfoKHR scInfo = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
 	scInfo.surface = vkSurf;
-	scInfo.minImageCount = sc.imgCount = scImgCount;
-	scInfo.imageFormat = sc.imgFormat = scFormatAndColSpace.format;
+	scInfo.minImageCount = scImgCount;
+	scInfo.imageFormat = scFormatAndColSpace.format;
 	scInfo.imageColorSpace = scFormatAndColSpace.colorSpace;
 	scInfo.imageExtent = surfaceCaps.currentExtent;
 	assert( surfaceCaps.maxImageArrayLayers >= 1 );
-	scInfo.imageArrayLayers = 1; 
+	scInfo.imageArrayLayers = 1;
 	scInfo.imageUsage = scImgUsage;
 	scInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	scInfo.preTransform = surfaceCaps.currentTransform;
@@ -1654,10 +1661,10 @@ VkMakeSwapchain(
 														scInfo.flags,
 														&scImageProps ) );
 
+
+	swapchain sc = {};
 	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &sc.swapchain ) );
 
-	sc.scRes = { scInfo.imageExtent.width, scInfo.imageExtent.height , 1 };
-	
 	u32 scImgsNum = 0;
 	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, sc.swapchain, &scImgsNum, 0 ) );
 	VK_CHECK( VK_INTERNAL_ERROR( !( scImgsNum == scInfo.minImageCount ) ) );
@@ -1667,6 +1674,11 @@ VkMakeSwapchain(
 	{
 		sc.imgViews[i] = VkMakeImgView( vkDevice, sc.imgs[ i ], scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
 	}
+
+	sc.width = scInfo.imageExtent.width;
+	sc.height = scInfo.imageExtent.height;
+	sc.imgCount = scInfo.minImageCount;
+	sc.imgFormat = scInfo.imageFormat;
 
 	return sc;
 }
@@ -1747,38 +1759,38 @@ VkMakeFramebuffer(
 	return fbo;
 }
 
-
-static void VkInitVirutalFrames( 
-	VkDevice		vkDevice, 
-	u32				boundQueueIdx, 
-	virtual_frame*	vrtFrames,
-	u64				framesInFlight 
+// TODO: buffer_desc ?
+// TODO: revisit
+static inline virtual_frame VkCreateVirtualFrame(
+	VkDevice		vkDevice,
+	u32				exectutionQueueIdx,
+	u32				bufferSize,
+	vk_mem_arena&	arena
 ){
+	virtual_frame vrtFrame = {};
+
 	VkCommandPoolCreateInfo cmdPoolInfo = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
 	cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-	cmdPoolInfo.queueFamilyIndex = boundQueueIdx;
-	for( u64 i = 0; i < framesInFlight; ++i )
-		VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &vrtFrames[ i ].cmdPool ) );
+	cmdPoolInfo.queueFamilyIndex = exectutionQueueIdx;
+	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &vrtFrame.cmdPool ) );
 
 	VkCommandBufferAllocateInfo cmdBuffAllocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
 	cmdBuffAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	cmdBuffAllocInfo.commandBufferCount = 1;
-	for( u64 i = 0; i < framesInFlight; ++i ){
-		cmdBuffAllocInfo.commandPool = vrtFrames[ i ].cmdPool;
-		VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &vrtFrames[ i ].cmdBuf ) );
-	}
+	cmdBuffAllocInfo.commandPool = vrtFrame.cmdPool;
+	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &vrtFrame.cmdBuf ) );
 
 	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-	for( u64 i = 0; i < framesInFlight; ++i ){
-		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrames[ i ].canGetImgSema ) );
-		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrames[ i ].canPresentSema ) );
-	}
+	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
+	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrame.canPresentSema ) );
 
 	VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-	for( u64 i = 0; i < framesInFlight; ++i )
-		VK_CHECK( vkCreateFence( vkDevice, &fenceInfo, 0, &vrtFrames[ i ].hostSyncFence ) );
+	VK_CHECK( vkCreateFence( vkDevice, &fenceInfo, 0, &vrtFrame.hostSyncFence ) );
 
+	vrtFrame.frameData = VkCreateAllocBindBuffer( bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &arena );
+
+	return vrtFrame;
 }
 
 // TODO: more locallity ?
@@ -1906,15 +1918,34 @@ inline VkImageCreateInfo GetVkImageInfoFromMetadata( const image_metadata& meta,
 }
 
 using namespace DirectX;
-
-// TODO:
-static constexpr b32 IsLeftHanded( vec3 a, vec3 b, vec3 c )
+// TODO: remove duplicates ?
+constexpr float SignNonZero( float e )
 {
-	vec3 e0 = { b.x - a.x, b.y - a.y, b.z - a.z };
-	vec3 e1 = { c.x - b.x, c.y - b.y, c.z - b.z };
-
-	return 1;
+	return ( e >= 0.0f ) ? 1.0f : -1.0f;
 }
+constexpr float ConstexprFabs( float n )
+{
+	return ( n >= 0.0f ) ? n : -n;
+}
+constexpr vec2 OctaNormalEncode( vec3 n )
+{
+	// NOTE: Project the sphere onto the octahedron, and then onto the xy plane
+	float absLen = ConstexprFabs( n.x ) + ConstexprFabs( n.y ) + ConstexprFabs( n.z );
+	float absNorm = ( absLen == 0.0f ) ? 0.0f : 1.0f / absLen;
+	float nx = n.x * absNorm;
+	float ny = n.y * absNorm;
+
+	// NOTE: Reflect the folds of the lower hemisphere over the diagonals
+	float octaX = ( n.z < 0.f ) ? ( 1.0f - ConstexprFabs( ny ) ) * SignNonZero( nx ) : nx;
+	float octaY = ( n.z < 0.f ) ? ( 1.0f - ConstexprFabs( nx ) ) * SignNonZero( ny ) : ny;
+
+	return { octaX, octaY };
+}
+inline u8 FloatToSnorm8( float e )
+{
+	return std::round( 127.5f + e * 127.5f );
+}
+
 static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
 {
 	assert( count % 3 == 0 );
@@ -2058,16 +2089,11 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 		vtxData[ i ].snorm8octNy = FloatToSnorm8( n.y );
 	}
 }
-static void GenerateBox( 
-	std::vector<vertex>& vtx, 
-	std::vector<u32>&	idx, 
-	float			width = 1.0f, 
-	float			height = 1.0f, 
-	float			thickenss = 1.0f )
+constexpr void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
 {
-	float w = width * 0.5f;
-	float h = height * 0.5f;
-	float t = thickenss * 0.5f;
+	constexpr float w = 0.5f;
+	constexpr float h = 0.5f;
+	constexpr float t = 0.5f;
 
 	vec3 c0 = { w, h,-t };
 	vec3 c1 = {-w, h,-t };
@@ -2079,12 +2105,12 @@ static void GenerateBox(
 	vec3 c6 = {-w,-h, t };
 	vec3 c7 = { w,-h, t };
 
-	/*constexpr*/ vec2 u = OctaNormalEncode( { 0,1,0 } );
-	/*constexpr*/ vec2 d = OctaNormalEncode( { 0,-1,0 } );
-	/*constexpr*/ vec2 f = OctaNormalEncode( { 0,0,1 } );
-	/*constexpr*/ vec2 b = OctaNormalEncode( { 0,0,-1 } );
-	/*constexpr*/ vec2 l = OctaNormalEncode( { -1,0,0 } );
-	/*constexpr*/ vec2 r = OctaNormalEncode( { 1,0,0 } );
+	constexpr vec2 u = OctaNormalEncode( { 0,1,0 } );
+	constexpr vec2 d = OctaNormalEncode( { 0,-1,0 } );
+	constexpr vec2 f = OctaNormalEncode( { 0,0,1 } );
+	constexpr vec2 b = OctaNormalEncode( { 0,0,-1 } );
+	constexpr vec2 l = OctaNormalEncode( { -1,0,0 } );
+	constexpr vec2 r = OctaNormalEncode( { 1,0,0 } );
 
 	vertex vertices[] = {
 		// Bottom
@@ -2189,9 +2215,6 @@ VkMakeImgBarrier(
 	return imgMemBarrier;
 }
 
-// TODO: must place somewhere else, less global
-static buffer_data hostComBuff;
-
 static buffer_data bdasUboBuff;
 
 static buffer_data vertexBuff;
@@ -2228,69 +2251,6 @@ static buffer_data drawCountDbgBuff;
 static buffer_data drawVisibilityBuff;
 
 static buffer_data depthAtomicCounterBuff;
-
-
-// TODO: make sep buffer for dbg
-// TODO: mesh dbg selector smth
-inline static void MakeDebugGeometryBuffer( 
-	std::vector<vertex>&	vtx, 
-	std::vector<u32>&		idx, 
-	std::vector<mesh>&		meshes 
-){
-	std::vector<vertex> vtxData;
-	std::vector<u32> idxData;
-
-	GenerateIcosphere( vtxData, idxData, 1 );
-
-	mesh mIco = {};
-	mIco.center = { 0,0,0 };
-	mIco.radius = 1.0f;
-	if( std::size( meshes ) )
-	{
-		mIco.center = meshes[ 0 ].center;
-		mIco.radius = meshes[ 0 ].radius;
-
-		for( vertex& v : vtxData )
-		{
-			v.px *= mIco.radius;
-			v.py *= mIco.radius;
-			v.pz *= mIco.radius;
-
-			v.px += mIco.center.x;
-			v.py += mIco.center.y;
-			v.pz += mIco.center.z;
-		}
-	}
-	mIco.vertexOffset = std::size( vtx );
-	mIco.vertexCount = std::size( vtxData );
-	mIco.lodCount = 1;
-	mIco.lods[ 0 ].indexOffset = std::size( idx );
-	mIco.lods[ 0 ].indexCount = std::size( idxData );
-
-	vtx.insert( std::end( vtx ), std::begin( vtxData ), std::end( vtxData ) );
-	idx.insert( idx.end(), idxData.begin(), idxData.end() );
-	meshes.push_back( mIco );
-
-
-	vtxData.resize( 0 );
-	idxData.resize( 0 );
-
-
-	GenerateBox( vtxData, idxData, 1.0f, 0.8f, 0.2f );
-
-	mesh mBox = {};
-	mBox.center = { 0,0,0 };
-	mBox.radius = 1.0f;
-	mBox.vertexOffset = std::size( vtx );
-	mBox.vertexCount = std::size( vtxData );
-	mBox.lodCount = 1;
-	mBox.lods[ 0 ].indexOffset = std::size( idx );
-	mBox.lods[ 0 ].indexCount = std::size( idxData );
-
-	vtx.insert( std::end( vtx ), std::begin( vtxData ), std::end( vtxData ) );
-	idx.insert( idx.end(), idxData.begin(), idxData.end() );
-	meshes.push_back( mBox );
-}
 
 
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
@@ -2484,8 +2444,10 @@ inline static void VkInitInternalBuffers()
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &vkRscArena );
 	drawCountBuff =
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawCountBuff.hndl, "Buff_Draw_Count" );
 	drawCountDbgBuff =
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawCountDbgBuff.hndl, "Buff_Dbg_Draw_Count" );
 	// TODO: no transfer bit ?
 	depthAtomicCounterBuff =
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &vkRscArena );
@@ -2494,10 +2456,6 @@ inline static void VkInitInternalBuffers()
 		VkCreateAllocBindBuffer( sizeof( dispatch_command ),
 								 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 								 &vkRscArena );
-
-	// TODO: must be buffered as per frame in flight 
-	hostComBuff =
-		VkCreateAllocBindBuffer( 1 * MB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &vkHostComArena );
 
 	bdasUboBuff = VkCreateAllocBindBuffer( sizeof( global_bdas ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &vkHostComArena );
 }
@@ -2606,15 +2564,16 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 	const std::span<vertex> vtxView =
 	{ (vertex*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset,fileDesc.vtxRange.size };
 
-	std::vector<mesh> meshes;
+	std::vector<mesh_desc> meshes;
 	// TODO: must make mesh and binary_mesh_desc the same
 	for( const binary_mesh_desc& m : meshDesc )
 	{
 		meshes.push_back( {} );
-		mesh& out = meshes[ std::size( meshes ) - 1 ];
+		mesh_desc& out = meshes[ std::size( meshes ) - 1 ];
 		out.vertexCount = m.vtxRange.size;
 		out.vertexOffset = m.vtxRange.offset;
-		//out.materialIndex = m.materialIndex;
+		
+		assert( m.lodCount <= u8( -1 ) );
 		out.lodCount = m.lodCount;
 		for( u64 i = 0; i < m.lodCount; ++i )
 		{
@@ -2624,7 +2583,6 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 
 		XMFLOAT3 center;
 		XMFLOAT3 extent;
-		float radius;
 		{
 			XMVECTOR xmm0 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMinMax[ 0 ] );
 			XMVECTOR xmm1 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMinMax[ 3 ] );
@@ -2632,11 +2590,9 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 			XMStoreFloat3( &center, XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f ) );
 			xmm0 = XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f );
 			XMStoreFloat3( &extent, xmm0 );
-
-			radius = XMVectorGetX( XMVector3Length( xmm0 ) );
 		}
 		out.center = center;
-		out.radius = radius;
+		out.extent = extent;
 	}
 
 	assert( std::size( textures.rsc ) == 0 );
@@ -2784,9 +2740,11 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
 										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 										   &vkRscArena );
-	drawCmdDbgBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
+	drawCmdDbgBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_indirect ),
 											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 											  &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawCmdDbgBuff.hndl, "Buff_Indirect_Dbg_Draw_Cmds" );
+
 	// TODO: use per wave stuff ?
 	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -2864,19 +2822,21 @@ static vk_program	depthPyramidMultiProgram = {};
 // TODO: find better soln
 enum shader_idx : u8
 {
-	VERT_BINDLESS = 0,
-	FRAG_PBR = 1,
-	COMP_CULL = 2,
-	COMP_HIZ_MIPS = 3,
-	COMP_HIZ_MIPS_POW2 = 4,
-	COMP_LUMINANCE = 5,
-	COMP_TONE_GAMMA = 6,
-	FRAG_NORMAL_COL = 7
+	VERT_BINDLESS,
+	VERT_BOX_DBG, 
+	FRAG_PBR,
+	COMP_CULL,
+	COMP_HIZ_MIPS,
+	COMP_HIZ_MIPS_POW2,
+	COMP_LUMINANCE,
+	COMP_TONE_GAMMA,
+	FRAG_NORMAL_COL
 };
 
 constexpr char* shaderFiles[] =
 {
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\shdr.vert.glsl.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\box_debug.vert.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\draw_cull.comp.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv",
@@ -3065,16 +3025,17 @@ static void VkBackendInit()
 								   shaders[ COMP_HIZ_MIPS_POW2 ].module, {} );
 	}
 
+
 	debugGfxProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, 
-											 { &shaders[ VERT_BINDLESS ], &shaders[ FRAG_NORMAL_COL ] } );
+											 { &shaders[ VERT_BOX_DBG ], &shaders[ FRAG_NORMAL_COL ] } );
 	rndCtx.gfxBVDbgDrawPipeline = VkMakeGfxPipeline( dc.device,
 													 pipelineCache,
 													 rndCtx.renderPass,
 													 debugGfxProgram.pipeLayout,
-													 shaders[ VERT_BINDLESS ].module,
+													 shaders[ VERT_BOX_DBG ].module,
 													 shaders[ FRAG_NORMAL_COL ].module,
-													 VK_POLYGON_MODE_FILL,
-													 1, 0 );
+													 VK_POLYGON_MODE_LINE,//VK_POLYGON_MODE_FILL,
+													 1, 0, VK_CULL_MODE_NONE );
 
 	rndCtx.compAvgLumPipe = 
 		VkMakeComputePipeline( dc.device, pipelineCache, avgLumCompProgram.pipeLayout, 
@@ -3085,7 +3046,10 @@ static void VkBackendInit()
 
 	for( vk_shader& s : shaders ) vkDestroyShaderModule( dc.device, s.module, 0 );
 
-	VkInitVirutalFrames( dc.device, dc.gfxQueueIdx, rndCtx.vrtFrames, rndCtx.framesInFlight );
+	for( u64 vfi = 0; vfi < rndCtx.framesInFlight; ++vfi )
+	{
+		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( dc.device, dc.gfxQueueIdx, 1 * MB, vkHostComArena );
+	}
 
 	VkInitInternalBuffers();
 }
@@ -3123,7 +3087,7 @@ inline u64 GetImgMipCount( u64 width, u64 height )
 	return std::min( (u64) floor( log2( maxDim ) ), MAX_MIP_LEVELS );
 }
 
-// TODO- pass dpethPyr directly
+// TODO: pass dpethPyr directly
 inline static void 
 CullPass( 
 	VkCommandBuffer			cmdBuff, 
@@ -3140,6 +3104,11 @@ CullPass(
 	cullInfo.planes[ 2 ] = camFrust.planes[ 2 ];
 	cullInfo.planes[ 3 ] = camFrust.planes[ 3 ];
 	
+	cullInfo.frustum[ 0 ] = camFrust.frustum[ 0 ];
+	cullInfo.frustum[ 1 ] = camFrust.frustum[ 1 ];
+	cullInfo.frustum[ 2 ] = camFrust.frustum[ 2 ];
+	cullInfo.frustum[ 3 ] = camFrust.frustum[ 3 ];
+
 	cullInfo.zNear = camFrust.zNear;
 	cullInfo.drawDistance = camFrust.drawDistance;
 	cullInfo.projWidth = camFrust.projWidth;
@@ -3147,25 +3116,23 @@ CullPass(
 
 	cullInfo.pyramidWidthPixels = float( rndCtx.depthPyramid.width );
 	cullInfo.pyramidHeightPixels = float( rndCtx.depthPyramid.height );
-	cullInfo.mipLevelsCount = pyramidMipLevels;
 
 	cullInfo.drawCallsCount = instDescBuff.size / sizeof( instance_desc );
-	//cullInfo.dbgMeshIdx = drawCount;
 	
 
 	VkBufferMemoryBarrier drawCountResetBarriers[] = {
-		VkMakeBufferBarrier( drawCountBuff.hndl,
-							 VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-							 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT ),
-
 		VkMakeBufferBarrier( drawCmdBuff.hndl, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT ),
-		VkMakeBufferBarrier( dispatchCmdBuff.hndl, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT ),
+		VkMakeBufferBarrier( 
+			drawCountBuff.hndl, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT ),
 
-		VkMakeBufferBarrier( drawCountDbgBuff.hndl,
-							 VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-							 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT )
+		VkMakeBufferBarrier( dispatchCmdBuff.hndl, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT ),
+		
+		VkMakeBufferBarrier( drawCmdDbgBuff.hndl, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT ),
+		VkMakeBufferBarrier( 
+			drawCountDbgBuff.hndl, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT )
 	};
 
+	// TODO: should use img layout readonly optimal
 	VkImageMemoryBarrier depthPyramidReadBarrier =
 		VkMakeImgBarrier( rndCtx.depthPyramid.img,
 						  0,
@@ -3187,7 +3154,6 @@ CullPass(
 	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
 	VkDescriptorImageInfo depthPyramidInfo = { rndCtx.linearMinSampler, rndCtx.depthPyramid.view, VK_IMAGE_LAYOUT_GENERAL };
-
 	vk_descriptor_info drawcullDescs[] = {  
 		drawCmdBuff.descriptor(),
 		drawCountBuff.descriptor(), 
@@ -3195,18 +3161,19 @@ CullPass(
 		dispatchCmdBuff.descriptor(),
 		depthPyramidInfo, 
 		drawCmdDbgBuff.descriptor(),
-		drawCountDbgBuff.descriptor() };
-
+		drawCountDbgBuff.descriptor() 
+	};
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, drawcullDescs );
 	
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( cullInfo ), &cullInfo );
 
-	vkCmdDispatch( cmdBuff, VkGetGroupCount( instDescBuff.size / sizeof( instance_desc ), program.groupSize.localSizeX ), 1, 1 );
+	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.localSizeX ), 1, 1 );
 
 	VkBufferMemoryBarrier drawCmdReadyBarriers[] = {
 		VkMakeBufferBarrier( drawCmdBuff.hndl, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT ),
-		VkMakeBufferBarrier( dispatchCmdBuff.hndl, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT ),
 		VkMakeBufferBarrier( drawCountBuff.hndl, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT ),
+
+		VkMakeBufferBarrier( dispatchCmdBuff.hndl, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT ),
 
 		VkMakeBufferBarrier( drawCmdDbgBuff.hndl, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT ),
 		VkMakeBufferBarrier( drawCountDbgBuff.hndl, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT ),
@@ -3226,16 +3193,16 @@ DrawIndirectPass(
 	VkPipeline				vkPipeline,
 	VkRenderPass			vkRndPass,
 	VkFramebuffer			offscreenFbo,
-	VkBuffer				drawCmds,
+	const buffer_data&		drawCmds,
 	VkBuffer				drawCmdCount,
 	const VkClearValue*		clearVals,
 	const vk_program&		program,
-	const buffer_data*		lightsBuffer
+	b32						dbgCam
 ){
 	vk_label label = { cmdBuff,"DrawIndirect Pass",{} };
 
-	VkViewport viewport = { 0, (float) sc.scRes.height, (float) sc.scRes.width, -(float) sc.scRes.height, 0, 1.0f };
-	VkRect2D scissor = { { 0, 0 }, { sc.scRes.width, sc.scRes.height } };
+	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
 	rndPassBegInfo.renderPass = vkRndPass;
@@ -3253,33 +3220,63 @@ DrawIndirectPass(
 
 	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
-	vk_descriptor_info descriptors[] = { 
-		instDescBuff.descriptor(),
-		drawCmdBuff.descriptor()
-	};
-
+	vk_descriptor_info descriptors[] = { instDescBuff.descriptor(), drawCmds.descriptor() };
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
-
-	if( lightsBuffer )
-	{
-		vkCmdPushConstants( cmdBuff,
-							program.pipeLayout,
-							program.pushConstStages, 0,
-							sizeof( lightsBuffer->devicePointer ),
-							&lightsBuffer->devicePointer );
-	}
+	// TODO: multiple push const stages ?
+	//vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgCam ), &dbgCam );
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
 
-	vkCmdDrawIndexedIndirectCount( cmdBuff,
-								   drawCmds,
-								   offsetof( draw_command, cmd ),
-								   drawCmdCount, 0,
-								   instDescBuff.size / sizeof( instance_desc ),
-								   sizeof( draw_command ) );
+	u32 maxDrawCount = instDescBuff.size / sizeof( instance_desc );
+	vkCmdDrawIndexedIndirectCount( 
+		cmdBuff, drawCmds.hndl, offsetof( draw_command, cmd ), drawCmdCount, 0, maxDrawCount, sizeof( draw_command ) );
 
 	vkCmdEndRenderPass( cmdBuff );
 }
+
+// TODO: sexier
+inline static void
+DebugDrawIndirectPass(
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline,
+	VkRenderPass			vkRndPass,
+	VkFramebuffer			offscreenFbo,
+	const buffer_data&		drawCmds,
+	VkBuffer				drawCmdCount,
+	const vk_program&		program,
+	b32						dbgCam
+){
+	vk_label label = { cmdBuff,"Dbg Draw Indirect Pass",{} };
+
+	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	rndPassBegInfo.renderPass = vkRndPass;
+	rndPassBegInfo.framebuffer = offscreenFbo;
+	rndPassBegInfo.renderArea = scissor;
+
+	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
+
+	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+
+	vk_descriptor_info descriptors[] = { drawCmds.descriptor() };// , meshBuff.descriptor(), instDescBuff.descriptor()};
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
+
+	//vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgCam ), &dbgCam );
+
+	u32 maxDrawCnt = instDescBuff.size / sizeof( instance_desc );
+	vkCmdDrawIndirectCount( 
+		cmdBuff, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCmdCount, 0, maxDrawCnt, sizeof( draw_indirect ) );
+	
+	vkCmdEndRenderPass( cmdBuff );
+}
+
 
 inline static void
 DepthPyramidPass(
@@ -3393,15 +3390,11 @@ DepthPyramidMultiPass(
 		u32 levelWidth = std::max( 1u, depthTargetExt.width >> i );
 		u32 levelHeight = std::max( 1u, depthTargetExt.height >> i );
 
-		vec2 reduceData;
+		vec2 reduceData = {};
 		reduceData.x = levelWidth;
 		reduceData.y = levelHeight;
 
-		vkCmdPushConstants( cmdBuff,
-							program.pipeLayout,
-							program.pushConstStages, 0,
-							sizeof( reduceData ),
-							&reduceData );
+		vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( reduceData ), &reduceData );
 
 		vkCmdDispatch( cmdBuff,
 					   VkGetGroupCount( levelWidth, program.groupSize.localSizeX ),
@@ -3452,7 +3445,7 @@ ToneMappingWithSrgb(
 ){
 	vk_label label = { cmdBuff,"AvgLum && Tonemap Pass",{} };
 	// NOTE: inspired by http://www.alextardif.com/HistogramLuminance.html
-	avg_luminance_info avgLumInfo;
+	avg_luminance_info avgLumInfo = {};
 	avgLumInfo.minLogLum = -10.0f;
 	avgLumInfo.invLogLumRange = 1.0f / 12.0f;
 	avgLumInfo.dt = dt;
@@ -3530,8 +3523,7 @@ ToneMappingWithSrgb(
 										   tonemapProg.pipeLayout, 0,
 										   &tonemapDescs[ 0 ] );
 
-	assert( fboHdrColTrg.width == sc.scRes.width );
-	assert( fboHdrColTrg.height == sc.scRes.height );
+	assert( ( fboHdrColTrg.width == sc.width ) && ( fboHdrColTrg.height == sc.height ) );
 	vkCmdDispatch( cmdBuff,
 				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.localSizeX ),
 				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.localSizeY ),
@@ -3539,7 +3531,7 @@ ToneMappingWithSrgb(
 
 }
 
-static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b32 bvDraw, float dt )
+static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b32 bvDraw, b32 freeCam, float dt )
 {
 	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
 
@@ -3565,69 +3557,55 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 		{
 			rndCtx.depthTarget = VkCreateAllocBindImage( rndCtx.desiredDepthFormat,
 														 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-														 sc.scRes, 1,
+														 { sc.width,sc.height,1 }, 1,
 														 &vkAlbumArena );
-			u32 depthPyrWidth = 0;
-			u32 depthPyrHeight = 0;
-			u32 depthPyrMipCount = 0;
+			u32 hiZWidth = 0;
+			u32 hiZHeight = 0;
+			u32 hiZMipCount = 0;
 			// TODO: place depth pyr elsewhere 
 			if constexpr( !multiShaderDepthPyramid )
 			{
 				// TODO: make conservative ?
-				depthPyrWidth = ( sc.scRes.width ) / 2;
-				depthPyrHeight = ( sc.scRes.height ) / 2;
-				depthPyrMipCount = GetImgMipCount( depthPyrWidth, depthPyrHeight );
+				hiZWidth = ( sc.width ) / 2;
+				hiZHeight = ( sc.height ) / 2;
+				hiZMipCount = GetImgMipCount( hiZWidth, hiZHeight );
 			}
 			else
 			{
-				depthPyrWidth = FloorPowOf2( sc.scRes.width );
-				depthPyrHeight = FloorPowOf2( sc.scRes.height );
-				depthPyrMipCount = GetImgMipCountForPow2( depthPyrWidth, depthPyrHeight );
+				hiZWidth = FloorPowOf2( sc.width );
+				hiZHeight = FloorPowOf2( sc.height );
+				hiZMipCount = GetImgMipCountForPow2( hiZWidth, hiZHeight );
 			}
-			VK_CHECK( VK_INTERNAL_ERROR( !( rndCtx.depthPyramid.mipCount < MAX_MIP_LEVELS ) ) );
-			rndCtx.depthPyramid = VkCreateAllocBindImage( VK_FORMAT_R32_SFLOAT,
-														  VK_IMAGE_USAGE_SAMPLED_BIT |
-														  VK_IMAGE_USAGE_STORAGE_BIT |
-														  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-														  { depthPyrWidth, depthPyrHeight, 1 },
-														  depthPyrMipCount,
-														  &vkAlbumArena );
-
+			VK_CHECK( VK_INTERNAL_ERROR( !( hiZMipCount < MAX_MIP_LEVELS ) ) );
+			VkImageUsageFlags hiZUsg = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			VkFormat depthFormat = VK_FORMAT_R32_SFLOAT;
+			rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg,{ hiZWidth, hiZHeight, 1 }, hiZMipCount, &vkAlbumArena );
 			VkDbgNameObj( dc.device, VK_OBJECT_TYPE_IMAGE, (u64) rndCtx.depthPyramid.img, "Img_Depth_Pyramid" );
 
 			for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
 			{
-				rndCtx.depthPyramidChain[ i ] = VkMakeImgView( dc.device, rndCtx.depthPyramid.img, VK_FORMAT_R32_SFLOAT, i, 1 );
-			};
+				rndCtx.depthPyramidChain[ i ] = 
+					VkMakeImgView( dc.device, rndCtx.depthPyramid.img, rndCtx.depthPyramid.nativeFormat, i, 1 );
+			}
 
 			rndCtx.linearMinSampler = VkMakeSampler( dc.device, rndCtx.depthPyramid.mipCount, VK_SAMPLER_REDUCTION_MODE_MIN );
 		}
 
 		if( !rndCtx.colorTarget.img )
 		{
-			rndCtx.colorTarget = VkCreateAllocBindImage( rndCtx.desiredColorFormat,
-														 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-														 VK_IMAGE_USAGE_SAMPLED_BIT |
-														 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-														 sc.scRes, 1,
-														 &vkAlbumArena );
+			VkImageUsageFlags colorTargetUsg =
+				VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			rndCtx.colorTarget = 
+				VkCreateAllocBindImage( rndCtx.desiredColorFormat, colorTargetUsg, { sc.width,sc.height,1 }, 1, &vkAlbumArena );
 		}
 
-
-
-
 		VkImageView fboAttach[] = { rndCtx.colorTarget.view, rndCtx.depthTarget.view };
-		rndCtx.offscreenFbo = 
-			VkMakeFramebuffer( dc.device, rndCtx.renderPass, fboAttach, std::size( fboAttach ), sc.scRes.width, sc.scRes.height );
+		rndCtx.offscreenFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, fboAttach, std::size( fboAttach ), sc.width, sc.height );
 	}
 	
-	// TODO: barrier ?
-	// TODO: manage/abstract this somehow ?
-	// TODO: cache offset ?
-	u64 doubleBufferOffset = FwdAlign( sizeof( global_data ), dc.gpuProps.limits.minUniformBufferOffsetAlignment );
-	std::memcpy( hostComBuff.hostVisible + doubleBufferOffset * currentFrameIdx, (u8*) globs, sizeof( global_data ) );
-	
-	VkDescriptorBufferInfo uboInfo = { hostComBuff.hndl, doubleBufferOffset * currentFrameIdx, sizeof( global_data ) };
+
+	std::memcpy( currentVFrame.frameData.hostVisible, (u8*) globs, sizeof( *globs ) );
+	VkDescriptorBufferInfo uboInfo = { currentVFrame.frameData.hndl, 0, sizeof( *globs ) };
 	VkWriteDescriptorSet globalDataUpdate = VkMakeBindlessGlobalUpdate( &uboInfo, 1, VK_GLOBAL_SLOT_UNIFORM_BUFFER );
 	vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
 
@@ -3712,8 +3690,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 		clearedBuffers = 1;
 	}
 
-	VkImageMemoryBarrier renderBeginBarriers[] =
-	{
+	VkImageMemoryBarrier renderBeginBarriers[] = {
 		VkMakeImgBarrier(
 			rndCtx.colorTarget.img, 0, 0,
 			VK_IMAGE_LAYOUT_UNDEFINED,
@@ -3734,24 +3711,20 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 						  renderBeginBarriers );
 
 
-	CullPass( currentVFrame.cmdBuf,
-			  rndCtx.compPipeline,
-			  drawcullCompProgram,
-			  camFrust,
-			  rndCtx.depthPyramid.mipCount );
+	CullPass( currentVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, camFrust, rndCtx.depthPyramid.mipCount );
 
 	VkClearValue clearVals[ 2 ] = {};
-	//clearVals[ 0 ].color = { 100,100,100 };
+	//clearVals[ 0 ].color = {};
 	//clearVals[ 1 ].depthStencil = {};
 	DrawIndirectPass( currentVFrame.cmdBuf,
 					  rndCtx.gfxPipeline,
 					  rndCtx.renderPass,
 					  rndCtx.offscreenFbo,
-					  drawCmdBuff.hndl,
+					  drawCmdBuff,
 					  drawCountBuff.hndl,
 					  clearVals,
 					  gfxOpaqueProgram,
-					  &lightsBuff);
+					  freeCam );
 
 	
 	if constexpr( !multiShaderDepthPyramid )
@@ -3777,16 +3750,16 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 			depthPyramidMultiProgram );
 	}
 
-	if( boundingSphereDbgDraw && bvDraw )
+	if( boundingVolDbgDraw && bvDraw )
 	{
-		DrawIndirectPass( currentVFrame.cmdBuf,
-						  rndCtx.gfxBVDbgDrawPipeline,
-						  rndCtx.render2ndPass,
-						  rndCtx.offscreenFbo,
-						  drawCmdDbgBuff.hndl,
-						  drawCountDbgBuff.hndl,
-						  0,
-						  debugGfxProgram, 0 );
+		DebugDrawIndirectPass( currentVFrame.cmdBuf,
+							   rndCtx.gfxBVDbgDrawPipeline,
+							   rndCtx.render2ndPass,
+							   rndCtx.offscreenFbo,
+							   drawCmdDbgBuff,
+							   drawCountDbgBuff.hndl,
+							   debugGfxProgram,
+							   freeCam );
 	}
 
 
@@ -3800,11 +3773,12 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 						 sc.imgViews[ imgIdx ],
 						 dt );
 
-	VkImageMemoryBarrier presentBarrier = VkMakeImgBarrier( sc.imgs[ imgIdx ], 
+	VkImageMemoryBarrier presentBarrier = VkMakeImgBarrier( sc.imgs[ imgIdx ],
 															VK_ACCESS_SHADER_WRITE_BIT, 0,
 															VK_IMAGE_LAYOUT_GENERAL,
 															VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-															VK_IMAGE_ASPECT_COLOR_BIT,0,0 );
+															VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
+
 	vkCmdPipelineBarrier( currentVFrame.cmdBuf, 
 						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 						  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 

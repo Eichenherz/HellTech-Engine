@@ -97,7 +97,4 @@ struct drak_file_desc
 
 using PfnReadFile = std::vector<u8>( * )( const char* );
 
-vec2 OctaNormalEncode( vec3 n );
-u8 FloatToSnorm8( float e );
-
 void CompileGlbAssetToBinary( const std::vector<u8>& glbData, std::vector<u8>& drakAsset );

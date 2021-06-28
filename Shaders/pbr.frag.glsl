@@ -12,10 +12,6 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer m
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer light_ref{
 	light_data lights[];
 };
-// TODO: remove, use global ubo
-layout( push_constant ) uniform block{
-	uint64_t lightsBuffAddr;
-};
 
 //layout( constant_id = 0 ) const bool TEXTURED_OUTPUT = false;
 
@@ -27,7 +23,7 @@ layout( location = 4 ) in flat uint mtlIdx;
 
 layout( location = 0 ) out vec4 oCol;
 
-
+// TODO: pre-convert to Linear space
 vec4 SrgbToLinear( vec4 srgb )
 {
 	bvec4 cutoff = lessThanEqual( srgb, vec4( 0.04045 ) );
@@ -87,8 +83,8 @@ vec3 ComputeBrdfReflectance(
 	vec3	baseReflectivity,
 	vec3	viewDir,  
 	vec3	normal, 
-	float	linearRoughness )
-{
+	float	linearRoughness 
+){
 	vec3 halfVec = normalize( viewDir + lightDir );
 	float NdotV = abs( dot( normal, viewDir ) ) + 1e-5;
 	float NdotL = clamp( dot( normal, lightDir ), 0, 1 );
@@ -155,16 +151,12 @@ void main()
 
 	[[unroll]] for( uint i = 0; i < 4; ++i )
 	{
-		light_data l = light_ref( lightsBuffAddr ).lights[ i ];
+		light_data l = light_ref( bdas.lightsDescAddr ).lights[ i ];
 		vec3 posToLight = l.pos - worldPos;
 		vec3 radiance = l.col * DistRadiusAtten( dot( posToLight, posToLight ), l.radius );
 
-		reflectance += ComputeBrdfReflectance( normalize( posToLight ),
-											   diffCol,
-											   baseReflectivity,
-											   viewDir,
-											   bumpN,
-											   surfRoughness ) * radiance;
+		reflectance += ComputeBrdfReflectance( 
+			normalize( posToLight ), diffCol, baseReflectivity, viewDir, bumpN, surfRoughness ) * radiance;
 	}
 	oCol += vec4( reflectance, 1 );
 	

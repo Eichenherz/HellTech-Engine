@@ -3,18 +3,13 @@
 #include <assert.h>
 #include <utility>
 #include <tuple>
-// TODO: fix this shit
-#define __SSE2__ 
-#define __SSE3__
-#define __SSSE3__ 
-#define __SSE4_2__
 #include <immintrin.h>
 
 #if !defined( R_SHUFFLE_D )
 #define R_SHUFFLE_D( x, y, z, w )	(( (w) & 3 ) << 6 | ( (z) & 3 ) << 4 | ( (y) & 3 ) << 2 | ( (x) & 3 ))
 #endif
 
-// NOTE: uber-heavily-inspired from Doom 3 BFG and J.M.P. van Waveren 's work, mostly 
+// NOTE: uber-heavily-inspired from Doom 3 BFG and J.M.P. van Waveren's work, mostly 
 constexpr u64 INSET_COLOR_SHIFT = 4;	// inset the bounding box with ( range >> shift )
 constexpr u64 INSET_ALPHA_SHIFT = 5;	// inset alpha channel
 
