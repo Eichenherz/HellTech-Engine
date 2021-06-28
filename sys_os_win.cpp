@@ -119,25 +119,30 @@ static inline void SysErrMsgBox( const char* str )
 	UINT behaviour = MB_OK | MB_ICONERROR | MB_APPLMODAL;
 	MessageBox( 0, str, 0, behaviour );
 }
+
+// PLATOFRM_FILE_API
+// TODO: use own memory system 
+// TODO: multithreading
+// TODO: async
+// TODO: streaming
+// TODO: better file api
 static inline u32 SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize )
 {
 	static_assert( sizeof( DWORD ) == sizeof( u32 ) );
 	return GetFullPathNameA( fileName, buffSize, buffer, 0 );
 }
-
 static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
 {
 	DWORD accessMode = GENERIC_READ;
-	DWORD shareMode = FILE_SHARE_READ;
+	DWORD shareMode = 0;
 	DWORD creationDisp = OPEN_EXISTING;
 	DWORD flagsAndAttrs = FILE_ATTRIBUTE_READONLY;
 	return CreateFile( fileName, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
 }
-// TODO: use own mem
 static inline std::vector<u8> SysReadFile( const char* fileName )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( fileName );
-	WIN_CHECK( hfile == INVALID_HANDLE_VALUE );
+	if( hfile == INVALID_HANDLE_VALUE ) return{};
 
 	LARGE_INTEGER fileSize = {};
 	WIN_CHECK( !GetFileSizeEx( hfile, &fileSize ) );
@@ -163,6 +168,23 @@ static inline u64 SysGetFileTimestamp( const char* filename )
 
 	return u64( timestamp.QuadPart );
 }
+// TODO: might not want to crash when file can't be written/read
+static inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
+{
+	DWORD accessMode = GENERIC_WRITE;
+	DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+	DWORD creationDisp = OPEN_ALWAYS;
+	DWORD flagsAndAttrs = FILE_ATTRIBUTE_NORMAL;
+	HANDLE hFile = CreateFile( filename, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
+
+	OVERLAPPED asyncIo = {};
+	WIN_CHECK( !WriteFileEx( hFile, data, sizeInBytes, &asyncIo, 0 ) );
+	CloseHandle( hFile );
+
+	return true;
+}
+
+
 
 constexpr char	ENGINE_NAME[] = "helltech_engine";
 constexpr char	WINDOW_TITLE[] = "HellTech Engine";
@@ -279,7 +301,8 @@ static inline u64	SysTicks()
 static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 {
 	MSG msg;
-	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) ){
+	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) )
+	{
 		TranslateMessage( &msg );
 		DispatchMessageA( &msg );
 		if( msg.message == WM_QUIT ) return false;
@@ -287,8 +310,9 @@ static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 		m->dx = 0;
 		m->dy = 0;
 
-		if( msg.message == WM_INPUT ){
-			RAWINPUT ri;
+		if( msg.message == WM_INPUT )
+		{
+			RAWINPUT ri = {};
 			u32 rawDataSize = sizeof( ri );
 			// TODO: how to handle GetRawInputData errors ?
 			if( GetRawInputData( (HRAWINPUT) msg.lParam,
@@ -349,7 +373,7 @@ static inline void	SysCloseMemMapFile( void* mmFile )
 	//mmFile = 0;
 }
 
-LRESULT CALLBACK	MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
 	switch( uMsg )
 	{
@@ -497,35 +521,51 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 										  XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ),
 										  camUpBasis );
 
+		XMVECTOR viewScale = {};
+		XMVECTOR viewQuat = {};
+		XMVECTOR viewMove = {};
+		assert( XMMatrixDecompose( &viewScale, &viewQuat, &viewMove, view ) );
+
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
-		XMMATRIX transpInvView = XMMatrixTranspose( invView );
 
 		global_data globs = {};
 		XMStoreFloat4x4A( &globs.proj, proj );
 		XMStoreFloat4x4A( &globs.view, view );
 		globs.camPos = camWorldPos;
 		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
+		XMStoreFloat4( &globs.viewMove, viewMove );
+		XMStoreFloat4( &globs.viewQuat, viewQuat );
+		
 
 		// NOTE: transpose for row-major matrices
 		XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
+		//XMMATRIX comboMat = XMMatrixTranspose( proj );
 
 		XMVECTOR planes[ 4 ];
 		planes[ 0 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
 		planes[ 1 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
 		planes[ 2 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
 		planes[ 3 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
-		if( !kbd.f )
+
+		XMVECTOR frustumX = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
+		XMVECTOR frustumY = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
+
+		//if( !kbd.f )
 		{
 			for( u64 i = 0; i < 4; ++i ) XMStoreFloat4( (XMFLOAT4*) &camFrust.planes[ i ], planes[ i ] );
+		
+			camFrust.planes[ 0 ] = { 1,0,0,1 };
+			camFrust.planes[ 1 ] = { -1,0,0,1 };
+			camFrust.planes[ 2 ] = { 0,1,0,1 };
+			camFrust.planes[ 3 ] = { 0,-1,0,1 };
+		
+			camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
+			camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );
+			camFrust.frustum[ 2 ] = XMVectorGetY( frustumY );
+			camFrust.frustum[ 3 ] = XMVectorGetZ( frustumY );
 		}
 
-		DirectX::XMVECTOR frustumX = XMVector3Normalize( XMVectorAdd( proj.r[ 3 ], proj.r[ 0 ] ) );
-		DirectX::XMVECTOR frustumY = XMVector3Normalize( XMVectorAdd( proj.r[ 3 ], proj.r[ 1 ] ) );
-		camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
-		camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );
-		camFrust.frustum[ 2 ] = XMVectorGetY( frustumY );
-		camFrust.frustum[ 3 ] = XMVectorGetZ( frustumY );
 		// TODO: get this from matrix directly ?
 		camFrust.zNear = zNear;
 		camFrust.drawDistance = drawDistance;
@@ -534,7 +574,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 
 
-		HostFrames( &globs, camFrust, kbd.o, elapsedSecs );
+		HostFrames( &globs, camFrust, kbd.o, kbd.f, elapsedSecs );
 	}
 
 

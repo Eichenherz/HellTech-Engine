@@ -14,11 +14,10 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding = 0) uniform texture2D depthSrc;
-layout(binding = 1) uniform sampler reduceMin4;
-layout(binding = 3, r32f) uniform coherent image2D depthMips[12];
-layout(binding = 2, r32f) uniform coherent image2D depthMip5; // wtf about this ? 
-layout(binding = 4) coherent buffer global_atomic_counter
+layout( binding = 0 ) uniform texture2D depthSrc;
+layout( binding = 1 ) uniform sampler reduceMin4;
+layout( binding = 2, r32f ) uniform coherent image2D depthMips[ 12 ];
+layout( binding = 3 ) coherent buffer global_atomic_counte
 {
 	uint globalAtomicCounter;
 };
@@ -144,12 +143,7 @@ void GenerateNext4Mips( uint x, uint y, uint mipIdx, ivec2 workGroupID )
 	if( gl_LocalInvocationIndex < 4 ){
 		vec4 t = QuadWaveMinReduce( intermediateLDS[ gl_LocalInvocationIndex ][ 0 ] );
 
-		if( ( gl_LocalInvocationIndex % 4 ) == 0 ){
-			//if( mipIdx == 5 ) 
-				imageStore( depthMips[mipIdx], workGroupID, t );
-			//else
-			//	imageStore( depthMips[mipIdx], workGroupID, t );
-		}
+		if( ( gl_LocalInvocationIndex % 4 ) == 0 ) imageStore( depthMips[mipIdx], workGroupID, t );
 	}
 }
 

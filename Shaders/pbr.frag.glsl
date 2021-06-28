@@ -13,10 +13,6 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer l
 	light_data lights[];
 };
 
-layout( push_constant ) uniform block{
-	uint64_t lightsBuffAddr;
-};
-
 //layout( constant_id = 0 ) const bool TEXTURED_OUTPUT = false;
 
 layout( location = 0 ) in vec3 normal;
@@ -27,7 +23,7 @@ layout( location = 4 ) in flat uint mtlIdx;
 
 layout( location = 0 ) out vec4 oCol;
 
-
+// TODO: pre-convert to Linear space
 vec4 SrgbToLinear( vec4 srgb )
 {
 	bvec4 cutoff = lessThanEqual( srgb, vec4( 0.04045 ) );
@@ -87,8 +83,8 @@ vec3 ComputeBrdfReflectance(
 	vec3	baseReflectivity,
 	vec3	viewDir,  
 	vec3	normal, 
-	float	linearRoughness )
-{
+	float	linearRoughness 
+){
 	vec3 halfVec = normalize( viewDir + lightDir );
 	float NdotV = abs( dot( normal, viewDir ) ) + 1e-5;
 	float NdotL = clamp( dot( normal, lightDir ), 0, 1 );
@@ -117,12 +113,12 @@ vec3 ComputeBrdfReflectance(
   
 void main()
 {
-	material_data mtl = mtl_ref( g.addr + g.materialsOffset ).materials[ mtlIdx ];
+	material_data mtl = mtl_ref( bdas.mtrlsAddr ).materials[ mtlIdx ];
 
 	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv );
 	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv ).rgb;
-	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ),
-								  uv ).rgb;
+	vec3 normalFromMap = 
+		texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ nonuniformEXT( 0 ) ] ), uv ).rgb;
 
 	normalFromMap = normalFromMap * 2.0 - 1.0;
 	normalFromMap.b = sqrt( clamp( 1 - dot( normalFromMap.rg, normalFromMap.rg ), 0, 1 ) );
@@ -155,16 +151,12 @@ void main()
 
 	[[unroll]] for( uint i = 0; i < 4; ++i )
 	{
-		light_data l = light_ref( lightsBuffAddr ).lights[ i ];
+		light_data l = light_ref( bdas.lightsDescAddr ).lights[ i ];
 		vec3 posToLight = l.pos - worldPos;
 		vec3 radiance = l.col * DistRadiusAtten( dot( posToLight, posToLight ), l.radius );
 
-		reflectance += ComputeBrdfReflectance( normalize( posToLight ),
-											   diffCol,
-											   baseReflectivity,
-											   viewDir,
-											   bumpN,
-											   surfRoughness ) * radiance;
+		reflectance += ComputeBrdfReflectance( 
+			normalize( posToLight ), diffCol, baseReflectivity, viewDir, bumpN, surfRoughness ) * radiance;
 	}
 	oCol += vec4( reflectance, 1 );
 	
