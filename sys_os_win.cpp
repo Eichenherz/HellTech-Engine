@@ -455,6 +455,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	XMFLOAT3 camWorldPos = { 0,0,0 };
 	
 	cam_frustum	camFrust = {};
+	global_data globs = {};
 
 	VkBackendInit();
 
@@ -528,13 +529,22 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
 
-		global_data globs = {};
 		XMStoreFloat4x4A( &globs.proj, proj );
-		XMStoreFloat4x4A( &globs.view, view );
-		globs.camPos = camWorldPos;
-		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
-		XMStoreFloat4( &globs.viewMove, viewMove );
-		XMStoreFloat4( &globs.viewQuat, viewQuat );
+		if( !kbd.f )
+		{
+			
+			XMStoreFloat4x4A( &globs.view, view );
+			globs.camPos = camWorldPos;
+			XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
+			//XMStoreFloat4( &globs.viewMove, viewMove );
+			//XMStoreFloat4( &globs.viewQuat, viewQuat );
+		}
+		else
+		{
+			XMStoreFloat4x4A( &globs.dbgCam, view );
+		}
+
+		
 		
 
 		// NOTE: transpose for row-major matrices

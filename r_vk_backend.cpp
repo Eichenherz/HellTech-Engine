@@ -1154,7 +1154,7 @@ vk_program VkMakePipelineProgram(
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
 	descSetLayoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
 	descSetLayoutInfo.bindingCount = std::size( bindings );
-	descSetLayoutInfo.pBindings = &bindings[ 0 ];
+	descSetLayoutInfo.pBindings = std::data( bindings );
 	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &program.descSetLayout ) );
 
 	VkDescriptorSetLayout setLayouts[] = { program.descSetLayout, bindlessLayout };
@@ -1166,33 +1166,33 @@ vk_program VkMakePipelineProgram(
 	pipeLayoutInfo.pPushConstantRanges = std::data( pushConstRanges );
 	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &program.pipeLayout ) );
 
-
-	std::vector<VkDescriptorUpdateTemplateEntry> entries;
-	entries.reserve( std::size( bindings ) );
-	entries.resize( 0 );
-	for( const VkDescriptorSetLayoutBinding& binding : bindings )
+	if( std::size( bindings ) )
 	{
-		VkDescriptorUpdateTemplateEntry entry = {};
-		entry.dstBinding = binding.binding;
-		entry.dstArrayElement = 0;
-		entry.descriptorCount = binding.descriptorCount;
-		entry.descriptorType = binding.descriptorType;
-		entry.offset = std::size( entries ) * sizeof( vk_descriptor_info );
-		entry.stride = sizeof( vk_descriptor_info );
-		entries.emplace_back( entry );
+		std::vector<VkDescriptorUpdateTemplateEntry> entries;
+		entries.reserve( std::size( bindings ) );
+		for( const VkDescriptorSetLayoutBinding& binding : bindings )
+		{
+			VkDescriptorUpdateTemplateEntry entry = {};
+			entry.dstBinding = binding.binding;
+			entry.dstArrayElement = 0;
+			entry.descriptorCount = binding.descriptorCount;
+			entry.descriptorType = binding.descriptorType;
+			entry.offset = std::size( entries ) * sizeof( vk_descriptor_info );
+			entry.stride = sizeof( vk_descriptor_info );
+			entries.emplace_back( entry );
+		}
+
+		VkDescriptorUpdateTemplateCreateInfo templateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
+		templateInfo.descriptorUpdateEntryCount = std::size( entries );
+		templateInfo.pDescriptorUpdateEntries = std::data( entries );
+		templateInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
+		templateInfo.descriptorSetLayout = program.descSetLayout;
+		templateInfo.pipelineBindPoint = bindPoint;
+		templateInfo.pipelineLayout = program.pipeLayout;
+		templateInfo.set = 0;
+		VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &program.descUpdateTemplate ) );
 	}
-
-	VkDescriptorUpdateTemplateCreateInfo templateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
-	templateInfo.descriptorUpdateEntryCount = std::size( entries );
-	templateInfo.pDescriptorUpdateEntries = &entries[ 0 ];
-	templateInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
-	templateInfo.descriptorSetLayout = program.descSetLayout;
-	templateInfo.pipelineBindPoint = bindPoint;
-	templateInfo.pipelineLayout = program.pipeLayout;
-	templateInfo.set = 0;
-	VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &program.descUpdateTemplate ) );
-
-
+	
 	program.pushConstStages = std::size( pushConstRanges ) ? pushConstRanges[ 0 ].stageFlags : 0;
 	program.groupSize = gs;
 
@@ -1228,6 +1228,16 @@ VkMakeSpecializationInfo(
 	return specInfo;
 }
 
+// TODO: config struct
+struct vk_gfx_pipeline_state
+{
+	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL;
+	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT;
+	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	b32					blendCol = colorBlending;
+	b32					depthWrite = true;
+};
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
 // TODO: entry point name
@@ -1241,7 +1251,9 @@ VkPipeline VkMakeGfxPipeline(
 	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL,
 	b32					blendCol = colorBlending,
 	b32					depthWrite = true,
-	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT
+	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT,
+	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
 ){
 	VkPipelineShaderStageCreateInfo shaderStagesInfo[ 2 ] = {};
 	shaderStagesInfo[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1255,7 +1267,7 @@ VkPipeline VkMakeGfxPipeline(
 
 
 	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-	inAsmStateInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	inAsmStateInfo.topology = primTopology;
 	inAsmStateInfo.primitiveRestartEnable = 0;
 
 	VkPipelineViewportStateCreateInfo viewportInfo = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
@@ -1272,11 +1284,8 @@ VkPipeline VkMakeGfxPipeline(
 	rasterInfo.depthClampEnable = 0;
 	rasterInfo.rasterizerDiscardEnable = 0;
 	rasterInfo.polygonMode = polyMode;
-
-	//rasterInfo.cullMode = worldLeftHanded ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
 	rasterInfo.cullMode = cullFlags;
-	rasterInfo.frontFace = worldLeftHanded ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
-
+	rasterInfo.frontFace = frontFace;
 	rasterInfo.depthBiasEnable = 0;
 	rasterInfo.lineWidth = 1.0f;
 
@@ -2517,16 +2526,6 @@ inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float s
 		l.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		l.radius = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
 		l.col = { 600.0f,200.0f,100.0f };
-		//if constexpr( drawLightDbgSphere )
-		//{
-		//	draw_data lightBoundigShpere = {};
-		//	lightBoundigShpere.pos = l.pos;
-		//	lightBoundigShpere.scale = l.radius;
-		//	DirectX::XMStoreFloat4( &lightBoundigShpere.rot, DirectX::XMQuaternionIdentity() );
-		//
-		//	lightBoundigShpere.meshIdx = meshCount;
-		//	drawArgs.push_back( lightBoundigShpere );
-		//}
 	}
 
 	return lights;
@@ -2740,7 +2739,9 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 										   &vkRscArena );
 	drawCmdDbgBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_indirect ),
-											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+											  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 											  &vkRscArena );
 	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawCmdDbgBuff.hndl, "Buff_Indirect_Dbg_Draw_Cmds" );
 
@@ -3027,14 +3028,21 @@ static void VkBackendInit()
 
 	debugGfxProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, 
 											 { &shaders[ VERT_BOX_DBG ], &shaders[ FRAG_NORMAL_COL ] } );
+
+	static_assert( worldLeftHanded );
 	rndCtx.gfxBVDbgDrawPipeline = VkMakeGfxPipeline( dc.device,
 													 pipelineCache,
 													 rndCtx.renderPass,
 													 debugGfxProgram.pipeLayout,
 													 shaders[ VERT_BOX_DBG ].module,
 													 shaders[ FRAG_NORMAL_COL ].module,
-													 VK_POLYGON_MODE_LINE,//VK_POLYGON_MODE_FILL,
-													 1, 0, VK_CULL_MODE_NONE );
+													 //VK_POLYGON_MODE_FILL,
+													 VK_POLYGON_MODE_LINE,
+													 1, 0, 
+													 VK_CULL_MODE_NONE,
+													 VK_FRONT_FACE_COUNTER_CLOCKWISE,
+													 VK_PRIMITIVE_TOPOLOGY_LINE_LIST
+													);
 
 	rndCtx.compAvgLumPipe = 
 		VkMakeComputePipeline( dc.device, pipelineCache, avgLumCompProgram.pipeLayout, 
@@ -3221,8 +3229,8 @@ DrawIndirectPass(
 
 	vk_descriptor_info descriptors[] = { instDescBuff.descriptor(), drawCmds.descriptor() };
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
-	// TODO: multiple push const stages ?
-	//vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgCam ), &dbgCam );
+	
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgCam ), &dbgCam );
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
 
@@ -3232,6 +3240,14 @@ DrawIndirectPass(
 
 	vkCmdEndRenderPass( cmdBuff );
 }
+
+struct dbg_draw_push
+{
+	vec3 col;
+	u64 drawIndirctAddr;
+	u32 freeCam;
+	u32 frustumDraw;
+};
 
 // TODO: sexier
 inline static void
@@ -3264,10 +3280,9 @@ DebugDrawIndirectPass(
 
 	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
-	vk_descriptor_info descriptors[] = { drawCmds.descriptor() };// , meshBuff.descriptor(), instDescBuff.descriptor()};
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
-
-	//vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgCam ), &dbgCam );
+	//dbg_draw_push dbgDrawPush = { {0.00025f,0.00025f,0},drawCmds.devicePointer,dbgCam };
+	dbg_draw_push dbgDrawPush = { {255,255,0},drawCmds.devicePointer,dbgCam };
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgDrawPush ), &dbgDrawPush );
 
 	u32 maxDrawCnt = instDescBuff.size / sizeof( instance_desc );
 	vkCmdDrawIndirectCount( 
@@ -3276,6 +3291,40 @@ DebugDrawIndirectPass(
 	vkCmdEndRenderPass( cmdBuff );
 }
 
+inline static void
+DebugDrawFrustumPass(
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline,
+	VkRenderPass			vkRndPass,
+	VkFramebuffer			offscreenFbo,
+	const vk_program&		program
+){
+	vk_label label = { cmdBuff,"Dbg Draw Frustum Pass",{} };
+
+	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	rndPassBegInfo.renderPass = vkRndPass;
+	rndPassBegInfo.framebuffer = offscreenFbo;
+	rndPassBegInfo.renderArea = scissor;
+
+	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
+
+	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+
+	dbg_draw_push dbgDrawPush = { {0,255,255},0,1,1 };
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgDrawPush ), &dbgDrawPush );
+
+	vkCmdDraw( cmdBuff, 24, 1, 0, 0 );
+
+	vkCmdEndRenderPass( cmdBuff );
+}
 
 inline static void
 DepthPyramidPass(
@@ -3747,6 +3796,15 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 			rndCtx.depthPyramidChain,
 			rndCtx.depthTarget,
 			depthPyramidMultiProgram );
+	}
+
+	if( freeCam )
+	{
+		DebugDrawFrustumPass( currentVFrame.cmdBuf,
+							  rndCtx.gfxBVDbgDrawPipeline,
+							  rndCtx.render2ndPass,
+							  rndCtx.offscreenFbo,
+							  debugGfxProgram );
 	}
 
 	if( boundingVolDbgDraw && bvDraw )

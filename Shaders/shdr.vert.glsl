@@ -6,7 +6,7 @@
 
 #define GLOBAL_RESOURCES
 
-#define GLSL_DBG 0
+#define GLSL_DBG 1
 
 #include "..\r_data_structs.h"
 #include "glsl_func_lib.h"

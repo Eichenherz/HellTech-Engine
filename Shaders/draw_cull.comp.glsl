@@ -210,7 +210,7 @@ void main()
 		// TODO: box vertex count const
 		dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
 		dbgDrawCmd[ dbgDrawCallIdx ].firstVertex = 0;
-		dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 36;
+		dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 24;
 		dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
 		dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
 	#endif
