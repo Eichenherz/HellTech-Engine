@@ -517,9 +517,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
 		// TRANSF CAM VIEW
 		XMVECTOR camLookAt = XMVector3Transform( camFwdBasis, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = XMMatrixLookAtLH( XMLoadFloat3( &camWorldPos ),
-										  XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ),
-										  camUpBasis );
+		XMMATRIX view = 
+			XMMatrixLookAtLH( XMLoadFloat3( &camWorldPos ), XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ),camUpBasis );
 
 		XMVECTOR viewScale = {};
 		XMVECTOR viewQuat = {};

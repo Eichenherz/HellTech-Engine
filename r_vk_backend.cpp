@@ -1101,10 +1101,9 @@ inline static void VkReflectShaderLayout(
 	for( u64 pci = 0; pci < shaderReflection.push_constant_block_count; ++pci )
 	{
 		VkPushConstantRange pushConstRange = {};
+		pushConstRange.stageFlags = shaderReflection.shader_stage;
 		pushConstRange.offset = shaderReflection.push_constant_blocks[ pci ].offset;
 		pushConstRange.size = shaderReflection.push_constant_blocks[ pci ].size;
-		// TODO: what about this ?
-		pushConstRange.stageFlags = shaderReflection.shader_stage;
 		VK_CHECK( VK_INTERNAL_ERROR( pushConstRange.size > gpuProps.limits.maxPushConstantsSize ) );
 
 		pushConstRanges.push_back( pushConstRange );
@@ -2835,9 +2834,9 @@ enum shader_idx : u8
 
 constexpr char* shaderFiles[] =
 {
-	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\shdr.vert.glsl.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\shdr.vert.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\box_debug.vert.spv",
-	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl.spv",
+	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\draw_cull.comp.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\depth_pyramid.comp.spv",
 	"D:\\EichenRepos\\QiY\\QiY\\Shaders\\pow2_downsampler.comp.spv",

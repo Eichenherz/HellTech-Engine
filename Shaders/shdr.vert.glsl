@@ -21,11 +21,11 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer m
 //	draw_data drawArgs[];
 //};
 
-//#if GLSL_DBG
-//layout( push_constant ) uniform dbg_block{
-//	uint freeCam;
-//};
-//#endif
+#if GLSL_DBG
+layout( push_constant ) uniform dbg_block{
+	uint freeCam;
+};
+#endif
 
 layout( binding = 0 ) readonly buffer inst_desc_buffer{
 	instance_desc instDescs[];
@@ -92,9 +92,9 @@ void main()
 	
 	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
 	vec4 outScreenPos = cam.view * vec4( worldPos, 1 );
-//#if GLSL_DBG
-//	outScreenPos = bool( freeCam ) ? ( cam.dbgCam * outScreenPos ) : outScreenPos;
-//#endif
+#if GLSL_DBG
+	outScreenPos = bool( freeCam ) ? ( cam.dbgCam * outScreenPos ) : outScreenPos;
+#endif
 	gl_Position = cam.proj * outScreenPos;
 
 	vec3 n = normalize( norm );

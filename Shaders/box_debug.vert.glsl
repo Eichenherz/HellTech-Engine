@@ -10,11 +10,11 @@
 
 #include "../r_data_structs.h"
 
-//#if GLSL_DBG
-//layout( push_constant ) uniform block{
-//	uint freeCam;
-//};
-//#endif
+#if GLSL_DBG
+layout( push_constant ) uniform block{
+	uint freeCam;
+};
+#endif
 
 layout( binding = 0, scalar ) readonly buffer draw_cmd{
 	draw_indirect drawCmd[];
@@ -93,9 +93,9 @@ void main()
 	vec3 pos = vtx.xyz * m.extent + m.center;
 	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
 	vec4 outScreenPos = cam.view * vec4( worldPos, 1 );
-//#if GLSL_DBG
-//	outScreenPos = bool( freeCam ) ? ( cam.dbgCam * outScreenPos ) : outScreenPos;
-//#endif
+#if GLSL_DBG
+	outScreenPos = bool( freeCam ) ? ( cam.dbgCam * outScreenPos ) : outScreenPos;
+#endif
 	gl_Position = cam.proj * outScreenPos;
 	oCol = vec3( 255, 255, 0 );
 }
