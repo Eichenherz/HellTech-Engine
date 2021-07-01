@@ -14,7 +14,6 @@
 layout( push_constant ) uniform block{
 	vec3		col;
 	uint64_t	drawIndirctAddr;
-	uint		freeCam;
 	uint		frustumDraw;
 };
 //#endif
@@ -52,36 +51,47 @@ const vec4 BOX_TRIANGLES[] = {
 	vec4( -1.0,1.0,1.0,1.0 ),
 	vec4( -1.0,-1.0,1.0,1.0 ),
 	vec4( -1.0,-1.0,-1.0,1.0 ),
+
 	vec4( 1.0,1.0,1.0,1.0 ),
 	vec4( 1.0,-1.0,1.0,1.0 ),
 	vec4( -1.0,-1.0,1.0,1.0 ),
+
 	vec4( 1.0,1.0,-1.0,1.0 ),
 	vec4( 1.0,-1.0,-1.0,1.0 ),
 	vec4( 1.0,-1.0,1.0,1.0 ),
+
 	vec4( -1.0,1.0,-1.0,1.0 ),
 	vec4( -1.0,-1.0,-1.0,1.0 ),
 	vec4( 1.0,-1.0,-1.0,1.0 ),
+
 	vec4( -1.0,-1.0,1.0,1.0 ),
 	vec4( 1.0,-1.0,1.0,1.0 ),
 	vec4( 1.0,-1.0,-1.0,1.0 ),
+
 	vec4( 1.0,1.0,1.0,1.0 ),
 	vec4( -1.0,1.0,1.0,1.0 ),
 	vec4( -1.0,1.0,-1.0,1.0 ),
+
 	vec4( -1.0,1.0,-1.0,1.0 ),
 	vec4( -1.0,1.0,1.0,1.0 ),
 	vec4( -1.0,-1.0,-1.0,1.0 ),
+
 	vec4( -1.0,1.0,1.0,1.0 ),
 	vec4( 1.0,1.0,1.0,1.0 ),
 	vec4( -1.0,-1.0,1.0,1.0 ),
+
 	vec4( 1.0,1.0,1.0,1.0 ),
 	vec4( 1.0,1.0,-1.0,1.0 ),
 	vec4( 1.0,-1.0,1.0,1.0 ),
+
 	vec4( 1.0,1.0,-1.0,1.0 ),
 	vec4( -1.0,1.0,-1.0,1.0 ),
 	vec4( 1.0,-1.0,-1.0,1.0 ),
+
 	vec4( -1.0,-1.0,-1.0,1.0 ),
 	vec4( -1.0,-1.0,1.0,1.0 ),
 	vec4( 1.0,-1.0,-1.0,1.0 ),
+
 	vec4( 1.0,1.0,-1.0,1.0 ),
 	vec4( 1.0,1.0,1.0,1.0 ),
 	vec4( -1.0,1.0,-1.0,1.0 )
@@ -154,15 +164,9 @@ void main()
 	}
 	else
 	{
-		worldPos = inverse( cam.proj ) * vtx;
-		//vec4 world = inverse( cam.proj ) * vtx;
-		//worldPos = world / world.w;
+		worldPos = inverse( cam.mainView ) * inverse( cam.proj ) * vtx;
 	}
 
-	vec4 outScreenPos = cam.view * worldPos;
-#if GLSL_DBG
-	outScreenPos = bool( freeCam ) ? ( cam.dbgCam * outScreenPos ) : outScreenPos;
-#endif
-	gl_Position = cam.proj * outScreenPos;
+	gl_Position = cam.proj * cam.activeView * worldPos;
 	oCol = col;
 }

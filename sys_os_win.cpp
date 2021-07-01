@@ -238,8 +238,9 @@ constexpr u16 VK_F = 0x46;
 constexpr u16 VK_O = 0x4F;
 
 
-
-inline DirectX::XMMATRIX PerspInvDepthInfFovLH( float fovYRads, float aspectRatioWH, float zNear )
+// TODO: templates ? 
+// TODO: fromalize world coord
+inline DirectX::XMMATRIX PerspRevInfFovLH( float fovYRads, float aspectRatioWH, float zNear )
 {
 	float sinFov;
 	float cosFov;
@@ -254,6 +255,24 @@ inline DirectX::XMMATRIX PerspInvDepthInfFovLH( float fovYRads, float aspectRati
 	proj.r[ 1 ] = DirectX::XMVectorSet( 0, h, 0, 0 );
 	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, zNear );
 	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, 1, 0 );
+
+	return proj;
+}
+inline DirectX::XMMATRIX PerspRevInfFovRH( float fovYRads, float aspectRatioWH, float zNear )
+{
+	float sinFov;
+	float cosFov;
+
+	DirectX::XMScalarSinCos( &sinFov, &cosFov, fovYRads * 0.5f );
+
+	float h = cosFov / sinFov;
+	float w = h / aspectRatioWH;
+
+	DirectX::XMMATRIX proj;
+	proj.r[ 0 ] = DirectX::XMVectorSet( w, 0, 0, 0 );
+	proj.r[ 1 ] = DirectX::XMVectorSet( 0, h, 0, 0 );
+	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, zNear );
+	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, -1, 0 );
 
 	return proj;
 }
@@ -444,7 +463,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 	float zNear = 0.5f;
 	float drawDistance = 200.0f;
-	XMMATRIX proj = PerspInvDepthInfFovLH( XMConvertToRadians( 70.0f ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
+	XMMATRIX proj = PerspRevInfFovLH( XMConvertToRadians( 70.0f ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
 	// NOTE: pitch must be in [-pi/2,pi/2]
 	float pitch = 0;
 	float yaw = 0;
@@ -521,31 +540,18 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		XMMATRIX view = 
 			XMMatrixLookAtLH( XMLoadFloat3( &camWorldPos ), XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ),camUpBasis );
 
-		XMVECTOR viewScale = {};
-		XMVECTOR viewQuat = {};
-		XMVECTOR viewMove = {};
-		assert( XMMatrixDecompose( &viewScale, &viewQuat, &viewMove, view ) );
-
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
 
 		XMStoreFloat4x4A( &globs.proj, proj );
+		XMStoreFloat4x4A( &globs.activeView, view );
 		if( !kbd.f )
 		{
-			
-			XMStoreFloat4x4A( &globs.view, view );
-			globs.camPos = camWorldPos;
-			XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
-			//XMStoreFloat4( &globs.viewMove, viewMove );
-			//XMStoreFloat4( &globs.viewQuat, viewQuat );
+			XMStoreFloat4x4A( &globs.mainView, view );
 		}
-		else
-		{
-			XMStoreFloat4x4A( &globs.dbgCam, view );
-		}
+		globs.camPos = camWorldPos;
+		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
 
-		
-		
 
 		// NOTE: transpose for row-major matrices
 		XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
@@ -560,14 +566,14 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		XMVECTOR frustumX = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
 		XMVECTOR frustumY = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
 
-		//if( !kbd.f )
+		if( !kbd.f )
 		{
 			for( u64 i = 0; i < 4; ++i ) XMStoreFloat4( (XMFLOAT4*) &camFrust.planes[ i ], planes[ i ] );
 		
-			camFrust.planes[ 0 ] = { 1,0,0,1 };
-			camFrust.planes[ 1 ] = { -1,0,0,1 };
-			camFrust.planes[ 2 ] = { 0,1,0,1 };
-			camFrust.planes[ 3 ] = { 0,-1,0,1 };
+			//camFrust.planes[ 0 ] = { 1,0,0,1 };
+			//camFrust.planes[ 1 ] = { -1,0,0,1 };
+			//camFrust.planes[ 2 ] = { 0,1,0,1 };
+			//camFrust.planes[ 3 ] = { 0,-1,0,1 };
 		
 			camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
 			camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );

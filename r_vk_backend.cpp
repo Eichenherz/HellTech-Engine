@@ -2479,7 +2479,6 @@ inline static std::vector<instance_desc> SpawnRandomInstances( u64 drawCount, u6
 	{
 		i.meshIdx = rand() % meshCount;
 		i.mtrlIdx = 0;
-		//i.bndVolMeshIdx = 1;
 		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
@@ -2494,7 +2493,8 @@ inline static std::vector<instance_desc> SpawnRandomInstances( u64 drawCount, u6
 								  0 ) );
 		float angle = DirectX::XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
 
-		DirectX::XMVECTOR quat = DirectX::XMQuaternionRotationNormal( axis, angle );
+		//DirectX::XMVECTOR quat = DirectX::XMQuaternionRotationNormal( axis, angle );
+		DirectX::XMVECTOR quat = DirectX::XMQuaternionIdentity();
 		DirectX::XMStoreFloat4( &i.rot, quat );
 	}
 	// TODO: draw from transparent only pipe ?
@@ -3230,8 +3230,6 @@ DrawIndirectPass(
 	vk_descriptor_info descriptors[] = { instDescBuff.descriptor(), drawCmds.descriptor() };
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
 	
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgCam ), &dbgCam );
-
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
 
 	u32 maxDrawCount = instDescBuff.size / sizeof( instance_desc );
@@ -3245,7 +3243,6 @@ struct dbg_draw_push
 {
 	vec3 col;
 	u64 drawIndirctAddr;
-	u32 freeCam;
 	u32 frustumDraw;
 };
 
@@ -3258,8 +3255,7 @@ DebugDrawIndirectPass(
 	VkFramebuffer			offscreenFbo,
 	const buffer_data&		drawCmds,
 	VkBuffer				drawCmdCount,
-	const vk_program&		program,
-	b32						dbgCam
+	const vk_program&		program
 ){
 	vk_label label = { cmdBuff,"Dbg Draw Indirect Pass",{} };
 
@@ -3281,7 +3277,7 @@ DebugDrawIndirectPass(
 	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
 	//dbg_draw_push dbgDrawPush = { {0.00025f,0.00025f,0},drawCmds.devicePointer,dbgCam };
-	dbg_draw_push dbgDrawPush = { {255,255,0},drawCmds.devicePointer,dbgCam };
+	dbg_draw_push dbgDrawPush = { {255,255,0},drawCmds.devicePointer };
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgDrawPush ), &dbgDrawPush );
 
 	u32 maxDrawCnt = instDescBuff.size / sizeof( instance_desc );
@@ -3318,7 +3314,7 @@ DebugDrawFrustumPass(
 
 	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
-	dbg_draw_push dbgDrawPush = { {0,255,255},0,1,1 };
+	dbg_draw_push dbgDrawPush = { {0,255,255},0,1 };
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgDrawPush ), &dbgDrawPush );
 
 	vkCmdDraw( cmdBuff, 24, 1, 0, 0 );
@@ -3815,8 +3811,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 							   rndCtx.offscreenFbo,
 							   drawCmdDbgBuff,
 							   drawCountDbgBuff.hndl,
-							   debugGfxProgram,
-							   freeCam );
+							   debugGfxProgram );
 	}
 
 

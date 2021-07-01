@@ -43,14 +43,14 @@ const float PI = 3.14159265359;
 struct global_data
 {
 	mat4	proj;
-	mat4	view;
-	mat4	dbgCam;
+	mat4	mainView;
+	mat4	activeView;
 	vec3	camPos;
 	float	pad0;
 	vec3	camViewDir;
 	float	pad1;
-	vec4	viewMove;
-	vec4	viewQuat;
+	//vec4	viewMove;
+	//vec4	viewQuat;
 };
 
 // NOTE: bda == buffer device address

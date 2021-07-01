@@ -127,15 +127,14 @@ void main()
 	// NOTE: full model transfrom because BB might not be centered
 	vec4 center = vec4( currentInst.pos + RotateQuat( currentMesh.center * currentInst.scale, currentInst.rot ), 1 );
 	vec4 extent = vec4( RotateQuat( currentMesh.extent * currentInst.scale, currentInst.rot ), 0 ); // dir
-	//center = vec4( RotateQuat( center.xyz, cam.viewQuat ), 1 ) + cam.viewMove;
-	//extent = vec4( RotateQuat( extent.xyz, cam.viewQuat ), 0 );
-	center = cam.view * center;
-	extent = cam.view * extent;
-	center = cam.proj * center;
-	extent = cam.proj * extent;
+	//center = cam.view * center;
+	//extent = cam.view * extent;
+	//center = cam.proj * center;
+	//extent = cam.proj * extent;
 
 	bool visible = true;
-	//bool visible = center.z - cullInfo.zNear > -extent.z;// && ( cullInfo.drawDistance - center.z > -extent.z );
+	//bool visible = center.z + extent.z > 0;// && ( cullInfo.drawDistance - center.z > -extent.z );
+
 	//visible = visible && center.z * cullData.frustum[ 1 ] - abs( center.x ) * cullData.frustum[ 0 ] > -radius;
 	//visible = visible && center.z * cullData.frustum[ 3 ] - abs( center.y ) * cullData.frustum[ 2 ] > -radius;
 
@@ -144,13 +143,10 @@ void main()
 	//visible = visible && dot( cullInfo.planes[ 2 ], center ) > -dot( abs( cullInfo.planes[ 2 ] ), extent );
 	//visible = visible && dot( cullInfo.planes[ 3 ], center ) > -dot( abs( cullInfo.planes[ 3 ] ), extent );
 
-	//visible = visible && ( dot( cullInfo.planes[ 0 ], extent * SignFlip( cullInfo.planes[ 0 ] ) + center ) > -cullInfo.planes[ 0 ].w );
-	//visible = visible && ( dot( cullInfo.planes[ 1 ], extent * SignFlip( cullInfo.planes[ 1 ] ) + center ) > -cullInfo.planes[ 1 ].w );
-	//visible = visible && ( dot( cullInfo.planes[ 2 ], extent * SignFlip( cullInfo.planes[ 2 ] ) + center ) > -cullInfo.planes[ 2 ].w );
-	//visible = visible && ( dot( cullInfo.planes[ 3 ], extent * SignFlip( cullInfo.planes[ 3 ] ) + center ) > -cullInfo.planes[ 3 ].w );
-
-	visible = visible && ( abs( center.x ) < extent.x + center.w );
-	visible = visible && ( abs( center.y ) < extent.y + center.w );
+	visible = visible && ( dot( cullInfo.planes[ 0 ], extent * SignFlip( cullInfo.planes[ 0 ] ) + center ) > -cullInfo.planes[ 0 ].w );
+	visible = visible && ( dot( cullInfo.planes[ 1 ], extent * SignFlip( cullInfo.planes[ 1 ] ) + center ) > -cullInfo.planes[ 1 ].w );
+	visible = visible && ( dot( cullInfo.planes[ 2 ], extent * SignFlip( cullInfo.planes[ 2 ] ) + center ) > -cullInfo.planes[ 2 ].w );
+	visible = visible && ( dot( cullInfo.planes[ 3 ], extent * SignFlip( cullInfo.planes[ 3 ] ) + center ) > -cullInfo.planes[ 3 ].w );
 	
 
 	// DON'T use yet
