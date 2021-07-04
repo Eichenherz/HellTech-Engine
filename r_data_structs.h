@@ -84,6 +84,7 @@ struct vertex
 // TODO: compress data more ?
 ALIGNAS( 16 ) struct instance_desc
 {
+	mat4 localToWorld;
 	vec3 pos;
 	float scale;
 	vec4 rot;

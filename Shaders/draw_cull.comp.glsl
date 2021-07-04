@@ -97,19 +97,12 @@ vec3 RotateQuat( vec3 v, vec4 q )
 	return v + q.w * t + cross( q.xyz, t );
 }
 
-vec4 SignFlip( vec4 e )
-{
-	return vec4( ( e.x >= 0.0 ) ? 1.0 : -1.0, 
-				 ( e.y >= 0.0 ) ? 1.0 : -1.0, 
-				 ( e.z >= 0.0 ) ? 1.0 : -1.0,
-				 ( e.w >= 0.0 ) ? 1.0 : -1.0 );
-}
-
 void main()
 {
 	uint di = gl_GlobalInvocationID.x;
 
-	if( di == 0 ){
+	if( di == 0 )
+	{
 		drawCallCount = 0;
 	#if GLSL_DBG
 		dbgDrawCallCount = 0;
@@ -123,31 +116,26 @@ void main()
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
 	mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
 
-	// NOTE: transform to clip space
-	// NOTE: full model transfrom because BB might not be centered
-	vec4 center = vec4( currentInst.pos + RotateQuat( currentMesh.center * currentInst.scale, currentInst.rot ), 1 );
-	vec4 extent = vec4( RotateQuat( currentMesh.extent * currentInst.scale, currentInst.rot ), 0 ); // dir
-	//center = cam.view * center;
-	//extent = cam.view * extent;
-	//center = cam.proj * center;
-	//extent = cam.proj * extent;
+	vec3 center = currentMesh.center;
+	vec3 extent = abs( currentMesh.extent );
+
+
+	vec3 boxMin = ( center - extent ).xyz;
+	vec3 boxMax = ( center + extent ).xyz;
+	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
+	vec4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
+	vec4 yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
+	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
+	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 
 	bool visible = true;
-	//bool visible = center.z + extent.z > 0;// && ( cullInfo.drawDistance - center.z > -extent.z );
+	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
+	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
+	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
+	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
+	visible = visible && 
+		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 
-	//visible = visible && center.z * cullData.frustum[ 1 ] - abs( center.x ) * cullData.frustum[ 0 ] > -radius;
-	//visible = visible && center.z * cullData.frustum[ 3 ] - abs( center.y ) * cullData.frustum[ 2 ] > -radius;
-
-	//visible = visible && dot( cullInfo.planes[ 0 ], center ) > -dot( abs( cullInfo.planes[ 0 ] ), extent );
-	//visible = visible && dot( cullInfo.planes[ 1 ], center ) > -dot( abs( cullInfo.planes[ 1 ] ), extent );
-	//visible = visible && dot( cullInfo.planes[ 2 ], center ) > -dot( abs( cullInfo.planes[ 2 ] ), extent );
-	//visible = visible && dot( cullInfo.planes[ 3 ], center ) > -dot( abs( cullInfo.planes[ 3 ] ), extent );
-
-	visible = visible && ( dot( cullInfo.planes[ 0 ], extent * SignFlip( cullInfo.planes[ 0 ] ) + center ) > -cullInfo.planes[ 0 ].w );
-	visible = visible && ( dot( cullInfo.planes[ 1 ], extent * SignFlip( cullInfo.planes[ 1 ] ) + center ) > -cullInfo.planes[ 1 ].w );
-	visible = visible && ( dot( cullInfo.planes[ 2 ], extent * SignFlip( cullInfo.planes[ 2 ] ) + center ) > -cullInfo.planes[ 2 ].w );
-	visible = visible && ( dot( cullInfo.planes[ 3 ], extent * SignFlip( cullInfo.planes[ 3 ] ) + center ) > -cullInfo.planes[ 3 ].w );
-	
 
 	// DON'T use yet
 	//if( visible && OCCLUSION_CULLING )
@@ -189,7 +177,8 @@ void main()
 #endif
 
 	//if( visible && ( !OCCLUSION_CULLING || drawVisibility[ di ] == 0 ) ){
-	if( visible ){
+	if( visible )
+	{
 	#if !WAVE_OPS
 		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 	#endif

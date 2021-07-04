@@ -160,7 +160,8 @@ void main()
 		//instance_desc inst = instDescs[ di ];
 		//mesh_desc m = meshes[ inst.meshIdx ];
 		vec3 pos = vtx.xyz * m.extent + m.center;
-		worldPos = vec4( RotateQuat( pos * inst.scale, inst.rot ) + inst.pos, 1 );
+		//worldPos = vec4( RotateQuat( pos * inst.scale, inst.rot ) + inst.pos, 1 );
+		worldPos = inst.localToWorld * vec4( pos, 1 );
 	}
 	else
 	{

@@ -745,12 +745,12 @@ static void AssembleMeshAndOptimize(
 			mesh.lodRanges[ l ].offset = meshLods[ l ].indexOffset;
 			mesh.lodRanges[ l ].size = meshLods[ l ].indexCount;
 		}
-		mesh.aabbMinMax[ 0 ] = -m.aabbMin[ 0 ];
-		mesh.aabbMinMax[ 1 ] = m.aabbMin[ 1 ];
-		mesh.aabbMinMax[ 2 ] = m.aabbMin[ 2 ];
-		mesh.aabbMinMax[ 3 ] = -m.aabbMax[ 0 ];
-		mesh.aabbMinMax[ 4 ] = m.aabbMax[ 1 ];
-		mesh.aabbMinMax[ 5 ] = m.aabbMax[ 2 ];
+		mesh.aabbMin[ 0 ] = -m.aabbMin[ 0 ];
+		mesh.aabbMin[ 1 ] = m.aabbMin[ 1 ];
+		mesh.aabbMin[ 2 ] = m.aabbMin[ 2 ];
+		mesh.aabbMax[ 0 ] = -m.aabbMax[ 0 ];
+		mesh.aabbMax[ 1 ] = m.aabbMax[ 1 ];
+		mesh.aabbMax[ 2 ] = m.aabbMax[ 2 ];
 		mesh.materialIndex = m.mtlIdx;
 	}
 }

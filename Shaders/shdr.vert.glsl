@@ -84,6 +84,7 @@ void main()
 	instance_desc inst = instDescs[ di ];
 	
 	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
+	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 
 	vec3 n = normalize( norm );

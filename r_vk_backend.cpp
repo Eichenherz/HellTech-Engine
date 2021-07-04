@@ -2470,21 +2470,20 @@ inline static void VkInitInternalBuffers()
 
 constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
 // TODO: remove
-inline static std::vector<instance_desc> SpawnRandomInstances( u64 drawCount, u64 meshCount, u64 mtrlCount, float sceneRadius )
+inline static std::vector<instance_desc> 
+SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrlCount, float sceneRadius )
 {
 	assert( mtrlCount == 1 );
 	std::vector<instance_desc> insts( drawCount );
 	float scale = 1.0f;
 	for( instance_desc& i : insts )
 	{
-		i.meshIdx = rand() % meshCount;
+		i.meshIdx = rand() % std::size( meshes );
 		i.mtrlIdx = 0;
 		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-
-		//scale *= 0.001f;
 
 		DirectX::XMVECTOR axis = DirectX::XMVector3Normalize(
 			DirectX::XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
@@ -2496,20 +2495,21 @@ inline static std::vector<instance_desc> SpawnRandomInstances( u64 drawCount, u6
 		//DirectX::XMVECTOR quat = DirectX::XMQuaternionRotationNormal( axis, angle );
 		DirectX::XMVECTOR quat = DirectX::XMQuaternionIdentity();
 		DirectX::XMStoreFloat4( &i.rot, quat );
-	}
-	// TODO: draw from transparent only pipe ?
-	if constexpr( 0 )
-	{
-		instance_desc& i = insts[ std::size( insts ) - 1 ];
-		i.meshIdx = 2;
 
-		i.pos.x = 0;
-		i.pos.y = 0;
-		i.pos.z = -50.0f;
-		i.scale = 100.0f;
+		XMFLOAT3 rotCenter = meshes[ i.meshIdx ].center;
+		XMMATRIX m = XMMatrixAffineTransformation(
+			XMVectorSet( i.scale, i.scale, i.scale, 1 ),
+			//XMVectorSet( rotCenter.x, rotCenter.y, rotCenter.z, 1 ), quat,
+			XMVectorSet( 0, 0, 0, 1 ), quat,
+			XMVectorSet( i.pos.x, i.pos.y, i.pos.z, 1 ) );
 
-		DirectX::XMVECTOR quat = DirectX::XMQuaternionIdentity();
-		DirectX::XMStoreFloat4( &i.rot, quat );
+		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
+		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
+		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
+
+		XMMATRIX localToWorld = XMMatrixMultiply( moveM, XMMatrixMultiply( rotM, scaleM ) );
+
+		XMStoreFloat4x4A( &i.localToWorld, m );
 	}
 
 	return insts;
@@ -2531,6 +2531,12 @@ inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float s
 	return lights;
 }
 
+struct cpu_debug
+{
+	std::vector<instance_desc> insts;
+	std::vector<mesh_desc> meshes;
+};
+static cpu_debug cpuDbg;  
 // TODO: revisit remake improve
 inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 {
@@ -2579,18 +2585,17 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 			out.lods[ i ].indexOffset = m.lodRanges[ i ].offset;
 		}
 
-		XMFLOAT3 center;
-		XMFLOAT3 extent;
 		{
-			XMVECTOR xmm0 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMinMax[ 0 ] );
-			XMVECTOR xmm1 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMinMax[ 3 ] );
-
+			XMFLOAT3 center;
+			XMFLOAT3 extent;
+			XMVECTOR xmm0 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
+			XMVECTOR xmm1 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
 			XMStoreFloat3( &center, XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f ) );
-			xmm0 = XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f );
-			XMStoreFloat3( &extent, xmm0 );
+			XMStoreFloat3( &extent, XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
+
+			out.center = center;
+			out.extent = extent;
 		}
-		out.center = center;
-		out.extent = extent;
 	}
 
 	assert( std::size( textures.rsc ) == 0 );
@@ -2604,14 +2609,14 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 		refM.occRoughMetalIdx += std::size( textures.rsc );
 	}
 
-	u64 meshCount = std::size( meshes );
 	constexpr u64 randSeed = 42;
 	constexpr u64 drawCount = 10;
 	constexpr u64 lightCount = 4;
 	constexpr float sceneRadius = 40.0f;
 	std::srand( randSeed );
 
-	std::vector<instance_desc> instDesc = SpawnRandomInstances( drawCount, meshCount, 1, sceneRadius );
+	std::vector<instance_desc> instDesc = 
+		SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRadius );
 	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRadius );
 
 	// NOTE - upload buffers
@@ -2775,6 +2780,9 @@ inline static void VkUploadResources( VkCommandBuffer cmdBuf )
 
 		RecordTextureUploads( cmdBuf, stagingBuff.hndl, newTextures, copyOffsets );
 	}
+	// TODO: remove
+	cpuDbg.insts = std::move( instDesc );
+	cpuDbg.meshes = std::move( meshes );
 }
 // TODO: compact sampler thing ?
 // TODO: lod clamp
@@ -3575,6 +3583,52 @@ ToneMappingWithSrgb(
 
 }
 
+static inline std::vector<u32> 
+CPUFrustumBoxCulling( const global_data& globData, const cpu_debug&	cpuDebug )
+{
+	using namespace DirectX;
+
+	std::vector<u32> visibleInstances;
+
+	XMMATRIX projView = XMMatrixMultiply( XMLoadFloat4x4A( &globData.proj ), XMLoadFloat4x4A( &globData.mainView ) );
+
+	for( u64 drawIdx = 0; drawIdx < std::size( cpuDebug.insts ); ++drawIdx )
+	{
+		const instance_desc& i = cpuDebug.insts[ drawIdx ];
+		const mesh_desc& m = cpuDebug.meshes[ i.meshIdx ];
+
+		XMVECTOR xmm0 = XMLoadFloat3( &m.center );
+		XMVECTOR xmm1 = XMLoadFloat3( &m.extent );
+		XMVECTOR max = XMVectorAdd( xmm1, xmm0 );
+		XMVECTOR min = XMVectorSubtract( xmm1, xmm0 );
+
+		XMMATRIX transpMvp = XMMatrixMultiplyTranspose( projView, XMLoadFloat4x4A( &i.localToWorld ) );
+
+		XMVECTOR planes[ 4 ] = {};
+		planes[ 0 ] = XMVector3Normalize( XMVectorAdd( transpMvp.r[ 3 ], transpMvp.r[ 0 ] ) );
+		planes[ 1 ] = XMVector3Normalize( XMVectorSubtract( transpMvp.r[ 3 ], transpMvp.r[ 0 ] ) );
+		planes[ 2 ] = XMVector3Normalize( XMVectorAdd( transpMvp.r[ 3 ], transpMvp.r[ 1 ] ) );
+		planes[ 3 ] = XMVector3Normalize( XMVectorSubtract( transpMvp.r[ 3 ], transpMvp.r[ 1 ] ) );
+
+		auto BoxVsPlane = [=]( XMVECTOR plane ) -> bool
+		{
+			XMVECTOR lessMask = XMVectorLess( plane, XMVectorZero() );
+			XMVECTOR boxPNPoint = XMVectorSelect( max, min, lessMask );
+
+			return XMVectorGetX( XMVector3Dot( boxPNPoint, plane ) ) > -XMVectorGetW( plane );
+		};
+
+		bool visible =
+			BoxVsPlane( planes[ 0 ] ) && BoxVsPlane( planes[ 1 ] ) &&
+			BoxVsPlane( planes[ 2 ] ) && BoxVsPlane( planes[ 3 ] ) &&
+			BoxVsPlane( transpMvp.r[ 3 ] );
+
+		if( visible ) visibleInstances.push_back( drawIdx );
+	}
+
+	return visibleInstances;
+}
+
 static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b32 bvDraw, b32 freeCam, float dt )
 {
 	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
@@ -3754,6 +3808,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 						  std::size( renderBeginBarriers ),
 						  renderBeginBarriers );
 
+	//std::vector<u32> cpuVisibleInstances = CPUFrustumBoxCulling( *globs, cpuDbg );
 
 	CullPass( currentVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, camFrust, rndCtx.depthPyramid.mipCount );
 

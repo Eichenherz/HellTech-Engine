@@ -68,7 +68,8 @@ struct image_metadata
 struct binary_mesh_desc
 {
 	//MESH_ATTRIBUTE_TYPE attributeType[ 6 ];
-	float	aabbMinMax[ 6 ];
+	float	aabbMin[ 3 ];
+	float	aabbMax[ 3 ];
 	range	vtxRange;
 	range	lodRanges[ 4 ];
 	u32		materialIndex;

@@ -554,8 +554,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 
 		// NOTE: transpose for row-major matrices
-		XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
-		//XMMATRIX comboMat = XMMatrixTranspose( proj );
+		//XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
+		XMMATRIX comboMat = XMMatrixTranspose( proj );
 
 		XMVECTOR planes[ 4 ];
 		planes[ 0 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
@@ -569,11 +569,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		if( !kbd.f )
 		{
 			for( u64 i = 0; i < 4; ++i ) XMStoreFloat4( (XMFLOAT4*) &camFrust.planes[ i ], planes[ i ] );
-		
-			//camFrust.planes[ 0 ] = { 1,0,0,1 };
-			//camFrust.planes[ 1 ] = { -1,0,0,1 };
-			//camFrust.planes[ 2 ] = { 0,1,0,1 };
-			//camFrust.planes[ 3 ] = { 0,-1,0,1 };
 		
 			camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
 			camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );
