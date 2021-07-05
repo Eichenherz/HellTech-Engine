@@ -552,8 +552,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		globs.camPos = camWorldPos;
 		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
 
-
-		// NOTE: transpose for row-major matrices
+		// TODO: dump
 		//XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
 		XMMATRIX comboMat = XMMatrixTranspose( proj );
 

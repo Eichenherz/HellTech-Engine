@@ -119,7 +119,8 @@ void main()
 	vec3 center = currentMesh.center;
 	vec3 extent = abs( currentMesh.extent );
 
-
+	// NOTE: frustum culling inspired by Nabla
+	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
 	vec3 boxMin = ( center - extent ).xyz;
 	vec3 boxMax = ( center + extent ).xyz;
 	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );

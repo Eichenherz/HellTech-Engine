@@ -72,6 +72,7 @@ struct binary_mesh_desc
 	float	aabbMax[ 3 ];
 	range	vtxRange;
 	range	lodRanges[ 4 ];
+	range	mletRanges[ 4 ];
 	u32		materialIndex;
 	u8		lodCount = 1;
 };
@@ -88,6 +89,10 @@ struct drak_file_desc
 	range vtxRange;
 	range idxRange;
 	range texRange;
+	range mletsRange;
+	range mletsVtxRange;
+	range mletsTrisRange;
+
 	u32	dataOffset;
 	u32	compressedSize;
 	u32	originalSize;

@@ -14,7 +14,7 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer v
 	vertex vertices[];
 };
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_ref{ 
-	mesh meshes[]; 
+	mesh_desc meshes[]; 
 };
 //layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer draw_args_ref{
 //	draw_data drawArgs[];

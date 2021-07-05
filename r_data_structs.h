@@ -119,7 +119,7 @@ struct material_data
 struct meshlet
 {
 	vec3	center;
-	float	radius;
+	vec3	extent;
 
 	int8_t	coneX, coneY, coneZ, coneCutoff;
 
@@ -135,21 +135,6 @@ struct mesh_lod
 	uint indexOffset;
 	uint meshletCount;
 	uint meshletOffset;
-};
-
-// TODO: remove mtrlIdx
-struct mesh
-{
-	vec3		center;
-	float		radius;
-
-	uint		vertexCount;
-	uint		vertexOffset;
-
-	//uint		materialIndex;
-
-	mesh_lod	lods[ 4 ];
-	uint		lodCount;
 };
 
 struct mesh_desc

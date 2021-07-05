@@ -90,13 +90,6 @@ inline u8 FloatToSnorm8( float e )
 	return std::round( 127.5f + e * 127.5f );
 }
 
-struct meshlets_data
-{
-	std::vector<meshlet> meshlets;
-	std::vector<u32> vtxIndirBuf;
-	std::vector<u8> triangleBuf;
-};
-
 // TODO: context per gltf ?
 struct png_decoder
 {
@@ -506,86 +499,91 @@ inline u64 MeshoptReindexMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan
 	return newVtxCount;
 }
 
-// TODO: meshlets
-u32 MeshoptBuildMeshlets( const std::vector<vertex>& vtx, const std::vector<u32>& indices, meshlets_data& mlets )
+struct meshlets_data
 {
-	constexpr u64 MAX_VERTICES = 128;
-	constexpr u64 MAX_TRIANGLES = 256;
-	constexpr float CONE_WEIGHT = 0.8f;
-
-	u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( indices ), MAX_VERTICES, MAX_TRIANGLES );
-	std::vector<meshopt_Meshlet> meshlets( maxMeshletCount );
-	std::vector<u32> meshletVertices( maxMeshletCount * MAX_VERTICES );
-	std::vector<u8> meshletTriangles( maxMeshletCount * MAX_TRIANGLES * 3 );
-
-	u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ),
-											  std::data( meshletVertices ),
-											  std::data( meshletTriangles ),
-											  std::data( indices ),
-											  std::size( indices ),
-											  &vtx[ 0 ].px,
-											  std::size( vtx ),
-											  sizeof( vertex ),
-											  MAX_VERTICES,
-											  MAX_TRIANGLES,
-											  CONE_WEIGHT );
-
-
-	meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
-	meshletVertices.resize( last.vertex_offset + last.vertex_count );
-	meshletTriangles.resize( last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
-	meshlets.resize( meshletCount );
-
-	mlets.meshlets.reserve( std::size( mlets.meshlets ) + meshletCount );
-
-	for( meshopt_Meshlet& m : meshlets )
-	{
-
-
-		meshopt_Bounds bounds = meshopt_computeMeshletBounds( &meshletVertices[ m.vertex_offset ],
-															  &meshletTriangles[ m.triangle_offset ],
-															  m.triangle_count,
-															  &vtx[ 0 ].px,
-															  std::size( vtx ),
-															  sizeof( vertex ) );
-
-		meshlet data = {};
-		data.center = vec3( bounds.center );
-		data.radius = bounds.radius;
-		data.coneX = bounds.cone_axis_s8[ 0 ];
-		data.coneY = bounds.cone_axis_s8[ 1 ];
-		data.coneZ = bounds.cone_axis_s8[ 2 ];
-		data.coneCutoff = bounds.cone_cutoff_s8;
-		data.vtxBufOffset = std::size( mlets.vtxIndirBuf );
-		data.triBufOffset = std::size( mlets.triangleBuf );
-		data.vertexCount = m.vertex_count;
-		data.triangleCount = m.triangle_count;
-
-		mlets.meshlets.push_back( data );
-	}
-
-	mlets.vtxIndirBuf.insert( std::end( mlets.vtxIndirBuf ), std::begin( meshletVertices ), std::end( meshletVertices ) );
-	mlets.triangleBuf.insert( std::end( mlets.triangleBuf ), std::begin( meshletTriangles ), std::end( meshletTriangles ) );
-
-	return std::size( meshlets );
-}
-
-// TODO:
+	std::vector<meshlet> meshlets;
+	std::vector<u32> vtxIndirBuf;
+	std::vector<u8> triangleBuf;
+};
+// NOTE: fuck C++ constness thing
+// TODO: store outputs
+// TODO: rewrite meshopt_computeMeshletBounds to output aabbs ?
 static void MeshoptMakeMeshlets(
-	const std::vector<vertex>& vertices,
-	const std::vector<u32>& lodIndices,
-	std::vector<mesh_lod>& meshLods,
-	meshlets_data& mlets )
-{
+	const std::vector<vertex>&	vertices,
+	const std::vector<u32>&		lodIndices,
+	binary_mesh_desc&			meshDesc,
+	std::vector<meshlet>&		mletsDesc,
+	std::vector<u32>&			vtxIndirBuf,
+	std::vector<u8>&			triangleBuf
+){
+	using namespace DirectX;
+
+
 	constexpr u64 MAX_VERTICES = 128;
 	constexpr u64 MAX_TRIANGLES = 256;
 	constexpr float CONE_WEIGHT = 0.8f;
 
-	for( mesh_lod& lod : meshLods )
+	
+	std::vector<meshopt_Meshlet> meshlets;
+	std::vector<u32> mletVtx;
+	std::vector<u8> mletTris;
+
+	const std::span<vertex> vtxSpan = { 
+		const_cast<vertex*>( std::data( vertices ) ) + meshDesc.vtxRange.offset,meshDesc.vtxRange.size };
+
+	for( u64 li = 0; li < meshDesc.lodCount; ++li )
 	{
-		lod.meshletOffset = std::size( mlets.meshlets );
-		// TODO: use last lod for meshlet culling ?
-		lod.meshletCount = MeshoptBuildMeshlets( vertices, lodIndices, mlets );
+		const range& lodRange = meshDesc.lodRanges[ li ];
+		const std::span<u32> lodIdx = { const_cast<u32*>( std::data( lodIndices ) ) + lodRange.offset,lodRange.size };
+
+		u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( lodIdx ), MAX_VERTICES, MAX_TRIANGLES );
+		meshlets.resize( maxMeshletCount );
+		mletVtx.resize( maxMeshletCount * MAX_VERTICES );
+		mletTris.resize( maxMeshletCount * MAX_TRIANGLES * 3 );
+
+		u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), std::data( mletVtx ), std::data( mletTris ),
+												  std::data( lodIdx ), std::size( lodIdx ),
+												  &vtxSpan[ 0 ].px, std::size( vtxSpan ), sizeof( vtxSpan[ 0 ] ),
+												  MAX_VERTICES, MAX_TRIANGLES, CONE_WEIGHT );
+		meshlets.resize( meshletCount );
+		mletVtx.resize( meshletCount * MAX_VERTICES );
+		mletTris.resize( meshletCount * MAX_TRIANGLES * 3 );
+
+		u64 mletOffset = std::size( mletsDesc );
+		meshDesc.mletRanges[ li ] = { mletOffset,meshletCount };
+
+		for( u64 mi = 0; mi < std::size( meshlets ); ++mi )
+		{
+			const meshopt_Meshlet& m = meshlets[ mi ];
+			meshopt_Bounds bounds = meshopt_computeMeshletBounds( std::data( mletVtx ), std::data( mletTris ), m.triangle_count,
+																  &vtxSpan[ 0 ].px, std::size( vtxSpan ), sizeof( vtxSpan[ 0 ] ) );
+			// TODO: don't copy ?
+			XMFLOAT3 mletVertices[ MAX_VERTICES ] = {};
+			for( u64 vi = 0; vi < m.vertex_count; ++vi )
+			{
+				const vertex& v = vtxSpan[ mletVtx[ vi + m.vertex_offset ] ];
+				mletVertices[ vi ] = { v.px,v.py,v.pz };
+			}
+
+			BoundingBox aabb = {};
+			BoundingBox::CreateFromPoints( aabb, m.vertex_count, mletVertices, sizeof( mletVertices[ 0 ] ) );
+
+			meshlet data = {};
+			data.center = aabb.Center;
+			data.extent = aabb.Extents;
+			data.coneX = bounds.cone_axis_s8[ 0 ];
+			data.coneY = bounds.cone_axis_s8[ 1 ];
+			data.coneZ = bounds.cone_axis_s8[ 2 ];
+			data.coneCutoff = bounds.cone_cutoff_s8;
+			data.vertexCount = m.vertex_count;
+			data.triangleCount = m.triangle_count;
+			data.vtxBufOffset = std::size( vtxIndirBuf );
+			data.triBufOffset = std::size( triangleBuf );
+
+			mletsDesc.push_back( data );
+			vtxIndirBuf.insert( std::end( vtxIndirBuf ), std::begin( mletVtx ), std::end( mletVtx ) );
+			triangleBuf.insert( std::end( triangleBuf ), std::begin( mletTris ), std::end( mletTris ) );
+		}
 	}
 }
 
@@ -772,12 +770,21 @@ static void CompileGlbAssetToBinary(
 	std::vector<material_data>		mtrlDescs;
 	std::vector<image_metadata>		imgDescs;
 
+	std::vector<meshlet>			mlets;
+	std::vector<u32>				mletsVtx;
+	std::vector<u8>					mletsTris;
+
 	LoadGlbFile( glbData, meshAttrs, rawIndices, texBin, imgDescs, mtrlDescs, rawMeshDescs );
 	AssembleMeshAndOptimize( meshAttrs, rawMeshDescs, rawIndices, vertices, indices, meshDescs );
+	for( binary_mesh_desc& m : meshDescs )
+	{
+		MeshoptMakeMeshlets( vertices, indices, m, mlets, mletsVtx, mletsTris );
+	}
 
 	u64 descOffset = sizeof( drak_file_header ) + sizeof( drak_file_desc );
 	u64 totalFileDescSize = BYTE_COUNT( meshDescs ) + BYTE_COUNT( mtrlDescs ) + BYTE_COUNT( imgDescs );
 	u64 totalContentSize = BYTE_COUNT( vertices ) + BYTE_COUNT( indices ) + BYTE_COUNT( texBin );
+	totalContentSize += BYTE_COUNT( mlets ) + BYTE_COUNT( mletsVtx ) + BYTE_COUNT( mletsTris );
 	std::vector<u8> outData( descOffset + totalFileDescSize + totalContentSize );
 
 	u8* pOutData = std::data( outData ) + descOffset;
@@ -792,6 +799,10 @@ static void CompileGlbAssetToBinary(
 	u64 vtxOffset = 0;
 	u64 idxOffset = 0;
 	u64 texOffset = 0;
+	u64 mletsOffset = 0;
+	u64 mletsVtxOffset = 0;
+	u64 mletsTrisOffset = 0;
+
 	const u8* pDataBegin = pOutData;
 	vtxOffset = pOutData - pDataBegin;
 	std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) );
@@ -800,6 +811,16 @@ static void CompileGlbAssetToBinary(
 	idxOffset = pOutData - pDataBegin;
 	std::memcpy( pOutData, std::data( indices ), BYTE_COUNT( indices ) );
 	pOutData += BYTE_COUNT( indices );
+
+	mletsOffset = pOutData - pDataBegin;
+	std::memcpy( pOutData, std::data( mlets ), BYTE_COUNT( mlets ) );
+	pOutData += BYTE_COUNT( mlets );
+	mletsVtxOffset = pOutData - pDataBegin;
+	std::memcpy( pOutData, std::data( mletsVtx ), BYTE_COUNT( mletsVtx ) );
+	pOutData += BYTE_COUNT( mletsVtx );
+	mletsTrisOffset = pOutData - pDataBegin;
+	std::memcpy( pOutData, std::data( mletsTris ), BYTE_COUNT( mletsTris ) );
+	pOutData += BYTE_COUNT( mletsTris );
 
 	texOffset = pOutData - pDataBegin;
 	std::memcpy( pOutData, std::data( texBin ), BYTE_COUNT( texBin ) );
@@ -816,6 +837,9 @@ static void CompileGlbAssetToBinary(
 	fileDesc.vtxRange = { vtxOffset, BYTE_COUNT( vertices ) };
 	fileDesc.idxRange = { idxOffset, BYTE_COUNT( indices ) };
 	fileDesc.texRange = { texOffset, BYTE_COUNT( texBin ) };
+	fileDesc.mletsRange = { mletsOffset, BYTE_COUNT( mlets ) };
+	fileDesc.mletsVtxRange = { mletsVtxOffset, BYTE_COUNT( mletsVtx ) };
+	fileDesc.mletsTrisRange = { mletsTrisOffset, BYTE_COUNT( mletsTris ) };
 	*(drak_file_desc*) ( std::data( outData ) + sizeof( drak_file_header ) ) = fileDesc;
 
 	drakAsset = std::move( outData );
