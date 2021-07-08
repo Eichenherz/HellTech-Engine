@@ -16,7 +16,7 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer l
 //layout( constant_id = 0 ) const bool TEXTURED_OUTPUT = false;
 
 layout( location = 0 ) in vec3 normal;
-layout( location = 1 ) in vec3 tan;
+layout( location = 1 ) in vec3 tangent;
 layout( location = 2 ) in vec3 worldPos;
 layout( location = 3 ) in vec2 uv;
 layout( location = 4 ) in flat uint mtlIdx;
@@ -127,7 +127,7 @@ void main()
 	baseCol = SrgbToLinear( baseCol );
 	baseCol *= vec4( mtl.baseColFactor, 1 );
 
-	vec3 t = normalize( tan );
+	vec3 t = normalize( tangent );
 	vec3 n = normalize( normal );
 	// NOTE: orthonormalize t wrt n
 	t = normalize( t - dot( t, n ) * n );

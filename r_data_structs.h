@@ -60,9 +60,9 @@ struct global_bdas
 	uint64_t idxAddr;
 	uint64_t meshDescAddr;
 	uint64_t lightsDescAddr;
-	//uint64_t meshletsOffset;
-	//uint64_t meshletsVtxOffset;
-	//uint64_t meshletsIdxOffset;
+	uint64_t meshletsAddr;
+	uint64_t meshletsVtxAddr;
+	uint64_t meshletsTriAddr;
 	uint64_t mtrlsAddr;
 	uint64_t instDescAddr;
 };

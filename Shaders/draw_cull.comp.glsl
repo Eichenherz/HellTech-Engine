@@ -49,15 +49,21 @@ layout( binding = 2 ) buffer draw_visibility_buffer{
 layout( binding = 3 ) buffer dispatch_cmd{
 	dispatch_command dispatchCmd[];
 };
-layout( binding = 4 ) uniform sampler2D minQuadFormDepthPyramid;
+layout( binding = 4 ) buffer mlet_inst_idx{
+	uint mletInstIdx[];
+};
+layout( binding = 5 ) buffer mlet_dispatch_count{
+	uint mletDispatchCount;
+};
+layout( binding = 6 ) uniform sampler2D minQuadFormDepthPyramid;
 
 
 #if GLSL_DBG
 
-layout( binding = 5, scalar ) writeonly buffer dbg_draw_cmd{
+layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
 	draw_indirect dbgDrawCmd[];
 };
-layout( binding = 6 ) buffer dbg_draw_cmd_count{
+layout( binding = 8 ) buffer dbg_draw_cmd_count{
 	uint dbgDrawCallCount;
 };
 #endif
@@ -66,7 +72,8 @@ layout( binding = 6 ) buffer dbg_draw_cmd_count{
 // TODO: would a u64 be better here ?
 shared uint meshletCullDispatchCounterLDS;
 
-// NOTE: https://research.nvidia.com/publication/2d-polyhedral-bounds-clipped-perspective-projected-3d-sphere && niagara renderer by zeux
+// NOTE: https://research.nvidia.com/publication/2d-polyhedral-bounds-clipped-perspective-projected-3d-sphere 
+// && niagara renderer by zeux
 vec4 ProjectedSphereToAABB( vec3 viewSpaceCenter, float r, float perspDividedWidth, float perspDividedHeight )
 {
 	vec2 cXZ = viewSpaceCenter.xz;
@@ -104,6 +111,7 @@ void main()
 	if( di == 0 )
 	{
 		drawCallCount = 0;
+		mletDispatchCount = 0;
 	#if GLSL_DBG
 		dbgDrawCallCount = 0;
 	#endif
@@ -138,30 +146,43 @@ void main()
 		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 
 
-	// DON'T use yet
-	//if( visible && OCCLUSION_CULLING )
-	//{
-	//	vec3 viewSpaceCenter = ( cam.view * center ).xyz;
-	//	if( viewSpaceCenter.z > radius + cullInfo.zNear )
-	//	{
-	//		vec4 aabb = ProjectedSphereToAABB( viewSpaceCenter, radius,
-	//										   cullInfo.projWidth / cullInfo.zNear,
-	//										   cullInfo.projHeight / cullInfo.zNear );
-	//
-	//		float width = abs( aabb.z - aabb.x ) * cullInfo.pyramidWidthPixels;
-	//		float height = abs( aabb.w - aabb.y ) * cullInfo.pyramidHeightPixels;
-	//		float mipLevel = floor( log2( max( width, height ) ) );
-	//		// NOTE: sampler does clamping 
-	//		float depth = textureLod( minQuadFormDepthPyramid, ( aabb.xy + aabb.zw ) * 0.5, mipLevel ).x;
-	//		float closestDepthValOnSphere = cullInfo.zNear / ( viewSpaceCenter.z - radius );
-	//
-	//		visible = visible && ( closestDepthValOnSphere > depth );
-	//	}
-	//}
+	if( visible && OCCLUSION_CULLING )
+	{
+		mat4 mvp = transpose( transpMvp );
+		vec4 ndcMin = mvp * vec4( boxMin, 1 );
+		vec4 ndcMax = mvp * vec4( boxMax, 1 );
+
+		//vec3 viewSpaceCenter = ( cam.view * center ).xyz;
+		//
+		//vec4 aabb = ProjectedSphereToAABB( viewSpaceCenter, radius,
+		//								   cullInfo.projWidth / cullInfo.zNear,
+		//								   cullInfo.projHeight / cullInfo.zNear );
+	
+		//float width = abs( aabb.z - aabb.x ) * cullInfo.pyramidWidthPixels;
+		//float height = abs( aabb.w - aabb.y ) * cullInfo.pyramidHeightPixels;
+		//float mipLevel = floor( log2( max( width, height ) ) );
+		//// NOTE: sampler does clamping 
+		//float depth = textureLod( minQuadFormDepthPyramid, ( aabb.xy + aabb.zw ) * 0.5, mipLevel ).x;
+		//float closestDepthValOnSphere = cullInfo.zNear / ( viewSpaceCenter.z - radius );
+		//
+		//visible = visible && ( closestDepthValOnSphere > depth );
+	}
+
 
 	float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
 	uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 	mesh_lod lod = currentMesh.lods[ 0 ];
+
+	// TODO: should pass meshletOffset + count too ?
+	// TODO: go surfin'
+	if( visible )
+	{
+		uint mletIdxOffset = atomicAdd( mletDispatchCount, lod.meshletCount );
+		for( uint i = 0; i < lod.meshletCount; ++i )
+		{
+			mletInstIdx[ mletIdxOffset + i ] = di;
+		}
+	}
 
 #if WAVE_OPS
 	uint mletsCount = subgroupAdd( visible ? lod.meshletCount : 0 );
@@ -203,4 +224,9 @@ void main()
 	}
 
 	//if( OCCLUSION_CULLING ) drawVisibility[ di ] = visible ? 1 : 0;
+	if( di == 0 )
+	{
+		uint xDispatches = ( mletDispatchCount + gl_WorkGroupSize.x - 1 ) / gl_WorkGroupSize.x;
+		dispatchCmd[ 0 ] = dispatch_command( xDispatches, 1, 1 );
+	}
 }

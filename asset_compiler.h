@@ -84,6 +84,7 @@ struct drak_file_header
 	u32 contentVer = 0;
 };
 // NOTE - all offsets and ranges are relative to dataOffset
+// TODO: rethink drak file layout
 struct drak_file_desc
 {
 	range vtxRange;
