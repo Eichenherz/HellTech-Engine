@@ -118,6 +118,8 @@ constexpr u64 MAX_MIP_LEVELS = 12;
 constexpr u32 NOT_USED_IDX = -1;
 constexpr u64 OBJ_CULL_WORKSIZE = 64;
 constexpr u64 MLET_CULL_WORKSIZE = 256;
+// TODO: cvar or constexpr ?
+constexpr b32 DBG_DRAW = true;
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
@@ -322,6 +324,7 @@ VkArenaTerimate( vk_mem_arena* vkArena )
 		vkFreeMemory( vkArena->device, vkArena->dedicatedAllocs[ i ].device, 0 );
 }
 
+// TODO: move debug stuff out of here ?
 inline static void
 VkInitMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
 {
@@ -368,7 +371,7 @@ inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
 // TODO: keep memory in buffer ?
 // TODO: keep devicePointer here ?
 // TODO: keep usage flags ?
-// TODO: use buffer offset ?
+
 // TODO: add buffer stride ?
 struct buffer_data
 {
@@ -598,8 +601,7 @@ struct render_context
 	VkPipeline		gfxPipeline;
 	VkPipeline		compPipeline;
 	VkPipeline		compHiZPipeline;
-	VkPipeline		gfxBVDbgDrawPipeline;
-	VkPipeline		gfxTranspPipe;
+	//VkPipeline		gfxTranspPipe;
 	VkPipeline		compAvgLumPipe;
 	VkPipeline		compTonemapPipe;
 	VkRenderPass	renderPass;
@@ -1142,6 +1144,7 @@ inline static void VkReflectShaderLayout(
 // TODO: map spec consts ?
 using vk_shader_list = std::initializer_list<vk_shader*>;
 using vk_specializations = std::initializer_list<u64>;
+using vk_dynamic_states = std::initializer_list<VkDynamicState>;
 
 // TODO: bindlessLayout only for the shaders that use it ?
 vk_program VkMakePipelineProgram(
@@ -1364,6 +1367,101 @@ VkPipeline VkMakeGfxPipeline(
 	return vkGfxPipeline;
 }
 
+VkPipeline VkMakeGfxPipeline(
+	VkDevice			vkDevice,
+	VkPipelineCache		vkPipelineCache,
+	VkRenderPass		vkRndPass,
+	VkPipelineLayout	vkPipelineLayout,
+	VkShaderModule		vs,
+	VkShaderModule		fs,
+	const vk_gfx_pipeline_state& pipelineState
+){
+	VkPipelineShaderStageCreateInfo shaderStagesInfo[ 2 ] = {};
+	shaderStagesInfo[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shaderStagesInfo[ 0 ].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	shaderStagesInfo[ 0 ].module = vs;
+	shaderStagesInfo[ 0 ].pName = SHADER_ENTRY_POINT;
+	shaderStagesInfo[ 1 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shaderStagesInfo[ 1 ].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	shaderStagesInfo[ 1 ].module = fs;
+	shaderStagesInfo[ 1 ].pName = SHADER_ENTRY_POINT;
+
+
+	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+	inAsmStateInfo.topology = pipelineState.primTopology;
+	inAsmStateInfo.primitiveRestartEnable = 0;
+
+	VkPipelineViewportStateCreateInfo viewportInfo = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+	viewportInfo.viewportCount = 1;
+	viewportInfo.scissorCount = 1;
+
+	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+	VkPipelineDynamicStateCreateInfo dynamicStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+	dynamicStateInfo.dynamicStateCount = std::size( dynamicStates );
+	dynamicStateInfo.pDynamicStates = dynamicStates;
+
+	VkPipelineRasterizationStateCreateInfo rasterInfo = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+	rasterInfo.depthClampEnable = 0;
+	rasterInfo.rasterizerDiscardEnable = 0;
+	rasterInfo.polygonMode = pipelineState.polyMode;
+	rasterInfo.cullMode = pipelineState.cullFlags;
+	rasterInfo.frontFace = pipelineState.frontFace;
+	rasterInfo.lineWidth = 1.0f;
+
+	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+	depthStencilState.depthTestEnable = VK_TRUE;
+	depthStencilState.depthWriteEnable = pipelineState.depthWrite;
+	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER;
+	depthStencilState.depthBoundsTestEnable = VK_TRUE;
+	depthStencilState.minDepthBounds = 0;
+	depthStencilState.maxDepthBounds = 1.0f;
+
+	VkPipelineColorBlendAttachmentState blendConfig = {};
+	blendConfig.blendEnable = pipelineState.blendCol;
+	blendConfig.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+	blendConfig.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
+	blendConfig.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+	blendConfig.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
+	blendConfig.colorWriteMask =
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+	colorBlendStateInfo.logicOpEnable = 0;
+	colorBlendStateInfo.attachmentCount = 1;
+	colorBlendStateInfo.pAttachments = &blendConfig;
+
+
+	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+	pipelineInfo.stageCount = std::size( shaderStagesInfo );
+	pipelineInfo.pStages = shaderStagesInfo;
+	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
+	pipelineInfo.pInputAssemblyState = &inAsmStateInfo;
+	pipelineInfo.pTessellationState = 0;
+	pipelineInfo.pViewportState = &viewportInfo;
+	pipelineInfo.pRasterizationState = &rasterInfo;
+	pipelineInfo.pMultisampleState = &multisamplingInfo;
+	pipelineInfo.pDepthStencilState = &depthStencilState;
+	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
+	pipelineInfo.pDynamicState = &dynamicStateInfo;
+	pipelineInfo.layout = vkPipelineLayout;
+	pipelineInfo.renderPass = vkRndPass;
+	pipelineInfo.subpass = 0;
+	pipelineInfo.basePipelineHandle = 0;
+	pipelineInfo.basePipelineIndex = -1;
+
+	VkPipeline vkGfxPipeline;
+	VK_CHECK( vkCreateGraphicsPipelines( vkDevice, vkPipelineCache, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
+
+	return vkGfxPipeline;
+}
+
 VkPipeline VkMakeComputePipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,
@@ -1453,7 +1551,7 @@ inline static VkSurfaceKHR VkMakeSurfWin32( VkInstance vkInst, HINSTANCE hInst, 
 
 // TODO: separate logical and physical device ?
 // TODO: return val ?
-inline static void VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, device* dc )
+inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
 {
 	// TODO: what about integrated devices ?
 	constexpr VkPhysicalDeviceType PREFFERED_PHYSICAL_DEVICE_TYPE = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
@@ -1467,7 +1565,9 @@ inline static void VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, 
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 		
 		VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
-		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
+		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+
+		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME
 	};
 
 	u32 numDevices = 0;
@@ -1479,8 +1579,11 @@ inline static void VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, 
 	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
 
-	// TODO: GPU specific features NV/AMD/whatever?
-	VkPhysicalDevice16BitStorageFeatures _16BitStorageFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES };
+	
+	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT };
+	VkPhysicalDevice16BitStorageFeatures _16BitStorageFeatures = 
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES, &extDynamicStateFeatures };
 	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &_16BitStorageFeatures };
 	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures12 };
 
@@ -1566,30 +1669,34 @@ inline static void VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, 
 		queueInfos[ qi ].pQueuePriorities = &queuePriorities;
 	}
 	
+	device dc = {};
+
 	VkDeviceCreateInfo deviceInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	deviceInfo.pNext = &gpuFeatures;
 	deviceInfo.queueCreateInfoCount = std::size( queueInfos );
 	deviceInfo.pQueueCreateInfos = &queueInfos[ 0 ];
 	deviceInfo.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS );
 	deviceInfo.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS;
-	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, 0, &dc->device ) );
+	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, 0, &dc.device ) );
 
 	// TODO: move to BackendInit ?
-	VkLoadDeviceProcs( dc->device );
+	VkLoadDeviceProcs( dc.device );
 
-	vkGetDeviceQueue( dc->device, queueInfos[ qGfxIdx ].queueFamilyIndex, 0, &dc->gfxQueue );
-	vkGetDeviceQueue( dc->device, queueInfos[ qCompIdx ].queueFamilyIndex, 0, &dc->compQueue );
-	vkGetDeviceQueue( dc->device, queueInfos[ qTransfIdx ].queueFamilyIndex, 0, &dc->transfQueue );
-	VK_CHECK( VK_INTERNAL_ERROR( !dc->gfxQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !dc->compQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !dc->transfQueue ) );
+	vkGetDeviceQueue( dc.device, queueInfos[ qGfxIdx ].queueFamilyIndex, 0, &dc.gfxQueue );
+	vkGetDeviceQueue( dc.device, queueInfos[ qCompIdx ].queueFamilyIndex, 0, &dc.compQueue );
+	vkGetDeviceQueue( dc.device, queueInfos[ qTransfIdx ].queueFamilyIndex, 0, &dc.transfQueue );
+	VK_CHECK( VK_INTERNAL_ERROR( !dc.gfxQueue ) );
+	VK_CHECK( VK_INTERNAL_ERROR( !dc.compQueue ) );
+	VK_CHECK( VK_INTERNAL_ERROR( !dc.transfQueue ) );
 
-	dc->gfxQueueIdx = queueInfos[ qGfxIdx ].queueFamilyIndex;
-	dc->compQueueIdx = queueInfos[ qCompIdx ].queueFamilyIndex;
-	dc->transfQueueIdx = queueInfos[ qTransfIdx ].queueFamilyIndex;
-	dc->gpu = gpu;
-	dc->gpuProps = gpuProps2.properties;
-	dc->waveSize = waveProps.subgroupSize;
+	dc.gfxQueueIdx = queueInfos[ qGfxIdx ].queueFamilyIndex;
+	dc.compQueueIdx = queueInfos[ qCompIdx ].queueFamilyIndex;
+	dc.transfQueueIdx = queueInfos[ qTransfIdx ].queueFamilyIndex;
+	dc.gpu = gpu;
+	dc.gpuProps = gpuProps2.properties;
+	dc.waveSize = waveProps.subgroupSize;
+
+	return dc;
 }
 
 // TODO: sep initial validation form sc creation when resize ?
@@ -1821,7 +1928,7 @@ static inline virtual_frame VkCreateVirtualFrame(
 	return vrtFrame;
 }
 
-// TODO: more locallity ?
+
 #include "r_data_structs.h"
 
 #include "asset_compiler.h"
@@ -2481,19 +2588,18 @@ inline static void VkInitInternalBuffers()
 	depthAtomicCounterBuff =
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &vkRscArena );
 
-	dispatchCmdBuff =
-		VkCreateAllocBindBuffer( sizeof( dispatch_command ),
-								 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
-								 &vkRscArena );
+	dispatchCmdBuff = VkCreateAllocBindBuffer( 
+		sizeof( dispatch_command ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &vkRscArena );
 
 	bdasUboBuff = VkCreateAllocBindBuffer( sizeof( global_bdas ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &vkHostComArena );
 
 	mletDispatchCounterBuff =
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) mletDispatchCounterBuff.hndl, "Buff_Mlet_Dispatch_Count" );
 }
 
 constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
-// TODO: remove
+// TODO: remove ?
 inline static std::vector<instance_desc> 
 SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrlCount, float sceneRadius )
 {
@@ -2511,31 +2617,24 @@ SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrl
 		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
 		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
 
-		DirectX::XMVECTOR axis = DirectX::XMVector3Normalize(
-			DirectX::XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-								  float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-								  float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-								  0 ) );
-		float angle = DirectX::XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
+		XMVECTOR axis = XMVector3Normalize(
+			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 0 ) );
+		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
 
-		//DirectX::XMVECTOR quat = DirectX::XMQuaternionRotationNormal( axis, angle );
-		XMVECTOR quat = DirectX::XMQuaternionIdentity();
+		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
+		XMVECTOR quat = XMQuaternionIdentity();
 		XMStoreFloat4( &i.rot, quat );
-
-		XMFLOAT3 rotCenter = meshes[ i.meshIdx ].center;
-		XMMATRIX m = XMMatrixAffineTransformation(
-			XMVectorSet( i.scale, i.scale, i.scale, 1 ),
-			//XMVectorSet( rotCenter.x, rotCenter.y, rotCenter.z, 1 ), quat,
-			XMVectorSet( 0, 0, 0, 1 ), quat,
-			XMVectorSet( i.pos.x, i.pos.y, i.pos.z, 1 ) );
 
 		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
 		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
 		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
 
-		XMMATRIX localToWorld = XMMatrixMultiply( moveM, XMMatrixMultiply( rotM, scaleM ) );
+		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
 
-		XMStoreFloat4x4A( &i.localToWorld, m );
+		XMStoreFloat4x4A( &i.localToWorld, localToWorld );
 	}
 
 	return insts;
@@ -2583,224 +2682,27 @@ VkStageCopyUploadBuffer(
 	return VkMakeBufferBarrier( dstBuff.hndl, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT );
 }
 
-struct cpu_debug
+struct aabb
 {
+	vec3 center;
+	vec3 extent;
+};
+
+// TODO: redesign
+struct instance_data
+{
+	std::vector<mat4> transforms;
+	std::vector<aabb> aabbs;
 	std::vector<instance_desc> insts;
 	std::vector<mesh_desc> meshes;
 };
-static cpu_debug cpuDbg;  
-// TODO: revisit remake improve
-inline static void VkUploadResources( VkCommandBuffer cmdBuf )
+
+// TODO:
+struct sampler_desc
 {
-	using namespace DirectX;
 
-	std::vector<u8> binaryData;
-	// TODO: extra checks and stuff ?
-	// TODO: add data offset and use that
-	// TODO: ensure SoA layout of data
-	// TODO: ensure resources of the same type are contiguous ?
-	{
-		binaryData = SysReadFile( drakPath );
-		if( std::size( binaryData ) == 0 )
-		{
-			std::vector<u8> fileData = SysReadFile( glbPath );
-			CompileGlbAssetToBinary( fileData, binaryData );
-			SysWriteToFile( drakPath, std::data( binaryData ), std::size( binaryData ) );
-		}
-	}
-	u64 offset = sizeof( drak_file_header );
-	const drak_file_desc& fileDesc = *(drak_file_desc*) ( std::data( binaryData ) + offset );
-	offset += sizeof( drak_file_desc );
+};
 
-	const std::span<binary_mesh_desc> meshDesc = { (binary_mesh_desc*) ( std::data( binaryData ) + offset ),fileDesc.meshesCount };
-	offset += BYTE_COUNT( meshDesc );
-	// TODO - must manage ?
-	const std::span<material_data> mtrlDesc = { (material_data*) ( std::data( binaryData ) + offset ),fileDesc.mtrlsCount };
-	offset += BYTE_COUNT( mtrlDesc );
-	const std::span<image_metadata> imgDesc = { (image_metadata*) ( std::data( binaryData ) + offset ),fileDesc.texCount };
-
-	const std::span<vertex> vtxView =
-	{ (vertex*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset,fileDesc.vtxRange.size };
-
-	const std::span<meshlet> mletView =
-	{ (meshlet*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsRange.offset,fileDesc.mletsRange.size };
-
-	std::vector<mesh_desc> meshes;
-	// TODO: must make mesh and binary_mesh_desc the same
-	for( const binary_mesh_desc& m : meshDesc )
-	{
-		meshes.push_back( {} );
-		mesh_desc& out = meshes[ std::size( meshes ) - 1 ];
-		out.vertexCount = m.vtxRange.size;
-		out.vertexOffset = m.vtxRange.offset;
-		
-		assert( m.lodCount <= u8( -1 ) );
-		out.lodCount = m.lodCount;
-		for( u64 i = 0; i < m.lodCount; ++i )
-		{
-			out.lods[ i ].indexCount = m.lodRanges[ i ].size;
-			out.lods[ i ].indexOffset = m.lodRanges[ i ].offset;
-			out.lods[ i ].meshletCount = m.mletRanges[ i ].size;
-			out.lods[ i ].meshletOffset = m.mletRanges[ i ].offset;
-		}
-
-		{
-			XMFLOAT3 center;
-			XMFLOAT3 extent;
-			XMVECTOR xmm0 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
-			XMVECTOR xmm1 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
-			XMStoreFloat3( &center, XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f ) );
-			XMStoreFloat3( &extent, XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
-
-			out.center = center;
-			out.extent = extent;
-		}
-	}
-
-	assert( std::size( textures.rsc ) == 0 );
-	std::vector<material_data> mtrls = {};
-	for( const material_data& m : mtrlDesc )
-	{
-		mtrls.push_back( m );
-		material_data& refM = mtrls[ std::size( mtrls ) - 1 ];
-		refM.baseColIdx += std::size( textures.rsc );
-		refM.normalMapIdx += std::size( textures.rsc );
-		refM.occRoughMetalIdx += std::size( textures.rsc );
-	}
-
-	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 10;
-	constexpr u64 lightCount = 4;
-	constexpr float sceneRadius = 40.0f;
-	std::srand( randSeed );
-
-	std::vector<instance_desc> instDesc = 
-		SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRadius );
-	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRadius );
-
-
-
-	// NOTE - upload buffers
-	std::vector<VkBufferMemoryBarrier> buffBarriers;
-	{
-		const u8* pVtxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset;
-		buffBarriers.push_back( VkStageCopyUploadBuffer( 
-			cmdBuf, "Buff_Vtx", pVtxData, fileDesc.vtxRange.size, vertexBuff, stagingManager ) );
-	}
-	{
-		const u8* pIdxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.idxRange.offset;
-		u64 copyDataSize = fileDesc.idxRange.size;
-		indexBuff = VkCreateAllocBindBuffer( copyDataSize,
-											 VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-											 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-											 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-											 &vkRscArena );
-		VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) indexBuff.hndl, "Buff_Idx" );
-
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( copyDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &vkStagingArena );
-		std::memcpy( stagingBuf.hostVisible, pIdxData, stagingBuf.size );
-		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
-
-		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
-		vkCmdCopyBuffer( cmdBuf, stagingBuf.hndl, indexBuff.hndl, 1, &copyRegion );
-		buffBarriers.push_back( VkMakeBufferBarrier( indexBuff.hndl, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT ) );
-	}
-	{
-		buffBarriers.push_back( VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Mesh_Desc", (const u8*) std::data( meshes ), BYTE_COUNT( meshes ), meshBuff, stagingManager ) );
-	}
-	{
-		buffBarriers.push_back( VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Lights", (const u8*) std::data( lights ), BYTE_COUNT( lights ), lightsBuff, stagingManager ) );
-	}
-	{
-		buffBarriers.push_back( VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Inst_Descs", (const u8*) std::data( instDesc ), BYTE_COUNT( instDesc ), instDescBuff, stagingManager ) );
-	}
-	{
-		buffBarriers.push_back( VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Mtrls", (const u8*) std::data( mtrls ), BYTE_COUNT( mtrls ), materialsBuff, stagingManager ) );
-	}
-	{
-		buffBarriers.push_back( VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Meshlets", (const u8*) std::data( mletView ), std::size( mletView ), meshletBuff, stagingManager ) );
-	}
-	{
-		const std::span<u32> mletVtxView =
-		{ (u32*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsVtxRange.offset,fileDesc.mletsVtxRange.size };
-		buffBarriers.push_back( VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Meshlet_Vtx", (const u8*) std::data( mletVtxView ), std::size( mletVtxView ), meshletVtxBuff, stagingManager ) );
-	}
-	{
-		const std::span<u8> mletTriView =
-		{ (u8*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsTrisRange.offset,fileDesc.mletsTrisRange.size };
-		buffBarriers.push_back( VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Meshlet_Tris", (const u8*) std::data( mletTriView ), std::size( mletTriView ), meshletTrisBuff, stagingManager ) );
-	}
-	
-
-	vkCmdPipelineBarrier( cmdBuf,
-						  VK_PIPELINE_STAGE_TRANSFER_BIT,
-						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-						  0, 0, 0,
-						  std::size( buffBarriers ), std::data( buffBarriers ), 0, 0 );
-
-	
-	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
-										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
-										   &vkRscArena );
-	drawCmdDbgBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_indirect ),
-											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
-											  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-											  &vkRscArena );
-	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawCmdDbgBuff.hndl, "Buff_Indirect_Dbg_Draw_Cmds" );
-
-	// TODO: use per wave stuff ?
-	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												  &vkRscArena );
-	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawVisibilityBuff.hndl, "Buff_Draw_Vis" );
-
-	assert( std::size( mletView ) <= u16( -1 ) && std::size( instDesc ) <= u16( -1 ) );
-	mletInstIdxBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( u32 ),
-											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-											   &vkRscArena );
-
-
-	// NOTE - create and texture uploads
-	{
-		const u8* pTexBinData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.texRange.offset;
-
-		std::vector<u64> copyOffsets;
-		u64 newTexturesOffset = std::size( textures.rsc );
-		for( const image_metadata& meta : imgDesc )
-		{
-			VkImageCreateInfo vkImgInfo =
-				GetVkImageInfoFromMetadata( meta, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
-			image img = VkCreateAllocBindImage( vkImgInfo );
-
-			hndl32<image> hImg = PushResourceToContainer( img, textures );
-			copyOffsets.push_back( meta.texBinRange.offset );
-		}
-
-		const std::span<image> newTextures = { std::data( textures.rsc ) + newTexturesOffset,std::size( imgDesc ) };
-
-		buffer_data stagingBuff = VkCreateAllocBindBuffer( fileDesc.texRange.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &vkStagingArena );
-		std::memcpy( stagingBuff.hostVisible, pTexBinData, stagingBuff.size );
-		StagingManagerPushForRecycle( stagingBuff.hndl, stagingManager );
-
-		RecordTextureUploads( cmdBuf, stagingBuff.hndl, newTextures, copyOffsets );
-	}
-	// TODO: remove
-	cpuDbg.insts = std::move( instDesc );
-	cpuDbg.meshes = std::move( meshes );
-}
-// TODO: compact sampler thing ?
-// TODO: lod clamp
 inline VkSampler VkMakeSampler( 
 	VkDevice				vkDevice, 
 	float					lodCount = 1.0f, 
@@ -2821,7 +2723,7 @@ inline VkSampler VkMakeSampler(
 	samplerInfo.addressModeV = addressMode;
 	samplerInfo.addressModeW = addressMode;
 	samplerInfo.minLod = 0;
-	samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+	samplerInfo.maxLod = ( lodCount == 1.0f ) ? VK_LOD_CLAMP_NONE : lodCount;
 	samplerInfo.maxAnisotropy = 1.0f;
 	samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 
@@ -2835,13 +2737,13 @@ static u64			VK_DLL = 0;
 
 // TODO: move out of global/static
 static vk_program	gfxOpaqueProgram = {};
-static vk_program	debugGfxProgram = {};
 static vk_program	drawcullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
 static vk_program	tonemapCompProgram = {};
 static vk_program	depthPyramidMultiProgram = {};
 
+// TODO: revisit
 // TODO: find better soln
 enum shader_idx : u8
 {
@@ -2991,13 +2893,450 @@ inline static vk_instance VkMakeInstance()
 	return { vkInstance, vkDbgUtilsMsgExt };
 }
 
+
+struct debug_context
+{
+	buffer_data dbgGeometryBuff;
+	vk_program	pipeProg;
+	VkPipeline	drawAsLines;
+	VkPipeline	drawAsTriangles;
+};
+
+static debug_context vkDbgCtx;
+
+// TODO: query for gpu props ?
+// TODO: dbgGeom buffer size based on what ?
+static inline debug_context VkInitDebugCtx( 
+	VkDevice							vkDevice, 
+	VkRenderPass						vkRndPass,
+	const VkPhysicalDeviceProperties&	gpuProps 
+){
+	debug_context dbgCtx = {};
+
+	vk_shader vert = VkLoadShader( shaderFiles[ VERT_BOX_DBG ], vkDevice );
+	vk_shader frag = VkLoadShader( shaderFiles[ FRAG_NORMAL_COL ], vkDevice );
+
+	dbgCtx.pipeProg = VkMakePipelineProgram( vkDevice, gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vert, &frag } );
+
+	static_assert( worldLeftHanded );
+	vk_gfx_pipeline_state lineDrawPipelineState = {};
+	lineDrawPipelineState.blendCol = VK_FALSE;
+	lineDrawPipelineState.depthWrite = VK_FALSE;
+	lineDrawPipelineState.cullFlags = VK_CULL_MODE_NONE;
+	lineDrawPipelineState.primTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+	lineDrawPipelineState.polyMode = VK_POLYGON_MODE_LINE;
+	lineDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	dbgCtx.drawAsLines = VkMakeGfxPipeline( 
+		vkDevice, 0, vkRndPass, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module, lineDrawPipelineState );
+
+	vk_gfx_pipeline_state triDrawPipelineState = {};
+	triDrawPipelineState.blendCol = VK_TRUE;
+	triDrawPipelineState.depthWrite = VK_TRUE;
+	triDrawPipelineState.cullFlags = VK_CULL_MODE_FRONT_BIT;
+	triDrawPipelineState.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	triDrawPipelineState.polyMode = VK_POLYGON_MODE_FILL;
+	triDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+	dbgCtx.drawAsTriangles = VkMakeGfxPipeline( 
+		vkDevice, 0, vkRndPass, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module, triDrawPipelineState );
+
+
+	vkDestroyShaderModule( vkDevice, vert.module, 0 );
+	vkDestroyShaderModule( vkDevice, frag.module, 0 );
+
+	dbgCtx.dbgGeometryBuff = VkCreateAllocBindBuffer( 1 * MB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &vkHostComArena );
+		//1 * MB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, &vkHostComArena );
+
+	return dbgCtx;
+}
+
+
+constexpr u64 boxLineVertexCount = 24u;
+constexpr u64 boxTrisVertexCount = 36u;
+
+constexpr u8 boxLineIndices[] = {
+	0,1,	0,2,	1,3,	2,3,
+	0,4,	1,5,	2,6,	3,7,
+	4,5,	4,6,	5,7,	6,7
+};
+constexpr u8 boxTrisIndices[] = {
+	0,1,3,		1,2,3,		// Bottom	
+	7,4,3,		4,0,3,		// Left
+	4,5,0,		5,1,0,		// Front
+	6,7,2,		7,3,2,		// Back
+	5,6,1,		6,2,1,		// Right
+	7,6,4,		6,5,4		// Top
+};
+
+ALIGNAS( 16 ) struct dbg_vertex
+{
+	vec4 pos;
+	vec3 col;
+};
+
+inline void XM_CALLCONV 
+TrnasformBoxVertices(
+	DirectX::XMMATRIX		transf,
+	DirectX::XMFLOAT3		boxMin,
+	DirectX::XMFLOAT3		boxMax,
+	DirectX::XMFLOAT4*		boxCorners
+){
+	using namespace DirectX;
+
+	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z, 1.0f };
+	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z, 1.0f };
+	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z, 1.0f };
+	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z, 1.0f };
+	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z, 1.0f };
+	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z, 1.0f };
+	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z, 1.0f };
+	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z, 1.0f };
+
+	for( u64 ci = 0; ci < 8; ++ci )
+	{
+		XMFLOAT4& outCorner = boxCorners[ ci ];
+		XMVECTOR trnasformedCorner = XMVector4Transform( XMLoadFloat4( &outCorner ), transf );
+		XMStoreFloat4( &outCorner, trnasformedCorner );
+	}
+}
+
+static std::vector<dbg_vertex> dbgLineGeomCache;
+
+// TODO: revisit remake improve
+static inline void VkUploadResources( VkCommandBuffer cmdBuf )
+{
+	using namespace DirectX;
+
+	std::vector<u8> binaryData;
+	// TODO: extra checks and stuff ?
+	// TODO: add data offset and use that
+	// TODO: ensure SoA layout of data
+	// TODO: ensure resources of the same type are contiguous ?
+	{
+		binaryData = SysReadFile( drakPath );
+		if( std::size( binaryData ) == 0 )
+		{
+			std::vector<u8> fileData = SysReadFile( glbPath );
+			CompileGlbAssetToBinary( fileData, binaryData );
+			SysWriteToFile( drakPath, std::data( binaryData ), std::size( binaryData ) );
+		}
+	}
+
+	
+	u64 offset = sizeof( drak_file_header );
+	const drak_file_desc& fileDesc = *(drak_file_desc*) ( std::data( binaryData ) + offset );
+	offset += sizeof( drak_file_desc );
+
+	const std::span<binary_mesh_desc> meshDesc = { (binary_mesh_desc*) ( std::data( binaryData ) + offset ),fileDesc.meshesCount };
+	offset += BYTE_COUNT( meshDesc );
+	// TODO: must manage ?
+	const std::span<material_data> mtrlDesc = { (material_data*) ( std::data( binaryData ) + offset ),fileDesc.mtrlsCount };
+	offset += BYTE_COUNT( mtrlDesc );
+	const std::span<image_metadata> imgDesc = { (image_metadata*) ( std::data( binaryData ) + offset ),fileDesc.texCount };
+
+	const std::span<vertex> vtxView =
+	{ (vertex*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset,fileDesc.vtxRange.size };
+
+	const std::span<meshlet> mletView =
+	{ (meshlet*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsRange.offset,fileDesc.mletsRange.size };
+
+	std::vector<mesh_desc> meshes;
+	// TODO: must make mesh and binary_mesh_desc the same
+	for( const binary_mesh_desc& m : meshDesc )
+	{
+		meshes.push_back( {} );
+		mesh_desc& out = meshes[ std::size( meshes ) - 1 ];
+		out.vertexCount = m.vtxRange.size;
+		out.vertexOffset = m.vtxRange.offset;
+
+		assert( m.lodCount <= u8( -1 ) );
+		out.lodCount = m.lodCount;
+		for( u64 i = 0; i < m.lodCount; ++i )
+		{
+			out.lods[ i ].indexCount = m.lodRanges[ i ].size;
+			out.lods[ i ].indexOffset = m.lodRanges[ i ].offset;
+			out.lods[ i ].meshletCount = m.mletRanges[ i ].size;
+			out.lods[ i ].meshletOffset = m.mletRanges[ i ].offset;
+		}
+
+		//out.aabbMin = *( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
+		//out.aabbMax = *( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
+
+		{
+			XMVECTOR xmm0 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
+			XMVECTOR xmm1 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
+			XMVECTOR center = XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f );
+			XMVECTOR extent = XMVectorAbs( XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
+			XMStoreFloat3( &out.center, center );
+			XMStoreFloat3( &out.extent, extent );
+			XMStoreFloat3( &out.aabbMin, XMVectorAdd( center, extent ) );
+			XMStoreFloat3( &out.aabbMax, XMVectorSubtract( center, extent ) );
+		}
+	}
+
+	assert( std::size( textures.rsc ) == 0 );
+	std::vector<material_data> mtrls = {};
+	for( const material_data& m : mtrlDesc )
+	{
+		mtrls.push_back( m );
+		material_data& refM = mtrls[ std::size( mtrls ) - 1 ];
+		refM.baseColIdx += std::size( textures.rsc );
+		refM.normalMapIdx += std::size( textures.rsc );
+		refM.occRoughMetalIdx += std::size( textures.rsc );
+	}
+
+	constexpr u64 randSeed = 42;
+	constexpr u64 drawCount = 10;
+	constexpr u64 lightCount = 4;
+	constexpr float sceneRad = 40.0f;
+	std::srand( randSeed );
+
+	std::vector<instance_desc> instDesc = SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRad );
+	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad );
+
+
+	//// TODO: move from here 
+	if constexpr( DBG_DRAW )
+	{
+		XMFLOAT4 boxVertices[ 8 ] = {};
+		std::vector<dbg_vertex> dbgGeom( std::size( instDesc ) * boxLineVertexCount + boxLineVertexCount );
+		for( u64 ii = 0; ii < std::size( instDesc ); ++ii )
+		{
+			const instance_desc& i = instDesc[ ii ];
+			const mesh_desc& m = meshes[ i.meshIdx ];
+			constexpr XMFLOAT3 col = { 255.0f,255.0f,0.0f };
+			TrnasformBoxVertices( XMLoadFloat4x4A( &i.localToWorld ), m.aabbMin, m.aabbMax, boxVertices );
+
+			std::span<dbg_vertex> boxLineRange = { std::data( dbgGeom ) + ii * boxLineVertexCount, boxLineVertexCount };
+			assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
+			for( u64 i = 0; i < std::size( boxLineRange ); ++i )
+			{
+				boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],col };
+			}
+		}
+	
+		dbgLineGeomCache = std::move( dbgGeom );
+	}
+	
+
+	// NOTE: upload buffers
+	std::vector<VkBufferMemoryBarrier> buffBarriers;
+	{
+		const u8* pVtxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset;
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Vtx", pVtxData, fileDesc.vtxRange.size, vertexBuff, stagingManager ) );
+	}
+	{
+		const u8* pIdxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.idxRange.offset;
+		u64 copyDataSize = fileDesc.idxRange.size;
+		indexBuff = VkCreateAllocBindBuffer( copyDataSize,
+											 VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+											 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+											 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											 &vkRscArena );
+		VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) indexBuff.hndl, "Buff_Idx" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( copyDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, pIdxData, stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuf, stagingBuf.hndl, indexBuff.hndl, 1, &copyRegion );
+		buffBarriers.push_back( VkMakeBufferBarrier( indexBuff.hndl, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT ) );
+	}
+	{
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Mesh_Desc", (const u8*) std::data( meshes ), BYTE_COUNT( meshes ), meshBuff, stagingManager ) );
+	}
+	{
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Lights", (const u8*) std::data( lights ), BYTE_COUNT( lights ), lightsBuff, stagingManager ) );
+	}
+	{
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Inst_Descs", (const u8*) std::data( instDesc ), BYTE_COUNT( instDesc ), instDescBuff, stagingManager ) );
+	}
+	{
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Mtrls", (const u8*) std::data( mtrls ), BYTE_COUNT( mtrls ), materialsBuff, stagingManager ) );
+	}
+	{
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Meshlets", (const u8*) std::data( mletView ), std::size( mletView ), meshletBuff, stagingManager ) );
+	}
+	{
+		const std::span<u32> mletVtxView =
+		{ (u32*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsVtxRange.offset,fileDesc.mletsVtxRange.size };
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Meshlet_Vtx", (const u8*) std::data( mletVtxView ), std::size( mletVtxView ), meshletVtxBuff, stagingManager ) );
+	}
+	{
+		const std::span<u8> mletTriView =
+		{ (u8*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsTrisRange.offset,fileDesc.mletsTrisRange.size };
+		buffBarriers.push_back( VkStageCopyUploadBuffer(
+			cmdBuf, "Buff_Meshlet_Tris", 
+			(const u8*) std::data( mletTriView ), 
+			std::size( mletTriView ), 
+			meshletTrisBuff, 
+			stagingManager ) );
+	}
+
+
+	vkCmdPipelineBarrier( cmdBuf,
+						  VK_PIPELINE_STAGE_TRANSFER_BIT,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+						  0, 0, 0,
+						  std::size( buffBarriers ), std::data( buffBarriers ), 0, 0 );
+
+
+	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
+										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+										   &vkRscArena );
+	drawCmdDbgBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_indirect ),
+											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+											  &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawCmdDbgBuff.hndl, "Buff_Indirect_Dbg_Draw_Cmds" );
+
+	// TODO: use per wave stuff ?
+	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
+												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												  &vkRscArena );
+	VkDbgNameObj( dc.device, VK_OBJECT_TYPE_BUFFER, (u64) drawVisibilityBuff.hndl, "Buff_Draw_Vis" );
+
+	assert( std::size( mletView ) <= u16( -1 ) && std::size( instDesc ) <= u16( -1 ) );
+	mletInstIdxBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( u32 ),
+											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+											   &vkRscArena );
+
+
+	// NOTE: create and texture uploads
+	{
+		const u8* pTexBinData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.texRange.offset;
+
+		std::vector<u64> copyOffsets;
+		u64 newTexturesOffset = std::size( textures.rsc );
+		for( const image_metadata& meta : imgDesc )
+		{
+			VkImageCreateInfo vkImgInfo = 
+				GetVkImageInfoFromMetadata( meta, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
+			image img = VkCreateAllocBindImage( vkImgInfo );
+
+			hndl32<image> hImg = PushResourceToContainer( img, textures );
+			copyOffsets.push_back( meta.texBinRange.offset );
+		}
+
+		const std::span<image> newTextures = { std::data( textures.rsc ) + newTexturesOffset,std::size( imgDesc ) };
+
+		buffer_data stagingBuff = VkCreateAllocBindBuffer( fileDesc.texRange.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &vkStagingArena );
+		std::memcpy( stagingBuff.hostVisible, pTexBinData, stagingBuff.size );
+		StagingManagerPushForRecycle( stagingBuff.hndl, stagingManager );
+
+		RecordTextureUploads( cmdBuf, stagingBuff.hndl, newTextures, copyOffsets );
+	}
+}
+
+inline static VkBufferMemoryBarrier2KHR VkMakeBufferBarrier2(
+	VkBuffer					hBuff,
+	VkAccessFlags2KHR			srcAccess,
+	VkPipelineStageFlags2KHR	srcStage,
+	VkAccessFlags2KHR			dstAccess,
+	VkPipelineStageFlags2KHR	dstStage,
+	VkDeviceSize				buffOffset = 0,
+	VkDeviceSize				buffSize = VK_WHOLE_SIZE,
+	u32							srcQueueFamIdx = VK_QUEUE_FAMILY_IGNORED,
+	u32							dstQueueFamIdx = VK_QUEUE_FAMILY_IGNORED
+){
+	VkBufferMemoryBarrier2KHR barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2_KHR };
+	barrier.srcStageMask = srcStage;
+	barrier.srcAccessMask = srcAccess;
+	barrier.dstStageMask = dstStage;
+	barrier.dstAccessMask = dstAccess;
+	barrier.srcQueueFamilyIndex = srcQueueFamIdx;
+	barrier.dstQueueFamilyIndex = dstQueueFamIdx;
+	barrier.buffer = hBuff;
+	barrier.offset = buffOffset;
+	barrier.size = buffSize;
+
+	return barrier;
+}
+
+inline static VkBufferMemoryBarrier2KHR VkReverseBufferBarrier2( const VkBufferMemoryBarrier2KHR& b )
+{
+	VkBufferMemoryBarrier2KHR barrier = b;
+	std::swap( barrier.srcAccessMask, barrier.dstAccessMask );
+	std::swap( barrier.srcStageMask, barrier.dstStageMask );
+
+	return barrier;
+}
+
+inline static void
+DebugDrawLinesPass(
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline,
+	VkRenderPass			vkRndPass,
+	VkFramebuffer			offscreenFbo,
+	const buffer_data&		lineBuff,
+	const vk_program&		program,
+	const mat4&				projView,
+	range					drawRange
+){
+	vk_label label = { cmdBuff,"Dbg Draw Lines Pass",{} };
+
+	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+
+	VkBufferMemoryBarrier2KHR barrier = VkMakeBufferBarrier2( lineBuff.hndl,
+															  VK_ACCESS_2_HOST_WRITE_BIT_KHR,
+															  VK_PIPELINE_STAGE_2_HOST_BIT_KHR,
+															  VK_ACCESS_2_SHADER_STORAGE_READ_BIT_KHR,
+															  VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR );
+
+	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependency.bufferMemoryBarrierCount = 1;
+	dependency.pBufferMemoryBarriers = &barrier;
+
+
+	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
+
+
+	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	rndPassBegInfo.renderPass = vkRndPass;
+	rndPassBegInfo.framebuffer = offscreenFbo;
+	rndPassBegInfo.renderArea = scissor;
+
+	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
+	
+	vk_descriptor_info pushDescs[] = { lineBuff.descriptor() };
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( mat4 ), &projView );
+
+	vkCmdDraw( cmdBuff, drawRange.size, 1, drawRange.offset, 0 );
+
+	vkCmdEndRenderPass( cmdBuff );
+
+
+	barrier = VkReverseBufferBarrier2( barrier );
+	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
+}
+
+
 // TODO: no structured binding
 static void VkBackendInit()
 {
 	auto [vkInst, vkDbgMsg] = VkMakeInstance();
 
 	vkSurf = VkMakeSurfWin32( vkInst, hInst, hWnd );
-	VkMakeDeviceContext( vkInst, vkSurf, &dc );
+	dc = VkMakeDeviceContext( vkInst, vkSurf );
 
 	VkInitMemory( dc.gpu, dc.device  );
 
@@ -3007,10 +3346,11 @@ static void VkBackendInit()
 	rndCtx.renderPass = VkMakeRndPass( dc.device, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, false );
 	rndCtx.render2ndPass = VkMakeRndPass( dc.device, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, true );
 
-	VkPipelineCache pipelineCache = 0;
+	// TODO: ?
+	//VkPipelineCache pipelineCache = 0;
 
 	std::vector<vk_shader> shaders( std::size( shaderFiles ) );
-	for( u64 i = 0; i < std::size( shaders ); ++i ) shaders[ i ] = VkLoadShader( shaderFiles[ i ], dc.device );
+	for( u64 si = 0; si < std::size( shaders ); ++si ) shaders[ si ] = VkLoadShader( shaderFiles[ si ], dc.device );
 
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
 
@@ -3027,52 +3367,29 @@ static void VkBackendInit()
 
 
 	rndCtx.gfxPipeline = 
-		VkMakeGfxPipeline( dc.device, pipelineCache, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, 
+		VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, 
 						   shaders[ VERT_BINDLESS ].module, shaders[ FRAG_PBR ].module );
 	rndCtx.compPipeline =
-		VkMakeComputePipeline( dc.device, pipelineCache, drawcullCompProgram.pipeLayout,
+		VkMakeComputePipeline( dc.device, 0, drawcullCompProgram.pipeLayout,
 							   shaders[ COMP_CULL ].module, { OBJ_CULL_WORKSIZE,occlusionCullingPass } );
 
 	if constexpr( !multiShaderDepthPyramid )
 	{
 		rndCtx.compHiZPipeline =
-			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidCompProgram.pipeLayout, 
-								   shaders[ COMP_HIZ_MIPS ].module, {} );
+			VkMakeComputePipeline( dc.device, 0, depthPyramidCompProgram.pipeLayout, shaders[ COMP_HIZ_MIPS ].module, {} );
 	}
 	else
 	{
-		depthPyramidMultiProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, 
-														  { &shaders[ COMP_HIZ_MIPS_POW2 ] } );
+		depthPyramidMultiProgram = 
+			VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &shaders[ COMP_HIZ_MIPS_POW2 ] } );
 		rndCtx.compHiZPipeline = 
-			VkMakeComputePipeline( dc.device, pipelineCache, depthPyramidMultiProgram.pipeLayout, 
-								   shaders[ COMP_HIZ_MIPS_POW2 ].module, {} );
+			VkMakeComputePipeline( dc.device, 0, depthPyramidMultiProgram.pipeLayout, shaders[ COMP_HIZ_MIPS_POW2 ].module, {} );
 	}
 
-
-	debugGfxProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, 
-											 { &shaders[ VERT_BOX_DBG ], &shaders[ FRAG_NORMAL_COL ] } );
-
-	static_assert( worldLeftHanded );
-	rndCtx.gfxBVDbgDrawPipeline = VkMakeGfxPipeline( dc.device,
-													 pipelineCache,
-													 rndCtx.renderPass,
-													 debugGfxProgram.pipeLayout,
-													 shaders[ VERT_BOX_DBG ].module,
-													 shaders[ FRAG_NORMAL_COL ].module,
-													 //VK_POLYGON_MODE_FILL,
-													 VK_POLYGON_MODE_LINE,
-													 1, 0, 
-													 VK_CULL_MODE_NONE,
-													 VK_FRONT_FACE_COUNTER_CLOCKWISE,
-													 VK_PRIMITIVE_TOPOLOGY_LINE_LIST
-													);
-
 	rndCtx.compAvgLumPipe = 
-		VkMakeComputePipeline( dc.device, pipelineCache, avgLumCompProgram.pipeLayout, 
-							   shaders[ COMP_LUMINANCE ].module, { dc.waveSize } );
+		VkMakeComputePipeline( dc.device, 0, avgLumCompProgram.pipeLayout, shaders[ COMP_LUMINANCE ].module, { dc.waveSize } );
 	rndCtx.compTonemapPipe =
-		VkMakeComputePipeline( dc.device, pipelineCache, tonemapCompProgram.pipeLayout, 
-							   shaders[ COMP_TONE_GAMMA ].module, {} );
+		VkMakeComputePipeline( dc.device, 0, tonemapCompProgram.pipeLayout, shaders[ COMP_TONE_GAMMA ].module, {} );
 
 	for( vk_shader& s : shaders ) vkDestroyShaderModule( dc.device, s.module, 0 );
 
@@ -3082,6 +3399,8 @@ static void VkBackendInit()
 	}
 
 	VkInitInternalBuffers();
+
+	vkDbgCtx = VkInitDebugCtx( dc.device, rndCtx.renderPass, dc.gpuProps );
 }
 
 inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
@@ -3117,36 +3436,18 @@ inline u64 GetImgMipCount( u64 width, u64 height )
 	return std::min( (u64) floor( log2( maxDim ) ), MAX_MIP_LEVELS );
 }
 
-// TODO: pass dpethPyr directly
+// TODO: depthPyramind layout optimal
 inline static void 
 CullPass( 
 	VkCommandBuffer			cmdBuff, 
 	VkPipeline				vkPipeline, 
 	const vk_program&		program,
-	const cam_frustum&		camFrust,
-	u64						pyramidMipLevels 
+	const image&			depthPyramid,
+	const VkSampler&		minQuadSamler
 ){
 	vk_label label = { cmdBuff,"Cull Pass",{} };
 
 	cull_info cullInfo = {};
-	cullInfo.planes[ 0 ] = camFrust.planes[ 0 ];
-	cullInfo.planes[ 1 ] = camFrust.planes[ 1 ];
-	cullInfo.planes[ 2 ] = camFrust.planes[ 2 ];
-	cullInfo.planes[ 3 ] = camFrust.planes[ 3 ];
-	
-	cullInfo.frustum[ 0 ] = camFrust.frustum[ 0 ];
-	cullInfo.frustum[ 1 ] = camFrust.frustum[ 1 ];
-	cullInfo.frustum[ 2 ] = camFrust.frustum[ 2 ];
-	cullInfo.frustum[ 3 ] = camFrust.frustum[ 3 ];
-
-	cullInfo.zNear = camFrust.zNear;
-	cullInfo.drawDistance = camFrust.drawDistance;
-	cullInfo.projWidth = camFrust.projWidth;
-	cullInfo.projHeight = camFrust.projHeight;
-
-	cullInfo.pyramidWidthPixels = float( rndCtx.depthPyramid.width );
-	cullInfo.pyramidHeightPixels = float( rndCtx.depthPyramid.height );
-
 	cullInfo.drawCallsCount = instDescBuff.size / sizeof( instance_desc );
 	
 
@@ -3184,19 +3485,21 @@ CullPass(
 
 	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
-	VkDescriptorImageInfo depthPyramidInfo = { rndCtx.linearMinSampler, rndCtx.depthPyramid.view, VK_IMAGE_LAYOUT_GENERAL };
-	vk_descriptor_info drawcullDescs[] = {  
+	VkDescriptorImageInfo depthPyramidInfo = { 0, depthPyramid.view, VK_IMAGE_LAYOUT_GENERAL };
+	VkDescriptorImageInfo minDepthSamlerInfo = { minQuadSamler };
+	vk_descriptor_info pushDescs[] = {  
 		drawCmdBuff.descriptor(),
 		drawCountBuff.descriptor(), 
 		drawVisibilityBuff.descriptor(), 
 		dispatchCmdBuff.descriptor(),
 		mletInstIdxBuff.descriptor(),
 		mletDispatchCounterBuff.descriptor(),
-		depthPyramidInfo, 
+		depthPyramidInfo,
+		minDepthSamlerInfo,
 		drawCmdDbgBuff.descriptor(),
 		drawCountDbgBuff.descriptor() 
 	};
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, drawcullDescs );
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
 	
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( cullInfo ), &cullInfo );
 
@@ -3219,7 +3522,6 @@ CullPass(
 						  drawCmdReadyBarriers, 0, 0 );
 }
 
-// TODO: pass lights buff differently
 inline static void
 DrawIndirectPass(
 	VkCommandBuffer			cmdBuff,
@@ -3229,8 +3531,7 @@ DrawIndirectPass(
 	const buffer_data&		drawCmds,
 	VkBuffer				drawCmdCount,
 	const VkClearValue*		clearVals,
-	const vk_program&		program,
-	b32						dbgCam
+	const vk_program&		program
 ){
 	vk_label label = { cmdBuff,"DrawIndirect Pass",{} };
 
@@ -3261,89 +3562,6 @@ DrawIndirectPass(
 	u32 maxDrawCount = instDescBuff.size / sizeof( instance_desc );
 	vkCmdDrawIndexedIndirectCount( 
 		cmdBuff, drawCmds.hndl, offsetof( draw_command, cmd ), drawCmdCount, 0, maxDrawCount, sizeof( draw_command ) );
-
-	vkCmdEndRenderPass( cmdBuff );
-}
-
-struct dbg_draw_push
-{
-	vec3 col;
-	u64 drawIndirctAddr;
-	u32 frustumDraw;
-};
-
-// TODO: sexier
-inline static void
-DebugDrawIndirectPass(
-	VkCommandBuffer			cmdBuff,
-	VkPipeline				vkPipeline,
-	VkRenderPass			vkRndPass,
-	VkFramebuffer			offscreenFbo,
-	const buffer_data&		drawCmds,
-	VkBuffer				drawCmdCount,
-	const vk_program&		program
-){
-	vk_label label = { cmdBuff,"Dbg Draw Indirect Pass",{} };
-
-	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
-
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = vkRndPass;
-	rndPassBegInfo.framebuffer = offscreenFbo;
-	rndPassBegInfo.renderArea = scissor;
-
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
-
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
-	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
-
-	//dbg_draw_push dbgDrawPush = { {0.00025f,0.00025f,0},drawCmds.devicePointer,dbgCam };
-	dbg_draw_push dbgDrawPush = { {255,255,0},drawCmds.devicePointer };
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgDrawPush ), &dbgDrawPush );
-
-	u32 maxDrawCnt = instDescBuff.size / sizeof( instance_desc );
-	vkCmdDrawIndirectCount( 
-		cmdBuff, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCmdCount, 0, maxDrawCnt, sizeof( draw_indirect ) );
-	
-	vkCmdEndRenderPass( cmdBuff );
-}
-
-inline static void
-DebugDrawFrustumPass(
-	VkCommandBuffer			cmdBuff,
-	VkPipeline				vkPipeline,
-	VkRenderPass			vkRndPass,
-	VkFramebuffer			offscreenFbo,
-	const vk_program&		program
-){
-	vk_label label = { cmdBuff,"Dbg Draw Frustum Pass",{} };
-
-	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
-
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = vkRndPass;
-	rndPassBegInfo.framebuffer = offscreenFbo;
-	rndPassBegInfo.renderArea = scissor;
-
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
-
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
-	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
-
-	dbg_draw_push dbgDrawPush = { {0,255,255},0,1 };
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( dbgDrawPush ), &dbgDrawPush );
-
-	vkCmdDraw( cmdBuff, 24, 1, 0, 0 );
 
 	vkCmdEndRenderPass( cmdBuff );
 }
@@ -3601,71 +3819,26 @@ ToneMappingWithSrgb(
 
 }
 
-// TODO: remove ?
-static inline std::vector<u32> 
-CPUFrustumBoxCulling( const global_data& globData, const cpu_debug&	cpuDebug )
-{
-	using namespace DirectX;
-
-	std::vector<u32> visibleInstances;
-
-	XMMATRIX projView = XMMatrixMultiply( XMLoadFloat4x4A( &globData.proj ), XMLoadFloat4x4A( &globData.mainView ) );
-
-	for( u64 drawIdx = 0; drawIdx < std::size( cpuDebug.insts ); ++drawIdx )
-	{
-		const instance_desc& i = cpuDebug.insts[ drawIdx ];
-		const mesh_desc& m = cpuDebug.meshes[ i.meshIdx ];
-
-		XMVECTOR xmm0 = XMLoadFloat3( &m.center );
-		XMVECTOR xmm1 = XMLoadFloat3( &m.extent );
-		XMVECTOR max = XMVectorAdd( xmm1, xmm0 );
-		XMVECTOR min = XMVectorSubtract( xmm1, xmm0 );
-
-		XMMATRIX transpMvp = XMMatrixMultiplyTranspose( projView, XMLoadFloat4x4A( &i.localToWorld ) );
-
-		XMVECTOR planes[ 4 ] = {};
-		planes[ 0 ] = XMVector3Normalize( XMVectorAdd( transpMvp.r[ 3 ], transpMvp.r[ 0 ] ) );
-		planes[ 1 ] = XMVector3Normalize( XMVectorSubtract( transpMvp.r[ 3 ], transpMvp.r[ 0 ] ) );
-		planes[ 2 ] = XMVector3Normalize( XMVectorAdd( transpMvp.r[ 3 ], transpMvp.r[ 1 ] ) );
-		planes[ 3 ] = XMVector3Normalize( XMVectorSubtract( transpMvp.r[ 3 ], transpMvp.r[ 1 ] ) );
-
-		auto BoxVsPlane = [=]( XMVECTOR plane ) -> bool
-		{
-			XMVECTOR lessMask = XMVectorLess( plane, XMVectorZero() );
-			XMVECTOR boxPNPoint = XMVectorSelect( max, min, lessMask );
-
-			return XMVectorGetX( XMVector3Dot( boxPNPoint, plane ) ) > -XMVectorGetW( plane );
-		};
-
-		bool visible =
-			BoxVsPlane( planes[ 0 ] ) && BoxVsPlane( planes[ 1 ] ) &&
-			BoxVsPlane( planes[ 2 ] ) && BoxVsPlane( planes[ 3 ] ) &&
-			BoxVsPlane( transpMvp.r[ 3 ] );
-
-		if( visible ) visibleInstances.push_back( drawIdx );
-	}
-
-	return visibleInstances;
-}
 
 static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b32 bvDraw, b32 freeCam, float dt )
 {
+	using namespace DirectX;
 	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
 
 	u64 currentFrameIdx = rndCtx.vFrameIdx;
-	const virtual_frame& currentVFrame = rndCtx.vrtFrames[ rndCtx.vFrameIdx ];
+	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ rndCtx.vFrameIdx ];
 	rndCtx.vFrameIdx = ( rndCtx.vFrameIdx + 1 ) % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 	assert( ( currentFrameIdx == 0 ) || ( currentFrameIdx == 1 ) );
 
 
 	VK_CHECK( VK_INTERNAL_ERROR( ( 
-		vkWaitForFences( dc.device, 1, &currentVFrame.hostSyncFence, true, 1'000'000'000 ) - VK_TIMEOUT ) > 0 ) );
-	VK_CHECK( vkResetFences( dc.device, 1, &currentVFrame.hostSyncFence ) );
+		vkWaitForFences( dc.device, 1, &thisVFrame.hostSyncFence, true, 1'000'000'000 ) - VK_TIMEOUT ) > 0 ) );
+	VK_CHECK( vkResetFences( dc.device, 1, &thisVFrame.hostSyncFence ) );
 
-	VK_CHECK( vkResetCommandPool( dc.device, currentVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
 
 	u32 imgIdx;
-	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, currentVFrame.canGetImgSema, 0, &imgIdx ) );
+	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 
 	// TODO: swapchain resize ?
 	if( !rndCtx.offscreenFbo )
@@ -3721,21 +3894,21 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	}
 	
 
-	std::memcpy( currentVFrame.frameData.hostVisible, (u8*) globs, sizeof( *globs ) );
+	std::memcpy( thisVFrame.frameData.hostVisible, (u8*) globs, sizeof( *globs ) );
 	// TODO: only after creation
-	VkDescriptorBufferInfo uboInfo = { currentVFrame.frameData.hndl, 0, sizeof( *globs ) };
+	VkDescriptorBufferInfo uboInfo = { thisVFrame.frameData.hndl, 0, sizeof( *globs ) };
 	VkWriteDescriptorSet globalDataUpdate = VkMakeBindlessGlobalUpdate( &uboInfo, 1, VK_GLOBAL_SLOT_UNIFORM_BUFFER );
 	vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
 
 	VkCommandBufferBeginInfo cmdBufBegInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	vkBeginCommandBuffer( currentVFrame.cmdBuf, &cmdBufBegInfo );
+	vkBeginCommandBuffer( thisVFrame.cmdBuf, &cmdBufBegInfo );
 
 	// TODO: async, multi-threaded, etc
 	static b32 rescUploaded = 0;
 	if( !rescUploaded )
 	{
-		VkUploadResources( currentVFrame.cmdBuf );
+		VkUploadResources( thisVFrame.cmdBuf );
 		rescUploaded = 1;
 	
 		global_bdas bdas = {};
@@ -3753,7 +3926,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 		std::memcpy( bdasUboBuff.hostVisible, &bdas, sizeof( bdas ) );
 	
 	
-		// NOTE - UpdateDescriptors
+		// NOTE: UpdateDescriptors
 		std::vector<VkWriteDescriptorSet> descUpdates;
 	
 		VkDescriptorBufferInfo bdaDesc = bdasUboBuff.descriptor();
@@ -3792,8 +3965,8 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	static b32 clearedBuffers = 0;
 	if( !clearedBuffers )
 	{
-		vkCmdFillBuffer( currentVFrame.cmdBuf, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
-		vkCmdFillBuffer( currentVFrame.cmdBuf, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0 );
+		vkCmdFillBuffer( thisVFrame.cmdBuf, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
+		vkCmdFillBuffer( thisVFrame.cmdBuf, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0 );
 	
 		VkBufferMemoryBarrier clearedVisibilityBarrier[] = {
 			VkMakeBufferBarrier( drawVisibilityBuff.hndl,
@@ -3804,7 +3977,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 								 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT )
 		};
 	
-		vkCmdPipelineBarrier( currentVFrame.cmdBuf,
+		vkCmdPipelineBarrier( thisVFrame.cmdBuf,
 							  VK_PIPELINE_STAGE_TRANSFER_BIT,
 							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0,
 							  2, clearedVisibilityBarrier, 0, 0 );
@@ -3824,7 +3997,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 			VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0 ),
 	};
 	
-	vkCmdPipelineBarrier( currentVFrame.cmdBuf,
+	vkCmdPipelineBarrier( thisVFrame.cmdBuf,
 						  VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 						  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
 						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
@@ -3832,25 +4005,24 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 						  renderBeginBarriers );
 	
 	
-	CullPass( currentVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, camFrust, rndCtx.depthPyramid.mipCount );
+	CullPass( thisVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, rndCtx.depthPyramid, rndCtx.linearMinSampler );
 	
 	VkClearValue clearVals[ 2 ] = {};
 	//clearVals[ 0 ].color = {};
 	//clearVals[ 1 ].depthStencil = {};
-	DrawIndirectPass( currentVFrame.cmdBuf,
+	DrawIndirectPass( thisVFrame.cmdBuf,
 					  rndCtx.gfxPipeline,
 					  rndCtx.renderPass,
 					  rndCtx.offscreenFbo,
 					  drawCmdBuff,
 					  drawCountBuff.hndl,
 					  clearVals,
-					  gfxOpaqueProgram,
-					  freeCam );
+					  gfxOpaqueProgram );
 	
 	
 	if constexpr( !multiShaderDepthPyramid )
 	{
-		DepthPyramidPass( currentVFrame.cmdBuf,
+		DepthPyramidPass( thisVFrame.cmdBuf,
 						  rndCtx.compHiZPipeline,
 						  rndCtx.depthPyramid.mipCount,
 						  rndCtx.linearMinSampler,
@@ -3861,7 +4033,7 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 	else
 	{
 		DepthPyramidMultiPass(
-			currentVFrame.cmdBuf,
+			thisVFrame.cmdBuf,
 			rndCtx.compHiZPipeline,
 			{ rndCtx.depthPyramid.width, rndCtx.depthPyramid.height },
 			rndCtx.depthPyramid.mipCount,
@@ -3871,28 +4043,51 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 			depthPyramidMultiProgram );
 	}
 	
-	if( freeCam )
+	// TODO: rethink
+	if( DBG_DRAW && ( freeCam || bvDraw ) )
 	{
-		DebugDrawFrustumPass( currentVFrame.cmdBuf,
-							  rndCtx.gfxBVDbgDrawPipeline,
-							  rndCtx.render2ndPass,
-							  rndCtx.offscreenFbo,
-							  debugGfxProgram );
+		// NOTE: inv( A * B ) = inv B * inv A
+		XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
+		XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &globs->mainView ), proj );
+		XMVECTOR det = XMMatrixDeterminant( invFrustMat );
+		assert( XMVectorGetX( det ) );
+		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
+
+		XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
+		mat4 projView;
+		XMStoreFloat4x4A( &projView, xmProjView );
+		
+		u64 instanceCount = instDescBuff.size / sizeof( instance_desc );
+		u64 frustBoxOffset = instanceCount * boxLineVertexCount;
+		
+		XMFLOAT4 boxVertices[ 8 ] = {};
+		TrnasformBoxVertices( frustMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
+
+		std::span<dbg_vertex> boxLineRange = { std::data( dbgLineGeomCache ) + frustBoxOffset,boxLineVertexCount };
+		assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
+		for( u64 i = 0; i < std::size( boxLineRange ); ++i )
+		{
+			boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],{ 0.0f, 255.0f, 255.0f } };
+		}
+		
+		std::memcpy( vkDbgCtx.dbgGeometryBuff.hostVisible, std::data( dbgLineGeomCache ), BYTE_COUNT( dbgLineGeomCache ) );
+
+		range drawRange = {};
+		drawRange.offset = bvDraw ? 0 : frustBoxOffset;
+		drawRange.size = ( freeCam && bvDraw ) ? std::size( dbgLineGeomCache ) : ( freeCam ? boxLineVertexCount : frustBoxOffset );
+
+
+		DebugDrawLinesPass( thisVFrame.cmdBuf,
+							vkDbgCtx.drawAsLines,
+							rndCtx.render2ndPass,
+							rndCtx.offscreenFbo,
+							vkDbgCtx.dbgGeometryBuff,
+							vkDbgCtx.pipeProg,
+							projView,
+							drawRange );
 	}
-	
-	if( boundingVolDbgDraw && bvDraw )
-	{
-		DebugDrawIndirectPass( currentVFrame.cmdBuf,
-							   rndCtx.gfxBVDbgDrawPipeline,
-							   rndCtx.render2ndPass,
-							   rndCtx.offscreenFbo,
-							   drawCmdDbgBuff,
-							   drawCountDbgBuff.hndl,
-							   debugGfxProgram );
-	}
-	
-	
-	ToneMappingWithSrgb( currentVFrame.cmdBuf, 
+
+	ToneMappingWithSrgb( thisVFrame.cmdBuf,
 						 rndCtx.compAvgLumPipe, 
 						 rndCtx.compTonemapPipe,
 						 avgLumCompProgram, 
@@ -3908,28 +4103,28 @@ static void HostFrames( const global_data* globs, const cam_frustum& camFrust, b
 															VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 															VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
 	
-	vkCmdPipelineBarrier( currentVFrame.cmdBuf, 
+	vkCmdPipelineBarrier( thisVFrame.cmdBuf,
 						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 						  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 
 						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, 
 						  &presentBarrier );
 
-	VK_CHECK( vkEndCommandBuffer( currentVFrame.cmdBuf ) );
+	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuf ) );
 
 	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	submitInfo.waitSemaphoreCount = 1;
-	submitInfo.pWaitSemaphores = &currentVFrame.canGetImgSema;
+	submitInfo.pWaitSemaphores = &thisVFrame.canGetImgSema;
 	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_TRANSFER_BIT; // VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	submitInfo.pWaitDstStageMask = &waitDstStageMsk;
 	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &currentVFrame.cmdBuf;
+	submitInfo.pCommandBuffers = &thisVFrame.cmdBuf;
 	submitInfo.signalSemaphoreCount = 1;
-	submitInfo.pSignalSemaphores = &currentVFrame.canPresentSema;
-	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, currentVFrame.hostSyncFence ) );
+	submitInfo.pSignalSemaphores = &thisVFrame.canPresentSema;
+	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, thisVFrame.hostSyncFence ) );
 
 	VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	presentInfo.waitSemaphoreCount = 1;
-	presentInfo.pWaitSemaphores = &currentVFrame.canPresentSema;
+	presentInfo.pWaitSemaphores = &thisVFrame.canPresentSema;
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &sc.swapchain;
 	presentInfo.pImageIndices = &imgIdx;

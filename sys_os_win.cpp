@@ -277,6 +277,8 @@ inline DirectX::XMMATRIX PerspRevInfFovRH( float fovYRads, float aspectRatioWH, 
 	return proj;
 }
 
+
+
 struct mouse
 {
 	float dx, dy;
@@ -526,19 +528,16 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		XMVECTOR smoothNewCamPos = XMVectorLerp( camPos, XMVectorAdd( camPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
 
 		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
-		//smoothNewCamPos = ( moveLen > moveThreshold ) ? smoothNewCamPos : XMVectorSet( 0, 0, 0, 0 );
-
-		//XMVECTOR oldPose = XMQuaternionRotationRollPitchYaw( pitch, yaw, 0 );
+		
 		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
 		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
 
-		//XMVECTOR smoothRot = XMQuaternionSlerp( oldPose, XMQuaternionRotationRollPitchYaw( pitch, yaw, 0 ), 0.18f * dt / 0.0166f );
-
+		
 		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
 		// TRANSF CAM VIEW
 		XMVECTOR camLookAt = XMVector3Transform( camFwdBasis, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = 
-			XMMatrixLookAtLH( XMLoadFloat3( &camWorldPos ), XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ),camUpBasis );
+		XMMATRIX view = XMMatrixLookAtLH( 
+			XMLoadFloat3( &camWorldPos ), XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ), camUpBasis );
 
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
@@ -552,36 +551,12 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		globs.camPos = camWorldPos;
 		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
 
-		// TODO: dump
-		//XMMATRIX comboMat = XMMatrixTranspose( XMMatrixMultiply( view, proj ) );
-		XMMATRIX comboMat = XMMatrixTranspose( proj );
-
-		XMVECTOR planes[ 4 ];
-		planes[ 0 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
-		planes[ 1 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
-		planes[ 2 ] = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
-		planes[ 3 ] = XMVector3Normalize( XMVectorSubtract( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
-
-		XMVECTOR frustumX = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 0 ] ) );
-		XMVECTOR frustumY = XMVector3Normalize( XMVectorAdd( comboMat.r[ 3 ], comboMat.r[ 1 ] ) );
-
-		if( !kbd.f )
-		{
-			for( u64 i = 0; i < 4; ++i ) XMStoreFloat4( (XMFLOAT4*) &camFrust.planes[ i ], planes[ i ] );
 		
-			camFrust.frustum[ 0 ] = XMVectorGetX( frustumX );
-			camFrust.frustum[ 1 ] = XMVectorGetZ( frustumX );
-			camFrust.frustum[ 2 ] = XMVectorGetY( frustumY );
-			camFrust.frustum[ 3 ] = XMVectorGetZ( frustumY );
-		}
-
-		// TODO: get this from matrix directly ?
-		camFrust.zNear = zNear;
-		camFrust.drawDistance = drawDistance;
-		camFrust.projWidth = XMVectorGetX( proj.r[ 0 ] );
-		camFrust.projHeight = XMVectorGetY( proj.r[ 1 ] );
-
-
+		//static b32 readAssetFile = false;
+		//if( !readAssetFile )
+		//{
+		//	readAssetFile = true;
+		//}
 
 		HostFrames( &globs, camFrust, kbd.o, kbd.f, elapsedSecs );
 	}

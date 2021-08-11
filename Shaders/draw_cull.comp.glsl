@@ -4,6 +4,8 @@
 #extension GL_KHR_shader_subgroup_arithmetic: require
 #extension GL_KHR_shader_subgroup_ballot: require
 #extension GL_KHR_shader_subgroup_shuffle: require
+// TODO: add to general ?
+#extension GL_EXT_samplerless_texture_functions: require
 
 #extension GL_GOOGLE_include_directive: require
 
@@ -55,15 +57,15 @@ layout( binding = 4 ) buffer mlet_inst_idx{
 layout( binding = 5 ) buffer mlet_dispatch_count{
 	uint mletDispatchCount;
 };
-layout( binding = 6 ) uniform sampler2D minQuadFormDepthPyramid;
-
+layout( binding = 6 ) uniform texture2D depthPyramid;
+layout( binding = 7 ) uniform sampler minQuadSampler;
 
 #if GLSL_DBG
 
-layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
+layout( binding = 8, scalar ) writeonly buffer dbg_draw_cmd{
 	draw_indirect dbgDrawCmd[];
 };
-layout( binding = 8 ) buffer dbg_draw_cmd_count{
+layout( binding = 9 ) buffer dbg_draw_cmd_count{
 	uint dbgDrawCallCount;
 };
 #endif
@@ -119,62 +121,68 @@ void main()
 
 	if( di >= cullInfo.drawCallsCount ) return;
 
-	//if( !OCCLUSION_CULLING && drawVisibility[ di ] == 0 ) return;
-
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
 	mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
 
 	vec3 center = currentMesh.center;
 	vec3 extent = abs( currentMesh.extent );
 
-	// NOTE: frustum culling inspired by Nabla
-	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
 	vec3 boxMin = ( center - extent ).xyz;
 	vec3 boxMax = ( center + extent ).xyz;
+
+	// NOTE: frustum culling inspired by Nabla
+	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
 	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
 	vec4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
 	vec4 yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
 	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
 	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 
-	bool visible = true;
+	bool visible = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w;
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
-	visible = visible && 
-		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 
-
-	if( visible && OCCLUSION_CULLING )
+	// TODO: 
+	vec3 camToCenterLocalDist = ( inverse( currentInst.localToWorld ) * vec4( cam.camPos, 1.0f ) ).xyz - center;
+	bool camInsideLocalAABB = all( greaterThanEqual( extent - abs( camToCenterLocalDist ), vec3( 0.0f ) ) );
+	if( visible && !camInsideLocalAABB && OCCLUSION_CULLING )
 	{
 		mat4 mvp = transpose( transpMvp );
-		vec4 ndcMin = mvp * vec4( boxMin, 1 );
-		vec4 ndcMax = mvp * vec4( boxMax, 1 );
 
-		//vec3 viewSpaceCenter = ( cam.view * center ).xyz;
-		//
-		//vec4 aabb = ProjectedSphereToAABB( viewSpaceCenter, radius,
-		//								   cullInfo.projWidth / cullInfo.zNear,
-		//								   cullInfo.projHeight / cullInfo.zNear );
-	
-		//float width = abs( aabb.z - aabb.x ) * cullInfo.pyramidWidthPixels;
-		//float height = abs( aabb.w - aabb.y ) * cullInfo.pyramidHeightPixels;
-		//float mipLevel = floor( log2( max( width, height ) ) );
-		//// NOTE: sampler does clamping 
-		//float depth = textureLod( minQuadFormDepthPyramid, ( aabb.xy + aabb.zw ) * 0.5, mipLevel ).x;
-		//float closestDepthValOnSphere = cullInfo.zNear / ( viewSpaceCenter.z - radius );
-		//
-		//visible = visible && ( closestDepthValOnSphere > depth );
+		vec2 ndcMin = vec2( 1.0f );
+		vec2 ndcMax = vec2( 0.0f );
+		float minDepth = 1.0f;
+
+		// TODO: clamp ?
+		[[ unroll ]] for( uint i = 0; i < 8; ++i )
+		{
+			vec4 clipCorner = mvp * vec4( mix( boxMax, boxMin, bvec3( i & 1, i & 2, i & 4 ) ), 1 );
+			clipCorner /= clipCorner.w;
+
+			vec2 uvCorner = clipCorner.xy * vec2( 0.5f, -0.5f ) + vec2( 0.5f );
+			ndcMin = min( ndcMin, uvCorner );
+			ndcMax = max( ndcMax, uvCorner );
+			minDepth = min( minDepth, clipCorner.z );
+		}
+		
+		vec2 boxSize = abs( ndcMax - ndcMin ) * textureSize( depthPyramid, 0 ).xy;
+		
+		float mipLevel = floor( log2( max( boxSize.x, boxSize.y ) ) );
+		// NOTE: sampler does clamping 
+		float depth = textureLod( sampler2D( depthPyramid, minQuadSampler ), ( ndcMax.xy + ndcMin.xy ) * 0.5f, mipLevel ).x;
+		visible = visible && ( minDepth >= depth );
 	}
 
-
+	// TODO: must compute LOD based on AABB
 	float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
 	uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 	mesh_lod lod = currentMesh.lods[ 0 ];
 
 	// TODO: should pass meshletOffset + count too ?
 	// TODO: go surfin'
+	// TODO: add to dispatch cound directly
 	if( visible )
 	{
 		uint mletIdxOffset = atomicAdd( mletDispatchCount, lod.meshletCount );
@@ -198,7 +206,6 @@ void main()
 	}
 #endif
 
-	//if( visible && ( !OCCLUSION_CULLING || drawVisibility[ di ] == 0 ) ){
 	if( visible )
 	{
 	#if !WAVE_OPS
@@ -217,13 +224,12 @@ void main()
 		// TODO: box vertex count const
 		dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
 		dbgDrawCmd[ dbgDrawCallIdx ].firstVertex = 0;
-		dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 24;
+		dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 36;
 		dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
 		dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
 	#endif
 	}
 
-	//if( OCCLUSION_CULLING ) drawVisibility[ di ] = visible ? 1 : 0;
 	if( di == 0 )
 	{
 		uint xDispatches = ( mletDispatchCount + gl_WorkGroupSize.x - 1 ) / gl_WorkGroupSize.x;

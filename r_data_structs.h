@@ -139,6 +139,8 @@ struct mesh_lod
 
 struct mesh_desc
 {
+	vec3		aabbMin;
+	vec3		aabbMax;
 	vec3		center;
 	vec3		extent;
 
@@ -187,7 +189,7 @@ struct draw_indirect
 #endif
 };
 
-// TODO: align
+// TODO: remove most stuff
 struct cull_info
 {	
 	vec4	planes[ 4 ];
