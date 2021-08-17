@@ -17,7 +17,7 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 layout( binding = 0 ) uniform texture2D depthSrc;
 layout( binding = 1 ) uniform sampler reduceMin4;
 layout( binding = 2, r32f ) uniform coherent image2D depthMips[ 12 ];
-layout( binding = 3 ) coherent buffer global_atomic_counte
+layout( binding = 3 ) coherent buffer global_atomic_counter
 {
 	uint globalAtomicCounter;
 };

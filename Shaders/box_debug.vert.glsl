@@ -20,5 +20,5 @@ void main()
 {
 	dbg_vertex v = dbgGeomBuff[ gl_VertexIndex ];
 	gl_Position = projView * v.pos;
-	oCol = v.col;
+	oCol = v.col.xyz;
 }

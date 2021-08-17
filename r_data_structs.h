@@ -189,34 +189,35 @@ struct draw_indirect
 #endif
 };
 
-// TODO: remove most stuff
 struct cull_info
 {	
-	vec4	planes[ 4 ];
-
-	float	frustum[ 4 ];
-
-	float	zNear;
-	float	drawDistance;
-	float	projWidth;
-	float	projHeight;
-
-	float	pyramidWidthPixels;
-	float	pyramidHeightPixels;
-
 	uint	drawCallsCount;
 };
 
-struct cam_frustum
+struct occlusion_debug
 {
-	vec4	planes[ 4 ];
+	mat4 mvp;
 
-	float	frustum[ 4 ];
+	vec4 minZCorner;
+	vec4 minXCorner;
+	vec4 minYCorner;
+	vec4 maxXCorner;
+	vec4 maxYCorner;
+	
+	vec2	ndcMin;
+	vec2	ndcMax;
 
-	float	zNear;
-	float	drawDistance;
-	float	projWidth;
-	float	projHeight;
+	float	zNearBound;
+	float	xPosBound;
+	float	yPosBound;
+	float	xNegBound;
+	float	yNegBound;
+
+	float	mipLevel;
+
+	float	depth;
+
+	uint	instID;
 };
 
 struct downsample_info
@@ -231,6 +232,12 @@ struct avg_luminance_info
 	float minLogLum;
 	float invLogLumRange;
 	float dt;
+};
+
+ALIGNAS( 16 ) struct dbg_vertex
+{
+	vec4 pos;
+	vec4 col;
 };
 
 #ifndef __cplusplus

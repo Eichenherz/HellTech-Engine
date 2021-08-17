@@ -408,6 +408,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
 
+	assert( XMVerifyCPUSupport() );
+
 	SysOsCreateConsole();
 	GetSystemInfo( &sysInfo );
 
@@ -475,7 +477,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
 	XMFLOAT3 camWorldPos = { 0,0,0 };
 	
-	cam_frustum	camFrust = {};
 	global_data globs = {};
 
 	VkBackendInit();
@@ -558,7 +559,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		//	readAssetFile = true;
 		//}
 
-		HostFrames( &globs, camFrust, kbd.o, kbd.f, elapsedSecs );
+		HostFrames( &globs, kbd.o, kbd.f, elapsedSecs );
 	}
 
 

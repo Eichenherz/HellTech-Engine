@@ -9,7 +9,7 @@
 
 
 
-#define MB (u64) ( 1 << 20 )
+
 
 
 constexpr u64 DEFAULT_ALIGNMNET = 2 * sizeof( void* );

@@ -7,15 +7,16 @@ layout(binding = 1) uniform sampler2D inImage;
 
 layout(push_constant) uniform block
 {
-	vec2 imageSize;
+	vec2 imgSize;
 };
 
 void main()
 {
 	uvec2 pos = gl_GlobalInvocationID.xy;
 
-	//NOTE: this computes the minimum depth of a 2x2 texel quad
-	float depth = texture(inImage, (vec2(pos) + vec2(0.5)) / imageSize).x;
+	//vec2 imgSize = imageSize( outImage, 
+	// NOTE: this computes the minimum depth of a 2x2 texel quad
+	float depth = textureGather( inImage, ( vec2( pos ) + vec2( 0.5f ) ) / imgSize ).x;
 
-	imageStore(outImage, ivec2(pos), vec4(depth));
+	imageStore( outImage, ivec2( pos ), vec4( depth ) );
 }

@@ -16,8 +16,9 @@
 
 #define BYTE_COUNT( buffer ) (u64) std::size( buffer ) * sizeof( buffer[ 0 ] )
 
-#define GB (u64)( 1 << 30 );
+#define GB (u64)( 1 << 30 )
 #define KB (u64)( 1 << 10 )
+#define MB (u64) ( 1 << 20 )
 
 #ifdef _WIN32
 //////////////////////////////////////
@@ -28,7 +29,6 @@
 
 #endif // WIN32
 
-struct cam_frustum;
 struct global_data;
 namespace std
 {
@@ -48,7 +48,7 @@ constexpr u64 SYS_MEM_BYTES = 1 * GB;
 void			CoreLoop();
 
 extern void		VkBackendInit();
-extern void		HostFrames( const global_data* globs, const cam_frustum& camFrust, b32 bvDraw, b32 freeCam, float dt );
+extern void		HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float dt );
 extern void		VkBackendKill();
 
 //////////////////////////////////////
