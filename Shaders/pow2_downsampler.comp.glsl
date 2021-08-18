@@ -16,7 +16,7 @@ void main()
 
 	//vec2 imgSize = imageSize( outImage, 
 	// NOTE: this computes the minimum depth of a 2x2 texel quad
-	float depth = textureGather( inImage, ( vec2( pos ) + vec2( 0.5f ) ) / imgSize ).x;
+	float depth = texture( inImage, ( vec2( pos ) + vec2( 0.5f ) ) / imgSize ).x;
 
 	imageStore( outImage, ivec2( pos ), vec4( depth ) );
 }

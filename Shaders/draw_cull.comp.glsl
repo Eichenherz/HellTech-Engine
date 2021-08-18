@@ -272,13 +272,13 @@ void main()
 		drawCmd[ drawCallIdx ].firstInstance = 0;
 
 	#if GLSL_DBG
-		uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
-		// TODO: box vertex count const
-		dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
-		dbgDrawCmd[ dbgDrawCallIdx ].firstVertex = 0;
-		dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 36;
-		dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
-		dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
+		//uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
+		//// TODO: box vertex count const
+		//dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
+		//dbgDrawCmd[ dbgDrawCallIdx ].firstVertex = 0;
+		//dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 36;
+		//dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
+		//dbgDrawCmd[ dbgDrawCallIdx ].firstInstance = 0;
 	#endif
 	}
 

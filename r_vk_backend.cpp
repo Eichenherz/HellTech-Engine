@@ -1597,9 +1597,9 @@ struct vk_shader
 // TODO: where to place this ?
 struct group_size
 {
-	u32 localSizeX;
-	u32 localSizeY;
-	u32 localSizeZ;
+	u32 x;
+	u32 y;
+	u32 z;
 };
 
 // TODO: vk_shader_program ?
@@ -3388,6 +3388,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 }
 
+// TODO: color depth toggle stuff
 inline static void
 DebugDrawPass(
 	VkCommandBuffer			cmdBuff,
@@ -3504,7 +3505,8 @@ inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
 	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
 
-#include <intrin.h>
+// NOTE: dx math ? includes these ?
+//#include <intrin.h>
 // TODO: math_uitl file
 inline u64 FloorPowOf2( u64 size )
 {
@@ -3614,7 +3616,7 @@ CullPass(
 	
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( cullInfo ), &cullInfo );
 
-	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.localSizeX ), 1, 1 );
+	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.x ), 1, 1 );
 
 	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
 		VkMakeBufferBarrier2( drawCmdBuff.hndl,
@@ -3710,6 +3712,7 @@ DepthPyramidPass(
 	const image&			depthTarget,
 	const vk_program&		program 
 ){
+	assert( 0 );
 	u32 dispatchGroupX = ( ( depthTarget.width + 63 ) >> 6 );
 	u32 dispatchGroupY = ( ( depthTarget.height + 63 ) >> 6 );
 
@@ -3818,8 +3821,8 @@ DepthPyramidMultiPass(
 
 		vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
 
-		u32 levelWidth = std::max( 1u, u32( depthTarget.width ) >> i );
-		u32 levelHeight = std::max( 1u, u32( depthTarget.height ) >> i );
+		u32 levelWidth = std::max( 1u, u32( depthPyramid.width ) >> i );
+		u32 levelHeight = std::max( 1u, u32( depthPyramid.height ) >> i );
 
 		vec2 reduceData = {};
 		reduceData.x = levelWidth;
@@ -3827,24 +3830,26 @@ DepthPyramidMultiPass(
 
 		vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( reduceData ), &reduceData );
 
-		vkCmdDispatch( cmdBuff,
-					   VkGetGroupCount( levelWidth, program.groupSize.localSizeX ),
-					   VkGetGroupCount( levelHeight, program.groupSize.localSizeY ),
-					   1 );
+		u32 dispatchX = VkGetGroupCount( levelWidth, program.groupSize.x );
+		u32 dispatchY = VkGetGroupCount( levelHeight, program.groupSize.y );
+		vkCmdDispatch( cmdBuff, dispatchX, dispatchY, 1 );
 
-		VkImageMemoryBarrier reduceBarrier =
-			VkMakeImgBarrier( depthPyramid.img,
-							  VK_ACCESS_SHADER_WRITE_BIT,
-							  VK_ACCESS_SHADER_READ_BIT,
-							  VK_IMAGE_LAYOUT_GENERAL,
-							  VK_IMAGE_LAYOUT_GENERAL,
-							  VK_IMAGE_ASPECT_COLOR_BIT );
+		// TODO: use memory barriers ?
+		VkImageMemoryBarrier2KHR reduceBarrier =
+			VkMakeImageBarrier2( depthPyramid.img,
+								 VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								 VK_ACCESS_2_SHADER_READ_BIT_KHR,
+								 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								 VK_IMAGE_LAYOUT_GENERAL,
+								 VK_IMAGE_LAYOUT_GENERAL,
+								 VK_IMAGE_ASPECT_COLOR_BIT );
 
-		vkCmdPipelineBarrier( cmdBuff,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-							  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0,
-							  1, &reduceBarrier );
+		VkDependencyInfoKHR passDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		passDependency.imageMemoryBarrierCount = 1;
+		passDependency.pImageMemoryBarriers = &reduceBarrier;
+		vkCmdPipelineBarrier2KHR( cmdBuff, &passDependency );
+
 	}
 
 	VkImageMemoryBarrier depthWriteBarrier = 
@@ -3854,7 +3859,7 @@ DepthPyramidMultiPass(
 						  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
 						  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 
 						  VK_IMAGE_ASPECT_DEPTH_BIT );
-
+	
 	vkCmdPipelineBarrier( cmdBuff, 
 						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
 						  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 
@@ -3862,6 +3867,7 @@ DepthPyramidMultiPass(
 						  1, &depthWriteBarrier );
 }
 
+// TODO: optimize
 inline static void
 ToneMappingWithSrgb(
 	VkCommandBuffer		cmdBuff,
@@ -3911,9 +3917,8 @@ ToneMappingWithSrgb(
 	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, avgProg.pushConstStages, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
 	vkCmdDispatch( cmdBuff, 
-				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.localSizeX ), 
-				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.localSizeY ), 
-				   1 );
+				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.x ), 
+				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
 
 	// TONEMAPPING w/ GAMMA sRGB
 	VkImageMemoryBarrier2KHR scWriteBarrier =
@@ -3948,16 +3953,13 @@ ToneMappingWithSrgb(
 		Descriptor( avgLumBuff )
 	};
 
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, 
-										   tonemapProg.descUpdateTemplate, 
-										   tonemapProg.pipeLayout, 0,
-										   &tonemapDescs[ 0 ] );
+	vkCmdPushDescriptorSetWithTemplateKHR( 
+		cmdBuff, tonemapProg.descUpdateTemplate, tonemapProg.pipeLayout, 0, &tonemapDescs[ 0 ] );
 
 	assert( ( fboHdrColTrg.width == sc.width ) && ( fboHdrColTrg.height == sc.height ) );
 	vkCmdDispatch( cmdBuff,
-				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.localSizeX ),
-				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.localSizeY ),
-				   1 );
+				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.x ),
+				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
 
 }
 
@@ -4258,7 +4260,7 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 		DepthPyramidMultiPass(
 			thisVFrame.cmdBuf,
 			rndCtx.compHiZPipeline,
-			rndCtx.pointMinSampler,
+			rndCtx.linearMinSampler,
 			rndCtx.depthPyramidChain,
 			rndCtx.depthTarget,
 			rndCtx.depthPyramid,
@@ -4307,11 +4309,11 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 					   drawRange );
 	}
 
-	for( auto& barrier : dbgDrawBarriers )
-	{
-		barrier = VkReverseBufferBarrier2( barrier );
-	}
-	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &dependency0 );
+	//for( auto& barrier : dbgDrawBarriers )
+	//{
+	//	barrier = VkReverseBufferBarrier2( barrier );
+	//}
+	//vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &dependency0 );
 
 	ToneMappingWithSrgb( thisVFrame.cmdBuf,
 						 rndCtx.compAvgLumPipe, 
