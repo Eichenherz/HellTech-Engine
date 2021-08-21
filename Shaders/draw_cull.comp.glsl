@@ -65,10 +65,7 @@ layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
 layout( binding = 8 ) buffer dbg_draw_cmd_count{
 	uint dbgDrawCallCount;
 };
-layout( binding = 9 ) writeonly buffer dbg_occlusion_data{
-	occlusion_debug occDbgBuff[];
-};
-layout( binding = 10 ) writeonly buffer screen_boxes_buff{
+layout( binding = 9 ) writeonly buffer screen_boxes_buff{
 	dbg_vertex screenspaceBoxBuff[];
 };
 #endif
@@ -124,17 +121,6 @@ void main()
 
 	if( di >= cullInfo.drawCallsCount ) return;
 
-#if GLSL_DBG
-	//screenspaceBoxBuff[ 8 * di + 0 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-	//screenspaceBoxBuff[ 8 * di + 1 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-	//screenspaceBoxBuff[ 8 * di + 2 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-	//screenspaceBoxBuff[ 8 * di + 3 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-	//screenspaceBoxBuff[ 8 * di + 4 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-	//screenspaceBoxBuff[ 8 * di + 5 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-	//screenspaceBoxBuff[ 8 * di + 6 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-	//screenspaceBoxBuff[ 8 * di + 7 ] = dbg_vertex( vec4( 0 ), vec4( 0 ) );
-#endif
-
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
 	mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
 
@@ -159,17 +145,27 @@ void main()
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
 	// TODO: faster ?
+	// TODO: fix Nabla occlusion
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.camPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
 	if( visible && !camInsideAabb && OCCLUSION_CULLING )
 	{
+		mat4 mvp = transpose( transpMvp );
+
 		// TODO: use this perspZ or compute per min/max Bound ? 
 		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
+
 		float xPosBound = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
 		float yPosBound = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
 		float xNegBound = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
 		float yNegBound = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
-		
+					    
+		debugPrintfEXT( "XPos = %f", xPosBound );
+		debugPrintfEXT( "YPos = %f", yPosBound );
+		debugPrintfEXT( "XNeg = %f", xNegBound );
+		debugPrintfEXT( "YNeg = %f", yNegBound );
+		debugPrintfEXT( "minZ = %f", 1.0f / perspZ );
+
 		xPosBound = clamp( xPosBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
 		yPosBound = clamp( yPosBound / perspZ, -1.0f, 1.0f ) * -0.5f + 0.5f;
 		xNegBound = clamp( xNegBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
@@ -179,52 +175,77 @@ void main()
 		vec2 screenMax = vec2( max( xPosBound, xNegBound ), max( yPosBound, yNegBound ) );
 
 		vec2 screenBoxSize = abs( screenMax - screenMin ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		
-		float mipLevel = floor( log2( max( screenBoxSize.x, screenBoxSize.y ) ) );
+		float depthPyrLodCount = textureQueryLevels( minQuadDepthPyramid );
+		float mipLevel = min( floor( log2( max( screenBoxSize.x, screenBoxSize.y ) ) ), depthPyrLodCount );
 		 
-		float depth = textureLod( minQuadDepthPyramid, ( screenMax + screenMin ) * 0.5f, mipLevel ).x;
-		visible = visible && ( 1.0f / perspZ >= depth );
+		float sampledDepth = textureLod( minQuadDepthPyramid, ( screenMax + screenMin ) * 0.5f, mipLevel ).x;
+		//visible = visible && ( 1.0f / perspZ >= sampledDepth );
 
-	#if GLSL_DBG
-		occDbgBuff[ di ].mvp = transpose( transpMvp );
-		//occDbgBuff[ di ].minZCorner = vec4( boxCorners[ 4 ], 1 );
-		//occDbgBuff[ di ].minXCorner = vec4( boxCorners[ 0 ], 1 );
-		//occDbgBuff[ di ].minYCorner = vec4( boxCorners[ 1 ], 1 );
-		//occDbgBuff[ di ].maxXCorner = vec4( boxCorners[ 2 ], 1 );
-		//occDbgBuff[ di ].maxYCorner = vec4( boxCorners[ 3 ], 1 );
+
+		vec3 boxSize = boxMax - boxMin;
+ 
+        vec3 boxCorners[] = { boxMin,
+                                boxMin + vec3(boxSize.x,0,0),
+                                boxMin + vec3(0, boxSize.y,0),
+                                boxMin + vec3(0, 0, boxSize.z),
+                                boxMin + vec3(boxSize.xy,0),
+                                boxMin + vec3(0, boxSize.yz),
+                                boxMin + vec3(boxSize.x, 0, boxSize.z),
+                                boxMin + boxSize
+                             };
+
+		vec3 xyMinMaxBoxCorners[] = {
+			mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ),
+			mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ),
+			mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ),
+			mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) )
+		};
+
+		[[unroll]]
+        for (int i = 0; i < 4; i++)
+        {
+            //transform world space aaBox to NDC
+            vec4 clipPos = mvp * vec4(xyMinMaxBoxCorners[i], 1);
+ 
+            clipPos.xyz = clipPos.xyz / clipPos.w;
+			debugPrintfEXT( "NablaClipPos = %v4f", clipPos );
+            clipPos.xy = clamp(clipPos.xy, -1, 1);
+            clipPos.xy = clipPos.xy * vec2(0.5, -0.5) + vec2(0.5, 0.5);
+ 
+        }
+
+        vec2 minXY = vec2(1);
+        vec2 maxXY = vec2(0);
+
+        [[unroll]]
+        for (int i = 0; i < 8; i++)
+        {
+            //transform world space aaBox to NDC
+            vec4 clipPos = mvp * vec4(boxCorners[i], 1);
+ 
+            clipPos.xyz = clipPos.xyz / clipPos.w;
+			debugPrintfEXT( "ClipPos = %v4f", clipPos );
+
+            clipPos.xy = clamp(clipPos.xy, -1, 1);
+            clipPos.xy = clipPos.xy * vec2(0.5, -0.5) + vec2(0.5, 0.5);
+ 
+            minXY = min(clipPos.xy, minXY);
+            maxXY = max(clipPos.xy, maxXY);
+        }
+
+		vec4 boxUVs = vec4( minXY, maxXY );
+		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
+		float mip = min( floor( log2( max( size.x, size.y ) ) ), depthPyrLodCount );
+		vec4 depth = vec4(
+				textureLod( minQuadDepthPyramid, boxUVs.xy, mip ).x,
+				textureLod( minQuadDepthPyramid, boxUVs.zy, mip ).x,
+				textureLod( minQuadDepthPyramid, boxUVs.xw, mip ).x,
+				textureLod( minQuadDepthPyramid, boxUVs.zw, mip ).x );
+		visible = visible && any( lessThanEqual( depth * perspZ, vec4( 1.0f ) ) );
+
+		//float minDepth = min( min( min( depth.x, depth.y ), depth.z ), depth.w );
+		//visible = visible && ( 1.0f / perspZ >= minDepth );
 		
-		occDbgBuff[ di ].ndcMin = screenMin;
-		occDbgBuff[ di ].ndcMax = screenMax;
-		
-		occDbgBuff[ di ].xPosBound = xPosBound;
-		occDbgBuff[ di ].yPosBound = yPosBound;
-		occDbgBuff[ di ].xNegBound = xNegBound;
-		occDbgBuff[ di ].yNegBound = yNegBound;
-		occDbgBuff[ di ].zNearBound = 1.0f / perspZ;
-		
-		occDbgBuff[ di ].mipLevel = mipLevel;
-		
-		occDbgBuff[ di ].depth = depth;
-		
-		//vec4 screenBoxCorners[ 4 ] = {
-		//	vec4( minXY, 0, 1 ),
-		//	vec4( minXY.x, maxXY.y, 0, 1 ),
-		//	vec4( maxXY.x, minXY.y, 0, 1 ),
-		//	vec4( maxXY, 0, 1 )
-		//};
-		//
-		//screenspaceBoxBuff[ 8 * di + 0 ] = dbg_vertex( screenBoxCorners[ 0 ], vec4( 255, 0, 0, 1 ) );
-		//screenspaceBoxBuff[ 8 * di + 1 ] = dbg_vertex( screenBoxCorners[ 1 ], vec4( 255, 0, 0, 1 ) );
-		//					
-		//screenspaceBoxBuff[ 8 * di + 2 ] = dbg_vertex( screenBoxCorners[ 1 ], vec4( 255, 0, 0, 1 ) );
-		//screenspaceBoxBuff[ 8 * di + 3 ] = dbg_vertex( screenBoxCorners[ 3 ], vec4( 255, 0, 0, 1 ) );
-		//					
-		//screenspaceBoxBuff[ 8 * di + 4 ] = dbg_vertex( screenBoxCorners[ 3 ], vec4( 255, 0, 0, 1 ) );
-		//screenspaceBoxBuff[ 8 * di + 5 ] = dbg_vertex( screenBoxCorners[ 2 ], vec4( 255, 0, 0, 1 ) );
-		//					
-		//screenspaceBoxBuff[ 8 * di + 6 ] = dbg_vertex( screenBoxCorners[ 2 ], vec4( 255, 0, 0, 1 ) );
-		//screenspaceBoxBuff[ 8 * di + 7 ] = dbg_vertex( screenBoxCorners[ 0 ], vec4( 255, 0, 0, 1 ) );
-	#endif	
 	}
 
 	// TODO: must compute LOD based on AABB

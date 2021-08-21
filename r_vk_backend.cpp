@@ -37,12 +37,14 @@
 
 #endif
 
-#include <DirectXCollision.h>
+#include <DirectXPackedVector.h>
+
+namespace DXPacked = DirectX::PackedVector;
 
 #include "sys_os_api.h"
 #include "core_lib_api.h"
 
-// TODO: gen from VkResult
+// TODO: gen from VkResult ?
 inline std::string_view VkResErrorString( VkResult errorCode )
 {
 	switch( errorCode )			{
@@ -89,7 +91,6 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 		default: return "VK_UNKNOWN_INTERNAL_ERROR";
 	}
 }
-
 inline VkResult VkResFromStatement( b32 statement )
 {
 	return !statement ? VK_SUCCESS : VkResult( int( 0x8FFFFFFF ) );
@@ -193,93 +194,35 @@ inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
 	VK_CHECK( vkSetDebugUtilsObjectNameEXT( vkDevice, &nameInfo ) );
 }
 
+// TODO: remove ?
+static const DXPacked::XMCOLOR white = { 255u, 255u, 255u, 1 };
+static const DXPacked::XMCOLOR black = { 0u, 0u, 0u, 1 };
+static const DXPacked::XMCOLOR gray = { 0x80u, 0x80u, 0x80u, 1 };
+static const DXPacked::XMCOLOR lightGray = { 0xD3u, 0xD3u, 0xD3u, 1 };
+static const DXPacked::XMCOLOR red = { 255u, 0u, 0u, 1 };
+static const DXPacked::XMCOLOR green = { 0u, 255u, 0u, 1 };
+static const DXPacked::XMCOLOR blue = { 0u, 0u, 255u, 1 };
+static const DXPacked::XMCOLOR yellow = { 255u, 255u, 0u, 1 };
+static const DXPacked::XMCOLOR cyan = { 0u, 255u, 255u, 1 };
+static const DXPacked::XMCOLOR magenta = { 255u, 0u, 255u, 1 };
 
-// NOTE: inspired by Chili Framework
-struct color32
-{
-	u32 dword;
 
-	constexpr color32() : dword(){}
-	//constexpr color32( const color32& col ) : dword( col.dword ){}
-	constexpr color32( u32 dw ) : dword( dw ){}
-	constexpr color32( u8 x, u8 r, u8 g, u8 b ) : dword( ( x << 24u ) | ( r << 16u ) | ( g << 8u ) | b ){}
-	constexpr color32( u8 r, u8 g, u8 b ) : dword( ( r << 16u ) | ( g << 8u ) | b ){}
-	constexpr color32( color32 col, u8 x ) : color32( ( x << 24u ) | col.dword ){}
-	//color32& operator =( color32 color )
-	//{
-	//	dword = color.dword;
-	//	return *this;
-	//}
-};
-
-constexpr u8 Col32GetA( color32 c ){ return c.dword >> 24u; }
-constexpr u8 Col32GetR( color32 c ){ return ( c.dword >> 16u ) & 0xFFu; }
-constexpr u8 Col32GetG( color32 c ){ return ( c.dword >> 8u ) & 0xFFu; }
-constexpr u8 Col32GetB( color32 c ){ return c.dword & 0xFFu; }
-constexpr void GetCol32AsFloat( color32 c, float* col )
-{
-	float r = float( Col32GetR( c ) ) / float( u8( -1 ) );
-	float g = float( Col32GetG( c ) ) / float( u8( -1 ) );
-	float b = float( Col32GetB( c ) ) / float( u8( -1 ) );
-	float a = float( Col32GetA( c ) ) / float( u8( -1 ) );
-
-	col[ 0 ] = r;
-	col[ 1 ] = g;
-	col[ 2 ] = b;
-	col[ 3 ] = a;
-}
-//constexpr DirectX::XMFLOAT4 GetColVecFromCol32();
-//void SetA( unsigned char x )
-//{
-//	dword = ( dword & 0xFFFFFFu ) | ( x << 24u );
-//}
-//void SetR( unsigned char r )
-//{
-//	dword = ( dword & 0xFF00FFFFu ) | ( r << 16u );
-//}
-//void SetG( unsigned char g )
-//{
-//	dword = ( dword & 0xFFFF00FFu ) | ( g << 8u );
-//}
-//void SetB( unsigned char b )
-//{
-//	dword = ( dword & 0xFFFFFF00u ) | b;
-//}
-
-namespace Colors
-{
-	static constexpr color32 MakeRGB( u8 r, u8 g, u8 b )
-	{
-		return ( r << 16 ) | ( g << 8 ) | b;
-	}
-	static constexpr color32 white = MakeRGB( 255u, 255u, 255u );
-	static constexpr color32 black = MakeRGB( 0u, 0u, 0u );
-	static constexpr color32 gray = MakeRGB( 0x80u, 0x80u, 0x80u );
-	static constexpr color32 lightGray = MakeRGB( 0xD3u, 0xD3u, 0xD3u );
-	static constexpr color32 red = MakeRGB( 255u, 0u, 0u );
-	static constexpr color32 green = MakeRGB( 0u, 255u, 0u );
-	static constexpr color32 blue = MakeRGB( 0u, 0u, 255u );
-	static constexpr color32 yellow = MakeRGB( 255u, 255u, 0u );
-	static constexpr color32 cyan = MakeRGB( 0u, 255u, 255u );
-	static constexpr color32 magenta = MakeRGB( 255u, 0u, 255u );
-}
-
-// TODO: better colors
-// TODO: use XMCOLOR ?
 // TODO: degub-on-off
 struct vk_label
 {
 	const VkCommandBuffer& cmdBuf;
 
-	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, color32 col )
+	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
 		: cmdBuf{ cmdBuff }
 	{
 		assert( cmdBuf );
 
 		VkDebugUtilsLabelEXT dbgLabel = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
 		dbgLabel.pLabelName = labelName;
-		assert( std::size( dbgLabel.color ) == 4 );
-		GetCol32AsFloat( col, dbgLabel.color );
+		dbgLabel.color[ 0 ] = col.r;
+		dbgLabel.color[ 1 ] = col.g;
+		dbgLabel.color[ 2 ] = col.b;
+		dbgLabel.color[ 3 ] = col.a;
 		vkCmdBeginDebugUtilsLabelEXT( cmdBuf, &dbgLabel );
 	}
 	inline ~vk_label()
@@ -290,6 +233,7 @@ struct vk_label
 };
 
 // TODO: separate GPU and logical device ?
+// TODO: physical_device_info ?
 struct device
 {
 	VkPhysicalDeviceProperties gpuProps;
@@ -459,11 +403,10 @@ static device dc;
 
 // TODO: move to memory section
 // TODO: pass VkPhysicalDevice differently
-// TODO: make an allocator and let it manage arenas and dedicated allocs
 // TODO: multi gpu ?
 // TODO: multi threaded
 // TODO: better alloc strategy ?
-// TODO: alloc vector for debug only
+// TODO: alloc vector for debug only ?
 // TODO: check alloc num ?
 // TODO: recycle memory ?
 // TODO: redesign ?
@@ -471,13 +414,13 @@ static device dc;
 struct vk_mem_view
 {
 	VkDeviceMemory	device;
-	void* host = 0;
+	void*			host = 0;
 };
 
 struct vk_allocation
 {
 	VkDeviceMemory  deviceMem;
-	u8* hostVisible = 0;
+	u8*				hostVisible = 0;
 	u64				dataOffset;
 };
 
@@ -536,7 +479,7 @@ VkTryAllocDeviceMem(
 	u64										size,
 	u32										memTypeIdx,
 	VkMemoryAllocateFlags					allocFlags,
-	const VkMemoryDedicatedAllocateInfo* dedicated
+	const VkMemoryDedicatedAllocateInfo*	dedicated
 ){
 	VkMemoryAllocateFlagsInfo allocFlagsInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
 	allocFlagsInfo.pNext = dedicated;
@@ -700,7 +643,7 @@ struct buffer_data
 	VkDeviceMemory	mem = 0;
 	u64				size = 0;
 	//u64				offset = 0;
-	u8* hostVisible = 0;
+	u8*				hostVisible = 0;
 	u64				devicePointer = 0;
 	u32				magicId;
 };
@@ -900,7 +843,7 @@ VkCreateAllocBindImage(
 	VkImageUsageFlags	usageFlags,
 	VkExtent3D			extent,
 	u32					mipCount,
-	vk_mem_arena* vkArena,
+	vk_mem_arena*		vkArena,
 	VkImageType			vkImgType = VK_IMAGE_TYPE_2D,
 	VkPhysicalDevice	gpu = dc.gpu
 ){
@@ -1103,6 +1046,8 @@ VkMakeImageBarrier2(
 	return barrier;
 }
 
+
+
 // TODO: add VkFramebuffer here ?
 struct virtual_frame
 {
@@ -1120,7 +1065,7 @@ static inline virtual_frame VkCreateVirtualFrame(
 	VkDevice		vkDevice,
 	u32				exectutionQueueIdx,
 	u32				bufferSize,
-	vk_mem_arena& arena
+	vk_mem_arena&	arena
 ){
 	virtual_frame vrtFrame = {};
 
@@ -1318,7 +1263,7 @@ struct render_context
 
 	VkSampler		pointMinSampler;
 	VkSampler		linearMinSampler;
-	VkSampler		linearTextureSampler;
+	VkSampler		pbrTexSampler;
 	image			depthTarget;
 	image			colorTarget;
 
@@ -1386,7 +1331,7 @@ inline static VkFramebuffer
 VkMakeFramebuffer(
 	VkDevice		vkDevice,
 	VkRenderPass	vkRndPass,
-	VkImageView* attachements,
+	VkImageView*	attachements,
 	u32				attachementCount,
 	u32				width,
 	u32				height
@@ -1570,6 +1515,7 @@ static VkDebugUtilsMessengerEXT	vkDbgMsg = 0;
 
 static VkSurfaceKHR				vkSurf = 0;
 
+// TODO: where to place these ?
 extern HINSTANCE hInst;
 extern HWND hWnd;
 
@@ -1980,116 +1926,13 @@ struct vk_gfx_pipeline_state
 	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT;
 	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-	b32					blendCol = colorBlending;
-	b32					depthWrite = VK_TRUE;
-	b32					depthTestEnable = VK_TRUE;
+	bool				blendCol = colorBlending;
+	bool				depthWrite = VK_TRUE;
+	bool				depthTestEnable = VK_TRUE;
 };
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
 // TODO: entry point name
-VkPipeline VkMakeGfxPipeline(
-	VkDevice			vkDevice,
-	VkPipelineCache		vkPipelineCache,
-	VkRenderPass		vkRndPass,
-	VkPipelineLayout	vkPipelineLayout,
-	VkShaderModule		vs,
-	VkShaderModule		fs,
-	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL,
-	b32					blendCol = colorBlending,
-	b32					depthWrite = true,
-	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT,
-	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
-){
-	VkPipelineShaderStageCreateInfo shaderStagesInfo[ 2 ] = {};
-	shaderStagesInfo[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	shaderStagesInfo[ 0 ].stage = VK_SHADER_STAGE_VERTEX_BIT;
-	shaderStagesInfo[ 0 ].module = vs;
-	shaderStagesInfo[ 0 ].pName = SHADER_ENTRY_POINT;
-	shaderStagesInfo[ 1 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	shaderStagesInfo[ 1 ].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-	shaderStagesInfo[ 1 ].module = fs;
-	shaderStagesInfo[ 1 ].pName = SHADER_ENTRY_POINT;
-
-
-	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-	inAsmStateInfo.topology = primTopology;
-	inAsmStateInfo.primitiveRestartEnable = 0;
-
-	VkPipelineViewportStateCreateInfo viewportInfo = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
-	viewportInfo.viewportCount = 1;
-	viewportInfo.scissorCount = 1;
-
-	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-
-	VkPipelineDynamicStateCreateInfo dynamicStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-	dynamicStateInfo.dynamicStateCount = std::size( dynamicStates );
-	dynamicStateInfo.pDynamicStates = dynamicStates;
-
-	VkPipelineRasterizationStateCreateInfo rasterInfo = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
-	rasterInfo.depthClampEnable = 0;
-	rasterInfo.rasterizerDiscardEnable = 0;
-	rasterInfo.polygonMode = polyMode;
-	rasterInfo.cullMode = cullFlags;
-	rasterInfo.frontFace = frontFace;
-	rasterInfo.depthBiasEnable = 0;
-	rasterInfo.lineWidth = 1.0f;
-
-	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-	depthStencilState.depthTestEnable = VK_TRUE;
-	depthStencilState.depthWriteEnable = depthWrite;
-	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER;
-	depthStencilState.depthBoundsTestEnable = VK_TRUE;
-	depthStencilState.stencilTestEnable = 0;
-	depthStencilState.minDepthBounds = 0;
-	depthStencilState.maxDepthBounds = 1.0f;
-
-	VkPipelineColorBlendAttachmentState blendConfig = {};
-	blendConfig.blendEnable = blendCol;
-	blendConfig.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-	blendConfig.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	blendConfig.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.colorWriteMask = 
-		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-	colorBlendStateInfo.logicOpEnable = 0;
-	colorBlendStateInfo.attachmentCount = 1;
-	colorBlendStateInfo.pAttachments = &blendConfig;
-
-
-	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-	pipelineInfo.stageCount = std::size( shaderStagesInfo );
-	pipelineInfo.pStages = shaderStagesInfo;
-
-	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
-	pipelineInfo.pInputAssemblyState = &inAsmStateInfo;
-	pipelineInfo.pTessellationState = 0;
-	pipelineInfo.pViewportState = &viewportInfo;
-	pipelineInfo.pRasterizationState = &rasterInfo;
-	pipelineInfo.pMultisampleState = &multisamplingInfo;
-	pipelineInfo.pDepthStencilState = &depthStencilState;
-	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
-	pipelineInfo.pDynamicState = &dynamicStateInfo;
-	pipelineInfo.layout = vkPipelineLayout;
-	pipelineInfo.renderPass = vkRndPass;
-	pipelineInfo.subpass = 0;
-	pipelineInfo.basePipelineHandle = 0;
-	pipelineInfo.basePipelineIndex = -1;
-
-	VkPipeline vkGfxPipeline;
-	VK_CHECK( vkCreateGraphicsPipelines( vkDevice, vkPipelineCache, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
-
-	return vkGfxPipeline;
-}
-
 VkPipeline VkMakeGfxPipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,
@@ -2191,8 +2034,8 @@ VkPipeline VkMakeComputePipeline(
 	VkPipelineLayout	vkPipelineLayout,
 	VkShaderModule		cs,
 	vk_specializations	consts,
-	const char*			pEntryPointName = SHADER_ENTRY_POINT )
-{
+	const char*			pEntryPointName = SHADER_ENTRY_POINT 
+){
 	std::vector<VkSpecializationMapEntry> specializations;
 	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
 
@@ -2329,7 +2172,7 @@ GetVkImageInfo(
 
 	return imgInfo;
 }
-inline VkImageCreateInfo GetVkImageInfoFromMetadata( const image_metadata& meta, VkImageUsageFlags	usageFlags )
+inline VkImageCreateInfo GetVkImageInfoFromMetadata( const image_metadata& meta, VkImageUsageFlags usageFlags )
 {
 	VkImageCreateInfo imgInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
 	imgInfo.imageType = GetVkImgType( meta.type );
@@ -2374,18 +2217,13 @@ inline u8 FloatToSnorm8( float e )
 	return std::round( 127.5f + e * 127.5f );
 }
 
+#define HTVK_NO_SAMPLER_REDUCTION VK_SAMPLER_REDUCTION_MODE_MAX_ENUM
 
-
-// TODO:
-struct sampler_desc
-{
-
-};
-
+// TODO: use reduction ?
+// TODO: AddrMOde ?
 inline VkSampler VkMakeSampler(
 	VkDevice				vkDevice,
-	float					lodCount = 1.0f,
-	VkSamplerReductionMode	reductionMode = VK_SAMPLER_REDUCTION_MODE_MAX_ENUM,
+	VkSamplerReductionMode	reductionMode = HTVK_NO_SAMPLER_REDUCTION,
 	VkFilter				filter = VK_FILTER_LINEAR,
 	VkSamplerAddressMode	addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
 	VkSamplerMipmapMode		mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST
@@ -2402,9 +2240,10 @@ inline VkSampler VkMakeSampler(
 	samplerInfo.addressModeV = addressMode;
 	samplerInfo.addressModeW = addressMode;
 	samplerInfo.minLod = 0;
-	samplerInfo.maxLod = ( lodCount == 1.0f ) ? VK_LOD_CLAMP_NONE : lodCount;
+	samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
 	samplerInfo.maxAnisotropy = 1.0f;
 	samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+	samplerInfo.unnormalizedCoordinates = VK_FALSE;
 
 	VkSampler sampler;
 	VK_CHECK( vkCreateSampler( vkDevice, &samplerInfo, 0, &sampler ) );
@@ -3014,7 +2853,7 @@ constexpr char* shaderFiles[] =
 };
 
 
-// TODO: use instancing ?
+// TODO: use instancing 4 drawing ?
 struct debug_context
 {
 	buffer_data dbgLinesBuff;
@@ -3140,7 +2979,8 @@ TrnasformBoxVertices(
 
 static std::vector<dbg_vertex> dbgLineGeomCache;
 
-static buffer_data occlusionDbgBuff;
+static mat4 localToWorld;
+
 static buffer_data screenspaceBoxBuff;
 // TODO: revisit remake improve
 static inline void VkUploadResources( VkCommandBuffer cmdBuf )
@@ -3234,7 +3074,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	std::vector<instance_desc> instDesc = SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRad );
 	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad );
 
-
+	localToWorld = instDesc[ 0 ].localToWorld;
 	//// TODO: move from here 
 	if constexpr( dbgDraw )
 	{
@@ -3353,11 +3193,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 											   &vkRscArena );
 
-	occlusionDbgBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( occlusion_debug ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-												&vkRscArena );
-	VkDbgNameObj( occlusionDbgBuff.hndl, dc.device, "Buff_Occlusion_Dbg" );
-
 	screenspaceBoxBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( dbg_vertex ) * 8,
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 												  &vkRscArena );
@@ -3462,10 +3297,10 @@ static void VkBackendInit()
 	tonemapCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, 
 												{ &shaders[ COMP_TONE_GAMMA ] } );
 
-
+	vk_gfx_pipeline_state opaqueState = {};
 	rndCtx.gfxPipeline = 
 		VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, 
-						   shaders[ VERT_BINDLESS ].module, shaders[ FRAG_PBR ].module );
+						   shaders[ VERT_BINDLESS ].module, shaders[ FRAG_PBR ].module, {} );
 	rndCtx.compPipeline =
 		VkMakeComputePipeline( dc.device, 0, drawcullCompProgram.pipeLayout,
 							   shaders[ COMP_CULL ].module, { OBJ_CULL_WORKSIZE,occlusionCullingPass } );
@@ -3609,7 +3444,6 @@ CullPass(
 		depthPyramidInfo,
 		Descriptor( drawCmdDbgBuff ),
 		Descriptor( drawCountDbgBuff ),
-		Descriptor( occlusionDbgBuff ),
 		Descriptor( screenspaceBoxBuff )
 	};
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
@@ -4024,10 +3858,10 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 					VkMakeImgView( dc.device, rndCtx.depthPyramid.img, rndCtx.depthPyramid.nativeFormat, i, 1 );
 			}
 
+			// TODO: no sampler reduction for cull shader ?
 			rndCtx.pointMinSampler = 
-				VkMakeSampler( dc.device, rndCtx.depthPyramid.mipCount, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_NEAREST );
-			rndCtx.linearMinSampler = 
-				VkMakeSampler( dc.device, rndCtx.depthPyramid.mipCount, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR );
+				VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
+			rndCtx.linearMinSampler = VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR );
 		}
 
 		if( !rndCtx.colorTarget.img )
@@ -4090,9 +3924,8 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 		descUpdates.push_back( bdaUpdate );
 	
 	
-		rndCtx.linearTextureSampler =
-			VkMakeSampler( dc.device, 1, VK_SAMPLER_REDUCTION_MODE_MAX_ENUM, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
-		VkDescriptorImageInfo samplerDesc = { rndCtx.linearTextureSampler };
+		rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+		VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
 		VkWriteDescriptorSet samplerUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		samplerUpdate.dstSet = globBindlessDesc.set;
 		samplerUpdate.dstBinding = VK_GLOBAL_SLOT_SAMPLER;
@@ -4379,6 +4212,7 @@ static void VkBackendKill()
 	//SysDllUnload( VK_DLL );
 }
 
+#undef HTVK_NO_SAMPLER_REDUCTION
 #undef VK_APPEND_DESTROYER
 #undef VK_CHECK
 

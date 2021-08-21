@@ -465,8 +465,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	float camSpeed = 1.5f;
 	float moveThreshold = 0.0001f;
 
-	float zNear = 0.5f;
-	float drawDistance = 200.0f;
+	constexpr float zNear = 0.5f;
 	XMMATRIX proj = PerspRevInfFovLH( XMConvertToRadians( 70.0f ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
 	// NOTE: pitch must be in [-pi/2,pi/2]
 	float pitch = 0;

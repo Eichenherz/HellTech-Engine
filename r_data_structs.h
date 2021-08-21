@@ -5,7 +5,6 @@
 #include "core_types.h"
 
 // TODO: remove
-
 #undef __clang__
 #define _XM_NO_XMVECTOR_OVERLOADS_
 #include <DirectXMath.h>
