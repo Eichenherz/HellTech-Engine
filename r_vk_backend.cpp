@@ -1261,8 +1261,7 @@ struct render_context
 	VkRenderPass	renderPass;
 	VkRenderPass	render2ndPass;
 
-	VkSampler		pointMinSampler;
-	VkSampler		linearMinSampler;
+	VkSampler		quadMinSampler;
 	VkSampler		pbrTexSampler;
 	image			depthTarget;
 	image			colorTarget;
@@ -3541,7 +3540,7 @@ DepthPyramidPass(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
 	u64						mipLevelsCount,
-	VkSampler				linearMinSampler,
+	VkSampler				quadMinSampler,
 	VkImageView				( &depthMips )[ MAX_MIP_LEVELS ],
 	const image&			depthTarget,
 	const vk_program&		program 
@@ -3575,7 +3574,7 @@ DepthPyramidPass(
 
 	std::vector<vk_descriptor_info> depthPyramidDescs( MAX_MIP_LEVELS + 3 );
 	depthPyramidDescs[ 0 ] = { 0, depthTarget.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };;
-	depthPyramidDescs[ 1 ] = { linearMinSampler, 0, VK_IMAGE_LAYOUT_GENERAL };
+	depthPyramidDescs[ 1 ] = { quadMinSampler, 0, VK_IMAGE_LAYOUT_GENERAL };
 	depthPyramidDescs[ 2 ] = { depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size };
 	for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
 	{
@@ -3858,10 +3857,8 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 					VkMakeImgView( dc.device, rndCtx.depthPyramid.img, rndCtx.depthPyramid.nativeFormat, i, 1 );
 			}
 
-			// TODO: no sampler reduction for cull shader ?
-			rndCtx.pointMinSampler = 
-				VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-			rndCtx.linearMinSampler = VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR );
+			rndCtx.quadMinSampler = 
+				VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
 		}
 
 		if( !rndCtx.colorTarget.img )
@@ -4020,7 +4017,7 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 	//				  clearVals,
 	//				  gfxOpaqueProgram );
 	
-	CullPass( thisVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, rndCtx.depthPyramid, rndCtx.pointMinSampler );
+	CullPass( thisVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
 	
 	VkClearValue clearVals[ 2 ] = {};
 	//clearVals[ 0 ].color = {};
@@ -4083,7 +4080,7 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 		DepthPyramidPass( thisVFrame.cmdBuf,
 						  rndCtx.compHiZPipeline,
 						  rndCtx.depthPyramid.mipCount,
-						  rndCtx.pointMinSampler,
+						  rndCtx.quadMinSampler,
 						  rndCtx.depthPyramidChain,
 						  rndCtx.depthTarget,
 						  depthPyramidCompProgram );
@@ -4093,7 +4090,7 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 		DepthPyramidMultiPass(
 			thisVFrame.cmdBuf,
 			rndCtx.compHiZPipeline,
-			rndCtx.linearMinSampler,
+			rndCtx.quadMinSampler,
 			rndCtx.depthPyramidChain,
 			rndCtx.depthTarget,
 			rndCtx.depthPyramid,

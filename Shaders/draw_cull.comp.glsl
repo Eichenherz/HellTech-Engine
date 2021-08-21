@@ -233,18 +233,11 @@ void main()
             maxXY = max(clipPos.xy, maxXY);
         }
 
-		vec4 boxUVs = vec4( minXY, maxXY );
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
 		float mip = min( floor( log2( max( size.x, size.y ) ) ), depthPyrLodCount );
-		vec4 depth = vec4(
-				textureLod( minQuadDepthPyramid, boxUVs.xy, mip ).x,
-				textureLod( minQuadDepthPyramid, boxUVs.zy, mip ).x,
-				textureLod( minQuadDepthPyramid, boxUVs.xw, mip ).x,
-				textureLod( minQuadDepthPyramid, boxUVs.zw, mip ).x );
-		visible = visible && any( lessThanEqual( depth * perspZ, vec4( 1.0f ) ) );
-
-		//float minDepth = min( min( min( depth.x, depth.y ), depth.z ), depth.w );
-		//visible = visible && ( 1.0f / perspZ >= minDepth );
+		
+		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mip ).x;
+		visible = visible && ( minDepth * perspZ <= 1.0f );
 		
 	}
 
