@@ -42,13 +42,14 @@ constexpr u32 SCREEN_WIDTH = 960;
 constexpr u32 SCREEN_HEIGHT = 600;
 constexpr u64 SYS_MEM_BYTES = 1 * GB;
 
+// TODO: remove extern ? 
 //////////////////////////////////////
 // ENGINE -> PLATFORM
 //////////////////////////////////////
 void			CoreLoop();
 
 extern void		VkBackendInit();
-extern void		HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float dt );
+extern void		HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt );
 extern void		VkBackendKill();
 
 //////////////////////////////////////

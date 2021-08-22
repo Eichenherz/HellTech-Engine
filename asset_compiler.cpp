@@ -755,7 +755,7 @@ static void AssembleMeshAndOptimize(
 
 // TODO: better more efficient copy
 // TODO: better binary file design ?
-static void CompileGlbAssetToBinary( 
+void CompileGlbAssetToBinary( 
 	const std::vector<u8>&	glbData, 
 	std::vector<u8>&		drakAsset
 ){

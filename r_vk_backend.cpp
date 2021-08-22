@@ -91,12 +91,12 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 		default: return "VK_UNKNOWN_INTERNAL_ERROR";
 	}
 }
-inline VkResult VkResFromStatement( b32 statement )
+inline VkResult VkResFromStatement( bool statement )
 {
 	return !statement ? VK_SUCCESS : VkResult( int( 0x8FFFFFFF ) );
 }
 // TODO: keep ?
-#define VK_INTERNAL_ERROR( vk ) VkResFromStatement( b32( vk ) )
+#define VK_INTERNAL_ERROR( vk ) VkResFromStatement( bool( vk ) )
 
 #define VK_CHECK( vk )																\
 do{																					\
@@ -122,18 +122,18 @@ constexpr u64 MLET_CULL_WORKSIZE = 256;
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
-static b32 colorBlending = 0;
-static b32 occlusionCullingPass = 1;
+static bool colorBlending = 0;
+static bool occlusionCullingPass = 1;
 //==============================================//
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
-constexpr b32 multiShaderDepthPyramid = 1;
+constexpr bool multiShaderDepthPyramid = 1;
 // TODO: enable gfx debug outside of VS Debug
-constexpr b32 vkValidationLayerFeatures = 1;
-constexpr b32 worldLeftHanded = 1;
-constexpr b32 objectNaming = 1;
+constexpr bool vkValidationLayerFeatures = 1;
+constexpr bool worldLeftHanded = 1;
+constexpr bool objectNaming = 1;
 // TODO: cvar or constexpr ?
-constexpr b32 dbgDraw = true;
+constexpr bool dbgDraw = true;
 //==============================================//
 
 template<typename VKH>
@@ -295,7 +295,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 
 		for( u64 i = 0; i < std::size( ENABLED_DEVICE_EXTS ); ++i )
 		{
-			b32 foundExt = false;
+			bool foundExt = false;
 			for( u64 j = 0; j < extsNum; ++j )
 			{
 				if( !strcmp( ENABLED_DEVICE_EXTS[ i ], availableExts[ j ].extensionName ) )
@@ -359,7 +359,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 
 	float queuePriorities = 1.0f;
 	VkDeviceQueueCreateInfo queueInfos[ 3 ] = {};
-	for( u64 qi = 0; qi < std::size( queueInfos ); ++qi )
+	for( u32 qi = 0; qi < std::size( queueInfos ); ++qi )
 	{
 		queueInfos[ qi ].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 		queueInfos[ qi ].queueFamilyIndex = qi;
@@ -439,7 +439,7 @@ struct vk_mem_arena
 
 static vk_mem_arena vkRscArena, vkStagingArena, vkAlbumArena, vkHostComArena, vkDbgArena;
 
-inline b32 IsPowOf2( u64 addr )
+inline bool IsPowOf2( u64 addr )
 {
 	return !( addr & ( addr - 1 ) );
 }
@@ -459,10 +459,10 @@ VkFindMemTypeIdx(
 	for( u64 memIdx = 0; memIdx < pVkMemProps->memoryTypeCount; ++memIdx )
 	{
 		u32 memTypeBits = ( 1 << memIdx );
-		b32 isRequiredMemType = memTypeBitsRequirement & memTypeBits;
+		bool isRequiredMemType = memTypeBitsRequirement & memTypeBits;
 
 		VkMemoryPropertyFlags props = pVkMemProps->memoryTypes[ memIdx ].propertyFlags;
-		b32 hasRequiredProps = ( props & requiredProps ) == requiredProps;
+		bool hasRequiredProps = ( props & requiredProps ) == requiredProps;
 		if( isRequiredMemType && hasRequiredProps ) return (i32) memIdx;
 	}
 
@@ -745,8 +745,8 @@ VkCreateAllocBindBuffer(
 	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
 	dedicatedAllocateInfo.buffer = buffMemReqs2.buffer;
 
-	//b32 dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation; 
-	b32 dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation;
+	//bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation; 
+	bool dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation;
 
 	vk_allocation bufferMem = VkArenaAlignAlloc( vkArena,
 												 memReqs2.memoryRequirements.size,
@@ -804,7 +804,7 @@ VkCreateAllocBindImage(
 	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
 	dedicatedAllocateInfo.image = imgReqs2.image;
 
-	b32 dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
+	bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
 
 #ifdef _VK_DEBUG_
 	VkPhysicalDeviceMemoryProperties memProps;
@@ -885,7 +885,7 @@ VkCreateAllocBindImage(
 	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
 	dedicatedAllocateInfo.image = imgReqs2.image;
 
-	b32 dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
+	bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
 
 #ifdef _VK_DEBUG_
 	VkPhysicalDeviceMemoryProperties memProps;
@@ -1284,7 +1284,7 @@ VkMakeRenderPass(
 	VkDevice	vkDevice,
 	VkFormat	colorFormat,
 	VkFormat	depthFormat,
-	b32			overDraw
+	bool			overDraw
 ){
 	VkAttachmentReference colorAttachement = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
 	VkAttachmentReference depthAttachement = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
@@ -1433,7 +1433,7 @@ inline static vk_instance VkMakeInstance()
 	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, std::data( givenExts ) ) );
 	for( u32 i = 0; i < std::size( ENABLED_INST_EXTS ); ++i )
 	{
-		b32 foundExt = false;
+		bool foundExt = false;
 		for( u32 j = 0; j < vkExtsNum; ++j )
 			if( !strcmp( ENABLED_INST_EXTS[ i ], givenExts[ j ].extensionName ) )
 			{
@@ -1449,7 +1449,7 @@ inline static vk_instance VkMakeInstance()
 	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, std::data( layersAvailable ) ) );
 	for( u32 i = 0; i < std::size( LAYERS ); ++i )
 	{
-		b32 foundLayer = false;
+		bool foundLayer = false;
 		for( u32 j = 0; j < layerCount; ++j )
 			if( !strcmp( LAYERS[ i ], layersAvailable[ j ].layerName ) )
 			{
@@ -1687,9 +1687,9 @@ static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 template<typename T>
 inline VkWriteDescriptorSet VkMakeBindlessGlobalUpdate( 
 	const T*					descInfo, 
-	u64							descInfoCount,
+	u32							descInfoCount,
 	vk_global_descriptor_slot	bindingSlot,
-	u64							dstAarryElem = 0,
+	u32							dstAarryElem = 0,
 	const vk_global_descriptor& desc = globBindlessDesc 
 ){
 	VkWriteDescriptorSet update = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
@@ -2394,7 +2394,7 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 		vtxData[ i ].snorm8octNy = FloatToSnorm8( n.y );
 	}
 }
-constexpr void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
+static void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
 {
 	constexpr float w = 0.5f;
 	constexpr float h = 0.5f;
@@ -2562,7 +2562,7 @@ inline const T& GetResourceFromHndl( hndl32<T> h, const resource_container<T>& b
 template<typename T>
 inline hndl32<T> PushResourceToContainer( T& rsc, resource_container<T>& buf )
 {
-	u64 magicCounter = buf.magicCounter++;
+	u32 magicCounter = buf.magicCounter++;
 	rsc.magicId = magicCounter;
 	buf.rsc.push_back( rsc );
 
@@ -2757,7 +2757,7 @@ SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrl
 }
 inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float sceneRadius)
 {
-	constexpr b32 drawLightDbgSphere = 0;
+	constexpr bool drawLightDbgSphere = 0;
 
 	std::vector<light_data> lights( lightCount );
 	for( light_data& l : lights )
@@ -2838,7 +2838,7 @@ enum shader_idx : u8
 	FRAG_NORMAL_COL
 };
 
-constexpr char* shaderFiles[] =
+constexpr const char* shaderFiles[] =
 {
 	"Shaders/shdr.vert.spv",
 	"Shaders/box_debug.vert.spv",
@@ -3262,7 +3262,7 @@ DebugDrawPass(
 
 
 // TODO: no structured binding
-static void VkBackendInit()
+void VkBackendInit()
 {
 	auto [vkInst, vkDbgMsg] = VkMakeInstance();
 
@@ -3799,7 +3799,7 @@ ToneMappingWithSrgb(
 
 // TODO: batch barriers
 
-static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float dt )
+void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 {
 	using namespace DirectX;
 	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
@@ -3885,7 +3885,7 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 	vkBeginCommandBuffer( thisVFrame.cmdBuf, &cmdBufBegInfo );
 
 	// TODO: async, multi-threaded, etc
-	static b32 rescUploaded = 0;
+	static bool rescUploaded = 0;
 	if( !rescUploaded )
 	{
 		VkUploadResources( thisVFrame.cmdBuf );
@@ -3953,7 +3953,7 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 		}
 	}
 	
-	static b32 clearedBuffers = 0;
+	static bool clearedBuffers = 0;
 	if( !clearedBuffers )
 	{
 		vkCmdFillBuffer( thisVFrame.cmdBuf, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
@@ -4190,7 +4190,7 @@ static void HostFrames( const global_data* globs, b32 bvDraw, b32 freeCam, float
 	
 }
 
-static void VkBackendKill()
+void VkBackendKill()
 {
 	// NOTE: SHOULDN'T need to check if(VkObj) can't create -> app fail
 	assert( dc.device );

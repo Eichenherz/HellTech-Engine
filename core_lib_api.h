@@ -29,7 +29,7 @@ struct temp_arena
 };
  
 extern u64	FwdAlign( u64 addr, u64 alignment );
-b32			MemSysInit( u8* baseAddr, u64 size );
+bool		MemSysInit( u8* baseAddr, u64 size );
 void		ArenaInit( mem_arena* a, u8* backBuffer, u64 backBuffLen );
 u8*			LinearAlignAlloc( mem_arena* a, u64 size, u64 alignment = DEFAULT_ALIGNMNET );
 void		LinearReset( mem_arena* a );

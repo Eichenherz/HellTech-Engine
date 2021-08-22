@@ -283,11 +283,13 @@ inline u32 CopmuteColorIndicesBc1_SIMD( const u8* colorBlock, i32 maxCol, i32 mi
 	temp0 = _mm_packus_epi16( temp0, {} );
 	color3 = _mm_shuffle_epi32( temp0, R_SHUFFLE_D( 0, 1, 0, 1 ) );
 
+	// TODO: use other instruction ?
 	for( int i = 1; i >= 0; i-- )
 	{
 		// Load block
 		temp3 = _mm_shuffle_epi32( blockA[ i ], R_SHUFFLE_D( 0, 2, 1, 3 ) );
-		temp5 = _mm_shuffle_ps( blockA[ i ], _mm_setzero_ps(), R_SHUFFLE_D( 2, 3, 0, 1 ) );
+		//temp5 = _mm_shuffle_ps( blockA[ i ], _mm_setzero_ps(), R_SHUFFLE_D( 2, 3, 0, 1 ) );
+		temp5 = _mm_castps_si128( _mm_shuffle_ps( _mm_castsi128_ps( blockA[ i ] ), _mm_setzero_ps(), R_SHUFFLE_D( 2, 3, 0, 1 ) ) );
 		temp5 = _mm_shuffle_epi32( temp5, R_SHUFFLE_D( 0, 2, 1, 3 ) );
 
 		temp0 = _mm_sad_epu8( temp3, color0 );
@@ -308,7 +310,8 @@ inline u32 CopmuteColorIndicesBc1_SIMD( const u8* colorBlock, i32 maxCol, i32 mi
 
 		// Load block
 		temp4 = _mm_shuffle_epi32( blockB[ i ], R_SHUFFLE_D( 0, 2, 1, 3 ) );
-		temp5 = _mm_shuffle_ps( blockB[ i ], _mm_setzero_ps(), R_SHUFFLE_D( 2, 3, 0, 1 ) );
+		//temp5 = _mm_shuffle_ps( blockB[ i ], _mm_setzero_ps(), R_SHUFFLE_D( 2, 3, 0, 1 ) );
+		temp5 = _mm_castps_si128( _mm_shuffle_ps( _mm_castsi128_ps( blockB[ i ] ), _mm_setzero_ps(), R_SHUFFLE_D( 2, 3, 0, 1 ) ) );
 		temp5 = _mm_shuffle_epi32( temp5, R_SHUFFLE_D( 0, 2, 1, 3 ) );
 
 		temp6 = _mm_sad_epu8( temp4, color0 );

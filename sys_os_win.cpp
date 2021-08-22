@@ -114,7 +114,7 @@ static inline void SysDbgPrint( const char* str )
 {
 	OutputDebugString( str );
 }
-static inline void SysErrMsgBox( const char* str )
+inline void SysErrMsgBox( const char* str )
 {
 	UINT behaviour = MB_OK | MB_ICONERROR | MB_APPLMODAL;
 	MessageBox( 0, str, 0, behaviour );
@@ -139,7 +139,7 @@ static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
 	DWORD flagsAndAttrs = FILE_ATTRIBUTE_READONLY;
 	return CreateFile( fileName, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
 }
-static inline std::vector<u8> SysReadFile( const char* fileName )
+inline std::vector<u8> SysReadFile( const char* fileName )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( fileName );
 	if( hfile == INVALID_HANDLE_VALUE ) return{};
@@ -156,20 +156,22 @@ static inline std::vector<u8> SysReadFile( const char* fileName )
 	return fileData;
 }
 // TODO: can be any kind of handle
-static inline u64 SysGetFileTimestamp( const char* filename )
+inline u64 SysGetFileTimestamp( const char* filename )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( filename );
 	FILETIME fileTime = {};
 	WIN_CHECK( !GetFileTime( hfile, 0, 0, &fileTime ) );
 
-	ULARGE_INTEGER timestamp = { .LowPart = fileTime.dwLowDateTime, .HighPart = fileTime.dwHighDateTime };
+	ULARGE_INTEGER timestamp = {};
+	timestamp.LowPart = fileTime.dwLowDateTime;
+	timestamp.HighPart = fileTime.dwHighDateTime;
 
 	CloseHandle( hfile );
 
 	return u64( timestamp.QuadPart );
 }
 // TODO: might not want to crash when file can't be written/read
-static inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
+inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
 {
 	DWORD accessMode = GENERIC_WRITE;
 	DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
@@ -227,7 +229,7 @@ struct cvar_buffer
 
 };
 
-static b32 frustumCullDbg = 0;
+static bool frustumCullDbg = 0;
 
 constexpr u16 VK_W = 0x57;
 constexpr u16 VK_A = 0x41;
@@ -286,22 +288,22 @@ struct mouse
 
 struct keyboard
 {
-	b32 w, a, s, d;
-	b32 c;
-	b32 space, lctrl;
-	b32 f, o;
+	bool w, a, s, d;
+	bool c;
+	bool space, lctrl;
+	bool f, o;
 };
 
-static inline u64	SysDllLoad( const char* name )
+inline u64	SysDllLoad( const char* name )
 {
 	return (u64) LoadLibrary( name );
 }
-static inline void	SysDllUnload( u64 hDll )
+inline void	SysDllUnload( u64 hDll )
 {
 	if( !hDll ) return;
 	WIN_CHECK( !FreeLibrary( (HMODULE) hDll ) );
 }
-static inline void*	SysGetProcAddr( u64 hDll, const char* procName )
+inline void*	SysGetProcAddr( u64 hDll, const char* procName )
 {
 	return (void*)GetProcAddress( (HMODULE) hDll, procName );
 }
@@ -319,7 +321,7 @@ static inline u64	SysTicks()
 	return double( tick.QuadPart );
 }
 // TODO: remake
-static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
+static inline bool	SysPumpUserInput( mouse* m, keyboard* kbd, bool insideWnd )
 {
 	MSG msg;
 	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) )
@@ -344,9 +346,9 @@ static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 
 			if( ri.header.dwType == RIM_TYPEKEYBOARD )
 			{
-				b32 isPressed = !( ri.data.keyboard.Flags & RI_KEY_BREAK );
-				b32 isE0 = ( ri.data.keyboard.Flags & RI_KEY_E0 );
-				b32 isE1 = ( ri.data.keyboard.Flags & RI_KEY_E1 );
+				bool isPressed = !( ri.data.keyboard.Flags & RI_KEY_BREAK );
+				bool isE0 = ( ri.data.keyboard.Flags & RI_KEY_E0 );
+				bool isE1 = ( ri.data.keyboard.Flags & RI_KEY_E1 );
 
 				if( ri.data.keyboard.VKey == VK_W ) kbd->w = isPressed;
 				if( ri.data.keyboard.VKey == VK_A ) kbd->a = isPressed;
@@ -355,8 +357,8 @@ static inline b32	SysPumpUserInput( mouse* m, keyboard* kbd, b32 insideWnd )
 				if( ri.data.keyboard.VKey == VK_C ) kbd->c = isPressed;
 				if( ri.data.keyboard.VKey == VK_SPACE ) kbd->space = isPressed;
 				if( ri.data.keyboard.VKey == VK_CONTROL && !isE0 ) kbd->lctrl = isPressed;
-				if( ( ri.data.keyboard.VKey == VK_F ) && isPressed ) kbd->f = ~kbd->f;
-				if( ( ri.data.keyboard.VKey == VK_O ) && isPressed ) kbd->o = ~kbd->o;
+				if( ( ri.data.keyboard.VKey == VK_F ) && isPressed ) kbd->f = !kbd->f;
+				if( ( ri.data.keyboard.VKey == VK_O ) && isPressed ) kbd->o = !kbd->o;
 
 			}
 			if( ( ri.header.dwType == RIM_TYPEMOUSE ) && insideWnd )
