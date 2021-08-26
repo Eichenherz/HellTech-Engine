@@ -338,11 +338,8 @@ static inline bool	SysPumpUserInput( mouse* m, keyboard* kbd, bool insideWnd )
 			RAWINPUT ri = {};
 			u32 rawDataSize = sizeof( ri );
 			// TODO: how to handle GetRawInputData errors ?
-			if( GetRawInputData( (HRAWINPUT) msg.lParam,
-								 RID_INPUT,
-								 &ri,
-								 &rawDataSize,
-								 sizeof( RAWINPUTHEADER ) ) == (UINT) -1 ) continue;
+			UINT res = GetRawInputData( ( HRAWINPUT )msg.lParam, RID_INPUT, &ri, &rawDataSize, sizeof( RAWINPUTHEADER ) );
+			if( res == UINT( -1 ) ) continue;
 
 			if( ri.header.dwType == RIM_TYPEKEYBOARD )
 			{
@@ -410,7 +407,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
 
-	assert( XMVerifyCPUSupport() );
+	WIN_CHECK( !XMVerifyCPUSupport() );
 
 	SysOsCreateConsole();
 	GetSystemInfo( &sysInfo );
@@ -444,7 +441,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
 
-	RAWINPUTDEVICE hid[ 2 ];
+	RAWINPUTDEVICE hid[ 2 ] = {};
 	hid[ 0 ].usUsage = HID_USAGE_GENERIC_MOUSE;
 	hid[ 0 ].usUsagePage = HID_USAGE_PAGE_GENERIC;
 	hid[ 0 ].hwndTarget = hWnd;

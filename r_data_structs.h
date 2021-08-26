@@ -50,6 +50,7 @@ const float PI = 3.14159265359;
 
 #endif
 
+// TODO: use mat4x3
 struct global_data
 {
 	mat4	proj;
@@ -59,8 +60,8 @@ struct global_data
 	float	pad0;
 	vec3	camViewDir;
 	float	pad1;
-	//vec4	viewMove;
-	//vec4	viewQuat;
+	float   screenX;
+	float   screenY;
 };
 
 // NOTE: bda == buffer device address
@@ -101,6 +102,7 @@ ALIGNAS( 16 ) struct instance_desc
 
 	uint meshIdx;
 	uint mtrlIdx;
+	uint transfIdx;
 };
 //ALIGNAS( 16 ) struct light_data
 //{

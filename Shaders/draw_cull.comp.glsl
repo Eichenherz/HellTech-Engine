@@ -11,17 +11,10 @@
 
 #include "..\r_data_structs.h"
 
-#define WAVE_OPS 0
+
 #define GLSL_DBG 1
 
 #extension GL_EXT_debug_printf : enable
-
-
-layout( local_size_x_id = 0 ) in;
-layout( constant_id = 1 ) const bool OCCLUSION_CULLING = false;
-
-
-layout( local_size_x = 64, local_size_y = 1, local_size_z = 1 ) in;
 
 
 layout( push_constant, scalar ) uniform block{
@@ -46,33 +39,33 @@ layout( binding = 1 ) buffer draw_cmd_count{
 layout( binding = 2 ) buffer draw_visibility_buffer{
 	uint drawVisibility[];
 };
-layout( binding = 3 ) buffer dispatch_cmd{
-	dispatch_command dispatchCmd[];
+
+// TODO: strike down
+struct inst_chunk
+{
+	uint instID;
+	uint mletOffset;
+	uint mletCount;
 };
-layout( binding = 4 ) buffer mlet_inst_idx{
-	uint mletInstIdx[];
+
+layout( binding = 3 ) writeonly buffer visible_insts{
+	inst_chunk visibleInstsChunks[];
 };
-layout( binding = 5 ) buffer mlet_dispatch_count{
-	uint mletDispatchCount;
+layout( binding = 4 ) writeonly buffer disptach_indirect{
+	dispatch_command dispatchCmd;
 };
-layout( binding = 6 ) uniform sampler2D minQuadDepthPyramid;
+layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
 
 
 #if GLSL_DBG
-layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
+layout( binding = 6, scalar ) writeonly buffer dbg_draw_cmd{
 	draw_indirect dbgDrawCmd[];
 };
-layout( binding = 8 ) buffer dbg_draw_cmd_count{
+layout( binding = 7 ) buffer dbg_draw_cmd_count{
 	uint dbgDrawCallCount;
-};
-layout( binding = 9 ) writeonly buffer screen_boxes_buff{
-	dbg_vertex screenspaceBoxBuff[];
 };
 #endif
 
-
-// TODO: would a u64 be better here ?
-shared uint meshletCullDispatchCounterLDS;
 
 // NOTE: https://research.nvidia.com/publication/2d-polyhedral-bounds-clipped-perspective-projected-3d-sphere 
 // && niagara renderer by zeux
@@ -100,28 +93,25 @@ vec4 ProjectedSphereToAABB( vec3 viewSpaceCenter, float r, float perspDividedWid
 	return aabb;
 }
 
-vec3 RotateQuat( vec3 v, vec4 q )
-{
-	vec3 t = 2.0 * cross( q.xyz, v );
-	return v + q.w * t + cross( q.xyz, t );
-}
+layout( local_size_x_id = 0 ) in;
+layout( constant_id = 1 ) const bool OCCLUSION_CULLING = false;
 
+layout( local_size_x = 64, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
-	uint di = gl_GlobalInvocationID.x;
+	uint globalIdx = gl_GlobalInvocationID.x;
 
-	if( di == 0 )
+	if( globalIdx == 0 )
 	{
 		drawCallCount = 0;
-		mletDispatchCount = 0;
 	#if GLSL_DBG
 		dbgDrawCallCount = 0;
 	#endif
 	}
 
-	if( di >= cullInfo.drawCallsCount ) return;
+	if( globalIdx >= cullInfo.drawCallsCount ) return;
 
-	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
+	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ globalIdx ];
 	mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
 
 	vec3 center = currentMesh.center;
@@ -237,48 +227,32 @@ void main()
 		float mip = min( floor( log2( max( size.x, size.y ) ) ), depthPyrLodCount );
 		
 		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mip ).x;
-		visible = visible && ( minDepth * perspZ <= 1.0f );
-		
+		visible = visible && ( minDepth * perspZ <= 1.0f );	
 	}
 
-	// TODO: must compute LOD based on AABB
-	float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
-	uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
+	// TODO: must compute LOD based on AABB's screen area
+	//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
+	//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 	mesh_lod lod = currentMesh.lods[ 0 ];
 
-	// TODO: should pass meshletOffset + count too ?
-	// TODO: go surfin'
-	// TODO: add to dispatch cound directly
-	if( visible )
-	{
-		uint mletIdxOffset = atomicAdd( mletDispatchCount, lod.meshletCount );
-		for( uint i = 0; i < lod.meshletCount; ++i )
-		{
-			mletInstIdx[ mletIdxOffset + i ] = di;
-		}
-	}
+	uvec4 ballotVisible = subgroupBallot( visible );
+	uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
 
-#if WAVE_OPS
-	uint mletsCount = subgroupAdd( visible ? lod.meshletCount : 0 );
-	memoryBarrierShared();
+	if( visibleInstCount == 0 ) return;
+	// TODO: shared atomics + global atomics ?
+	uint subgrSlotOffset = ( gl_SubgroupInvocationID.x == 0 ) ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
 
-	if( gl_LocalInvocationID.x == 0 ) meshletCullDispatchCounterLDS = 0;
-	// TODO: should get lowest active ?
-	if( gl_SubgroupInvocationID == 0 ) meshletCullDispatchCounterLDS += mletsCount;
-
-	if( gl_LocalInvocationID.x == ( gl_WorkGroupSize.x - 1 ) ) {
-		// TODO: / 256.0f just once in the last glob invoc ?
-		//drawCallGrIdx = atomicAdd( drawCallCount, ceil( float( meshletCullDispatchCounterLDS ) / 256.0f ); );
-	}
-#endif
+	uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+	uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
 
 	if( visible )
 	{
-	#if !WAVE_OPS
-		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
-	#endif
+		//uint drawCallIdx = atomicAdd( drawCallCount, 1 );
+		visibleInstsChunks[ drawCallIdx ].instID = globalIdx;
+		visibleInstsChunks[ drawCallIdx ].mletOffset = lod.meshletOffset;
+		visibleInstsChunks[ drawCallIdx ].mletCount = lod.meshletCount;
 
-		drawCmd[ drawCallIdx ].drawIdx = di;
+		drawCmd[ drawCallIdx ].drawIdx = globalIdx;
 		drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
 		drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
 		drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
@@ -288,7 +262,7 @@ void main()
 	#if GLSL_DBG
 		//uint dbgDrawCallIdx = atomicAdd( dbgDrawCallCount, 1 );
 		//// TODO: box vertex count const
-		//dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = di;
+		//dbgDrawCmd[ dbgDrawCallIdx ].drawIdx = globalIdx;
 		//dbgDrawCmd[ dbgDrawCallIdx ].firstVertex = 0;
 		//dbgDrawCmd[ dbgDrawCallIdx ].vertexCount = 36;
 		//dbgDrawCmd[ dbgDrawCallIdx ].instanceCount = 1;
@@ -296,9 +270,10 @@ void main()
 	#endif
 	}
 
-	if( di == 0 )
+	barrier();
+	if( globalIdx == 0 )
 	{
-		uint xDispatches = ( mletDispatchCount + gl_WorkGroupSize.x - 1 ) / gl_WorkGroupSize.x;
-		dispatchCmd[ 0 ] = dispatch_command( xDispatches, 1, 1 );
+		uint mletsExpDispatch = ( drawCallCount + 127 ) / 128;
+		dispatchCmd = dispatch_command( mletsExpDispatch / 4, 1, 1 );
 	}
 }
