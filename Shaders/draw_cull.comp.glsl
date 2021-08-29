@@ -4,6 +4,8 @@
 #extension GL_KHR_shader_subgroup_arithmetic: require
 #extension GL_KHR_shader_subgroup_ballot: require
 #extension GL_KHR_shader_subgroup_shuffle: require
+//#extension GL_KHR_memory_scope_semantics: require
+
 
 #extension GL_GOOGLE_include_directive: require
 
@@ -51,14 +53,15 @@ struct inst_chunk
 layout( binding = 3 ) writeonly buffer visible_insts{
 	inst_chunk visibleInstsChunks[];
 };
-layout( binding = 4 ) writeonly buffer disptach_indirect{
-	dispatch_command dispatchCmd;
-};
+
+layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
+
 layout( binding = 5 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
-layout( binding = 6 ) uniform sampler2D minQuadDepthPyramid;
-
+//layout( binding = 6 ) writeonly buffer disptach_indirect{
+//	dispatch_command dispatchCmd;
+//};
 
 #if GLSL_DBG
 //layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
@@ -96,6 +99,11 @@ vec4 ProjectedSphereToAABB( vec3 viewSpaceCenter, float r, float perspDividedWid
 	return aabb;
 }
 
+
+shared uint workgrAtomicCounterShared = {};
+//shared uint drawCallCounterShared;
+
+
 layout( local_size_x_id = 0 ) in;
 layout( constant_id = 1 ) const bool OCCLUSION_CULLING = false;
 
@@ -104,14 +112,8 @@ void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	
-	//if( globalIdx == 0 )
-	//{
-	//	drawCallCount = 0;
-	//	workgrAtomicCounter = 0;
-	//}
+	//if( gl_LocalInvocationID.x == 0 ) drawCallCounterShared = 0;
 	//barrier();
-	//memoryBarrier();
 
 	if( globalIdx >= cullInfo.drawCallsCount ) return;
 
@@ -182,7 +184,7 @@ void main()
                              };
 		
         vec2 minXY = vec2(1);
-        vec2 maxXY = vec2(0);
+        vec2 maxXY = {};
 		
 		mat4 mvp = transpose( transpMvp );
 		
@@ -215,19 +217,19 @@ void main()
 	//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 	mesh_lod lod = currentMesh.lods[ 0 ];
 
-	uvec4 ballotVisible = subgroupBallot( visible );
-	uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
-
-	if( visibleInstCount == 0 ) return;
-	// TODO: shared atomics + global atomics ?
-	uint subgrSlotOffset = ( gl_SubgroupInvocationID.x == 0 ) ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
-
-	uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-	uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
+	//uvec4 ballotVisible = subgroupBallot( visible );
+	//uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
+	//
+	//if( visibleInstCount == 0 ) return;
+	//// TODO: shared atomics + global atomics ?
+	//uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
+	//
+	//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+	//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
 
 	if( visible )
 	{
-		//uint drawCallIdx = atomicAdd( drawCallCount, 1 );
+		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 
 		visibleInstsChunks[ drawCallIdx ].instID = globalIdx;
 		visibleInstsChunks[ drawCallIdx ].mletOffset = lod.meshletOffset;
@@ -240,21 +242,23 @@ void main()
 		drawCmd[ drawCallIdx ].instanceCount = 1;
 		drawCmd[ drawCallIdx ].firstInstance = 0;
 	}
-
+	barrier();
 	
-	if( gl_LocalInvocationID.x == 0 ) atomicAdd( workgrAtomicCounter, 1 );
-	//barrier();
-	//memoryBarrier();
-
-
-	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounter == gl_NumWorkGroups.x ) )
+	if( gl_LocalInvocationID.x == 0 ) 
 	{
-		//barrier();
-		//memoryBarrier();
+		workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+		//debugPrintfEXT( "GlobalID = %u, workgrAtomicCounterShared = %u", globalIdx, workgrAtomicCounterShared );
+	}
+	barrier();
+	//memoryBarrier();
+	
+	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x ) )
+	{
 		debugPrintfEXT( "drawCallCount = %f", drawCallCount );
-		debugPrintfEXT( "workgrAtomicCounter = %u", workgrAtomicCounter );
-
+		//debugPrintfEXT( "workgrAtomicCounter = %u", workgrAtomicCounter );
+	
 		uint mletsExpDispatch = ( drawCallCount + 127 ) / 128;
-		dispatchCmd = dispatch_command( mletsExpDispatch / 4, 1, 1 );
+		//dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
+		//dispatchCmd = dispatch_command( 1, 1, 1 );
 	}
 }

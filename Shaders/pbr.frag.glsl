@@ -144,7 +144,7 @@ void main()
 	vec3 baseReflectivity = mix( vec3( 0.04 ), baseCol.rgb, surfMetalness );
 	vec3 diffCol = baseCol.rgb * ( 1.0 - surfMetalness );
 
-	vec3 reflectance = vec3( 0 );
+	vec3 reflectance = {};
 
 	float ambientFactor = 0.0025;
 	oCol = vec4( baseCol.rgb * ambientFactor, 1 );

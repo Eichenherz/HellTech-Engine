@@ -42,6 +42,7 @@ using uint = u32;
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_null_initializer : require
 
 const float invPi = 0.31830988618;
 const float PI = 3.14159265359;

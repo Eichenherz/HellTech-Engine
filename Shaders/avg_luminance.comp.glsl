@@ -29,7 +29,7 @@ layout( binding = 2 ) buffer global_vars
 	uint finalLumSum;
 	uint finalTailValsCount;
 };
-layout( binding = 3 ) buffer global_sync_counter
+layout( binding = 3 ) coherent buffer global_sync_counter
 {
 	uint globSyncCounter;
 };
@@ -51,13 +51,13 @@ void main()
 	if( gl_GlobalInvocationID.x > hdrColTrgSize.x || gl_GlobalInvocationID.y > hdrColTrgSize.y ) return;
 
 
-	if( gl_GlobalInvocationID.x == 0 && gl_GlobalInvocationID.y == 0 )
-	{
-		finalLumSum = 0;
-		finalTailValsCount = 0;
-		globSyncCounter = 0;
-	}
-	barrier();
+	//if( gl_GlobalInvocationID.x == 0 && gl_GlobalInvocationID.y == 0 )
+	//{
+	//	finalLumSum = 0;
+	//	finalTailValsCount = 0;
+	//	globSyncCounter = 0;
+	//}
+	//barrier();
 
 	uint histoBinIdx = 0;
 
@@ -77,22 +77,20 @@ void main()
 	uint tailValsPartialCount = subgroupBallotBitCount( subgroupBallot( !bool( histoBinIdx ) ) );
 	uint partialLumSum = subgroupAdd( histoBinIdx );
 
+	// TODO: gl_SubgroupInvocationID vs gl_SubgroupID
 	if( gl_SubgroupInvocationID == 0 )
 	{
 		partialSumLDS[ gl_SubgroupID ] = partialLumSum;
 		tailValsCountLDS[ gl_SubgroupID ] = tailValsPartialCount;
 	}
-
 	barrier();
 
 	if( gl_SubgroupID == 0 )
 	{
-		partialLumSum =
-			gl_SubgroupInvocationID < gl_NumSubgroups ? partialSumLDS[ gl_SubgroupInvocationID ] : 0;
+		partialLumSum = gl_SubgroupInvocationID < gl_NumSubgroups ? partialSumLDS[ gl_SubgroupInvocationID ] : 0;
 		partialLumSum = subgroupAdd( partialLumSum );
 
-		tailValsPartialCount =
-			gl_SubgroupInvocationID < gl_NumSubgroups ? tailValsCountLDS[ gl_SubgroupInvocationID ] : 0;
+		tailValsPartialCount = gl_SubgroupInvocationID < gl_NumSubgroups ? tailValsCountLDS[ gl_SubgroupInvocationID ] : 0;
 		tailValsPartialCount = subgroupAdd( tailValsPartialCount );
 	}
 
@@ -102,14 +100,12 @@ void main()
 		atomicAdd( finalTailValsCount, tailValsPartialCount );
 		atomicAdd( globSyncCounter, 1 );
 	}
-
 	barrier();
 
 	if( globSyncCounter == ( gl_NumWorkGroups.x + gl_NumWorkGroups.y - 2 ) )
 	{
 		float numPixels = hdrColTrgSize.x * hdrColTrgSize.y;
-		float weightedLogAverage = 
-			( float( finalLumSum ) / max( numPixels - float( finalTailValsCount ), 1.0 ) ) - 1.0;
+		float weightedLogAverage = ( float( finalLumSum ) / max( numPixels - float( finalTailValsCount ), 1.0 ) ) - 1.0;
 			
 		float logLumRange = avgLumInfo.invLogLumRange;
 		float weightedAvgLum = exp2( ( ( weightedLogAverage / 254.0 ) * logLumRange ) + avgLumInfo.minLogLum );

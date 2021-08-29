@@ -43,7 +43,8 @@ void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	if( globalIdx == 0 ) meshletCount = 0;
+	// TODO: init out side
+	//if( globalIdx == 0 ) meshletCount = 0;
 
 	
 	if( gl_LocalInvocationID.x == 0 )
@@ -60,9 +61,9 @@ void main()
 		}
 
 		 meshletOutOffsetLDS = atomicAdd( meshletCount, workgrAccumulator );
-		 memoryBarrier();
 	}
-	
+	barrier();
+	groupMemoryBarrier();
 	
 	[[ unroll ]] 
 	for( uint ii = 0; ii < instsPerWorkgr; ++ii )
@@ -75,17 +76,18 @@ void main()
 
 		uint mletsCount = visibleInstsChunks[ instIdx ].mletCount;
 
-		for( uint msi = 0; msi < mletsCount; msi += gl_SubgroupSize.x )
+		for( uint msi = 0; msi < mletsCount; msi += gl_SubgroupSize )
 		{
-			uint slotIdx = msi + meshletOutOffsetLDS + gl_SubgroupInvocationID.x;
+			uint slotIdx = msi + meshletOutOffsetLDS + gl_SubgroupInvocationID;
 			if( slotIdx < mletsCount )
 			{
 				visibleMeshlets[ slotIdx ] = meshlet_id( instIdx, mletsIndexOffset + slotIdx );
 			}
 		}
 
-		//if( gl_LocalInvocationID.x == 0 ) atomicAdd( meshletOutOffsetLDS, meshletCount );
-		if( gl_LocalInvocationID.x == 0 ) meshletOutOffsetLDS += meshletCount;
+		if( gl_LocalInvocationID.x == 0 ) atomicAdd( meshletOutOffsetLDS, meshletCount );
+		//if( gl_LocalInvocationID.x == 0 ) meshletOutOffsetLDS += meshletCount;
+		barrier();
 		groupMemoryBarrier();
 	}
 }
