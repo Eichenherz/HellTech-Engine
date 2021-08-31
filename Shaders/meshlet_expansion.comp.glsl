@@ -2,12 +2,14 @@
 
 #extension GL_KHR_shader_subgroup_basic: require
 #extension GL_KHR_shader_subgroup_arithmetic: require
+#extension GL_KHR_shader_subgroup_ballot: require
 
 #extension GL_GOOGLE_include_directive: require
 
 
 #include "..\r_data_structs.h"
 
+#extension GL_EXT_debug_printf : enable
 
 struct inst_chunk
 {
@@ -36,57 +38,65 @@ layout( binding = 3 ) buffer meshlet_list_cnt{
 
 const uint instsPerWorkgr = 4;
 
-shared uint meshletOutOffsetLDS;
+shared uint visibleMletsOffsetLDS = {};
 
 layout( local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
-	uint globalIdx = gl_GlobalInvocationID.x;
-
-	// TODO: init out side
-	//if( globalIdx == 0 ) meshletCount = 0;
-
+	uint workGrIdx = gl_WorkGroupID.x;
 	
+	// NOTE: inside workgr so we can sync
 	if( gl_LocalInvocationID.x == 0 )
 	{
 		uint workgrAccumulator = 0;
 		[[ unroll ]] 
 		for( uint ii = 0; ii < instsPerWorkgr; ++ii )
 		{
-			uint instIdx = globalIdx * instsPerWorkgr + ii;
+			uint instIdx = workGrIdx * instsPerWorkgr + ii;
 
-			if( instIdx >= visibleInstsCount ) return;
+			if( instIdx >= visibleInstsCount ) break;
 
 			workgrAccumulator += visibleInstsChunks[ instIdx ].mletCount;
 		}
 
-		 meshletOutOffsetLDS = atomicAdd( meshletCount, workgrAccumulator );
+		visibleMletsOffsetLDS = atomicAdd( meshletCount, workgrAccumulator );
+		debugPrintfEXT( "WorkGrID = %u, offset = %u", workGrIdx, visibleMletsOffsetLDS );
 	}
 	barrier();
 	groupMemoryBarrier();
-	
+
+	debugPrintfEXT( "WorkGrID = %u, offset = %u", workGrIdx, visibleMletsOffsetLDS );
+
 	[[ unroll ]] 
 	for( uint ii = 0; ii < instsPerWorkgr; ++ii )
 	{
-		uint instIdx = globalIdx * instsPerWorkgr + ii;
-
+		uint instIdx = workGrIdx * instsPerWorkgr + ii;
+	
 		if( instIdx >= visibleInstsCount ) return;
-
+	
 		uint mletsIndexOffset = visibleInstsChunks[ instIdx ].mletOffset;
-
+	
 		uint mletsCount = visibleInstsChunks[ instIdx ].mletCount;
-
+	
+		//uint meshletIdx = gl_SubgroupID * gl_SubgroupSize + gl_SubgroupInvocationID;
+		//if( meshletIdx < mletsCount )
+		//{
+		//	uint slotIdx = visibleMletsOffsetLDS + meshletIdx;
+		//	visibleMeshlets[ slotIdx ] = meshlet_id( instIdx, mletsIndexOffset + meshletIdx );
+		//}
+	
 		for( uint msi = 0; msi < mletsCount; msi += gl_SubgroupSize )
 		{
-			uint slotIdx = msi + meshletOutOffsetLDS + gl_SubgroupInvocationID;
+			uint slotIdx = msi + gl_SubgroupInvocationID;
+			// TODO: wavefront select ?
 			if( slotIdx < mletsCount )
 			{
-				visibleMeshlets[ slotIdx ] = meshlet_id( instIdx, mletsIndexOffset + slotIdx );
+				visibleMeshlets[ slotIdx + visibleMletsOffsetLDS ] = meshlet_id( instIdx, mletsIndexOffset + slotIdx );
 			}
 		}
-
-		if( gl_LocalInvocationID.x == 0 ) atomicAdd( meshletOutOffsetLDS, meshletCount );
-		//if( gl_LocalInvocationID.x == 0 ) meshletOutOffsetLDS += meshletCount;
+		
+		// TODO: atomicAdd ?
+		if( gl_LocalInvocationID.x == 0 ) visibleMletsOffsetLDS += mletsCount;
 		barrier();
 		groupMemoryBarrier();
 	}

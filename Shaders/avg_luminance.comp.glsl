@@ -50,15 +50,6 @@ void main()
 	uvec2 hdrColTrgSize = textureSize( hdrColTrg, 0 ).xy;
 	if( gl_GlobalInvocationID.x > hdrColTrgSize.x || gl_GlobalInvocationID.y > hdrColTrgSize.y ) return;
 
-
-	//if( gl_GlobalInvocationID.x == 0 && gl_GlobalInvocationID.y == 0 )
-	//{
-	//	finalLumSum = 0;
-	//	finalTailValsCount = 0;
-	//	globSyncCounter = 0;
-	//}
-	//barrier();
-
 	uint histoBinIdx = 0;
 
 	vec3 hdrCol = texelFetch( hdrColTrg, ivec2( gl_GlobalInvocationID.xy ), 0 ).xyz;

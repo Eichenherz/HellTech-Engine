@@ -59,9 +59,9 @@ layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
 layout( binding = 5 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
-//layout( binding = 6 ) writeonly buffer disptach_indirect{
-//	dispatch_command dispatchCmd;
-//};
+layout( binding = 6 ) buffer disptach_indirect{
+	dispatch_command dispatchCmd;
+};
 
 #if GLSL_DBG
 //layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
@@ -101,7 +101,6 @@ vec4 ProjectedSphereToAABB( vec3 viewSpaceCenter, float r, float perspDividedWid
 
 
 shared uint workgrAtomicCounterShared = {};
-//shared uint drawCallCounterShared;
 
 
 layout( local_size_x_id = 0 ) in;
@@ -112,14 +111,12 @@ void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	//if( gl_LocalInvocationID.x == 0 ) drawCallCounterShared = 0;
-	//barrier();
-
+	
 	if( globalIdx >= cullInfo.drawCallsCount ) return;
-
+	
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ globalIdx ];
 	mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
-
+	
 	vec3 center = currentMesh.center;
 	vec3 extent = abs( currentMesh.extent );
 	
@@ -169,8 +166,8 @@ void main()
 		 
 		float sampledDepth = textureLod( minQuadDepthPyramid, ( screenMax + screenMin ) * 0.5f, mipLevel ).x;
 		visible = visible && ( 1.0f / perspZ >= sampledDepth );
-
-
+	
+	
 		vec3 boxSize = boxMax - boxMin;
  		
         vec3 boxCorners[] = { boxMin,
@@ -189,7 +186,7 @@ void main()
 		mat4 mvp = transpose( transpMvp );
 		
         [[unroll]]
-        for (int i = 0; i < 8; i++)
+        for( int i = 0; i < 8; ++i )
         {
             //transform world space aaBox to NDC
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
@@ -210,31 +207,31 @@ void main()
 		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mip ).x;
 		visible = visible && ( minDepth * perspZ <= 1.0f );	
 	}
-
+	
 	
 	// TODO: must compute LOD based on AABB's screen area
 	//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
 	//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 	mesh_lod lod = currentMesh.lods[ 0 ];
-
-	//uvec4 ballotVisible = subgroupBallot( visible );
-	//uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
-	//
-	//if( visibleInstCount == 0 ) return;
-	//// TODO: shared atomics + global atomics ?
-	//uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
-	//
-	//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-	//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
-
+	
+	uvec4 ballotVisible = subgroupBallot( visible );
+	uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
+	
+	if( visibleInstCount == 0 ) return;
+	// TODO: shared atomics + global atomics ?
+	uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
+	
+	uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+	uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
+	
 	if( visible )
 	{
-		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
-
+		//uint drawCallIdx = atomicAdd( drawCallCount, 1 );
+	
 		visibleInstsChunks[ drawCallIdx ].instID = globalIdx;
 		visibleInstsChunks[ drawCallIdx ].mletOffset = lod.meshletOffset;
 		visibleInstsChunks[ drawCallIdx ].mletCount = lod.meshletCount;
-
+	
 		drawCmd[ drawCallIdx ].drawIdx = globalIdx;
 		drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
 		drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
@@ -242,23 +239,19 @@ void main()
 		drawCmd[ drawCallIdx ].instanceCount = 1;
 		drawCmd[ drawCallIdx ].firstInstance = 0;
 	}
+	
+
+	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 	barrier();
-	
-	if( gl_LocalInvocationID.x == 0 ) 
+
+	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
-		workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-		//debugPrintfEXT( "GlobalID = %u, workgrAtomicCounterShared = %u", globalIdx, workgrAtomicCounterShared );
-	}
-	barrier();
-	//memoryBarrier();
-	
-	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x ) )
-	{
-		debugPrintfEXT( "drawCallCount = %f", drawCallCount );
-		//debugPrintfEXT( "workgrAtomicCounter = %u", workgrAtomicCounter );
-	
-		uint mletsExpDispatch = ( drawCallCount + 127 ) / 128;
-		//dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
-		//dispatchCmd = dispatch_command( 1, 1, 1 );
+		uint mletsExpDispatch = max( ( ( drawCallCount / 4 ) + 127 ) / 128, 1 );
+		dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
+		dispatchCmd.localSizeX = mletsExpDispatch;
+		
+		//debugPrintfEXT( "dispatchCmd.localSizeX = %u", dispatchCmd.localSizeX );
+		//debugPrintfEXT( "dispatchCmd.localSizeY = %u", dispatchCmd.localSizeY );
+		//debugPrintfEXT( "dispatchCmd.localSizeZ = %u", dispatchCmd.localSizeZ );
 	}
 }
