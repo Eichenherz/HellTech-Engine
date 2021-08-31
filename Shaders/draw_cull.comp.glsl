@@ -246,7 +246,8 @@ void main()
 
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
-		uint mletsExpDispatch = max( ( ( drawCallCount / 4 ) + 127 ) / 128, 1 );
+		// TODO: pass as spec consts or push consts ? 
+		uint mletsExpDispatch = ( drawCallCount + 3 ) / 4;
 		dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
 		dispatchCmd.localSizeX = mletsExpDispatch;
 		

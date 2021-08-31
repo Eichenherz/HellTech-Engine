@@ -60,12 +60,10 @@ void main()
 		}
 
 		visibleMletsOffsetLDS = atomicAdd( meshletCount, workgrAccumulator );
-		debugPrintfEXT( "WorkGrID = %u, offset = %u", workGrIdx, visibleMletsOffsetLDS );
 	}
 	barrier();
 	groupMemoryBarrier();
 
-	debugPrintfEXT( "WorkGrID = %u, offset = %u", workGrIdx, visibleMletsOffsetLDS );
 
 	[[ unroll ]] 
 	for( uint ii = 0; ii < instsPerWorkgr; ++ii )
