@@ -251,8 +251,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 {
 	constexpr VkPhysicalDeviceType PREFFERED_PHYSICAL_DEVICE_TYPE = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
-	constexpr const char* ENABLED_DEVICE_EXTS[] =
-	{
+	constexpr const char* ENABLED_DEVICE_EXTS[] = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 
 		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
@@ -285,7 +284,9 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &sync2Features };
 	VkPhysicalDevice16BitStorageFeatures _16BitStorageFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES, &extDynamicStateFeatures };
-	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &_16BitStorageFeatures };
+	VkPhysicalDeviceBufferDeviceAddressFeatures bdaFeatures =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES, &_16BitStorageFeatures };
+	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &bdaFeatures };
 	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures12 };
 
 	VkPhysicalDevice gpu = 0;

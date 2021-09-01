@@ -75,17 +75,10 @@ void main()
 		uint mletsIndexOffset = visibleInstsChunks[ instIdx ].mletOffset;
 	
 		uint mletsCount = visibleInstsChunks[ instIdx ].mletCount;
-	
-		//uint meshletIdx = gl_SubgroupID * gl_SubgroupSize + gl_SubgroupInvocationID;
-		//if( meshletIdx < mletsCount )
-		//{
-		//	uint slotIdx = visibleMletsOffsetLDS + meshletIdx;
-		//	visibleMeshlets[ slotIdx ] = meshlet_id( instIdx, mletsIndexOffset + meshletIdx );
-		//}
-	
-		for( uint msi = 0; msi < mletsCount; msi += gl_SubgroupSize )
+		
+		for( uint msi = 0; msi < mletsCount; msi += gl_WorkGroupSize.x )
 		{
-			uint slotIdx = msi + gl_SubgroupInvocationID;
+			uint slotIdx = msi + gl_LocalInvocationID.x;
 			// TODO: wavefront select ?
 			if( slotIdx < mletsCount )
 			{
