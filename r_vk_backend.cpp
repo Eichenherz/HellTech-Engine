@@ -2866,6 +2866,7 @@ constexpr char drakPath[] = "Assets/cyberbaron.drak";
 
 // TODO: revisit remake improve
 // TODO: staging clean up
+// TODO: re make offsets, ranges, etc
 static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 {
 	using namespace DirectX;
@@ -2897,11 +2898,12 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	offset += BYTE_COUNT( mtrlDesc );
 	const std::span<image_metadata> imgDesc = { (image_metadata*) ( std::data( binaryData ) + offset ),fileDesc.texCount };
 
-	const std::span<vertex> vtxView =
-	{ (vertex*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset,fileDesc.vtxRange.size };
+	//const std::span<vertex> vtxView =
+	//{ (vertex*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset ),fileDesc.vtxRange.size };
 
-	const std::span<meshlet> mletView =
-	{ (meshlet*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsRange.offset,fileDesc.mletsRange.size };
+	const std::span<meshlet> mletView = { 
+		(meshlet*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsRange.offset ),
+		fileDesc.mletsRange.size / sizeof( meshlet ) };
 
 	std::vector<mesh_desc> meshes;
 	// TODO: must make mesh and binary_mesh_desc the same
@@ -2949,7 +2951,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 
 	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 5;
+	constexpr u64 drawCount = 1;
 	constexpr u64 lightCount = 4;
 	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
@@ -3059,7 +3061,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 	{
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Meshlets", (const u8*) std::data( mletView ), std::size( mletView ), meshletBuff, stagingManager );
+			cmdBuf, "Buff_Meshlets", (const u8*) std::data( mletView ), BYTE_COUNT( mletView ), meshletBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3068,10 +3070,11 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ) );
 	}
 	{
-		const std::span<u32> mletVtxView =
-		{ (u32*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsVtxRange.offset,fileDesc.mletsVtxRange.size };
+		const std::span<u32> mletVtxView = {
+			( u32* )( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsVtxRange.offset ),
+			fileDesc.mletsVtxRange.size / sizeof( u32 ) };
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Meshlet_Vtx", (const u8*) std::data( mletVtxView ), std::size( mletVtxView ), meshletVtxBuff, stagingManager );
+			cmdBuf, "Buff_Meshlet_Vtx", (const u8*) std::data( mletVtxView ), BYTE_COUNT( mletVtxView ), meshletVtxBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletVtxBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3080,8 +3083,9 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ) );
 	}
 	{
-		const std::span<u8> mletTriView =
-		{ (u8*) std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsTrisRange.offset,fileDesc.mletsTrisRange.size };
+		const std::span<u8> mletTriView = {
+			( u8* )( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsTrisRange.offset ),
+			fileDesc.mletsTrisRange.size / sizeof( u8 ) };
 
 		meshletTrisBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mletTriView ),
 												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
@@ -3244,7 +3248,11 @@ inline static void VkInitInternalBuffers()
 											 vkRscArena );
 	VkDbgNameObj( drawCountBuff.hndl, dc.device, "Buff_Draw_Count" );
 
-	drawCountDbgBuff = VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, vkRscArena );
+	drawCountDbgBuff = VkCreateAllocBindBuffer( 4, 
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+												vkRscArena );
 	VkDbgNameObj( drawCountDbgBuff.hndl, dc.device, "Buff_Dbg_Draw_Count" );
 	// TODO: no transfer bit ?
 	depthAtomicCounterBuff =
@@ -3533,6 +3541,8 @@ CullPass(
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, expanderCompProgram.descUpdateTemplate, expanderCompProgram.pipeLayout, 0, pd );
 	vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff.hndl, 0 );
 
+	vkCmdFillBuffer( cmdBuff, drawCountDbgBuff.hndl, 0, drawCountDbgBuff.size, 0u );
+
 	VkBufferMemoryBarrier2KHR dispatchCullBarriers[] = {
 		VkMakeBufferBarrier2( dispatchCmdBuff2.hndl,
 								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
@@ -3548,6 +3558,11 @@ CullPass(
 								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								VK_ACCESS_2_SHADER_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( drawCountDbgBuff.hndl,
+								VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+								VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
@@ -4225,7 +4240,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 							 drawCountDbgBuff.hndl,
 							 meshletTrisBuff.hndl,
 							 VK_INDEX_TYPE_UINT8_EXT,
-							 130,//meshletBuff.size / sizeof( meshlet ),
+							 meshletBuff.size / sizeof( meshlet ),
 							 clearVals,
 							 gfxMeshletProgram );
 	

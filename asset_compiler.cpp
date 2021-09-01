@@ -525,8 +525,8 @@ static void MeshoptMakeMeshlets(
 
 	
 	std::vector<meshopt_Meshlet> meshlets;
-	std::vector<u32> mletVtx;
-	std::vector<u8> mletTris;
+	std::vector<u32> meshletVertices;
+	std::vector<u8> meshletTriangles;
 
 	const std::span<vertex> vtxSpan = { 
 		const_cast<vertex*>( std::data( vertices ) ) + meshDesc.vtxRange.offset,meshDesc.vtxRange.size };
@@ -538,16 +538,19 @@ static void MeshoptMakeMeshlets(
 
 		u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( lodIdx ), MAX_VERTICES, MAX_TRIANGLES );
 		meshlets.resize( maxMeshletCount );
-		mletVtx.resize( maxMeshletCount * MAX_VERTICES );
-		mletTris.resize( maxMeshletCount * MAX_TRIANGLES * 3 );
+		meshletVertices.resize( maxMeshletCount * MAX_VERTICES );
+		meshletTriangles.resize( maxMeshletCount * MAX_TRIANGLES * 3 );
 
-		u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), std::data( mletVtx ), std::data( mletTris ),
+		u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), std::data( meshletVertices ), std::data( meshletTriangles ),
 												  std::data( lodIdx ), std::size( lodIdx ),
 												  &vtxSpan[ 0 ].px, std::size( vtxSpan ), sizeof( vtxSpan[ 0 ] ),
 												  MAX_VERTICES, MAX_TRIANGLES, CONE_WEIGHT );
+
+		const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
+
 		meshlets.resize( meshletCount );
-		mletVtx.resize( meshletCount * MAX_VERTICES );
-		mletTris.resize( meshletCount * MAX_TRIANGLES * 3 );
+		meshletVertices.resize( last.vertex_offset + last.vertex_count );
+		meshletTriangles.resize( last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
 
 		u64 mletOffset = std::size( mletsDesc );
 		meshDesc.mletRanges[ li ] = { mletOffset,meshletCount };
@@ -555,13 +558,17 @@ static void MeshoptMakeMeshlets(
 		for( u64 mi = 0; mi < std::size( meshlets ); ++mi )
 		{
 			const meshopt_Meshlet& m = meshlets[ mi ];
-			meshopt_Bounds bounds = meshopt_computeMeshletBounds( std::data( mletVtx ), std::data( mletTris ), m.triangle_count,
-																  &vtxSpan[ 0 ].px, std::size( vtxSpan ), sizeof( vtxSpan[ 0 ] ) );
+			meshopt_Bounds bounds = meshopt_computeMeshletBounds( std::data( meshletVertices ),
+																  std::data( meshletTriangles ),
+																  m.triangle_count,
+																  &vtxSpan[ 0 ].px,
+																  std::size( vtxSpan ),
+																  sizeof( vtxSpan[ 0 ] ) );
 			// TODO: don't copy ?
 			XMFLOAT3 mletVertices[ MAX_VERTICES ] = {};
 			for( u64 vi = 0; vi < m.vertex_count; ++vi )
 			{
-				const vertex& v = vtxSpan[ mletVtx[ vi + m.vertex_offset ] ];
+				const vertex& v = vtxSpan[ meshletVertices[ vi + m.vertex_offset ] ];
 				mletVertices[ vi ] = { v.px,v.py,v.pz };
 			}
 
@@ -577,13 +584,14 @@ static void MeshoptMakeMeshlets(
 			data.coneCutoff = bounds.cone_cutoff_s8;
 			data.vertexCount = m.vertex_count;
 			data.triangleCount = m.triangle_count;
-			data.vtxBufOffset = std::size( vtxIndirBuf );
-			data.triBufOffset = std::size( triangleBuf );
+			data.vtxBufOffset = std::size( vtxIndirBuf ) + m.vertex_offset;
+			data.triBufOffset = std::size( triangleBuf ) + m.triangle_offset;
 
 			mletsDesc.push_back( data );
-			vtxIndirBuf.insert( std::end( vtxIndirBuf ), std::begin( mletVtx ), std::end( mletVtx ) );
-			triangleBuf.insert( std::end( triangleBuf ), std::begin( mletTris ), std::end( mletTris ) );
 		}
+
+		vtxIndirBuf.insert( std::end( vtxIndirBuf ), std::begin( meshletVertices ), std::end( meshletVertices ) );
+		triangleBuf.insert( std::end( triangleBuf ), std::begin( meshletTriangles ), std::end( meshletTriangles ) );
 	}
 }
 
@@ -753,6 +761,7 @@ static void AssembleMeshAndOptimize(
 	}
 }
 
+// TODO: fix offsetting 
 // TODO: better more efficient copy
 // TODO: better binary file design ?
 void CompileGlbAssetToBinary( 

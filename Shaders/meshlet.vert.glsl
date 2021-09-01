@@ -48,7 +48,7 @@ void main()
 	
 	gl_Position = cam.proj * cam.activeView * inst.localToWorld * vec4( pos, 1 );
 
-	uint mhash = Hash( di );
+	uint mhash = Hash( gl_DrawIDARB );
 	vec3 mcolor = vec3( float( mhash & 255 ), float( ( mhash >> 8 ) & 255 ), float( ( mhash >> 16 ) & 255 ) ) / 255.0f;
 	oCol = mcolor;
 }
