@@ -32,20 +32,30 @@ struct meshlet_id
 layout( binding = 2 ) writeonly buffer meshlet_list{
 	meshlet_id visibleMeshlets[];
 };
-layout( binding = 3 ) buffer meshlet_list_cnt{
+layout( binding = 3 ) coherent buffer meshlet_list_cnt{
 	uint meshletCount;
+};
+
+layout( binding = 4 ) coherent buffer atomic_cnt{
+	uint workgrAtomicCounter;
+};
+
+layout( binding = 5 ) buffer disptach_indirect{
+	dispatch_command dispatchCmd;
 };
 
 const uint instsPerWorkgr = 4;
 
 shared uint visibleMletsOffsetLDS = {};
+shared uint workgrAtomicCounterShared = {};
+
 
 layout( local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint workGrIdx = gl_WorkGroupID.x;
 	
-	// NOTE: inside workgr so we can sync
+	// NOTE: inside workgr so we can order invocations
 	if( gl_LocalInvocationID.x == 0 )
 	{
 		uint workgrAccumulator = 0;
@@ -70,7 +80,7 @@ void main()
 	{
 		uint instIdx = workGrIdx * instsPerWorkgr + ii;
 	
-		if( instIdx >= visibleInstsCount ) return;
+		if( instIdx >= visibleInstsCount ) break;
 	
 		uint mletsIndexOffset = visibleInstsChunks[ instIdx ].mletOffset;
 	
@@ -90,5 +100,17 @@ void main()
 		if( gl_LocalInvocationID.x == 0 ) visibleMletsOffsetLDS += mletsCount;
 		barrier();
 		groupMemoryBarrier();
+	}
+
+	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+	barrier();
+
+	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
+	{
+		// TODO: pass as spec consts or push consts ? 
+		uint mletsCullDispatch = ( meshletCount + 255 ) / 256;
+		dispatchCmd = dispatch_command( mletsCullDispatch, 1, 1 );
+		// NOTE: reset atomicCounter
+		workgrAtomicCounter = 0;
 	}
 }

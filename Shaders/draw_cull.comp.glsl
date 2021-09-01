@@ -148,24 +148,25 @@ void main()
 		
 		float depthPyrLodCount = textureQueryLevels( minQuadDepthPyramid );
 		
-		float xPosBound = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
-		float yPosBound = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
-		float xNegBound = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
-		float yNegBound = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
-					    
-		xPosBound = clamp( xPosBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
-		yPosBound = clamp( yPosBound / perspZ, -1.0f, 1.0f ) * -0.5f + 0.5f;
-		xNegBound = clamp( xNegBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
-		yNegBound = clamp( yNegBound / perspZ, -1.0f, 1.0f ) * -0.5f + 0.5f;
-		
-		vec2 screenMin = vec2( min( xPosBound, xNegBound ), min( yPosBound, yNegBound ) );
-		vec2 screenMax = vec2( max( xPosBound, xNegBound ), max( yPosBound, yNegBound ) );
-		
-		vec2 screenBoxSize = abs( screenMax - screenMin ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float mipLevel = min( floor( log2( max( screenBoxSize.x, screenBoxSize.y ) ) ), depthPyrLodCount );
-		 
-		float sampledDepth = textureLod( minQuadDepthPyramid, ( screenMax + screenMin ) * 0.5f, mipLevel ).x;
-		visible = visible && ( 1.0f / perspZ >= sampledDepth );
+		// NOTE: if faulty occlusion, prolly this was uncommented 
+		//float xPosBound = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
+		//float yPosBound = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
+		//float xNegBound = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
+		//float yNegBound = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
+		//			    
+		//xPosBound = clamp( xPosBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
+		//yPosBound = clamp( yPosBound / perspZ, -1.0f, 1.0f ) * -0.5f + 0.5f;
+		//xNegBound = clamp( xNegBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
+		//yNegBound = clamp( yNegBound / perspZ, -1.0f, 1.0f ) * -0.5f + 0.5f;
+		//
+		//vec2 screenMin = vec2( min( xPosBound, xNegBound ), min( yPosBound, yNegBound ) );
+		//vec2 screenMax = vec2( max( xPosBound, xNegBound ), max( yPosBound, yNegBound ) );
+		//
+		//vec2 screenBoxSize = abs( screenMax - screenMin ) * textureSize( minQuadDepthPyramid, 0 ).xy;
+		//float mipLevel = min( floor( log2( max( screenBoxSize.x, screenBoxSize.y ) ) ), depthPyrLodCount );
+		//
+		//float sampledDepth = textureLod( minQuadDepthPyramid, ( screenMax + screenMin ) * 0.5f, mipLevel ).x;
+		//visible = visible && ( 1.0f / perspZ >= sampledDepth );
 	
 	
 		vec3 boxSize = boxMax - boxMin;
@@ -249,10 +250,7 @@ void main()
 		// TODO: pass as spec consts or push consts ? 
 		uint mletsExpDispatch = ( drawCallCount + 3 ) / 4;
 		dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
-		dispatchCmd.localSizeX = mletsExpDispatch;
-		
-		//debugPrintfEXT( "dispatchCmd.localSizeX = %u", dispatchCmd.localSizeX );
-		//debugPrintfEXT( "dispatchCmd.localSizeY = %u", dispatchCmd.localSizeY );
-		//debugPrintfEXT( "dispatchCmd.localSizeZ = %u", dispatchCmd.localSizeZ );
+		// NOTE: reset atomicCounter
+		workgrAtomicCounter = 0;
 	}
 }

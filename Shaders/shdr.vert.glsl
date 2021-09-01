@@ -16,23 +16,21 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer v
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_ref{ 
 	mesh_desc meshes[]; 
 };
+layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
+	instance_desc instDescs[];
+};
 //layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer draw_args_ref{
 //	draw_data drawArgs[];
 //};
 
-layout( binding = 0 ) readonly buffer inst_desc_buffer{
-	instance_desc instDescs[];
-};
+//layout( binding = 0 ) readonly buffer inst_desc_buffer{
+//	instance_desc instDescs[];
+//};
 
-layout( binding = 1 ) readonly buffer draw_cmd_buffer{
+layout( binding = 0 ) readonly buffer draw_cmd_buffer{
 	draw_command drawCmd[];
 };
 
-layout( location = 0 ) out vec3 oNormal;
-layout( location = 1 ) out vec3 oTan;
-layout( location = 2 ) out vec3 oFragWorldPos;
-layout( location = 3 ) out vec2 oUv;
-layout( location = 4 ) out flat uint oMtlIdx;
 
 vec2 SignNonZero( vec2 e )
 {
@@ -73,6 +71,12 @@ vec3 DecodeTanFromAngle( vec3 n, float tanAngle )
 	return tanRef * cos( tanAngle ) + cross( n, tanRef ) * sin( tanAngle );
 }
 
+
+layout( location = 0 ) out vec3 oNormal;
+layout( location = 1 ) out vec3 oTan;
+layout( location = 2 ) out vec3 oFragWorldPos;
+layout( location = 3 ) out vec2 oUv;
+layout( location = 4 ) out flat uint oMtlIdx;
 void main() 
 {
 	vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ gl_VertexIndex ];
@@ -81,7 +85,7 @@ void main()
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
 	uint di = drawCmd[ gl_DrawIDARB ].drawIdx;
-	instance_desc inst = instDescs[ di ];
+	instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
 	
 	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
 	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;
