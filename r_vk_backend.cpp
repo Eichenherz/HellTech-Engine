@@ -3349,10 +3349,10 @@ void VkBackendInit()
 			VkMakeComputePipeline( dc.device, 0, drawcullCompProgram.pipeLayout, drawCull.module, { OBJ_CULL_WORKSIZE,occlusionCulling } );
 		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
 
-		vk_shader expansionComp = VkLoadShader( "Shaders/meshlet_expansion.comp.spv", dc.device );
+		vk_shader expansionComp = VkLoadShader( "Shaders/id_expander.comp.spv", dc.device );
 		expanderCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &expansionComp } );
 		rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, expanderCompProgram.pipeLayout, expansionComp.module, {} );
-		VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_ExpandInstances" );
+		VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
 
 		vk_shader clusterCull = VkLoadShader( "Shaders/cluster_cull.comp.spv", dc.device );
 		clusterCullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &clusterCull } );
@@ -4506,14 +4506,18 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 					   projView,
 					   drawRange );
 
-		DrawIndirectPass( thisVFrame.cmdBuf,
-						  gfxDrawIndirDbg,
-						  rndCtx.render2ndPass,
-						  rndCtx.offscreenFbo,
-						  drawCmdAabbsBuff,
-						  drawCountDbgBuff.hndl,
-						  dbgDrawProgram,
-						  projView );
+		if( bvDraw )
+		{
+			DrawIndirectPass( thisVFrame.cmdBuf,
+							  gfxDrawIndirDbg,
+							  rndCtx.render2ndPass,
+							  rndCtx.offscreenFbo,
+							  drawCmdAabbsBuff,
+							  drawCountDbgBuff.hndl,
+							  dbgDrawProgram,
+							  projView );
+		}
+		
 	}
 
 	ToneMappingWithSrgb( thisVFrame.cmdBuf,

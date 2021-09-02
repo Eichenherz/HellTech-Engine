@@ -43,15 +43,15 @@ layout( binding = 2 ) buffer draw_visibility_buffer{
 };
 
 // TODO: strike down
-struct inst_chunk
+struct expandee_info
 {
-	uint instID;
-	uint mletOffset;
-	uint mletCount;
+	uint instId;
+	uint expOffset;
+	uint expCount;
 };
 
 layout( binding = 3 ) writeonly buffer visible_insts{
-	inst_chunk visibleInstsChunks[];
+	expandee_info visibleInstsChunks[];
 };
 
 layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
@@ -229,9 +229,9 @@ void main()
 	{
 		//uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 	
-		visibleInstsChunks[ drawCallIdx ].instID = globalIdx;
-		visibleInstsChunks[ drawCallIdx ].mletOffset = lod.meshletOffset;
-		visibleInstsChunks[ drawCallIdx ].mletCount = lod.meshletCount;
+		visibleInstsChunks[ drawCallIdx ].instId = globalIdx;
+		visibleInstsChunks[ drawCallIdx ].expOffset = lod.meshletOffset;
+		visibleInstsChunks[ drawCallIdx ].expCount = lod.meshletCount;
 	
 		drawCmd[ drawCallIdx ].drawIdx = globalIdx;
 		drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
