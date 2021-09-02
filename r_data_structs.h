@@ -129,6 +129,7 @@ struct material_data
 	uint hash;
 };
 
+// TODO: should store lod
 struct meshlet
 {
 	vec3	center;

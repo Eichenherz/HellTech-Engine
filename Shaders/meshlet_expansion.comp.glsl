@@ -23,14 +23,8 @@ layout( binding = 0 ) readonly buffer visible_insts{
 layout( binding = 1 ) readonly buffer visible_insts_cnt{
 	uint visibleInstsCount;
 };
-
-struct meshlet_id
-{
-	uint instID;
-	uint meshletID;
-};
 layout( binding = 2 ) writeonly buffer meshlet_list{
-	meshlet_id visibleMeshlets[];
+	uint64_t meshletIdBuff[];
 };
 layout( binding = 3 ) coherent buffer meshlet_list_cnt{
 	uint meshletCount;
@@ -92,7 +86,7 @@ void main()
 			// TODO: wavefront select ?
 			if( slotIdx < mletsCount )
 			{
-				visibleMeshlets[ slotIdx + visibleMletsOffsetLDS ] = meshlet_id( instIdx, mletsIndexOffset + slotIdx );
+				meshletIdBuff[ slotIdx + visibleMletsOffsetLDS ] = uint64_t( instIdx ) | ( uint64_t( mletsIndexOffset + slotIdx ) << 32 );
 			}
 		}
 		

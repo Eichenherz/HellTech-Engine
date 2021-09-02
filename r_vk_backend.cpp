@@ -2434,51 +2434,36 @@ static void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
 }
 
 
-
-
-static buffer_data bdasUboBuff;
-
 static buffer_data globVertexBuff;
 // TODO: use indirect merged index buffer
 static buffer_data indexBuff;
 static buffer_data meshBuff;
 
 static buffer_data mletInstIdxBuff;
-static buffer_data mletDispatchCounterBuff;
+static buffer_data meshletCountBuff;
 
 static buffer_data visibleInstsBuff;
-static buffer_data meshletDispatchIDsBuff;
+static buffer_data meshletIdBuff;
 
 static buffer_data meshletBuff;
 // TODO: store u8x4 vtx in here ?
 static buffer_data meshletVtxBuff;
 static buffer_data meshletTrisBuff;
 
+// TODO:
 static buffer_data transformsBuff;
+
 static buffer_data materialsBuff;
 static buffer_data instDescBuff;
 static buffer_data lightsBuff;
 
-
-static buffer_data dispatchCmdBuff;
-
 static buffer_data drawIdxBuff;
 
-static buffer_data avgLumBuff;
-static buffer_data shaderGlobalsBuff;
-static buffer_data shaderGlobalSyncCounterBuff;
+
 
 static buffer_data drawCmdBuff;
-static buffer_data drawCountBuff;
-
 static buffer_data drawCmdDbgBuff;
-static buffer_data drawCountDbgBuff;
-
 static buffer_data drawVisibilityBuff;
-
-static buffer_data depthAtomicCounterBuff;
-
-static buffer_data atomicCounterBuff;
 
 template<typename T>
 struct hndl32
@@ -2716,19 +2701,19 @@ VkStageCopyUploadBuffer(
 	vkCmdCopyBuffer( cmdBuf, stagingBuf.hndl, dstBuff.hndl, 1, &copyRegion );
 }
 
-//struct aabb
-//{
-//	vec3 center;
-//	vec3 extent;
-//};
-
-// TODO: redesign
-struct instance_data
+struct box_bounds
 {
-	//std::vector<mat4> transforms;
-	//std::vector<aabb> aabbs;
-	std::vector<instance_desc> insts;
-	std::vector<mesh_desc> meshes;
+	DirectX::XMFLOAT3 min;
+	DirectX::XMFLOAT3 max;
+};
+
+// TODO: better inst to meshlet mapping
+struct entities_data
+{
+	std::vector<DirectX::XMFLOAT4X4A> transforms;
+	std::vector<box_bounds> instAabbs;
+	std::vector<box_bounds> meshletAabbs;
+	std::vector<range> instToMeshletRange;
 };
 
 // TODO: use instancing 4 drawing ?
@@ -2785,7 +2770,7 @@ static inline debug_context VkInitDebugCtx(
 	vkDestroyShaderModule( vkDevice, vert.module, 0 );
 	vkDestroyShaderModule( vkDevice, frag.module, 0 );
 
-	dbgCtx.dbgLinesBuff = VkCreateAllocBindBuffer( 128 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
+	dbgCtx.dbgLinesBuff = VkCreateAllocBindBuffer( 512 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
 		//1 * MB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vkHostComArena );
 	dbgCtx.dbgTrisBuff = VkCreateAllocBindBuffer( 128 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
 
@@ -2864,9 +2849,26 @@ constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
 //constexpr char glbPath[] = "WaterBottle.glb";
 
+static entities_data entities;
 // TODO: revisit remake improve
 // TODO: staging clean up
 // TODO: re make offsets, ranges, etc
+
+inline box_bounds XM_CALLCONV BoxMinMaxFromCenterExtent( DirectX::XMVECTOR center, DirectX::XMVECTOR extent )
+{
+	using namespace DirectX;
+
+	XMVECTOR boxMin = XMVectorAdd( center, extent );
+	XMVECTOR boxMax = XMVectorSubtract( center, extent );
+	
+	box_bounds box = {};
+
+	XMStoreFloat3( &box.min, boxMin );
+	XMStoreFloat3( &box.max, boxMax );
+
+	return box;
+}
+
 static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 {
 	using namespace DirectX;
@@ -2898,8 +2900,9 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	offset += BYTE_COUNT( mtrlDesc );
 	const std::span<image_metadata> imgDesc = { (image_metadata*) ( std::data( binaryData ) + offset ),fileDesc.texCount };
 
-	//const std::span<vertex> vtxView =
-	//{ (vertex*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset ),fileDesc.vtxRange.size };
+	const std::span<vertex> vtxView = { 
+		(vertex*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset ),
+		fileDesc.vtxRange.size / sizeof( vertex ) };
 
 	const std::span<meshlet> mletView = { 
 		(meshlet*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsRange.offset ),
@@ -2959,30 +2962,21 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	std::vector<instance_desc> instDesc = SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRad );
 	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad );
 
-	
-	//// TODO: move from here 
-	if constexpr( dbgDraw )
+	// TODO: improve
+	for( const instance_desc& ii : instDesc )
 	{
-		XMFLOAT4 boxVertices[ 8 ] = {};
-		std::vector<dbg_vertex> dbgGeom( std::size( instDesc ) * boxLineVertexCount + boxLineVertexCount );
-		for( u64 ii = 0; ii < std::size( instDesc ); ++ii )
-		{
-			const instance_desc& i = instDesc[ ii ];
-			const mesh_desc& m = meshes[ i.meshIdx ];
-			constexpr XMFLOAT4 col = { 255.0f,255.0f,0.0f,1.0f };
-			TrnasformBoxVertices( XMLoadFloat4x4A( &i.localToWorld ), m.aabbMin, m.aabbMax, boxVertices );
+		const mesh_desc& m = meshes[ ii.meshIdx ];
+		entities.transforms.push_back( ii.localToWorld );
+		entities.instAabbs.push_back( BoxMinMaxFromCenterExtent( XMLoadFloat3( &m.center ), XMLoadFloat3( &m.extent ) ) );
+		entities.instToMeshletRange.push_back( { m.lods[ 0 ].meshletOffset, m.lods[ 0 ].meshletCount } );
 
-			std::span<dbg_vertex> boxLineRange = { std::data( dbgGeom ) + ii * boxLineVertexCount, boxLineVertexCount };
-			assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
-			for( u64 i = 0; i < std::size( boxLineRange ); ++i )
-			{
-				boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],col };
-			}
+		const range mletRange = entities.instToMeshletRange.back();
+		for( u64 mi = 0; mi < mletRange.size; ++mi )
+		{
+			const meshlet& mlet = mletView[ mletRange.offset + mi ];
+			entities.meshletAabbs.push_back( BoxMinMaxFromCenterExtent( XMLoadFloat3( &mlet.center ), XMLoadFloat3( &mlet.extent ) ) );
 		}
-	
-		dbgLineGeomCache = std::move( dbgGeom );
 	}
-	
 
 	// NOTE: upload buffers
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
@@ -3145,10 +3139,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 												  vkRscArena );
 	VkDbgNameObj( visibleInstsBuff.hndl, dc.device, "Buff_Visible_Insts" );
 
-	meshletDispatchIDsBuff = VkCreateAllocBindBuffer( std::size( mletView ) * 2 * sizeof( u32 ),
-													  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
-													  vkRscArena );
-	VkDbgNameObj( meshletDispatchIDsBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
+	meshletIdBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
+	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
 
 	// NOTE: create and texture uploads
 	std::vector<VkImageMemoryBarrier2KHR> imageBarriers;
@@ -3221,7 +3213,21 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	vkCmdPipelineBarrier2KHR( cmdBuf, &uploadDependency );
 }
 
+static buffer_data drawCountBuff;
+static buffer_data drawCountDbgBuff;
 
+static buffer_data avgLumBuff;
+
+static buffer_data shaderGlobalsBuff;
+static buffer_data shaderGlobalSyncCounterBuff;
+
+static buffer_data depthAtomicCounterBuff;
+
+static buffer_data atomicCounterBuff;
+
+static buffer_data bdasUboBuff;
+
+static buffer_data dispatchCmdBuff;
 static buffer_data dispatchCmdBuff2;
 // TODO:
 inline static void VkInitInternalBuffers()
@@ -3267,9 +3273,9 @@ inline static void VkInitInternalBuffers()
 
 	bdasUboBuff = VkCreateAllocBindBuffer( sizeof( global_bdas ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, vkHostComArena );
 
-	mletDispatchCounterBuff = 
+	meshletCountBuff = 
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
-	VkDbgNameObj( mletDispatchCounterBuff.hndl, dc.device, "Buff_Mlet_Dispatch_Count" );
+	VkDbgNameObj( meshletCountBuff.hndl, dc.device, "Buff_Mlet_Dispatch_Count" );
 
 	atomicCounterBuff = VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 	VkDbgNameObj( atomicCounterBuff.hndl, dc.device, "Buff_Atomic_Counter" );
@@ -3487,7 +3493,7 @@ CullPass(
 	// NOTE: wtf Vulkan ?
 	constexpr u64 VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR;
 
-	vkCmdFillBuffer( cmdBuff, mletDispatchCounterBuff.hndl, 0, mletDispatchCounterBuff.size, 0u );
+	vkCmdFillBuffer( cmdBuff, meshletCountBuff.hndl, 0, meshletCountBuff.size, 0u );
 
 	VkBufferMemoryBarrier2KHR dispatchBarriers[] = {
 		VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
@@ -3510,7 +3516,7 @@ CullPass(
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								VK_ACCESS_2_SHADER_READ_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-	    VkMakeBufferBarrier2( mletDispatchCounterBuff.hndl,
+	    VkMakeBufferBarrier2( meshletCountBuff.hndl,
 								VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 								VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
@@ -3531,8 +3537,8 @@ CullPass(
 	vk_descriptor_info pd[] = {
 		Descriptor( visibleInstsBuff ),
 		Descriptor( drawCountBuff ),
-		Descriptor( meshletDispatchIDsBuff ),
-		Descriptor( mletDispatchCounterBuff ),
+		Descriptor( meshletIdBuff ),
+		Descriptor( meshletCountBuff ),
 		Descriptor( atomicCounterBuff ),
 		Descriptor( dispatchCmdBuff2 )
 	};
@@ -3549,12 +3555,12 @@ CullPass(
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
 								VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH ),
-		VkMakeBufferBarrier2( meshletDispatchIDsBuff.hndl,
+		VkMakeBufferBarrier2( meshletIdBuff.hndl,
 								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								VK_ACCESS_2_SHADER_READ_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-		VkMakeBufferBarrier2( mletDispatchCounterBuff.hndl,
+		VkMakeBufferBarrier2( meshletCountBuff.hndl,
 								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								VK_ACCESS_2_SHADER_READ_BIT_KHR,
@@ -3572,10 +3578,11 @@ CullPass(
 	vkCmdPipelineBarrier2KHR( cmdBuff, &execCullDependency );
 
 	vk_descriptor_info ccd[] = {
-		Descriptor( meshletDispatchIDsBuff ),
-		Descriptor( mletDispatchCounterBuff ),
+		Descriptor( meshletIdBuff ),
+		Descriptor( meshletCountBuff ),
 		Descriptor( drawCmdDbgBuff ),
-		Descriptor( drawCountDbgBuff )
+		Descriptor( drawCountDbgBuff ),
+		depthPyramidInfo
 		//Descriptor( atomicCounterBuff )
 	};
 
@@ -3979,6 +3986,65 @@ DebugDrawPass(
 	vkCmdEndRenderPass( cmdBuff );
 }
 
+// TODO: rethink ?
+inline std::vector<dbg_vertex> ConstructSceneAABBVertexBuffer( const entities_data& entities )
+{
+	using namespace DirectX;
+
+	assert( std::size( entities.instAabbs ) == std::size( entities.transforms ) == std::size( entities.instToMeshletRange ) );
+
+	u64 entitiesCount = std::size( entities.transforms );
+	u64 meshletsCount = std::size( entities.meshletAabbs );
+	std::vector<dbg_vertex> dbgGeom;
+	dbgGeom.resize( ( entitiesCount + meshletsCount ) * boxLineVertexCount + boxLineVertexCount );
+
+	
+	for( u64 i = 0; i < entitiesCount; ++i )
+	{
+		const box_bounds& aabb = entities.instAabbs[ i ];
+		const XMFLOAT4X4A& mat = entities.transforms[ i ];
+
+		XMFLOAT4 boxVertices[ 8 ] = {};
+		constexpr XMFLOAT4 col = { 255.0f,255.0f,0.0f,1.0f };
+		TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
+
+		std::span<dbg_vertex> boxLineRange = { std::data( dbgGeom ) + i * boxLineVertexCount, boxLineVertexCount };
+		assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
+		for( u64 ii = 0; ii < std::size( boxLineRange ); ++ii )
+		{
+			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
+		}
+	}
+	
+	u64 meshletsOffset = entitiesCount * boxLineVertexCount;
+
+	for( u64 i = 0; i < entitiesCount; ++i )
+	{
+		const XMFLOAT4X4A& mat = entities.transforms[ i ];
+		const range& mletRange = entities.instToMeshletRange[ i ];
+	
+		constexpr XMFLOAT4 col = { 255.0f,0.0f,0.0f,1.0f };
+	
+		for( u64 mi = 0; mi < mletRange.size; ++mi )
+		{
+			const box_bounds& aabb = entities.meshletAabbs[ mi + mletRange.offset ];
+
+			XMFLOAT4 boxVertices[ 8 ] = {};
+			TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
+	
+			std::span<dbg_vertex> boxLineRange = { 
+				std::data( dbgGeom ) + meshletsOffset + mi * boxLineVertexCount, boxLineVertexCount };
+
+			assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
+			for( u64 ii = 0; ii < std::size( boxLineRange ); ++ii )
+			{
+				boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
+			}
+		}
+	}
+
+	return dbgGeom;
+}
 
 // TODO: batch barriers
 void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
@@ -4310,7 +4376,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 			depthPyramidMultiProgram );
 	}
 
-
+	dbgLineGeomCache = ConstructSceneAABBVertexBuffer( entities );
 	// TODO: rethink
 	if( dbgDraw && ( freeCam || bvDraw ) )
 	{
@@ -4321,9 +4387,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
 
 		
-		
-		u64 instanceCount = instDescBuff.size / sizeof( instance_desc );
-		u64 frustBoxOffset = instanceCount * boxLineVertexCount;
+		u64 frustBoxOffset = ( std::size( entities.instAabbs ) + std::size( entities.meshletAabbs ) ) * boxLineVertexCount;
 		
 		XMFLOAT4 boxVertices[ 8 ] = {};
 		TrnasformBoxVertices( frustMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
