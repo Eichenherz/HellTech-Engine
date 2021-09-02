@@ -2462,6 +2462,7 @@ static buffer_data drawIdxBuff;
 
 
 static buffer_data drawCmdBuff;
+static buffer_data drawCmdAabbsBuff;
 static buffer_data drawCmdDbgBuff;
 static buffer_data drawVisibilityBuff;
 
@@ -3116,6 +3117,11 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 											  vkRscArena );
 	VkDbgNameObj( drawCmdDbgBuff.hndl, dc.device, "Buff_Indirect_Dbg_Draw_Cmds" );
 
+	drawCmdAabbsBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( draw_command ),
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+												vkRscArena );
 	// TODO: use per wave stuff ?
 	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -3291,6 +3297,9 @@ static vk_program	tonemapCompProgram = {};
 static vk_program	depthPyramidMultiProgram = {};
 static vk_program   expanderCompProgram = {};
 static vk_program   clusterCullCompProgram = {};
+
+static vk_program   dbgDrawProgram = {};
+static VkPipeline   gfxDrawIndirDbg = {};
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3312,6 +3321,27 @@ void VkBackendInit()
 
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
 
+
+	{
+		vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", dc.device );
+		vk_shader normalCol = VkLoadShader( "Shaders/normal_col.frag.spv", dc.device );
+
+		vk_gfx_pipeline_state lineDrawPipelineState = {};
+		lineDrawPipelineState.blendCol = VK_FALSE;
+		lineDrawPipelineState.depthWrite = VK_FALSE;
+		lineDrawPipelineState.depthTestEnable = VK_FALSE;
+		lineDrawPipelineState.cullFlags = VK_CULL_MODE_NONE;
+		lineDrawPipelineState.primTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+		lineDrawPipelineState.polyMode = VK_POLYGON_MODE_LINE;
+		lineDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+		dbgDrawProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol } );
+		gfxDrawIndirDbg = VkMakeGfxPipeline( 
+			dc.device, 0, rndCtx.renderPass, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module, lineDrawPipelineState );
+
+		vkDestroyShaderModule( dc.device, vertBox.module, 0 );
+		vkDestroyShaderModule( dc.device, normalCol.module, 0 );
+	}
 	{
 		vk_shader drawCull = VkLoadShader( "Shaders/draw_cull.comp.spv", dc.device );
 		drawcullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCull } );
@@ -3487,7 +3517,7 @@ CullPass(
 	};
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( cullInfo ), &cullInfo );
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( cullInfo ), &cullInfo );
 	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.x ), 1, 1 );
 
 	// NOTE: wtf Vulkan ?
@@ -3569,6 +3599,16 @@ CullPass(
 								VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 								VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( atomicCounterBuff.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
+								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
@@ -3582,8 +3622,10 @@ CullPass(
 		Descriptor( meshletCountBuff ),
 		Descriptor( drawCmdDbgBuff ),
 		Descriptor( drawCountDbgBuff ),
-		depthPyramidInfo
-		//Descriptor( atomicCounterBuff )
+		depthPyramidInfo,
+		Descriptor( atomicCounterBuff ),
+		Descriptor( dispatchCmdBuff ),
+		Descriptor( drawCmdAabbsBuff )
 	};
 
 	// TODO: wtf binds ?
@@ -3614,7 +3656,12 @@ CullPass(
 								VK_ACCESS_2_SHADER_READ_BIT_KHR,//VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-								VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR )
+								VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR ),
+		VkMakeBufferBarrier2( drawCmdAabbsBuff.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ),
 	};
 
 	VkDependencyInfoKHR dependencyEnd = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -3638,7 +3685,7 @@ DrawIndexedIndirectPass(
 	const VkClearValue*		clearVals,
 	const vk_program&		program
 ){
-	vk_label label = { cmdBuff,"DrawIndirect Pass",{} };
+	vk_label label = { cmdBuff,"Draw Indexed Indirect Pass",{} };
 
 	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
@@ -3665,6 +3712,48 @@ DrawIndexedIndirectPass(
 
 	vkCmdDrawIndexedIndirectCount( 
 		cmdBuff, drawCmds.hndl, offsetof( draw_command, cmd ), drawCmdCount, 0, maxDrawCallCount, sizeof( draw_command ) );
+
+	vkCmdEndRenderPass( cmdBuff );
+}
+
+// TODO: sexier
+inline static void
+DrawIndirectPass(
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline,
+	VkRenderPass			vkRndPass,
+	VkFramebuffer			offscreenFbo,
+	const buffer_data&      drawCmds,
+	VkBuffer				drawCmdCount,
+	const vk_program&       program,
+	const mat4&             viewProjMat
+){
+	vk_label label = { cmdBuff,"Draw Indirect Pass",{} };
+
+	VkViewport viewport = { 0, ( float )sc.height, ( float )sc.width, -( float )sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	rndPassBegInfo.renderPass = vkRndPass;
+	rndPassBegInfo.framebuffer = offscreenFbo;
+	rndPassBegInfo.renderArea = scissor;
+
+	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
+
+	vk_descriptor_info descriptors[] = { Descriptor( drawCmds ), Descriptor( instDescBuff ), Descriptor( meshletBuff ) };
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
+
+	struct { mat4 viewProj; vec4 color; } push = { viewProjMat, { 255,0,0,0 } };
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( push ), &push );
+
+	u32 maxDrawCnt = meshletBuff.size / sizeof( meshlet );
+	vkCmdDrawIndirectCount(
+		cmdBuff, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCmdCount, 0, maxDrawCnt, sizeof( draw_indirect ) );
 
 	vkCmdEndRenderPass( cmdBuff );
 }
@@ -3899,7 +3988,7 @@ ToneMappingWithSrgb(
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, avgProg.descUpdateTemplate, avgProg.pipeLayout, 0, &avgLumDescs[ 0 ] );
 
-	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, avgProg.pushConstStages, 0, sizeof( avgLumInfo ), &avgLumInfo );
+	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
 	vkCmdDispatch( cmdBuff, 
 				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.x ), 
@@ -3996,7 +4085,8 @@ inline std::vector<dbg_vertex> ConstructSceneAABBVertexBuffer( const entities_da
 	u64 entitiesCount = std::size( entities.transforms );
 	u64 meshletsCount = std::size( entities.meshletAabbs );
 	std::vector<dbg_vertex> dbgGeom;
-	dbgGeom.resize( ( entitiesCount + meshletsCount ) * boxLineVertexCount + boxLineVertexCount );
+	//dbgGeom.resize( ( entitiesCount + meshletsCount ) * boxLineVertexCount + boxLineVertexCount );
+	dbgGeom.resize( entitiesCount * boxLineVertexCount + boxLineVertexCount );
 
 	
 	for( u64 i = 0; i < entitiesCount; ++i )
@@ -4016,32 +4106,32 @@ inline std::vector<dbg_vertex> ConstructSceneAABBVertexBuffer( const entities_da
 		}
 	}
 	
-	u64 meshletsOffset = entitiesCount * boxLineVertexCount;
-
-	for( u64 i = 0; i < entitiesCount; ++i )
-	{
-		const XMFLOAT4X4A& mat = entities.transforms[ i ];
-		const range& mletRange = entities.instToMeshletRange[ i ];
-	
-		constexpr XMFLOAT4 col = { 255.0f,0.0f,0.0f,1.0f };
-	
-		for( u64 mi = 0; mi < mletRange.size; ++mi )
-		{
-			const box_bounds& aabb = entities.meshletAabbs[ mi + mletRange.offset ];
-
-			XMFLOAT4 boxVertices[ 8 ] = {};
-			TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
-	
-			std::span<dbg_vertex> boxLineRange = { 
-				std::data( dbgGeom ) + meshletsOffset + mi * boxLineVertexCount, boxLineVertexCount };
-
-			assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
-			for( u64 ii = 0; ii < std::size( boxLineRange ); ++ii )
-			{
-				boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
-			}
-		}
-	}
+	//u64 meshletsOffset = entitiesCount * boxLineVertexCount;
+	//
+	//for( u64 i = 0; i < entitiesCount; ++i )
+	//{
+	//	const XMFLOAT4X4A& mat = entities.transforms[ i ];
+	//	const range& mletRange = entities.instToMeshletRange[ i ];
+	//
+	//	constexpr XMFLOAT4 col = { 255.0f,0.0f,0.0f,1.0f };
+	//
+	//	for( u64 mi = 0; mi < mletRange.size; ++mi )
+	//	{
+	//		const box_bounds& aabb = entities.meshletAabbs[ mi + mletRange.offset ];
+	//
+	//		XMFLOAT4 boxVertices[ 8 ] = {};
+	//		TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
+	//
+	//		std::span<dbg_vertex> boxLineRange = { 
+	//			std::data( dbgGeom ) + meshletsOffset + mi * boxLineVertexCount, boxLineVertexCount };
+	//
+	//		assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
+	//		for( u64 ii = 0; ii < std::size( boxLineRange ); ++ii )
+	//		{
+	//			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
+	//		}
+	//	}
+	//}
 
 	return dbgGeom;
 }
@@ -4387,7 +4477,8 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
 
 		
-		u64 frustBoxOffset = ( std::size( entities.instAabbs ) + std::size( entities.meshletAabbs ) ) * boxLineVertexCount;
+		//u64 frustBoxOffset = ( std::size( entities.instAabbs ) + std::size( entities.meshletAabbs ) ) * boxLineVertexCount;
+		u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
 		
 		XMFLOAT4 boxVertices[ 8 ] = {};
 		TrnasformBoxVertices( frustMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
@@ -4414,13 +4505,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 					   vkDbgCtx.pipeProg,
 					   projView,
 					   drawRange );
-	}
 
-	//for( auto& barrier : dbgDrawBarriers )
-	//{
-	//	barrier = VkReverseBufferBarrier2( barrier );
-	//}
-	//vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &dependency0 );
+		DrawIndirectPass( thisVFrame.cmdBuf,
+						  gfxDrawIndirDbg,
+						  rndCtx.render2ndPass,
+						  rndCtx.offscreenFbo,
+						  drawCmdAabbsBuff,
+						  drawCountDbgBuff.hndl,
+						  dbgDrawProgram,
+						  projView );
+	}
 
 	ToneMappingWithSrgb( thisVFrame.cmdBuf,
 						 rndCtx.compAvgLumPipe, 
@@ -4469,7 +4563,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 void VkBackendKill()
 {
-	// NOTE: SHOULDN'T need to check if(VkObj) can't create -> app fail
+	// NOTE: SHOULDN'T need to check if( VkObj ). Can't create -> app fail
 	assert( dc.device );
 	vkDeviceWaitIdle( dc.device );
 	//for( auto& queued : deviceGlobalDeletionQueue ) queued();

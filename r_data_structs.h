@@ -192,7 +192,7 @@ struct draw_command
 
 struct draw_indirect
 {
-	uint	drawIdx;
+	uint64_t drawIdx;
 #if defined( __cplusplus ) && defined( __VK )
 	VkDrawIndirectCommand cmd;
 #else

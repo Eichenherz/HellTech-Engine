@@ -27,13 +27,25 @@ layout( binding = 0 ) readonly buffer meshlet_list{
 layout( binding = 1 ) readonly buffer meshlet_list_cnt{
 	uint totalMeshletCount;
 };
-layout( binding = 2, scalar ) writeonly buffer dbg_draw_cmd{
-	draw_command dbgDrawCmd[];
+layout( binding = 2, scalar ) writeonly buffer draw_cmd{
+	draw_command drawCmd[];
 };
-layout( binding = 3 ) buffer dbg_draw_cmd_count{
-	uint dbgDrawCallCount;
+layout( binding = 3 ) buffer draw_cmd_count{
+	uint drawCallCount;
 };
 layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
+layout( binding = 5 ) coherent buffer atomic_cnt{
+	uint workgrAtomicCounter;
+};
+layout( binding = 6 ) buffer disptach_indirect{
+	dispatch_command dispatchCmd;
+};
+
+layout( binding = 7, scalar ) writeonly buffer draw_indir{
+	draw_indirect dbgDrawCmd[];
+};
+
+shared uint workgrAtomicCounterShared = {};
 
 
 layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
@@ -69,6 +81,10 @@ void main()
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
+
+
+	// TODO: add cone culling 
+
 
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.camPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
@@ -125,19 +141,36 @@ void main()
 	
 	if( subgrActiveCount == 0 ) return;
 	// TODO: shared atomics + global atomics ?
-	uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( dbgDrawCallCount, subgrActiveCount ) : 0;
+	uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, subgrActiveCount ) : 0;
 	
 	uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 	uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
 	if( visible )
 	{
-		//uint slotIdx = atomicAdd( dbgDrawCallCount, 1 );
-		dbgDrawCmd[ slotIdx ].drawIdx = parentInstId;
-		dbgDrawCmd[ slotIdx ].indexCount = uint( currentMeshlet.triangleCount ) * 3;
+		drawCmd[ slotIdx ].drawIdx = parentInstId;
+		drawCmd[ slotIdx ].indexCount = uint( currentMeshlet.triangleCount ) * 3;
+		drawCmd[ slotIdx ].instanceCount = 1;
+		drawCmd[ slotIdx ].firstIndex = currentMeshlet.triBufOffset;
+		drawCmd[ slotIdx ].vertexOffset = currentMeshlet.vtxBufOffset;
+		drawCmd[ slotIdx ].firstInstance = 0;
+
+		dbgDrawCmd[ slotIdx ].drawIdx = mid;
+		dbgDrawCmd[ slotIdx ].firstVertex = 0;
+		dbgDrawCmd[ slotIdx ].vertexCount = 24;
 		dbgDrawCmd[ slotIdx ].instanceCount = 1;
-		dbgDrawCmd[ slotIdx ].firstIndex = currentMeshlet.triBufOffset;
-		dbgDrawCmd[ slotIdx ].vertexOffset = currentMeshlet.vtxBufOffset;
 		dbgDrawCmd[ slotIdx ].firstInstance = 0;
+	}				
+
+	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+	barrier();
+
+	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
+	{
+		// TODO: pass as spec consts or push consts ? 
+		uint trisExpDispatch = ( drawCallCount + 127 ) / 128;
+		dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
+		// NOTE: reset atomicCounter
+		workgrAtomicCounter = 0;
 	}
 }
