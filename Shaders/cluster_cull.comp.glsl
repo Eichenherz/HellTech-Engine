@@ -33,15 +33,26 @@ layout( binding = 2, scalar ) writeonly buffer draw_cmd{
 layout( binding = 3 ) buffer draw_cmd_count{
 	uint drawCallCount;
 };
-layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
-layout( binding = 5 ) coherent buffer atomic_cnt{
+
+struct expandee_info
+{
+	uint instId;
+	uint expOffset;
+	uint expCount;
+};
+layout( binding = 4 ) writeonly buffer triangle_ids{
+	expandee_info visibleMeshlets[];
+};
+
+layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
+layout( binding = 6 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
-layout( binding = 6 ) buffer disptach_indirect{
+layout( binding = 7 ) buffer disptach_indirect{
 	dispatch_command dispatchCmd;
 };
 
-layout( binding = 7, scalar ) writeonly buffer draw_indir{
+layout( binding = 8, scalar ) writeonly buffer draw_indir{
 	draw_indirect dbgDrawCmd[];
 };
 
@@ -148,6 +159,11 @@ void main()
 
 	if( visible )
 	{
+		visibleMeshlets[ slotIdx ].instId = parentInstId;
+		visibleMeshlets[ slotIdx ].expOffset = currentMeshlet.triBufOffset;
+		// NOTE: want all the indices
+		visibleMeshlets[ slotIdx ].expCount = uint( currentMeshlet.triangleCount ) * 3;
+
 		drawCmd[ slotIdx ].drawIdx = parentInstId;
 		drawCmd[ slotIdx ].indexCount = uint( currentMeshlet.triangleCount ) * 3;
 		drawCmd[ slotIdx ].instanceCount = 1;
@@ -168,7 +184,7 @@ void main()
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
-		uint trisExpDispatch = ( drawCallCount + 127 ) / 128;
+		uint trisExpDispatch = ( drawCallCount + 3 ) / 4;
 		dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
 		// NOTE: reset atomicCounter
 		workgrAtomicCounter = 0;

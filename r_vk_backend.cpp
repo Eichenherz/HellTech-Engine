@@ -1244,6 +1244,7 @@ struct render_context
 {
 	VkPipeline		gfxPipeline;
 	VkPipeline		gfxMeshletPipeline;
+	VkPipeline		gfxMergedPipeline;
 	VkPipeline		compPipeline;
 	VkPipeline		compHiZPipeline;
 	//VkPipeline		gfxTranspPipe;
@@ -1251,6 +1252,7 @@ struct render_context
 	VkPipeline		compTonemapPipe;
 	VkPipeline      compExpanderPipe;
 	VkPipeline      compClusterCullPipe;
+	VkPipeline      compTriangleCullPipe;
 
 	VkRenderPass	renderPass;
 	VkRenderPass	render2ndPass;
@@ -2434,38 +2436,6 @@ static void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
 }
 
 
-static buffer_data globVertexBuff;
-// TODO: use indirect merged index buffer
-static buffer_data indexBuff;
-static buffer_data meshBuff;
-
-static buffer_data mletInstIdxBuff;
-static buffer_data meshletCountBuff;
-
-static buffer_data visibleInstsBuff;
-static buffer_data meshletIdBuff;
-
-static buffer_data meshletBuff;
-// TODO: store u8x4 vtx in here ?
-static buffer_data meshletVtxBuff;
-static buffer_data meshletTrisBuff;
-
-// TODO:
-static buffer_data transformsBuff;
-
-static buffer_data materialsBuff;
-static buffer_data instDescBuff;
-static buffer_data lightsBuff;
-
-static buffer_data drawIdxBuff;
-
-
-
-static buffer_data drawCmdBuff;
-static buffer_data drawCmdAabbsBuff;
-static buffer_data drawCmdDbgBuff;
-static buffer_data drawVisibilityBuff;
-
 template<typename T>
 struct hndl32
 {
@@ -2870,6 +2840,39 @@ inline box_bounds XM_CALLCONV BoxMinMaxFromCenterExtent( DirectX::XMVECTOR cente
 	return box;
 }
 
+
+
+static buffer_data globVertexBuff;
+// TODO: use indirect merged index buffer
+static buffer_data indexBuff;
+static buffer_data meshBuff;
+
+static buffer_data meshletBuff;
+// TODO: store u8x4 vtx in here ?
+static buffer_data meshletVtxBuff;
+static buffer_data meshletTrisBuff;
+
+// TODO:
+static buffer_data transformsBuff;
+
+static buffer_data materialsBuff;
+static buffer_data instDescBuff;
+static buffer_data lightsBuff;
+
+static buffer_data indirectMergedIndexBuff;
+
+static buffer_data visibleInstsBuff;
+static buffer_data meshletIdBuff;
+static buffer_data visibleMeshletsBuff;
+static buffer_data triangleIdBuff;
+
+static buffer_data drawCmdBuff;
+static buffer_data drawCmdAabbsBuff;
+static buffer_data drawCmdDbgBuff;
+static buffer_data drawVisibilityBuff;
+
+static buffer_data drawMergedCmd;
+
 static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 {
 	using namespace DirectX;
@@ -2915,6 +2918,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	{
 		meshes.push_back( {} );
 		mesh_desc& out = meshes[ std::size( meshes ) - 1 ];
+		assert( m.vtxRange.size < u16( -1 ) );
 		out.vertexCount = m.vtxRange.size;
 		out.vertexOffset = m.vtxRange.offset;
 
@@ -2962,6 +2966,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 
 	std::vector<instance_desc> instDesc = SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRad );
 	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad );
+
+	assert( std::size( instDesc ) < u16( -1 ) );
 
 	// TODO: improve
 	for( const instance_desc& ii : instDesc )
@@ -3128,12 +3134,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 												  vkRscArena );
 	VkDbgNameObj( drawVisibilityBuff.hndl, dc.device, "Buff_Draw_Vis" );
 
-	assert( std::size( mletView ) <= u16( -1 ) && std::size( instDesc ) <= u16( -1 ) );
-	mletInstIdxBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( u32 ),
-											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-											   vkRscArena );
 
 	screenspaceBoxBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( dbg_vertex ) * 8,
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -3141,12 +3141,27 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	VkDbgNameObj( screenspaceBoxBuff.hndl, dc.device, "Buff_Screenspace_Boxes" );
 
 	visibleInstsBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * 3 * sizeof( u32 ),
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-												  vkRscArena );
-	VkDbgNameObj( visibleInstsBuff.hndl, dc.device, "Buff_Visible_Insts" );
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+												vkRscArena );
+	visibleMeshletsBuff = VkCreateAllocBindBuffer( std::size( mletView ) * 3 * sizeof( u32 ),
+												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+												   vkRscArena );
 
 	meshletIdBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
 	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
+
+
+	triangleIdBuff = VkCreateAllocBindBuffer( fileDesc.idxRange.size * 2,// / sizeof( u32 ) * sizeof( u64 ),
+											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
+	indirectMergedIndexBuff = VkCreateAllocBindBuffer( 
+		std::size( instDesc ) * fileDesc.idxRange.size, 
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+		vkRscArena );
+
+	drawMergedCmd = VkCreateAllocBindBuffer( 3 * sizeof( draw_command ),
+											 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+											 vkRscArena );
 
 	// NOTE: create and texture uploads
 	std::vector<VkImageMemoryBarrier2KHR> imageBarriers;
@@ -3235,6 +3250,10 @@ static buffer_data bdasUboBuff;
 
 static buffer_data dispatchCmdBuff;
 static buffer_data dispatchCmdBuff2;
+
+static buffer_data meshletCountBuff;
+static buffer_data triangleCountBuff;
+static buffer_data mergedIndexCountBuff;
 // TODO:
 inline static void VkInitInternalBuffers()
 {
@@ -3282,12 +3301,18 @@ inline static void VkInitInternalBuffers()
 	meshletCountBuff = 
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 	VkDbgNameObj( meshletCountBuff.hndl, dc.device, "Buff_Mlet_Dispatch_Count" );
+	triangleCountBuff =
+		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+	VkDbgNameObj( triangleCountBuff.hndl, dc.device, "Buff_Triangle_Dispatch_Count" );
 
 	atomicCounterBuff = VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 	VkDbgNameObj( atomicCounterBuff.hndl, dc.device, "Buff_Atomic_Counter" );
+	mergedIndexCountBuff = 
+		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 }
 
 // TODO: move out of global/static
+static vk_program	gfxMergedProgram = {};
 static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
 static vk_program	drawcullCompProgram = {};
@@ -3297,6 +3322,7 @@ static vk_program	tonemapCompProgram = {};
 static vk_program	depthPyramidMultiProgram = {};
 static vk_program   expanderCompProgram = {};
 static vk_program   clusterCullCompProgram = {};
+static vk_program   triangleCullCompProgram = {};
 
 static vk_program   dbgDrawProgram = {};
 static VkPipeline   gfxDrawIndirDbg = {};
@@ -3359,9 +3385,15 @@ void VkBackendInit()
 		rndCtx.compClusterCullPipe = VkMakeComputePipeline( dc.device, 0, clusterCullCompProgram.pipeLayout, clusterCull.module, {} );
 		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_ClusterCull" );
 
+		vk_shader triangleCull = VkLoadShader( "Shaders/triangle_cull.comp.spv", dc.device );
+		triangleCullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &triangleCull } );
+		rndCtx.compTriangleCullPipe = VkMakeComputePipeline( dc.device, 0, triangleCullCompProgram.pipeLayout, triangleCull.module, {} );
+		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_TriangleCull" );
+
 		vkDestroyShaderModule( dc.device, drawCull.module, 0 );
 		vkDestroyShaderModule( dc.device, expansionComp.module, 0 );
 		vkDestroyShaderModule( dc.device, clusterCull.module, 0 );
+		vkDestroyShaderModule( dc.device, triangleCull.module, 0 );
 	}
 	{
 		vk_shader vertPBR = VkLoadShader( "Shaders/shdr.vert.spv", dc.device );
@@ -3371,6 +3403,18 @@ void VkBackendInit()
 		rndCtx.gfxPipeline =
 			VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, vertPBR.module, fragPBR.module, opaqueState );
 		VkDbgNameObj( rndCtx.gfxPipeline, dc.device, "Pipeline_Gfx_Opaque" );
+
+		vkDestroyShaderModule( dc.device, vertPBR.module, 0 );
+		vkDestroyShaderModule( dc.device, fragPBR.module, 0 );
+	}
+	{
+		vk_shader vertPBR = VkLoadShader( "Shaders/vtx_merged.vert.spv", dc.device );
+		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", dc.device );
+		vk_gfx_pipeline_state opaqueState = {};
+		gfxMergedProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertPBR, &fragPBR } );
+		rndCtx.gfxMergedPipeline =
+			VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, gfxMergedProgram.pipeLayout, vertPBR.module, fragPBR.module, opaqueState );
+		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
 
 		vkDestroyShaderModule( dc.device, vertPBR.module, 0 );
 		vkDestroyShaderModule( dc.device, fragPBR.module, 0 );
@@ -3455,8 +3499,9 @@ inline u64 GetImgMipCount( u64 width, u64 height )
 	return std::min( (u64) floor( log2( maxDim ) ), MAX_MIP_LEVELS );
 }
 
-// TODO: have the culling shader write the next dispatch
-// TODO: shader internal mem availabillity + visibility 
+// TODO: merge surviving meshlets
+// TODO: meshlet cone culling 
+// TODO: revisit triangle culling
 inline static void 
 CullPass( 
 	VkCommandBuffer			cmdBuff, 
@@ -3504,14 +3549,14 @@ CullPass(
 
 	VkDescriptorImageInfo depthPyramidInfo = { minQuadSampler, depthPyramid.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	
-	vk_descriptor_info pushDescs[] = {  
-		Descriptor( drawCmdBuff ),
-		Descriptor( drawCountBuff ), 
+	vk_descriptor_info pushDescs[] = {   
 		Descriptor( drawVisibilityBuff ),
 		Descriptor( visibleInstsBuff ),
 		depthPyramidInfo,
 		Descriptor( atomicCounterBuff ),
 		Descriptor( dispatchCmdBuff ),
+		Descriptor( drawCountBuff ),
+		//Descriptor( drawCmdBuff ),
 		//Descriptor( drawCmdDbgBuff ),
 		//Descriptor( drawCountDbgBuff )
 	};
@@ -3551,13 +3596,7 @@ CullPass(
 								VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 								VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-
 	};
-
-	//VkMemoryBarrier2KHR execDepBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
-	//execDepBarrier.srcStageMask = execDepBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR;
-	//execDepBarrier.srcAccessMask;
-	//execDepBarrier.dstAccessMask;
 
 	VkDependencyInfoKHR execDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
 	execDependency.bufferMemoryBarrierCount = std::size( dispatchBarriers );
@@ -3622,6 +3661,7 @@ CullPass(
 		Descriptor( meshletCountBuff ),
 		Descriptor( drawCmdDbgBuff ),
 		Descriptor( drawCountDbgBuff ),
+		Descriptor( visibleMeshletsBuff ),
 		depthPyramidInfo,
 		Descriptor( atomicCounterBuff ),
 		Descriptor( dispatchCmdBuff ),
@@ -3635,6 +3675,120 @@ CullPass(
 	vkCmdPushDescriptorSetWithTemplateKHR( 
 		cmdBuff, clusterCullCompProgram.descUpdateTemplate, clusterCullCompProgram.pipeLayout, 0, ccd );
 	vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff2.hndl, 0 );
+
+
+	vkCmdFillBuffer( cmdBuff, triangleCountBuff.hndl, 0, triangleCountBuff.size, 0u );
+
+	VkBufferMemoryBarrier2KHR triangleExpanderBarriers[] = {
+		VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH ),
+		VkMakeBufferBarrier2( visibleMeshletsBuff.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_SHADER_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( drawCountDbgBuff.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_SHADER_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( atomicCounterBuff.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( dispatchCmdBuff2.hndl,
+								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		 VkMakeBufferBarrier2( triangleCountBuff.hndl,
+								VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+								VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+	};
+
+	VkDependencyInfoKHR execTriExpDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	execTriExpDependency.bufferMemoryBarrierCount = std::size( triangleExpanderBarriers );
+	execTriExpDependency.pBufferMemoryBarriers = triangleExpanderBarriers;
+	vkCmdPipelineBarrier2KHR( cmdBuff, &execTriExpDependency );
+
+	vk_descriptor_info ted[] = {
+		Descriptor( visibleMeshletsBuff ),
+		Descriptor( drawCountDbgBuff ),
+		Descriptor( triangleIdBuff ),
+		Descriptor( triangleCountBuff ),
+		Descriptor( atomicCounterBuff ),
+		Descriptor( dispatchCmdBuff2 )
+	};
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpanderPipe );
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, expanderCompProgram.descUpdateTemplate, expanderCompProgram.pipeLayout, 0, ted );
+	vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff.hndl, 0 );
+
+
+	// TODO: revisit triangle culling
+	//vkCmdFillBuffer( cmdBuff, mergedIndexCountBuff.hndl, 0, mergedIndexCountBuff.size, 0u );
+	//vkCmdFillBuffer( cmdBuff, drawCountBuff.hndl, 0, drawCountBuff.size, 0u );
+	//
+	//VkBufferMemoryBarrier2KHR triangleCullBarriers[] = {
+	//	VkMakeBufferBarrier2( dispatchCmdBuff2.hndl,
+	//							VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+	//							VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH ),
+	//	VkMakeBufferBarrier2( triangleIdBuff.hndl,
+	//							VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+	//							VK_ACCESS_2_SHADER_READ_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+	//	VkMakeBufferBarrier2( triangleCountBuff.hndl,
+	//							VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+	//							VK_ACCESS_2_SHADER_READ_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+	//	VkMakeBufferBarrier2( atomicCounterBuff.hndl,
+	//							VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+	//							VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+	//	 VkMakeBufferBarrier2( mergedIndexCountBuff.hndl,
+	//							VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+	//							VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+	//	VkMakeBufferBarrier2( drawCountBuff.hndl,
+	//							VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+	//							VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+	//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+	//};
+	//
+	//VkDependencyInfoKHR execTriCullDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	//execTriCullDependency.bufferMemoryBarrierCount = std::size( triangleCullBarriers );
+	//execTriCullDependency.pBufferMemoryBarriers = triangleCullBarriers;
+	//vkCmdPipelineBarrier2KHR( cmdBuff, &execTriCullDependency );
+	//
+	//vk_descriptor_info tcd[] = {
+	//	Descriptor( triangleIdBuff ),
+	//	Descriptor( triangleCountBuff ),
+	//	Descriptor( mergedIndexCountBuff ),
+	//	Descriptor( indirectMergedIndexBuff ),
+	//	Descriptor( drawMergedCmd ),
+	//	Descriptor( drawCountBuff ),
+	//	Descriptor( atomicCounterBuff )
+	//};
+	//
+	//vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compTriangleCullPipe );
+	//vkCmdBindDescriptorSets( 
+	//	cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, triangleCullCompProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+	//vkCmdPushDescriptorSetWithTemplateKHR( 
+	//	cmdBuff, triangleCullCompProgram.descUpdateTemplate, triangleCullCompProgram.pipeLayout, 0, tcd );
+	//vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff.hndl, 0 );
 
 	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
 		VkMakeBufferBarrier2( drawCmdBuff.hndl,
@@ -3662,6 +3816,16 @@ CullPass(
 								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR,
 								VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( drawMergedCmd.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( indirectMergedIndexBuff.hndl,
+								VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								VK_ACCESS_2_INDEX_READ_BIT_KHR,
+								VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ),
 	};
 
 	VkDependencyInfoKHR dependencyEnd = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -3758,6 +3922,46 @@ DrawIndirectPass(
 	vkCmdEndRenderPass( cmdBuff );
 }
 
+inline static void
+DrawIndirectIndexedMerged(
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline,
+	VkRenderPass			vkRndPass,
+	VkFramebuffer			offscreenFbo,
+	const buffer_data&      indexBuff,
+	const buffer_data&      drawCmds,
+	VkBuffer				drawCmdCount,
+	u32                     maxDrawCallCount,
+	const VkClearValue*     clearVals,
+	const vk_program&       program
+){
+	vk_label label = { cmdBuff,"Draw Indexed Indirect Merged Pass",{} };
+
+	VkViewport viewport = { 0, ( float )sc.height, ( float )sc.width, -( float )sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	rndPassBegInfo.renderPass = vkRndPass;
+	rndPassBegInfo.framebuffer = offscreenFbo;
+	rndPassBegInfo.renderArea = scissor;
+	rndPassBegInfo.clearValueCount = clearVals ? 2 : 0;
+	rndPassBegInfo.pClearValues = clearVals;
+
+	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
+	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+
+	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
+
+	vkCmdDrawIndexedIndirectCount(
+		cmdBuff, drawCmds.hndl, offsetof( draw_command, cmd ), drawCmdCount, 0, maxDrawCallCount, sizeof( draw_command ) );
+
+	vkCmdEndRenderPass( cmdBuff );
+}
 // TODO: must remake single pass
 inline static void
 DepthPyramidPass(
@@ -4388,17 +4592,30 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//						 clearVals,
 	//						 gfxOpaqueProgram );
 
-	DrawIndexedIndirectPass( thisVFrame.cmdBuf,
-							 rndCtx.gfxMeshletPipeline,
-							 rndCtx.renderPass,
-							 rndCtx.offscreenFbo,
-							 drawCmdDbgBuff,
-							 drawCountDbgBuff.hndl,
-							 meshletTrisBuff.hndl,
-							 VK_INDEX_TYPE_UINT8_EXT,
-							 meshletBuff.size / sizeof( meshlet ),
-							 clearVals,
-							 gfxMeshletProgram );
+	DrawIndexedIndirectPass(
+		thisVFrame.cmdBuf,
+		rndCtx.gfxMeshletPipeline,
+		rndCtx.renderPass,
+		rndCtx.offscreenFbo,
+		drawCmdDbgBuff,
+		drawCountDbgBuff.hndl,
+		meshletTrisBuff.hndl,
+		VK_INDEX_TYPE_UINT8_EXT,
+		meshletBuff.size / sizeof( meshlet ),
+		clearVals,
+		gfxMeshletProgram );
+
+	//DrawIndirectIndexedMerged(
+	//	thisVFrame.cmdBuf,
+	//	rndCtx.gfxMergedPipeline,
+	//	rndCtx.renderPass,
+	//	rndCtx.offscreenFbo,
+	//	indirectMergedIndexBuff,
+	//	drawMergedCmd,
+	//	drawCountBuff.hndl,
+	//	drawMergedCmd.size / sizeof( draw_command ),
+	//	clearVals,
+	//	gfxMergedProgram );
 	
 	// TODO: rethink
 	VkBufferMemoryBarrier2KHR dbgDrawBarriers[] = {

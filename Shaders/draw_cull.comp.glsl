@@ -32,13 +32,7 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 };
 
 
-layout( binding = 0 ) writeonly buffer draw_cmd{
-	draw_command drawCmd[];
-};
-layout( binding = 1 ) coherent buffer draw_cmd_count{
-	uint drawCallCount;
-};
-layout( binding = 2 ) buffer draw_visibility_buffer{
+layout( binding = 0 ) buffer draw_visibility_buffer{
 	uint drawVisibility[];
 };
 
@@ -50,19 +44,24 @@ struct expandee_info
 	uint expCount;
 };
 
-layout( binding = 3 ) writeonly buffer visible_insts{
+layout( binding = 1 ) writeonly buffer visible_insts{
 	expandee_info visibleInstsChunks[];
 };
 
-layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
+layout( binding = 2 ) uniform sampler2D minQuadDepthPyramid;
 
-layout( binding = 5 ) coherent buffer atomic_cnt{
+layout( binding = 3 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
-layout( binding = 6 ) buffer disptach_indirect{
+layout( binding = 4 ) buffer disptach_indirect{
 	dispatch_command dispatchCmd;
 };
-
+//layout( binding = 6 ) writeonly buffer draw_cmd{
+//	draw_command drawCmd[];
+//};
+layout( binding = 5 ) coherent buffer draw_cmd_count{
+	uint drawCallCount;
+};
 #if GLSL_DBG
 //layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
 //	draw_indirect dbgDrawCmd[];
@@ -233,12 +232,12 @@ void main()
 		visibleInstsChunks[ drawCallIdx ].expOffset = lod.meshletOffset;
 		visibleInstsChunks[ drawCallIdx ].expCount = lod.meshletCount;
 	
-		drawCmd[ drawCallIdx ].drawIdx = globalIdx;
-		drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
-		drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
-		drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
-		drawCmd[ drawCallIdx ].instanceCount = 1;
-		drawCmd[ drawCallIdx ].firstInstance = 0;
+		//drawCmd[ drawCallIdx ].drawIdx = globalIdx;
+		//drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
+		//drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
+		//drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
+		//drawCmd[ drawCallIdx ].instanceCount = 1;
+		//drawCmd[ drawCallIdx ].firstInstance = 0;
 	}
 	
 
