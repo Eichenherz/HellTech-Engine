@@ -72,12 +72,12 @@ void main()
 	uint instId = uint( gl_VertexIndex & uint16_t( -1 ) );
 	uint vertexId = uint( gl_VertexIndex >> 16 );
 
-	vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ nonuniformEXT( vertexId ) ];
+	vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ vertexId ];
 	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
 	vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
-	instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ nonuniformEXT( instId ) ];
+	instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ instId ];
 	
 	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
 	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;

@@ -39,7 +39,7 @@ layout( binding = 2 ) buffer vis_idx_count{
 layout( binding = 3 ) writeonly buffer index_ids{
 	uint indexIds[];
 };
-layout( binding = 4, scalar ) writeonly buffer draw_cmd{
+layout( binding = 4, scalar ) buffer draw_cmd{
 	draw_command drawCmd[];
 };
 layout( binding = 5 ) buffer draw_cmd_count{
@@ -52,6 +52,7 @@ layout( binding = 6 ) coherent buffer atomic_cnt{
 shared uint workgrAtomicCounterShared = {};
 
 // TODO: unpacking of data ?
+// TODO: need to take care of meshlet vertex buffer offset
 // NOTE: inspired by "Optimizing gfx with comp GDC"
 layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 void main()

@@ -34,14 +34,24 @@ layout( binding = 3 ) buffer draw_cmd_count{
 	uint drawCallCount;
 };
 
-struct expandee_info
+//struct expandee_info
+//{
+//	uint instId;
+//	uint expOffset;
+//	uint expCount;
+//};
+//layout( binding = 4 ) writeonly buffer triangle_ids{
+//	expandee_info visibleMeshlets[];
+//};
+struct meshlet_info
 {
-	uint instId;
-	uint expOffset;
-	uint expCount;
+	uint triOffset;
+	uint vtxOffset;
+	uint16_t instId;
+	uint16_t idxCount;
 };
 layout( binding = 4 ) writeonly buffer triangle_ids{
-	expandee_info visibleMeshlets[];
+	meshlet_info visibleMeshlets[];
 };
 
 layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
@@ -159,10 +169,17 @@ void main()
 
 	if( visible )
 	{
-		visibleMeshlets[ slotIdx ].instId = parentInstId;
-		visibleMeshlets[ slotIdx ].expOffset = currentMeshlet.triBufOffset;
+		//visibleMeshlets[ slotIdx ].instId = parentInstId;
+		//visibleMeshlets[ slotIdx ].expOffset = currentMeshlet.triBufOffset;
+		//// NOTE: want all the indices
+		//visibleMeshlets[ slotIdx ].expCount = uint( currentMeshlet.triangleCount ) * 3;
+
+		
+		visibleMeshlets[ slotIdx ].triOffset = currentMeshlet.triBufOffset;
+		visibleMeshlets[ slotIdx ].vtxOffset = currentMeshlet.vtxBufOffset;
+		visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
 		// NOTE: want all the indices
-		visibleMeshlets[ slotIdx ].expCount = uint( currentMeshlet.triangleCount ) * 3;
+		visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( currentMeshlet.triangleCount ) * 3 );
 
 		drawCmd[ slotIdx ].drawIdx = parentInstId;
 		drawCmd[ slotIdx ].indexCount = uint( currentMeshlet.triangleCount ) * 3;
@@ -184,7 +201,7 @@ void main()
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
-		uint trisExpDispatch = ( drawCallCount + 3 ) / 4;
+		uint trisExpDispatch = ( drawCallCount + 7 ) / 8;
 		dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
 		// NOTE: reset atomicCounter
 		workgrAtomicCounter = 0;

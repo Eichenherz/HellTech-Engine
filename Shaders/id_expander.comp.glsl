@@ -73,24 +73,24 @@ void main()
 		uint clusterIdx = workGrIdx * clustersPerWorkgr + ii;
 	
 		if( clusterIdx >= visibleClustersCount ) break;
-	
-		uint expandeeIdxOffset = visibleClusters[ clusterIdx ].expOffset;
-	
-		uint expandeeCount = visibleClusters[ clusterIdx ].expCount;
 		
-		for( uint msi = 0; msi < expandeeCount; msi += gl_WorkGroupSize.x )
+		uint parentInstId = visibleClusters[ clusterIdx ].instId;
+		uint expandeeIdxOffset = visibleClusters[ clusterIdx ].expOffset;
+		uint thisExpandeeCount = visibleClusters[ clusterIdx ].expCount;
+		
+		for( uint msi = 0; msi < thisExpandeeCount; msi += gl_WorkGroupSize.x )
 		{
 			uint slotIdx = msi + gl_LocalInvocationID.x;
 			// TODO: wavefront select ?
-			if( slotIdx < expandeeCount )
+			if( slotIdx < thisExpandeeCount )
 			{
 				expandeeIdBuff[ slotIdx + expandeeOffsetLDS ] = 
-						uint64_t( clusterIdx ) | ( uint64_t( expandeeIdxOffset + slotIdx ) << 32 );
+						uint64_t( parentInstId ) | ( uint64_t( expandeeIdxOffset + slotIdx ) << 32 );
 			}
 		}
 		
 		// TODO: atomicAdd ?
-		if( gl_LocalInvocationID.x == 0 ) expandeeOffsetLDS += expandeeCount;
+		if( gl_LocalInvocationID.x == 0 ) expandeeOffsetLDS += thisExpandeeCount;
 		barrier();
 		groupMemoryBarrier();
 	}
