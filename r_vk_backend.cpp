@@ -1467,9 +1467,9 @@ inline static vk_instance VkMakeInstance()
 #ifdef _VK_DEBUG_
 
 	VkValidationFeatureEnableEXT enabled[] = {
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 	};
@@ -3161,6 +3161,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 		vkRscArena );
 
+	//// NOTE: 1 to 1 corresp to instances
+	//transformsBuff = VkCreateAllocBindBuffer(
+	//	sizeof( DirectX::XMFLOAT4X4A ) * std::size( instDesc ),
+	//	VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+	//	VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+	//	vkRscArena );
+	//VkDbgNameObj( transformsBuff.hndl, dc.device, "Buff_Transforms" );
+
 	// NOTE: create and texture uploads
 	std::vector<VkImageMemoryBarrier2KHR> imageBarriers;
 	{
@@ -3310,6 +3318,7 @@ inline static void VkInitInternalBuffers()
 
 	drawMergedCountBuff = VkCreateAllocBindBuffer( 
 		4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+	VkDbgNameObj( drawMergedCountBuff.hndl, dc.device, "Buff_Draw_Merged_Count" );
 }
 
 // TODO: move out of global/static
@@ -3889,21 +3898,6 @@ DrawIndirectIndexedMerged(
 ){
 	vk_label label = { cmdBuff,"Draw Indexed Indirect Merged Pass",{} };
 
-
-	vkCmdFillBuffer( cmdBuff, drawCount.hndl, 0, drawCount.size, 1u );
-
-	VkBufferMemoryBarrier2KHR drawCountBarrier = VkMakeBufferBarrier2(
-		drawCountBuff.hndl,
-		VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-		VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-		VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-		VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR );
-
-	VkDependencyInfoKHR drawCountDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	drawCountDependency.bufferMemoryBarrierCount = 1;
-	drawCountDependency.pBufferMemoryBarriers = &drawCountBarrier;
-	vkCmdPipelineBarrier2KHR( cmdBuff, &drawCountDependency );
-
 	constexpr u32 maxDrawCount = 1;
 
 
@@ -4254,7 +4248,8 @@ inline std::vector<dbg_vertex> ConstructSceneAABBVertexBuffer( const entities_da
 {
 	using namespace DirectX;
 
-	assert( std::size( entities.instAabbs ) == std::size( entities.transforms ) == std::size( entities.instToMeshletRange ) );
+	assert( ( std::size( entities.instAabbs ) == std::size( entities.transforms ) ) && 
+			( std::size( entities.instAabbs ) == std::size( entities.instToMeshletRange ) ) );
 
 	u64 entitiesCount = std::size( entities.transforms );
 	u64 meshletsCount = std::size( entities.meshletAabbs );
@@ -4477,26 +4472,37 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		}
 	}
 	
-	static bool clearedBuffers = 0;
-	if( !clearedBuffers )
+	static bool initBuffers = 0;
+	if( !initBuffers )
 	{
 		vkCmdFillBuffer( thisVFrame.cmdBuf, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
 		vkCmdFillBuffer( thisVFrame.cmdBuf, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0 );
-	
-		VkBufferMemoryBarrier clearedVisibilityBarrier[] = {
-			VkMakeBufferBarrier( drawVisibilityBuff.hndl,
-								 VK_ACCESS_TRANSFER_WRITE_BIT,
-								 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT ),
-			VkMakeBufferBarrier( depthAtomicCounterBuff.hndl,
-								 VK_ACCESS_TRANSFER_WRITE_BIT,
-								 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT )
+		vkCmdFillBuffer( thisVFrame.cmdBuf, drawMergedCountBuff.hndl, 0, drawMergedCountBuff.size, 1U );
+
+		VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
+			VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR, 
+									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VkMakeBufferBarrier2( depthAtomicCounterBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VkMakeBufferBarrier2( drawMergedCountBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+									VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR )
 		};
 	
-		vkCmdPipelineBarrier( thisVFrame.cmdBuf,
-							  VK_PIPELINE_STAGE_TRANSFER_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, 0,
-							  2, clearedVisibilityBarrier, 0, 0 );
-		clearedBuffers = 1;
+		VkDependencyInfoKHR initBuffsDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		initBuffsDependency.bufferMemoryBarrierCount = std::size( initBuffersBarriers );
+		initBuffsDependency.pBufferMemoryBarriers = initBuffersBarriers;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &initBuffsDependency );
+
+		initBuffers = 1;
 	}
 	
 	// TODO: run 1 for every frame in flight

@@ -42,7 +42,7 @@ shared uint expandeeOffsetLDS = {};
 shared uint workgrAtomicCounterShared = {};
 
 
-layout( local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint workGrIdx = gl_WorkGroupID.x;
@@ -64,7 +64,7 @@ void main()
 		expandeeOffsetLDS = atomicAdd( expandeeCount, perWorkgrExpCount );
 	}
 	barrier();
-	groupMemoryBarrier();
+	memoryBarrier();
 
 
 	[[ unroll ]] 
@@ -97,6 +97,8 @@ void main()
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 	barrier();
+	memoryBarrier();
+
 
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
