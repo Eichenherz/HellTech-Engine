@@ -6,7 +6,6 @@
 
 #define GLOBAL_RESOURCES
 
-
 #include "..\r_data_structs.h"
 #include "glsl_func_lib.h"
 

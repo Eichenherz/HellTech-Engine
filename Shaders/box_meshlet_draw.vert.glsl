@@ -22,7 +22,6 @@ layout( binding = 2, scalar ) readonly buffer meshlet_desc{
 };
 
 
-
 const vec4 BOX_TRIANGLES[] = {
 	vec4( -1.0,1.0,1.0,1.0 ),
 	vec4( -1.0,-1.0,1.0,1.0 ),

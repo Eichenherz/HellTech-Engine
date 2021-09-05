@@ -115,8 +115,8 @@ constexpr u64 VK_MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
 constexpr u64 VK_MIN_DEVICE_BLOCK_SIZE = 256 * MB;
 constexpr u64 MAX_MIP_LEVELS = 12;
 constexpr u32 NOT_USED_IDX = -1;
-constexpr u64 OBJ_CULL_WORKSIZE = 64;
-constexpr u64 MLET_CULL_WORKSIZE = 256;
+constexpr u32 OBJ_CULL_WORKSIZE = 64;
+constexpr u32 MLET_CULL_WORKSIZE = 256;
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
@@ -283,13 +283,13 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR, &zeroInitWorkgrMemFeatures };
 	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &sync2Features };
-	VkPhysicalDevice16BitStorageFeatures _16BitStorageFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES, &extDynamicStateFeatures };
 	//VkPhysicalDeviceBufferDeviceAddressFeatures bdaFeatures =
 	//{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES, &_16BitStorageFeatures };
 	//VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &bdaFeatures };
-	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &_16BitStorageFeatures };
-	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures12 };
+	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &extDynamicStateFeatures };
+	// NOTE: Vulkan SDK 1.2.189 complains about this stuff , wtf ?
+	VkPhysicalDeviceVulkan11Features gpuFeatures11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &gpuFeatures12 };
+	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
 
 	VkPhysicalDevice gpu = 0;
 	for( u64 i = 0; i < numDevices; ++i )
@@ -328,6 +328,8 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	VK_CHECK( VK_INTERNAL_ERROR( !gpu ) );
 
 	gpuFeatures.features.geometryShader = 0;
+	// NOTE: might help debugging ?
+	gpuFeatures.features.robustBufferAccess = 0;
 
 
 	u32 queueFamNum = 0;
@@ -1467,10 +1469,10 @@ inline static vk_instance VkMakeInstance()
 #ifdef _VK_DEBUG_
 
 	VkValidationFeatureEnableEXT enabled[] = {
-		VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 	};
 
@@ -1780,7 +1782,7 @@ inline static void VkReflectShaderLayout(
 
 // TODO: map spec consts ?
 using vk_shader_list = std::initializer_list<vk_shader*>;
-using vk_specializations = std::initializer_list<u64>;
+using vk_specializations = std::initializer_list<u32>;
 using vk_dynamic_states = std::initializer_list<VkDynamicState>;
 
 // TODO: bindlessLayout only for the shaders that use it ?
@@ -3418,15 +3420,15 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, fragPBR.module, 0 );
 	}
 	{
-		vk_shader vertPBR = VkLoadShader( "Shaders/vtx_merged.vert.spv", dc.device );
+		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", dc.device );
 		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", dc.device );
 		vk_gfx_pipeline_state opaqueState = {};
-		gfxMergedProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertPBR, &fragPBR } );
-		rndCtx.gfxMergedPipeline =
-			VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, gfxMergedProgram.pipeLayout, vertPBR.module, fragPBR.module, opaqueState );
+		gfxMergedProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vtxMerged, &fragPBR } );
+		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline( 
+			dc.device, 0, rndCtx.renderPass, gfxMergedProgram.pipeLayout, vtxMerged.module, fragPBR.module, opaqueState );
 		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
 
-		vkDestroyShaderModule( dc.device, vertPBR.module, 0 );
+		vkDestroyShaderModule( dc.device, vtxMerged.module, 0 );
 		vkDestroyShaderModule( dc.device, fragPBR.module, 0 );
 	}
 	{
@@ -3444,7 +3446,8 @@ void VkBackendInit()
 	{
 		vk_shader avgLum = VkLoadShader( "Shaders/avg_luminance.comp.spv", dc.device );
 		avgLumCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLum } );
-		rndCtx.compAvgLumPipe = VkMakeComputePipeline( dc.device, 0, avgLumCompProgram.pipeLayout, avgLum.module, { dc.waveSize } );
+		rndCtx.compAvgLumPipe = 
+			VkMakeComputePipeline( dc.device, 0, avgLumCompProgram.pipeLayout, avgLum.module, { dc.waveSize } );
 		VkDbgNameObj( rndCtx.compAvgLumPipe, dc.device, "Pipeline_Comp_AvgLum" );
 
 		vk_shader toneMapper = VkLoadShader( "Shaders/tonemap_gamma.comp.spv", dc.device );
@@ -3686,10 +3689,10 @@ CullPass(
 
 		// TODO: wtf binds ?
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
-		vkCmdBindDescriptorSets(
-			cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, clusterCullCompProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 		vkCmdPushDescriptorSetWithTemplateKHR(
 			cmdBuff, clusterCullCompProgram.descUpdateTemplate, clusterCullCompProgram.pipeLayout, 0, ccd );
+		vkCmdBindDescriptorSets(
+			cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, clusterCullCompProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff2.hndl, 0 );
 	}
 
@@ -3894,7 +3897,8 @@ DrawIndirectIndexedMerged(
 	const buffer_data&      drawCmds,
 	const buffer_data&      drawCount,
 	const VkClearValue*     clearVals,
-	const vk_program&       program
+	const vk_program&       program,
+	const vk_global_descriptor& globDesc = globBindlessDesc
 ){
 	vk_label label = { cmdBuff,"Draw Indexed Indirect Merged Pass",{} };
 
@@ -3917,7 +3921,7 @@ DrawIndirectIndexedMerged(
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globDesc.set, 0, 0 );
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
 
@@ -4592,7 +4596,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		clearVals,
 		gfxMergedProgram );
 	
-	// TODO: rethink
+	// TODO: remove, don't need , queue submit has implicit host sync for trivial stuff
 	VkBufferMemoryBarrier2KHR dbgDrawBarriers[] = {
 		VkMakeBufferBarrier2( vkDbgCtx.dbgTrisBuff.hndl,
 								VK_ACCESS_2_HOST_WRITE_BIT_KHR,
