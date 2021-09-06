@@ -51,7 +51,7 @@ shared uint idxBuffOffsetLDS = {};
 shared uint workgrAtomicCounterShared = {};
 
 // TODO: balace out meshlets sizes etc
-layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint workGrIdx = gl_WorkGroupID.x;
@@ -72,10 +72,10 @@ void main()
 
 		idxBuffOffsetLDS = atomicAdd( mergedIdxCount, perWorkgrCount );
 	}
+
+
 	barrier();
 	memoryBarrier();
-
-
 	[[ unroll ]] 
 	for( uint mi = 0; mi < meshletsPerWorkgr; ++mi )
 	{
@@ -100,15 +100,16 @@ void main()
 			}
 		}
 		
-		if( gl_LocalInvocationID.x == 0 ) idxBuffOffsetLDS += thisIdxCount;
 		barrier();
 		groupMemoryBarrier();
+		if( gl_LocalInvocationID.x == 0 ) idxBuffOffsetLDS += thisIdxCount;
+		
 	}
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+
 	barrier();
 	memoryBarrier();
-
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		drawCmd.drawIdx = -1; // Don't use

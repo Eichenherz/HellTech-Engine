@@ -2960,7 +2960,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 
 	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 1;
+	constexpr u64 drawCount = 2;
 	constexpr u64 lightCount = 4;
 	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
