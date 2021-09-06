@@ -138,7 +138,7 @@ void main()
 	
 	// TODO: faster ?
 	// TODO: fix Nabla occlusion
-	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.camPos, 1 ) ).xyz;
+	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
 	if( visible && !camInsideAabb && OCCLUSION_CULLING )
 	{
@@ -219,7 +219,7 @@ void main()
 	
 	if( visibleInstCount == 0 ) return;
 	// TODO: shared atomics + global atomics ?
-	uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
+	uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
 	
 	uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 	uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;

@@ -81,10 +81,10 @@ void main()
 	uint meshletIdx = uint( mid >> 32 );
 
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ parentInstId ];
-	meshlet currentMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
+	meshlet thisMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
 
-	vec3 center = currentMeshlet.center;
-	vec3 extent = abs( currentMeshlet.extent );
+	vec3 center = thisMeshlet.center;
+	vec3 extent = abs( thisMeshlet.extent );
 	
 	vec3 boxMin = ( center - extent ).xyz;
 	vec3 boxMax = ( center + extent ).xyz;
@@ -104,10 +104,17 @@ void main()
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
 
-	// TODO: add cone culling 
+	// TODO: in what space ?
+	// NOTE: cone culling 
+	//vec4 coneAxis = 
+	//vec4( int( thisMeshlet.coneX ) / 127.0f, int( thisMeshlet.coneY ) / 127.0f, int( thisMeshlet.coneZ ) / 127.0f, 0.0f );
+	//float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
+	//vec3 camConeDir = center - cam.worldPos;
+	//visible = visible && dot( camConeDir, coneAxis.xyz ) >= coneCutoff * length( camConeDir ) + length( extent );
 
+	
 
-	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.camPos, 1 ) ).xyz;
+	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
 	if( visible && !camInsideAabb )
 	{
@@ -158,34 +165,36 @@ void main()
 	}
 
 	uvec4 ballotVisible = subgroupBallot( visible );
-	uint subgrActiveCount = subgroupBallotBitCount( ballotVisible );
+	uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
 	
-	if( subgrActiveCount == 0 ) return;
+	if( subgrActiveInvocationsCount == 0 ) return;
 	// TODO: shared atomics + global atomics ?
-	uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, subgrActiveCount ) : 0;
+	uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
 	
 	uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 	uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
 	if( visible )
 	{
+		//uint slotIdx = atomicAdd( drawCallCount, 1 );
+
 		//visibleMeshlets[ slotIdx ].instId = parentInstId;
-		//visibleMeshlets[ slotIdx ].expOffset = currentMeshlet.triBufOffset;
+		//visibleMeshlets[ slotIdx ].expOffset = thisMeshlet.triBufOffset;
 		//// NOTE: want all the indices
-		//visibleMeshlets[ slotIdx ].expCount = uint( currentMeshlet.triangleCount ) * 3;
+		//visibleMeshlets[ slotIdx ].expCount = uint( thisMeshlet.triangleCount ) * 3;
 
 		
-		visibleMeshlets[ slotIdx ].triOffset = currentMeshlet.triBufOffset;
-		visibleMeshlets[ slotIdx ].vtxOffset = currentMeshlet.vtxBufOffset;
+		visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
+		visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
 		visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
 		// NOTE: want all the indices
-		visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( currentMeshlet.triangleCount ) * 3 );
+		visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( thisMeshlet.triangleCount ) * 3 );
 
 		drawCmd[ slotIdx ].drawIdx = parentInstId;
-		drawCmd[ slotIdx ].indexCount = uint( currentMeshlet.triangleCount ) * 3;
+		drawCmd[ slotIdx ].indexCount = uint( thisMeshlet.triangleCount ) * 3;
 		drawCmd[ slotIdx ].instanceCount = 1;
-		drawCmd[ slotIdx ].firstIndex = currentMeshlet.triBufOffset;
-		drawCmd[ slotIdx ].vertexOffset = currentMeshlet.vtxBufOffset;
+		drawCmd[ slotIdx ].firstIndex = thisMeshlet.triBufOffset;
+		drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
 		drawCmd[ slotIdx ].firstInstance = 0;
 
 		dbgDrawCmd[ slotIdx ].drawIdx = mid;
@@ -196,8 +205,9 @@ void main()
 	}				
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-	barrier();
 
+
+	barrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 

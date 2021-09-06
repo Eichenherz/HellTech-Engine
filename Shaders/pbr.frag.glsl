@@ -139,7 +139,7 @@ void main()
 	float surfRoughness = orm.r * mtl.roughnessFactor;
 	float surfMetalness = orm.g * mtl.metallicFactor;
 
-	vec3 viewDir = normalize( cam.camPos - worldPos );
+	vec3 viewDir = normalize( cam.worldPos - worldPos );
 
 	vec3 baseReflectivity = mix( vec3( 0.04 ), baseCol.rgb, surfMetalness );
 	vec3 diffCol = baseCol.rgb * ( 1.0 - surfMetalness );
