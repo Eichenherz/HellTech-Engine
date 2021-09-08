@@ -2266,8 +2266,10 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
 	
 
-	for( u64 i = 0; i < numIters; ++i ){
-		for( u64 t = 0; t < std::size( idxData ); t += 3 ){
+	for( u64 i = 0; i < numIters; ++i )
+	{
+		for( u64 t = 0; t < std::size( idxData ); t += 3 )
+		{
 			u32 i0 = idxData[ t ];
 			u32 i1 = idxData[ t + 1 ];
 			u32 i2 = idxData[ t + 2 ];
@@ -2290,7 +2292,8 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 			vtxCache.push_back( m12 );
 			vtxCache.push_back( m20 );
 
-			if constexpr( !worldLeftHanded ){
+			if constexpr( !worldLeftHanded )
+			{
 				idxCache.push_back( idxOffset + 1 );
 				idxCache.push_back( idxOffset + 3 );
 				idxCache.push_back( i0 );
@@ -2306,7 +2309,9 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 				idxCache.push_back( i1 );
 				idxCache.push_back( idxOffset + 2 );
 				idxCache.push_back( idxOffset + 1 );
-			} else{
+			} 
+			else
+			{
 				idxCache.push_back( i0 );
 				idxCache.push_back( idxOffset + 3 );
 				idxCache.push_back( idxOffset + 1 );
@@ -2331,7 +2336,8 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 	// TODO: 2 normals per vertex ? how ?
 	std::vector<vec3> normals( std::size( vtxCache ), vec3{} );
 
-	for( u64 t = 0; t < std::size( idxData ); t += 3 ){
+	for( u64 t = 0; t < std::size( idxData ); t += 3 )
+	{
 		u32 i0 = idxData[ t ];
 		u32 i1 = idxData[ t + 1 ];
 		u32 i2 = idxData[ t + 2 ];
@@ -2355,7 +2361,8 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 
 	vtxData.resize( std::size( vtxCache ) );
 
-	for( u64 i = 0; i < std::size( vtxCache ); ++i ){
+	for( u64 i = 0; i < std::size( vtxCache ); ++i )
+	{
 		vtxData[ i ] = {};
 		vtxData[ i ].px = vtxCache[ i ].x;
 		vtxData[ i ].py = vtxCache[ i ].y;
@@ -2819,7 +2826,8 @@ static buffer_data screenspaceBoxBuff;
 
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
-//constexpr char glbPath[] = "WaterBottle.glb";
+//constexpr char glbPath[] = "D:\\3d models\\WaterBottle.glb";
+//constexpr char drakPath[] = "Assets/WaterBottle.drak";
 
 static entities_data entities;
 // TODO: revisit remake improve
@@ -2912,13 +2920,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 		(meshlet*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsRange.offset ),
 		fileDesc.mletsRange.size / sizeof( meshlet ) };
 
+	assert( std::size( mletView ) < u16( -1 ) );
+
 	std::vector<mesh_desc> meshes;
 	// TODO: must make mesh and binary_mesh_desc the same
 	for( const binary_mesh_desc& m : meshDesc )
 	{
 		meshes.push_back( {} );
 		mesh_desc& out = meshes[ std::size( meshes ) - 1 ];
-		assert( m.vtxRange.size < u16( -1 ) );
 		out.vertexCount = m.vtxRange.size;
 		out.vertexOffset = m.vtxRange.offset;
 
@@ -3107,8 +3116,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 			meshletTrisBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ) );
+			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_INDEX_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
 	}
 
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
@@ -3257,6 +3266,7 @@ static buffer_data bdasUboBuff;
 
 static buffer_data dispatchCmdBuff;
 static buffer_data dispatchCmdBuff2;
+static buffer_data dispatchCmdBuff3;
 
 static buffer_data meshletCountBuff;
 
@@ -3299,12 +3309,21 @@ inline static void VkInitInternalBuffers()
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 
 	dispatchCmdBuff = VkCreateAllocBindBuffer( sizeof( dispatch_command ), 
-											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, 
+											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+											   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+											   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 											   vkRscArena );
 	dispatchCmdBuff2 = VkCreateAllocBindBuffer( sizeof( dispatch_command ),
-											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
-											   vkRscArena );
-
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												vkRscArena );
+	dispatchCmdBuff3 = VkCreateAllocBindBuffer( sizeof( dispatch_command ),
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												vkRscArena );
+	
 	bdasUboBuff = VkCreateAllocBindBuffer( sizeof( global_bdas ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, vkHostComArena );
 
 	meshletCountBuff = 
@@ -3537,7 +3556,10 @@ CullPass(
 	vkCmdFillBuffer( cmdBuff, meshletCountBuff.hndl, 0, meshletCountBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, mergedIndexCountBuff.hndl, 0, mergedIndexCountBuff.size, 0u );
 
-
+	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff.hndl, 0, dispatchCmdBuff.size, 0u );
+	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff2.hndl, 0, dispatchCmdBuff2.size, 0u );
+	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff3.hndl, 0, dispatchCmdBuff3.size, 0u );
+	
 	VkBufferMemoryBarrier2KHR beginCullBarriers[] = {
 		VkMakeBufferBarrier2( drawCmdBuff.hndl,
 								VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
@@ -3565,6 +3587,22 @@ CullPass(
 									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+
+		VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( dispatchCmdBuff2.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		VkMakeBufferBarrier2( dispatchCmdBuff3.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
 	
@@ -3640,11 +3678,6 @@ CullPass(
 									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 									VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
 									VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH ),
-			VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
-									VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-									VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH,
-									VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 		};
 
 		// TODO: write to read and write to write separately ?
@@ -3670,7 +3703,7 @@ CullPass(
 			Descriptor( visibleMeshletsBuff ),
 			depthPyramidInfo,
 			Descriptor( atomicCounterBuff ),
-			Descriptor( dispatchCmdBuff ),
+			Descriptor( dispatchCmdBuff3 ),
 			Descriptor( drawCmdAabbsBuff )
 		};
 
@@ -3685,7 +3718,7 @@ CullPass(
 
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
-			VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
+			VkMakeBufferBarrier2( dispatchCmdBuff3.hndl,
 								  VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
@@ -3722,7 +3755,7 @@ CullPass(
 		vkCmdPushDescriptorSetWithTemplateKHR( 
 			cmdBuff, expMergeCompProgram.descUpdateTemplate, expMergeCompProgram.pipeLayout, 0, pushDesc );
 		vkCmdPushConstants( cmdBuff, expMergeCompProgram.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
-		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff.hndl, 0 );
+		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff3.hndl, 0 );
 	}
 
 	// TODO: revisit triangle culling

@@ -69,7 +69,7 @@ layout( binding = 8, scalar ) writeonly buffer draw_indir{
 shared uint workgrAtomicCounterShared = {};
 
 
-layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
@@ -144,11 +144,9 @@ void main()
         [[unroll]]
         for( int i = 0; i < 8; ++i )
         {
-            //transform world space aaBox to NDC
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
  		
             clipPos.xyz = clipPos.xyz / clipPos.w;
-			//debugPrintfEXT( "ClipPos = %v4f", clipPos );
 		
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
             clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
@@ -164,19 +162,23 @@ void main()
 		visible = visible && ( minDepth * perspZ <= 1.0f );	
 	}
 
-	uvec4 ballotVisible = subgroupBallot( visible );
-	uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
-	
-	if( subgrActiveInvocationsCount == 0 ) return;
-	// TODO: shared atomics + global atomics ?
-	uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
-	
-	uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-	uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
+	visible = true;
+	const uint flickeryMeshletIdx = 23;
+	visible = visible && ( meshletIdx == flickeryMeshletIdx );
+
+	//uvec4 ballotVisible = subgroupBallot( visible );
+	//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
+	//
+	//if( subgrActiveInvocationsCount == 0 ) return;
+	//// TODO: shared atomics + global atomics ?
+	//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+	//
+	//uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+	//uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
 	if( visible )
 	{
-		//uint slotIdx = atomicAdd( drawCallCount, 1 );
+		uint slotIdx = atomicAdd( drawCallCount, 1 );
 
 		//visibleMeshlets[ slotIdx ].instId = parentInstId;
 		//visibleMeshlets[ slotIdx ].expOffset = thisMeshlet.triBufOffset;
@@ -208,6 +210,7 @@ void main()
 
 
 	barrier();
+	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 

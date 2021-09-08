@@ -13,15 +13,6 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer l
 	light_data lights[];
 };
 
-//layout( constant_id = 0 ) const bool TEXTURED_OUTPUT = false;
-
-layout( location = 0 ) in vec3 normal;
-layout( location = 1 ) in vec3 tangent;
-layout( location = 2 ) in vec3 worldPos;
-layout( location = 3 ) in vec2 uv;
-layout( location = 4 ) in flat uint mtlIdx;
-
-layout( location = 0 ) out vec4 oCol;
 
 // TODO: pre-convert to Linear space
 vec4 SrgbToLinear( vec4 srgb )
@@ -105,12 +96,16 @@ vec3 ComputeBrdfReflectance(
 	return ( specularBrdf + diffuseBrdf ) * NdotL;
 }
 
-//vec3 UnpackNormalFromMap( vec3 normalFromMap )
-//{
-//	normalFromMap = normalFromMap * 2.0 - 1.0;
-//
-//}
-  
+
+layout( location = 0 ) in vec3 normal;
+layout( location = 1 ) in vec3 tangent;
+layout( location = 2 ) in vec3 worldPos;
+layout( location = 3 ) in vec2 uv;
+layout( location = 4 ) in flat uint mtlIdx;
+
+layout( location = 0 ) out vec4 oCol;
+
+layout( early_fragment_tests ) in;
 void main()
 {
 	material_data mtl = mtl_ref( bdas.mtrlsAddr ).materials[ mtlIdx ];
