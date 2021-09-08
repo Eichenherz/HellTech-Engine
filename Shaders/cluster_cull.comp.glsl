@@ -106,39 +106,38 @@ void main()
 
 	// TODO: in what space ?
 	// NOTE: cone culling 
-	//vec4 coneAxis = 
-	//vec4( int( thisMeshlet.coneX ) / 127.0f, int( thisMeshlet.coneY ) / 127.0f, int( thisMeshlet.coneZ ) / 127.0f, 0.0f );
+	//vec4 coneAxis = vec4( int( thisMeshlet.coneX ) / 127.0f, int( thisMeshlet.coneY ) / 127.0f, int( thisMeshlet.coneZ ) / 127.0f, 0.0f );
+	//coneAxis = normalize( currentInst.localToWorld * coneAxis );
 	//float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
-	//vec3 camConeDir = center - cam.worldPos;
-	//visible = visible && dot( camConeDir, coneAxis.xyz ) >= coneCutoff * length( camConeDir ) + length( extent );
+	//visible = visible && dot( cam.camViewDir, coneAxis.xyz ) < coneCutoff;
 
 	
 
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
 	if( visible && !camInsideAabb )
+	//if( false )
 	{
 		// TODO: use this perspZ or compute per min/max Bound ? 
 		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
 		
-		float depthPyrLodCount = textureQueryLevels( minQuadDepthPyramid );
-		
 		
 		vec3 boxSize = boxMax - boxMin;
  		
-        vec3 boxCorners[] = { boxMin,
-                                boxMin + vec3(boxSize.x,0,0),
-                                boxMin + vec3(0, boxSize.y,0),
-                                boxMin + vec3(0, 0, boxSize.z),
-                                boxMin + vec3(boxSize.xy,0),
-                                boxMin + vec3(0, boxSize.yz),
-                                boxMin + vec3(boxSize.x, 0, boxSize.z),
-                                boxMin + boxSize
-                             };
+        vec3 boxCorners[] = { 
+			boxMin,
+			boxMin + vec3( boxSize.x, 0, 0 ),
+			boxMin + vec3( 0, boxSize.y, 0 ),
+			boxMin + vec3( 0, 0, boxSize.z ),
+			boxMin + vec3( boxSize.xy, 0 ),
+			boxMin + vec3( 0, boxSize.yz ),
+			boxMin + vec3( boxSize.x, 0, boxSize.z ),
+			boxMax };
 		
-        vec2 minXY = vec2(1);
+        vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
-		
+		float minZ = 0.0f;
+
 		mat4 mvp = transpose( transpMvp );
 		
         [[unroll]]
@@ -147,7 +146,7 @@ void main()
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
  		
             clipPos.xyz = clipPos.xyz / clipPos.w;
-		
+
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
             clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
  		
@@ -156,15 +155,15 @@ void main()
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float mip = min( floor( log2( max( size.x, size.y ) ) ), depthPyrLodCount );
+		float depthPyramidLodCount = textureQueryLevels( minQuadDepthPyramid );
+		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidLodCount );
 		
-		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mip ).x;
+		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
 		visible = visible && ( minDepth * perspZ <= 1.0f );	
 	}
 
-	visible = true;
-	const uint flickeryMeshletIdx = 23;
-	visible = visible && ( meshletIdx == flickeryMeshletIdx );
+	bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );
+	visible = visible && rangePassFilter;
 
 	//uvec4 ballotVisible = subgroupBallot( visible );
 	//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );

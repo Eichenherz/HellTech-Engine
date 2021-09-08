@@ -3168,7 +3168,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	drawMergedCmd = VkCreateAllocBindBuffer(
 		sizeof( draw_command ),
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		vkRscArena );
 
 	//// NOTE: 1 to 1 corresp to instances
@@ -3530,6 +3531,7 @@ inline u64 GetImgMipCount( u64 width, u64 height )
 	return std::min( (u64) floor( log2( maxDim ) ), MAX_MIP_LEVELS );
 }
 
+// TODO: wtf reseting draws?
 // TODO: merge surviving meshlets
 // TODO: meshlet cone culling 
 // TODO: must pass vertexOffset around somehow
@@ -3559,6 +3561,7 @@ CullPass(
 	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff.hndl, 0, dispatchCmdBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff2.hndl, 0, dispatchCmdBuff2.size, 0u );
 	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff3.hndl, 0, dispatchCmdBuff3.size, 0u );
+	//vkCmdFillBuffer( cmdBuff, drawMergedCmd.hndl, 0, drawMergedCmd.size, 0u );
 	
 	VkBufferMemoryBarrier2KHR beginCullBarriers[] = {
 		VkMakeBufferBarrier2( drawCmdBuff.hndl,
@@ -3602,7 +3605,12 @@ CullPass(
 									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 									VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+		//VkMakeBufferBarrier2( drawMergedCmd.hndl,
+		//							VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+		//							VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+		//							VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+		//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
 	
@@ -3672,13 +3680,12 @@ CullPass(
 	}
 
 	{
-		VkBufferMemoryBarrier2KHR dispatchCullBarriers[] = {
+		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff2.hndl,
-									VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-									VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-									VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH ),
-		};
+								  VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH );
 
 		// TODO: write to read and write to write separately ?
 		VkMemoryBarrier2KHR writeToReadWriteBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
@@ -3687,8 +3694,8 @@ CullPass(
 		writeToReadWriteBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
 
 		VkDependencyInfoKHR execCullDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-		execCullDependency.bufferMemoryBarrierCount = std::size( dispatchCullBarriers );
-		execCullDependency.pBufferMemoryBarriers = dispatchCullBarriers;
+		execCullDependency.bufferMemoryBarrierCount = 1;
+		execCullDependency.pBufferMemoryBarriers = &dispatchBarrier;
 		execCullDependency.memoryBarrierCount = 1;
 		execCullDependency.pMemoryBarriers = &writeToReadWriteBarrier;
 		vkCmdPipelineBarrier2KHR( cmdBuff, &execCullDependency );
