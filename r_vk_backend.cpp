@@ -3532,6 +3532,19 @@ inline u64 GetImgMipCount( u64 width, u64 height )
 	return std::min( (u64) floor( log2( maxDim ) ), MAX_MIP_LEVELS );
 }
 
+inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
+{
+	VkMemoryBarrier2KHR everythingBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
+	everythingBarrier.srcStageMask = everythingBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
+	everythingBarrier.srcAccessMask = everythingBarrier.dstAccessMask = 
+		VK_ACCESS_2_MEMORY_READ_BIT_KHR | VK_ACCESS_2_MEMORY_WRITE_BIT_KHR;
+	
+	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependency.memoryBarrierCount = 1;
+	dependency.pMemoryBarriers = &everythingBarrier;
+	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
+}
+
 // TODO: wtf reseting draws?
 // TODO: merge surviving meshlets
 // TODO: meshlet cone culling 
@@ -3766,7 +3779,6 @@ CullPass(
 	}
 
 	// TODO: revisit triangle culling
-	
 
 	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
 		VkMakeBufferBarrier2( drawCmdBuff.hndl,
@@ -4597,17 +4609,17 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	
 	// NOTE: clear to 0 == BLACK and 0 == MAX_DEPTH ( inv depth )
 	VkClearValue clearVals[ 2 ] = {};
-	//DrawIndexedIndirectPass( thisVFrame.cmdBuf,
-	//						 rndCtx.gfxPipeline,
-	//						 rndCtx.renderPass,
-	//						 rndCtx.offscreenFbo,
-	//						 drawCmdBuff,
-	//						 drawCountBuff.hndl,
-	//						 indexBuff.hndl,
-	//						 VK_INDEX_TYPE_UINT32,
-	//						 instDescBuff.size / sizeof( instance_desc ),
-	//						 clearVals,
-	//						 gfxOpaqueProgram );
+	DrawIndexedIndirectPass( thisVFrame.cmdBuf,
+							 rndCtx.gfxPipeline,
+							 rndCtx.renderPass,
+							 rndCtx.offscreenFbo,
+							 drawCmdBuff,
+							 drawCountBuff.hndl,
+							 indexBuff.hndl,
+							 VK_INDEX_TYPE_UINT32,
+							 instDescBuff.size / sizeof( instance_desc ),
+							 clearVals,
+							 gfxOpaqueProgram );
 
 	//DrawIndexedIndirectPass(
 	//	thisVFrame.cmdBuf,
@@ -4622,16 +4634,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMeshletProgram );
 
-	DrawIndirectIndexedMerged(
-		thisVFrame.cmdBuf,
-		rndCtx.gfxMergedPipeline,
-		rndCtx.renderPass,
-		rndCtx.offscreenFbo,
-		indirectMergedIndexBuff,
-		drawMergedCmd,
-		drawMergedCountBuff,
-		clearVals,
-		gfxMergedProgram );
+	//DrawIndirectIndexedMerged(
+	//	thisVFrame.cmdBuf,
+	//	rndCtx.gfxMergedPipeline,
+	//	rndCtx.renderPass,
+	//	rndCtx.offscreenFbo,
+	//	indirectMergedIndexBuff,
+	//	drawMergedCmd,
+	//	drawMergedCountBuff,
+	//	clearVals,
+	//	gfxMergedProgram );
 
 	
 	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );

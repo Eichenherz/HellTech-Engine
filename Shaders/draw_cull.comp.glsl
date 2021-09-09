@@ -214,8 +214,11 @@ void main()
 	//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 	//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
 	
+	//visible = true;
+
 	if( visible )
 	{
+		debugPrintfEXT( "visible = %u", uint( visible ) );
 		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 	
 		visibleInstsChunks[ drawCallIdx ].instId = globalIdx;
@@ -232,8 +235,9 @@ void main()
 	
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-	barrier();
 
+	barrier();
+	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
