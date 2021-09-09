@@ -48,6 +48,7 @@ layout( local_size_x = 16, local_size_y = 16, local_size_z = 1 ) in;
 void main()
 {
 	uvec2 hdrColTrgSize = textureSize( hdrColTrg, 0 ).xy;
+	// TODO: any( greaterThan ?
 	if( gl_GlobalInvocationID.x > hdrColTrgSize.x || gl_GlobalInvocationID.y > hdrColTrgSize.y ) return;
 
 	uint histoBinIdx = 0;
@@ -74,8 +75,8 @@ void main()
 		partialSumLDS[ gl_SubgroupID ] = partialLumSum;
 		tailValsCountLDS[ gl_SubgroupID ] = tailValsPartialCount;
 	}
-	barrier();
 
+	barrier();
 	if( gl_SubgroupID == 0 )
 	{
 		partialLumSum = gl_SubgroupInvocationID < gl_NumSubgroups ? partialSumLDS[ gl_SubgroupInvocationID ] : 0;
@@ -91,8 +92,8 @@ void main()
 		atomicAdd( finalTailValsCount, tailValsPartialCount );
 		atomicAdd( globSyncCounter, 1 );
 	}
-	barrier();
 
+	barrier();
 	if( globSyncCounter == ( gl_NumWorkGroups.x + gl_NumWorkGroups.y - 2 ) )
 	{
 		float numPixels = hdrColTrgSize.x * hdrColTrgSize.y;

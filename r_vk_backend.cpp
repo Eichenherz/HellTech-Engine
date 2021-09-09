@@ -126,6 +126,7 @@ static bool occlusionCulling = 1;
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
 constexpr bool multiPassDepthPyramid = 1;
+static_assert( multiPassDepthPyramid );
 // TODO: enable gfx debug outside of VS Debug
 constexpr bool vkValidationLayerFeatures = 1;
 constexpr bool worldLeftHanded = 1;
@@ -4364,7 +4365,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	u32 imgIdx;
 	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
-
+	
 	// TODO: swapchain resize ?
 	if( !rndCtx.offscreenFbo )
 	{
@@ -4657,27 +4658,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//			   idMat,
 	//			   { 0,screenspaceBoxBuff.size / sizeof( dbg_vertex ) } );
 
-	if constexpr( !multiPassDepthPyramid )
-	{
-		DepthPyramidPass( thisVFrame.cmdBuf,
-						  rndCtx.compHiZPipeline,
-						  rndCtx.depthPyramid.mipCount,
-						  rndCtx.quadMinSampler,
-						  rndCtx.depthPyramidChain,
-						  rndCtx.depthTarget,
-						  depthPyramidCompProgram );
-	}
-	else
-	{
-		DepthPyramidMultiPass(
-			thisVFrame.cmdBuf,
-			rndCtx.compHiZPipeline,
-			rndCtx.quadMinSampler,
-			rndCtx.depthPyramidChain,
-			rndCtx.depthTarget,
-			rndCtx.depthPyramid,
-			depthPyramidMultiProgram );
-	}
+
+	DepthPyramidMultiPass(
+		thisVFrame.cmdBuf,
+		rndCtx.compHiZPipeline,
+		rndCtx.quadMinSampler,
+		rndCtx.depthPyramidChain,
+		rndCtx.depthTarget,
+		rndCtx.depthPyramid,
+		depthPyramidMultiProgram );
+	
 
 	// NOTE: inv( A * B ) = inv B * inv A
 	XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &globs->mainView ), proj );
@@ -4749,7 +4739,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	submitInfo.waitSemaphoreCount = 1;
 	submitInfo.pWaitSemaphores = &thisVFrame.canGetImgSema;
-	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_TRANSFER_BIT; // VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	submitInfo.pWaitDstStageMask = &waitDstStageMsk;
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &thisVFrame.cmdBuf;
@@ -4765,7 +4755,6 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	presentInfo.pSwapchains = &sc.swapchain;
 	presentInfo.pImageIndices = &imgIdx;
 	VK_CHECK( vkQueuePresentKHR( dc.gfxQueue, &presentInfo ) );
-	
 }
 
 void VkBackendKill()
