@@ -39,8 +39,11 @@ layout( binding = 3 ) coherent buffer vis_idx_count{
 layout( binding = 4, scalar ) buffer draw_cmd{
 	draw_command drawCmd;
 };
+layout( binding = 5 ) buffer draw_cmd_count{
+	uint drawCmdCount;
+};
 
-layout( binding = 5 ) coherent buffer atomic_cnt{
+layout( binding = 6 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
 
@@ -118,6 +121,8 @@ void main()
 		drawCmd.firstIndex = 0;
 		drawCmd.vertexOffset = 0; // Pass some offset ?
 		drawCmd.firstInstance = 0;
+
+		drawCmdCount = 1;
 
 		workgrAtomicCounter = 0;
 	}
