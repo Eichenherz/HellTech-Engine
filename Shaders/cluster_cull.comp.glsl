@@ -97,7 +97,9 @@ void main()
 	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
 	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 	
-	bool visible = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w;
+	bool visible = true;
+	visible = visible &&
+		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
@@ -115,8 +117,8 @@ void main()
 
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
-	if( visible && !camInsideAabb )
-	//if( false )
+	//if( visible && !camInsideAabb )
+	if( false )
 	{
 		// TODO: use this perspZ or compute per min/max Bound ? 
 		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
@@ -162,8 +164,9 @@ void main()
 		visible = visible && ( minDepth * perspZ <= 1.0f );	
 	}
 
-	bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );
-	visible = visible && rangePassFilter;
+	//bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );
+	//visible = visible && rangePassFilter;
+	//visible = visible && ( meshletIdx == 23 );
 
 	//uvec4 ballotVisible = subgroupBallot( visible );
 	//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );

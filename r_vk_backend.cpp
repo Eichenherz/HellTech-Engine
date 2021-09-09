@@ -3561,7 +3561,6 @@ CullPass(
 	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff.hndl, 0, dispatchCmdBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff2.hndl, 0, dispatchCmdBuff2.size, 0u );
 	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff3.hndl, 0, dispatchCmdBuff3.size, 0u );
-	//vkCmdFillBuffer( cmdBuff, drawMergedCmd.hndl, 0, drawMergedCmd.size, 0u );
 	
 	VkBufferMemoryBarrier2KHR beginCullBarriers[] = {
 		VkMakeBufferBarrier2( drawCmdBuff.hndl,
@@ -3605,12 +3604,7 @@ CullPass(
 									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 									VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-		//VkMakeBufferBarrier2( drawMergedCmd.hndl,
-		//							VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-		//							VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-		//							VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-		//							VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
 	
@@ -3632,9 +3626,7 @@ CullPass(
 		Descriptor( atomicCounterBuff ),
 		Descriptor( dispatchCmdBuff ),
 		Descriptor( drawCountBuff ),
-		//Descriptor( drawCmdBuff ),
-		//Descriptor( drawCmdDbgBuff ),
-		//Descriptor( drawCountDbgBuff )
+		Descriptor( drawCmdBuff )
 	};
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
@@ -4598,17 +4590,17 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	
 	// NOTE: clear to 0 == BLACK and 0 == MAX_DEPTH ( inv depth )
 	VkClearValue clearVals[ 2 ] = {};
-	//DrawIndexedIndirectPass( thisVFrame.cmdBuf,
-	//						 rndCtx.gfxPipeline,
-	//						 rndCtx.renderPass,
-	//						 rndCtx.offscreenFbo,
-	//						 drawCmdBuff,
-	//						 drawCountBuff.hndl,
-	//						 indexBuff.hndl,
-	//						 VK_INDEX_TYPE_UINT32,
-	//						 instDescBuff.size / sizeof( instance_desc ),
-	//						 clearVals,
-	//						 gfxOpaqueProgram );
+	DrawIndexedIndirectPass( thisVFrame.cmdBuf,
+							 rndCtx.gfxPipeline,
+							 rndCtx.renderPass,
+							 rndCtx.offscreenFbo,
+							 drawCmdBuff,
+							 drawCountBuff.hndl,
+							 indexBuff.hndl,
+							 VK_INDEX_TYPE_UINT32,
+							 instDescBuff.size / sizeof( instance_desc ),
+							 clearVals,
+							 gfxOpaqueProgram );
 
 	//DrawIndexedIndirectPass(
 	//	thisVFrame.cmdBuf,
@@ -4623,16 +4615,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMeshletProgram );
 
-	DrawIndirectIndexedMerged(
-		thisVFrame.cmdBuf,
-		rndCtx.gfxMergedPipeline,
-		rndCtx.renderPass,
-		rndCtx.offscreenFbo,
-		indirectMergedIndexBuff,
-		drawMergedCmd,
-		drawMergedCountBuff,
-		clearVals,
-		gfxMergedProgram );
+	//DrawIndirectIndexedMerged(
+	//	thisVFrame.cmdBuf,
+	//	rndCtx.gfxMergedPipeline,
+	//	rndCtx.renderPass,
+	//	rndCtx.offscreenFbo,
+	//	indirectMergedIndexBuff,
+	//	drawMergedCmd,
+	//	drawMergedCountBuff,
+	//	clearVals,
+	//	gfxMergedProgram );
 
 	
 	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
