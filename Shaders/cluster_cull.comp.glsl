@@ -157,11 +157,11 @@ void main()
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float depthPyramidLodCount = textureQueryLevels( minQuadDepthPyramid );
-		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidLodCount );
+		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
+		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 		
-		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
-		visible = visible && ( minDepth * perspZ <= 1.0f );	
+		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+		visible = visible && ( sampledDepth * perspZ <= 1.0f );	
 	}
 
 	//bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );

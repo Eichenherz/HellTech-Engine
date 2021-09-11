@@ -131,11 +131,11 @@ void main()
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
 	if( visible && !camInsideAabb && OCCLUSION_CULLING )
+	//if( false )
 	{
-		// TODO: use this perspZ or compute per min/max Bound ? 
 		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
 		
-		float depthPyrLodCount = textureQueryLevels( minQuadDepthPyramid );
+		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
 		
 		// NOTE: if faulty occlusion, prolly this was uncommented 
 		//float xPosBound = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
@@ -172,7 +172,7 @@ void main()
 		
         vec2 minXY = vec2(1);
         vec2 maxXY = {};
-		
+		float minDepth = 0.0f;
 		mat4 mvp = transpose( transpMvp );
 		
         [[unroll]]
@@ -181,9 +181,9 @@ void main()
             //transform world space aaBox to NDC
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
  		
+			minDepth = max( minDepth, clipPos.w );
             clipPos.xyz = clipPos.xyz / clipPos.w;
 			//debugPrintfEXT( "ClipPos = %v4f", clipPos );
-		
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
             clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
  		
@@ -192,10 +192,16 @@ void main()
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float mip = min( floor( log2( max( size.x, size.y ) ) ), depthPyrLodCount );
-		
-		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mip ).x;
-		visible = visible && ( minDepth * perspZ <= 1.0f );	
+		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
+		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+		visible = visible && ( sampledDepth * perspZ <= 1.0f );	
+
+		debugPrintfEXT( "minZ = %f", 1.0f / perspZ );
+		debugPrintfEXT( "min = %v2f", minXY );
+		debugPrintfEXT( "max = %v2f", maxXY );
+		debugPrintfEXT( "mipLevel = %f", mipLevel );
+		debugPrintfEXT( "sampledDepth = %f", sampledDepth );
+		debugPrintfEXT( "minDepth = %f", 1.0f / minDepth );
 	}
 	
 	
@@ -218,7 +224,6 @@ void main()
 
 	if( visible )
 	{
-		debugPrintfEXT( "visible = %u", uint( visible ) );
 		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 	
 		visibleInstsChunks[ drawCallIdx ].instId = globalIdx;
