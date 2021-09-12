@@ -4,8 +4,6 @@
 #extension GL_KHR_shader_subgroup_arithmetic: require
 #extension GL_KHR_shader_subgroup_ballot: require
 #extension GL_KHR_shader_subgroup_shuffle: require
-//#extension GL_KHR_memory_scope_semantics: require
-
 
 #extension GL_GOOGLE_include_directive: require
 
@@ -13,8 +11,6 @@
 
 #include "..\r_data_structs.h"
 
-
-#define GLSL_DBG 1
 
 #extension GL_EXT_debug_printf : enable
 
@@ -56,21 +52,12 @@ layout( binding = 3 ) coherent buffer atomic_cnt{
 layout( binding = 4 ) buffer disptach_indirect{
 	dispatch_command dispatchCmd;
 };
-//layout( binding = 6 ) writeonly buffer draw_cmd{
-//	draw_command drawCmd[];
-//};
 layout( binding = 5 ) coherent buffer draw_cmd_count{
 	uint drawCallCount;
 };
-#if GLSL_DBG
-//layout( binding = 7, scalar ) writeonly buffer dbg_draw_cmd{
-//	draw_indirect dbgDrawCmd[];
-//};
-//layout( binding = 8 ) buffer dbg_draw_cmd_count{
-//	uint dbgDrawCallCount;
-//};
-#endif
-
+layout( binding = 6 ) writeonly buffer draw_cmd{
+	draw_command drawCmd[];
+};
 
 // NOTE: https://research.nvidia.com/publication/2d-polyhedral-bounds-clipped-perspective-projected-3d-sphere 
 // && niagara renderer by zeux
@@ -119,8 +106,8 @@ void main()
 	vec3 center = currentMesh.center;
 	vec3 extent = abs( currentMesh.extent );
 	
-	vec3 boxMin = ( center - extent ).xyz;
-	vec3 boxMax = ( center + extent ).xyz;
+	vec3 boxMin = center - extent;
+	vec3 boxMax = center + extent;
 	
 	// NOTE: frustum culling inspired by Nabla
 	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
@@ -130,22 +117,25 @@ void main()
 	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
 	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 	
-	bool visible = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w;
+
+	bool visible = true;
+	visible = visible && 
+		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
-	
+
+
 	// TODO: faster ?
 	// TODO: fix Nabla occlusion
-	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.camPos, 1 ) ).xyz;
+	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
 	if( visible && !camInsideAabb && OCCLUSION_CULLING )
 	{
-		// TODO: use this perspZ or compute per min/max Bound ? 
 		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
 		
-		float depthPyrLodCount = textureQueryLevels( minQuadDepthPyramid );
+		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
 		
 		// NOTE: if faulty occlusion, prolly this was uncommented 
 		//float xPosBound = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
@@ -180,10 +170,10 @@ void main()
                                 boxMin + boxSize
                              };
 		
-        vec2 minXY = vec2(1);
+        vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
-		
-		mat4 mvp = transpose( transpMvp );
+		float minDepth = 0.0f;
+		mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
 		
         [[unroll]]
         for( int i = 0; i < 8; ++i )
@@ -191,9 +181,9 @@ void main()
             //transform world space aaBox to NDC
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
  		
+			minDepth = max( minDepth, clipPos.w );
             clipPos.xyz = clipPos.xyz / clipPos.w;
 			//debugPrintfEXT( "ClipPos = %v4f", clipPos );
-		
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
             clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
  		
@@ -202,10 +192,17 @@ void main()
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float mip = min( floor( log2( max( size.x, size.y ) ) ), depthPyrLodCount );
-		
-		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mip ).x;
-		visible = visible && ( minDepth * perspZ <= 1.0f );	
+		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
+		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+		visible = visible && ( sampledDepth * perspZ <= 1.0f );	
+
+		debugPrintfEXT( "minZ = %f", 1.0f / perspZ );
+		debugPrintfEXT( "perspZ = %f", perspZ );
+		debugPrintfEXT( "min = %v2f", minXY );
+		debugPrintfEXT( "max = %v2f", maxXY );
+		debugPrintfEXT( "mipLevel = %f", mipLevel );
+		debugPrintfEXT( "sampledDepth = %f", sampledDepth );
+		debugPrintfEXT( "minDepth = %f", 1.0f / minDepth );
 	}
 	
 	
@@ -214,36 +211,39 @@ void main()
 	//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 	mesh_lod lod = currentMesh.lods[ 0 ];
 	
-	uvec4 ballotVisible = subgroupBallot( visible );
-	uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
+	//uvec4 ballotVisible = subgroupBallot( visible );
+	//uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
+	//
+	//if( visibleInstCount == 0 ) return;
+	//// TODO: shared atomics + global atomics ?
+	//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
+	//
+	//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+	//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
 	
-	if( visibleInstCount == 0 ) return;
-	// TODO: shared atomics + global atomics ?
-	uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
-	
-	uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-	uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
-	
+	//visible = true;
+
 	if( visible )
 	{
-		//uint drawCallIdx = atomicAdd( drawCallCount, 1 );
+		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
 	
 		visibleInstsChunks[ drawCallIdx ].instId = globalIdx;
 		visibleInstsChunks[ drawCallIdx ].expOffset = lod.meshletOffset;
 		visibleInstsChunks[ drawCallIdx ].expCount = lod.meshletCount;
 	
-		//drawCmd[ drawCallIdx ].drawIdx = globalIdx;
-		//drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
-		//drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
-		//drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
-		//drawCmd[ drawCallIdx ].instanceCount = 1;
-		//drawCmd[ drawCallIdx ].firstInstance = 0;
+		drawCmd[ drawCallIdx ].drawIdx = globalIdx;
+		drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
+		drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
+		drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
+		drawCmd[ drawCallIdx ].instanceCount = 1;
+		drawCmd[ drawCallIdx ].firstInstance = 0;
 	}
 	
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-	barrier();
 
+	barrier();
+	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 

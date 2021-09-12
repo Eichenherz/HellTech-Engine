@@ -69,7 +69,7 @@ layout( binding = 8, scalar ) writeonly buffer draw_indir{
 shared uint workgrAtomicCounterShared = {};
 
 
-layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
@@ -81,10 +81,10 @@ void main()
 	uint meshletIdx = uint( mid >> 32 );
 
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ parentInstId ];
-	meshlet currentMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
+	meshlet thisMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
 
-	vec3 center = currentMeshlet.center;
-	vec3 extent = abs( currentMeshlet.extent );
+	vec3 center = thisMeshlet.center;
+	vec3 extent = abs( thisMeshlet.extent );
 	
 	vec3 boxMin = ( center - extent ).xyz;
 	vec3 boxMax = ( center + extent ).xyz;
@@ -97,52 +97,58 @@ void main()
 	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
 	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 	
-	bool visible = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w;
+	bool visible = true;
+	visible = visible &&
+		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
 
-	// TODO: add cone culling 
+	// TODO: in what space ?
+	// NOTE: cone culling 
+	//vec4 coneAxis = vec4( int( thisMeshlet.coneX ) / 127.0f, int( thisMeshlet.coneY ) / 127.0f, int( thisMeshlet.coneZ ) / 127.0f, 0.0f );
+	//coneAxis = normalize( currentInst.localToWorld * coneAxis );
+	//float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
+	//visible = visible && dot( cam.camViewDir, coneAxis.xyz ) < coneCutoff;
 
+	
 
-	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.camPos, 1 ) ).xyz;
+	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
-	if( visible && !camInsideAabb )
+	//if( visible && !camInsideAabb )
+	if( false )
 	{
 		// TODO: use this perspZ or compute per min/max Bound ? 
 		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
 		
-		float depthPyrLodCount = textureQueryLevels( minQuadDepthPyramid );
-		
 		
 		vec3 boxSize = boxMax - boxMin;
  		
-        vec3 boxCorners[] = { boxMin,
-                                boxMin + vec3(boxSize.x,0,0),
-                                boxMin + vec3(0, boxSize.y,0),
-                                boxMin + vec3(0, 0, boxSize.z),
-                                boxMin + vec3(boxSize.xy,0),
-                                boxMin + vec3(0, boxSize.yz),
-                                boxMin + vec3(boxSize.x, 0, boxSize.z),
-                                boxMin + boxSize
-                             };
+        vec3 boxCorners[] = { 
+			boxMin,
+			boxMin + vec3( boxSize.x, 0, 0 ),
+			boxMin + vec3( 0, boxSize.y, 0 ),
+			boxMin + vec3( 0, 0, boxSize.z ),
+			boxMin + vec3( boxSize.xy, 0 ),
+			boxMin + vec3( 0, boxSize.yz ),
+			boxMin + vec3( boxSize.x, 0, boxSize.z ),
+			boxMax };
 		
-        vec2 minXY = vec2(1);
+        vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
-		
+		float minZ = 0.0f;
+
 		mat4 mvp = transpose( transpMvp );
 		
         [[unroll]]
         for( int i = 0; i < 8; ++i )
         {
-            //transform world space aaBox to NDC
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
  		
             clipPos.xyz = clipPos.xyz / clipPos.w;
-			//debugPrintfEXT( "ClipPos = %v4f", clipPos );
-		
+
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
             clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
  		
@@ -151,41 +157,49 @@ void main()
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float mip = min( floor( log2( max( size.x, size.y ) ) ), depthPyrLodCount );
+		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
+		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 		
-		float minDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mip ).x;
-		visible = visible && ( minDepth * perspZ <= 1.0f );	
+		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+		visible = visible && ( sampledDepth * perspZ <= 1.0f );	
 	}
 
-	uvec4 ballotVisible = subgroupBallot( visible );
-	uint subgrActiveCount = subgroupBallotBitCount( ballotVisible );
-	
-	if( subgrActiveCount == 0 ) return;
-	// TODO: shared atomics + global atomics ?
-	uint subgrSlotOffset = ( gl_SubgroupInvocationID == 0 ) ? atomicAdd( drawCallCount, subgrActiveCount ) : 0;
-	
-	uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-	uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
+	//bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );
+	//visible = visible && rangePassFilter;
+	//visible = visible && ( meshletIdx == 23 );
+	visible = ( meshletIdx == 23 );
+
+	//uvec4 ballotVisible = subgroupBallot( visible );
+	//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
+	//
+	//if( subgrActiveInvocationsCount == 0 ) return;
+	//// TODO: shared atomics + global atomics ?
+	//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+	//
+	//uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+	//uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
 	if( visible )
 	{
+		uint slotIdx = atomicAdd( drawCallCount, 1 );
+
 		//visibleMeshlets[ slotIdx ].instId = parentInstId;
-		//visibleMeshlets[ slotIdx ].expOffset = currentMeshlet.triBufOffset;
+		//visibleMeshlets[ slotIdx ].expOffset = thisMeshlet.triBufOffset;
 		//// NOTE: want all the indices
-		//visibleMeshlets[ slotIdx ].expCount = uint( currentMeshlet.triangleCount ) * 3;
+		//visibleMeshlets[ slotIdx ].expCount = uint( thisMeshlet.triangleCount ) * 3;
 
 		
-		visibleMeshlets[ slotIdx ].triOffset = currentMeshlet.triBufOffset;
-		visibleMeshlets[ slotIdx ].vtxOffset = currentMeshlet.vtxBufOffset;
+		visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
+		visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
 		visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
 		// NOTE: want all the indices
-		visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( currentMeshlet.triangleCount ) * 3 );
+		visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( thisMeshlet.triangleCount ) * 3 );
 
 		drawCmd[ slotIdx ].drawIdx = parentInstId;
-		drawCmd[ slotIdx ].indexCount = uint( currentMeshlet.triangleCount ) * 3;
+		drawCmd[ slotIdx ].indexCount = uint( thisMeshlet.triangleCount ) * 3;
 		drawCmd[ slotIdx ].instanceCount = 1;
-		drawCmd[ slotIdx ].firstIndex = currentMeshlet.triBufOffset;
-		drawCmd[ slotIdx ].vertexOffset = currentMeshlet.vtxBufOffset;
+		drawCmd[ slotIdx ].firstIndex = thisMeshlet.triBufOffset;
+		drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
 		drawCmd[ slotIdx ].firstInstance = 0;
 
 		dbgDrawCmd[ slotIdx ].drawIdx = mid;
@@ -196,8 +210,10 @@ void main()
 	}				
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-	barrier();
 
+
+	barrier();
+	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 

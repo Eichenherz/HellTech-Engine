@@ -7,6 +7,7 @@
 #extension GL_EXT_debug_printf : enable
 
 // TODO: try pack into uint64_t
+// TODO: must have vtx offset too
 struct expandee_info
 {
 	uint instId;
@@ -36,13 +37,13 @@ layout( binding = 5 ) buffer disptach_indirect{
 
 // TODO: push const or spec const ?
 const uint clustersPerWorkgr = 4;
-const uint destWorkgrSize = 256;
+const uint destWorkgrSize = 1;
 
 shared uint expandeeOffsetLDS = {};
 shared uint workgrAtomicCounterShared = {};
 
 
-layout( local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint workGrIdx = gl_WorkGroupID.x;
@@ -63,10 +64,10 @@ void main()
 
 		expandeeOffsetLDS = atomicAdd( expandeeCount, perWorkgrExpCount );
 	}
+
+
 	barrier();
-	groupMemoryBarrier();
-
-
+	memoryBarrier();
 	[[ unroll ]] 
 	for( uint ii = 0; ii < clustersPerWorkgr; ++ii )
 	{
@@ -89,15 +90,17 @@ void main()
 			}
 		}
 		
-		// TODO: atomicAdd ?
-		if( gl_LocalInvocationID.x == 0 ) expandeeOffsetLDS += thisExpandeeCount;
 		barrier();
 		groupMemoryBarrier();
+		if( gl_LocalInvocationID.x == 0 ) expandeeOffsetLDS += thisExpandeeCount;
+		
 	}
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-	barrier();
 
+
+	barrier();
+	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		uint expandeeCullDispatch = ( expandeeCount + destWorkgrSize - 1 ) / destWorkgrSize;

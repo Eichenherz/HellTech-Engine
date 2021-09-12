@@ -118,12 +118,10 @@ void main()
     
     float lum = yxy.x / ( 9.6 * avgLum + 0.0001 );
     
-    //yxy.x = TonemapLottesCurve( lum );
-    yxy.x = LumTonemapAcesFilmCurve( lum );
+    yxy.x = TonemapLottesCurve( lum );
+    //yxy.x = LumTonemapAcesFilmCurve( lum );
     
     rgb = YxyToRgb( yxy );
-
-    //rgb = RgbTonemapAcesFilmCurve( rgb );
 
     imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), LinearToSrgb( vec4( rgb, 1 ) ) );
     //imageStore( sdrColDst, ivec2( gl_GlobalInvocationID.xy ), vec4( rgb, 1 ) );

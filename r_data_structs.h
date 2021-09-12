@@ -57,7 +57,7 @@ struct global_data
 	mat4	proj;
 	mat4	mainView;
 	mat4	activeView;
-	vec3	camPos;
+	vec3	worldPos;
 	float	pad0;
 	vec3	camViewDir;
 	float	pad1;

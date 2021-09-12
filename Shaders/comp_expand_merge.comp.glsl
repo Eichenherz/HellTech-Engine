@@ -33,14 +33,17 @@ layout( binding = 1 ) readonly buffer visible_meshlets_cnt{
 layout( binding = 2 ) writeonly buffer index_ids{
 	uint mergedIdxBuff[];
 };
-layout( binding = 3 ) buffer vis_idx_count{
+layout( binding = 3 ) coherent buffer vis_idx_count{
 	uint mergedIdxCount;
 };
 layout( binding = 4, scalar ) buffer draw_cmd{
 	draw_command drawCmd;
 };
+layout( binding = 5 ) buffer draw_cmd_count{
+	uint drawCmdCount;
+};
 
-layout( binding = 5 ) coherent buffer atomic_cnt{
+layout( binding = 6 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
 
@@ -72,10 +75,10 @@ void main()
 
 		idxBuffOffsetLDS = atomicAdd( mergedIdxCount, perWorkgrCount );
 	}
+
+
 	barrier();
-	groupMemoryBarrier();
-
-
+	memoryBarrier();
 	[[ unroll ]] 
 	for( uint mi = 0; mi < meshletsPerWorkgr; ++mi )
 	{
@@ -100,22 +103,26 @@ void main()
 			}
 		}
 		
-		if( gl_LocalInvocationID.x == 0 ) idxBuffOffsetLDS += thisIdxCount;
 		barrier();
 		groupMemoryBarrier();
+		if( gl_LocalInvocationID.x == 0 ) idxBuffOffsetLDS += thisIdxCount;
+		
 	}
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-	barrier();
 
+	barrier();
+	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		drawCmd.drawIdx = -1; // Don't use
-		drawCmd.indexCount = mergedIdxCount;
+		drawCmd.indexCount = mergedIdxCount; // TODO: atomicAdd 0 here ?
 		drawCmd.instanceCount = 1;
 		drawCmd.firstIndex = 0;
 		drawCmd.vertexOffset = 0; // Pass some offset ?
 		drawCmd.firstInstance = 0;
+
+		drawCmdCount = 1;
 
 		workgrAtomicCounter = 0;
 	}

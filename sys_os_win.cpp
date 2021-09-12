@@ -547,7 +547,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		{
 			XMStoreFloat4x4A( &globs.mainView, view );
 		}
-		globs.camPos = camWorldPos;
+		globs.worldPos = camWorldPos;
 		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
 
 		
