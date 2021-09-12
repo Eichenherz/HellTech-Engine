@@ -3379,11 +3379,10 @@ void VkBackendInit()
 
 	rndCtx.renderPass = VkMakeRenderPass( dc.device, 1, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
 	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 0, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
-	zRndPass = VkMakeRenderPass( dc.device, 1, 1, VK_ATTACHMENT_UNUSED, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
+	//zRndPass = VkMakeRenderPass( dc.device, 0, 1, VK_ATTACHMENT_UNUSED, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
+	zRndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
 
-	// TODO: ?
-	//VkPipelineCache pipelineCache = 0;
-
+	
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
 
 	{
@@ -4003,6 +4002,8 @@ DrawIndirectIndexedMerged(
 
 	vkCmdEndRenderPass( cmdBuff );
 }
+
+
 // TODO: must remake single pass
 inline static void
 DepthPyramidPass(
@@ -4653,6 +4654,50 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	// HiZ buffer
 
 
+	{
+		vk_label label = { thisVFrame.cmdBuf,"Z Prepass",{} };
+
+		VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
+		VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+		VkClearValue clearTargets[ 2 ] = {};
+		VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+		rndPassBegInfo.renderPass = zRndPass;
+		rndPassBegInfo.framebuffer = rndCtx.offscreenFbo;
+		rndPassBegInfo.renderArea = scissor;
+		rndPassBegInfo.clearValueCount = 2;
+		rndPassBegInfo.pClearValues = clearTargets;
+
+		vkCmdBeginRenderPass( thisVFrame.cmdBuf, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+		vkCmdSetViewport( thisVFrame.cmdBuf, 0, 1, &viewport );
+		vkCmdSetScissor( thisVFrame.cmdBuf, 0, 1, &scissor );
+
+		vkCmdBindPipeline( thisVFrame.cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxZPrepass );
+		vkCmdBindDescriptorSets( 
+			thisVFrame.cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, zPrepassProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+
+		vk_descriptor_info descriptors[] = { Descriptor( drawCmdBuff ) };
+		vkCmdPushDescriptorSetWithTemplateKHR( 
+			thisVFrame.cmdBuf, zPrepassProgram.descUpdateTemplate, zPrepassProgram.pipeLayout, 0, descriptors );
+
+		//struct { u64 vtxAddr; u64 transfAddr; } pushConst = { globVertexBuff.devicePointer,instDescBuff.devicePointer };
+		//assert( pushConst.vtxAddr );
+		//assert( pushConst.transfAddr );
+		//vkCmdPushConstants( 
+		//	thisVFrame.cmdBuf, zPrepassProgram.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( pushConst ), &pushConst );
+		vkCmdBindIndexBuffer( thisVFrame.cmdBuf, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
+
+		vkCmdDrawIndexedIndirectCount(
+			thisVFrame.cmdBuf, 
+			drawCmdBuff.hndl, 
+			offsetof( draw_command, cmd ), 
+			drawCountBuff.hndl, 0, 
+			instDescBuff.size / sizeof( instance_desc ),
+			sizeof( draw_command ) );
+
+		vkCmdEndRenderPass( thisVFrame.cmdBuf );
+	}
 
 	// NOTE: clear to 0 == BLACK and 0 == MAX_DEPTH ( inv depth )
 	VkClearValue clearVals[ 2 ] = {};
