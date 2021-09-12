@@ -106,8 +106,8 @@ void main()
 	vec3 center = currentMesh.center;
 	vec3 extent = abs( currentMesh.extent );
 	
-	vec3 boxMin = ( center - extent ).xyz;
-	vec3 boxMax = ( center + extent ).xyz;
+	vec3 boxMin = center - extent;
+	vec3 boxMax = center + extent;
 	
 	// NOTE: frustum culling inspired by Nabla
 	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
@@ -126,12 +126,12 @@ void main()
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
+
 	// TODO: faster ?
 	// TODO: fix Nabla occlusion
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
 	if( visible && !camInsideAabb && OCCLUSION_CULLING )
-	//if( false )
 	{
 		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
 		
@@ -170,10 +170,10 @@ void main()
                                 boxMin + boxSize
                              };
 		
-        vec2 minXY = vec2(1);
+        vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
 		float minDepth = 0.0f;
-		mat4 mvp = transpose( transpMvp );
+		mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
 		
         [[unroll]]
         for( int i = 0; i < 8; ++i )
@@ -197,6 +197,7 @@ void main()
 		visible = visible && ( sampledDepth * perspZ <= 1.0f );	
 
 		debugPrintfEXT( "minZ = %f", 1.0f / perspZ );
+		debugPrintfEXT( "perspZ = %f", perspZ );
 		debugPrintfEXT( "min = %v2f", minXY );
 		debugPrintfEXT( "max = %v2f", maxXY );
 		debugPrintfEXT( "mipLevel = %f", mipLevel );

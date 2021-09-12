@@ -1300,7 +1300,7 @@ VkMakeRenderPass(
 	attachmentDescriptions[ 0 ].loadOp = overDraw ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
 	attachmentDescriptions[ 0 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 	attachmentDescriptions[ 0 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+	attachmentDescriptions[ 0 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 	attachmentDescriptions[ 0 ].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	attachmentDescriptions[ 0 ].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
@@ -1392,7 +1392,7 @@ struct vk_instance
 	VkInstance inst;
 	VkDebugUtilsMessengerEXT dbgMsg;
 };
-// TODO: turn on sync validation and fix errors
+
 inline static vk_instance VkMakeInstance()
 {
 	constexpr const char* ENABLED_INST_EXTS[] =
@@ -1417,14 +1417,14 @@ inline static vk_instance VkMakeInstance()
 	VK_CHECK( VK_INTERNAL_ERROR( !( VK_DLL = SysDllLoad( "vulkan-1.dll" ) ) ) );
 
 	// TODO: full vk file generation ?
-#define GET_VK_GLOBAL_PROC( VkProc ) VkProc = (PFN_##VkProc) vkGetInstanceProcAddr( 0, #VkProc )
 
-	vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr) SysGetProcAddr( VK_DLL, "vkGetInstanceProcAddr" );
-	GET_VK_GLOBAL_PROC( vkCreateInstance );
-	GET_VK_GLOBAL_PROC( vkEnumerateInstanceExtensionProperties );
-	GET_VK_GLOBAL_PROC( vkEnumerateInstanceLayerProperties );
-	GET_VK_GLOBAL_PROC( vkEnumerateInstanceVersion );
-#undef GET_VK_GLOBAL_PROC
+	vkGetInstanceProcAddr = ( PFN_vkGetInstanceProcAddr ) SysGetProcAddr( VK_DLL, "vkGetInstanceProcAddr" );
+	vkCreateInstance = ( PFN_vkCreateInstance ) vkGetInstanceProcAddr( 0, "vkCreateInstance" );
+	vkEnumerateInstanceExtensionProperties =
+		( PFN_vkEnumerateInstanceExtensionProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceExtensionProperties" );
+	vkEnumerateInstanceLayerProperties =
+		( PFN_vkEnumerateInstanceLayerProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceLayerProperties" );
+	vkEnumerateInstanceVersion = ( PFN_vkEnumerateInstanceVersion ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceVersion" );
 
 	u32 vkExtsNum = 0;
 	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, 0 ) );
@@ -1926,7 +1926,6 @@ VkPipeline VkMakeGfxPipeline(
 
 	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
 	inAsmStateInfo.topology = pipelineState.primTopology;
-	inAsmStateInfo.primitiveRestartEnable = 0;
 
 	VkPipelineViewportStateCreateInfo viewportInfo = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
 	viewportInfo.viewportCount = 1;
@@ -1999,6 +1998,7 @@ VkPipeline VkMakeGfxPipeline(
 	return vkGfxPipeline;
 }
 
+// TODO: pipeline caputre representations blah blah ?
 VkPipeline VkMakeComputePipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,
@@ -2042,7 +2042,7 @@ VkPipeline VkMakeComputePipeline(
 #include "asset_compiler.h"
 
 
-inline VkFormat GetVkFormat( texture_format t )
+inline VkFormat VkGetFormat( texture_format t )
 {
 	switch( t )
 	{
@@ -2053,7 +2053,7 @@ inline VkFormat GetVkFormat( texture_format t )
 	case TEXTURE_FORMAT_UNDEFINED: assert( 0 );
 	}
 }
-inline VkImageType GetVkImgType( texture_type t )
+inline VkImageType VkGetImageType( texture_type t )
 {
 	switch( t )
 	{
@@ -2121,7 +2121,7 @@ inline VkSamplerCreateInfo VkMakeSamplerInfo( sampler_config config )
 }
 
 inline VkImageCreateInfo
-GetVkImageInfo(
+VkMakeImageInfo(
 	VkFormat			imgFormat,
 	VkImageUsageFlags	usageFlags,
 	VkExtent3D			imgExtent,
@@ -2143,11 +2143,11 @@ GetVkImageInfo(
 
 	return imgInfo;
 }
-inline VkImageCreateInfo GetVkImageInfoFromMetadata( const image_metadata& meta, VkImageUsageFlags usageFlags )
+inline VkImageCreateInfo VkGetImageInfoFromMetadata( const image_metadata& meta, VkImageUsageFlags usageFlags )
 {
 	VkImageCreateInfo imgInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
-	imgInfo.imageType = GetVkImgType( meta.type );
-	imgInfo.format = GetVkFormat( meta.format );
+	imgInfo.imageType = VkGetImageType( meta.type );
+	imgInfo.format = VkGetFormat( meta.format );
 	imgInfo.extent = { u32( meta.width ),u32( meta.height ),1 };
 	imgInfo.mipLevels = meta.mipCount;
 	imgInfo.arrayLayers = meta.layerCount;
@@ -2542,120 +2542,6 @@ StagingManagerPushForRecycle( VkBuffer stagingBuf, staging_manager& stgMngr )
 	stgMngr.pendingUploads.push_back( { stagingBuf,stgMngr.semaSignalCounter } );
 }
 
-constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
-// TODO: remove ?
-inline static std::vector<instance_desc> 
-SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrlCount, float sceneRadius )
-{
-	using namespace DirectX;
-
-	assert( mtrlCount == 1 );
-	std::vector<instance_desc> insts( drawCount );
-	float scale = 1.0f;
-	for( instance_desc& i : insts )
-	{
-		i.meshIdx = rand() % std::size( meshes );
-		i.mtrlIdx = 0;
-		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-
-		XMVECTOR axis = XMVector3Normalize(
-			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 0 ) );
-		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
-
-		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
-		XMVECTOR quat = XMQuaternionIdentity();
-		XMStoreFloat4( &i.rot, quat );
-
-		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
-		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
-		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
-
-		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
-
-		XMStoreFloat4x4A( &i.localToWorld, localToWorld );
-	}
-
-	return insts;
-}
-
-inline static void
-SpawnRandomInstances( 
-	const std::span<mesh_desc> meshes, 
-	u64 drawCount,
-	u64 mtrlCount, 
-	float sceneRadius,
-	std::vector<instance_desc>& instsOut,
-	std::vector<mat4>& transfsOut 
-){
-	using namespace DirectX;
-
-	assert( mtrlCount == 1 );
-
-	std::vector<instance_desc> insts( drawCount );
-	std::vector<mat4> transfs( drawCount );
-
-	float scale = 1.0f;
-	for( u64 ii = 0; ii < drawCount; ++ii )
-	{
-		instance_desc& i = insts[ ii ];
-		mat4& t = transfs[ ii ];
-
-		i.transfIdx = ii;
-		i.meshIdx = rand() % std::size( meshes );
-		i.mtrlIdx = 0;
-		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-
-		XMVECTOR axis = XMVector3Normalize(
-			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 0 ) );
-		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
-
-		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
-		XMVECTOR quat = XMQuaternionIdentity();
-		XMStoreFloat4( &i.rot, quat );
-
-		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
-		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
-		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
-
-		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
-
-		XMStoreFloat4x4A( &i.localToWorld, localToWorld );
-		XMStoreFloat4x4A( &t, localToWorld );
-	}
-
-	instsOut = std::move( insts );
-	transfsOut = std::move( transfs );
-}
-
-inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float sceneRadius)
-{
-	constexpr bool drawLightDbgSphere = 0;
-
-	std::vector<light_data> lights( lightCount );
-	for( light_data& l : lights )
-	{
-		l.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.radius = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-		l.col = { 600.0f,200.0f,100.0f };
-	}
-
-	return lights;
-}
-
 // TODO: remove/improve 
 static inline void
 VkStageCopyUploadBuffer(
@@ -2850,7 +2736,119 @@ inline box_bounds XM_CALLCONV BoxMinMaxFromCenterExtent( DirectX::XMVECTOR cente
 	return box;
 }
 
+constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
+// TODO: remove ?
+inline static std::vector<instance_desc>
+SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrlCount, float sceneRadius )
+{
+	using namespace DirectX;
 
+	assert( mtrlCount == 1 );
+	std::vector<instance_desc> insts( drawCount );
+	float scale = 1.0f;
+	for( instance_desc& i : insts )
+	{
+		i.meshIdx = rand() % std::size( meshes );
+		i.mtrlIdx = 0;
+		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+
+		XMVECTOR axis = XMVector3Normalize(
+			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 0 ) );
+		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
+
+		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
+		XMVECTOR quat = XMQuaternionIdentity();
+		XMStoreFloat4( &i.rot, quat );
+
+		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
+		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
+		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
+
+		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
+
+		XMStoreFloat4x4A( &i.localToWorld, localToWorld );
+	}
+
+	return insts;
+}
+
+inline static void
+SpawnRandomInstances(
+	const std::span<mesh_desc> meshes,
+	u64 drawCount,
+	u64 mtrlCount,
+	float sceneRadius,
+	std::vector<instance_desc>& instsOut,
+	std::vector<mat4>& transfsOut
+){
+	using namespace DirectX;
+
+	assert( mtrlCount == 1 );
+
+	std::vector<instance_desc> insts( drawCount );
+	std::vector<mat4> transfs( drawCount );
+
+	float scale = 1.0f;
+	for( u64 ii = 0; ii < drawCount; ++ii )
+	{
+		instance_desc& i = insts[ ii ];
+		mat4& t = transfs[ ii ];
+
+		i.transfIdx = ii;
+		i.meshIdx = rand() % std::size( meshes );
+		i.mtrlIdx = 0;
+		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+
+		XMVECTOR axis = XMVector3Normalize(
+			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 0 ) );
+		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
+
+		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
+		XMVECTOR quat = XMQuaternionIdentity();
+		XMStoreFloat4( &i.rot, quat );
+
+		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
+		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
+		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
+
+		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
+
+		XMStoreFloat4x4A( &i.localToWorld, localToWorld );
+		XMStoreFloat4x4A( &t, localToWorld );
+	}
+
+	instsOut = std::move( insts );
+	transfsOut = std::move( transfs );
+}
+
+inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float sceneRadius )
+{
+	constexpr bool drawLightDbgSphere = 0;
+
+	std::vector<light_data> lights( lightCount );
+	for( light_data& l : lights )
+	{
+		l.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		l.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		l.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		l.radius = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+		l.col = { 600.0f,200.0f,100.0f };
+	}
+
+	return lights;
+}
 
 static buffer_data globVertexBuff;
 // TODO: use indirect merged index buffer
@@ -3190,7 +3188,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 
 		for( const image_metadata& meta : imgDesc )
 		{
-			VkImageCreateInfo info = GetVkImageInfoFromMetadata( meta, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
+			VkImageCreateInfo info = VkGetImageInfoFromMetadata( meta, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
 			image img = VkCreateAllocBindImage( info, vkAlbumArena );
 
 			imageBarriers.push_back( VkMakeImageBarrier2(
@@ -3636,44 +3634,12 @@ CullPass(
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
-
-
-
-	VkImageMemoryBarrier2KHR hiZClearBarrier = VkMakeImageBarrier2(
-		rndCtx.depthPyramid.hndl,
-		0,
-		0,
-		VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-		VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-		VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_IMAGE_LAYOUT_GENERAL,
-		VK_IMAGE_ASPECT_COLOR_BIT );
-
-	VkDependencyInfoKHR dependency0 = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	dependency0.imageMemoryBarrierCount = 1;
-	dependency0.pImageMemoryBarriers = &hiZClearBarrier;
-	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency0 );
-
-	VkClearColorValue clearCol = {};
-	clearCol.float32[ 0 ] = 1.0f;
-	VkImageSubresourceRange imgResource = {};
-	imgResource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	imgResource.baseMipLevel = 0;
-	imgResource.levelCount = rndCtx.depthPyramid.mipCount;
-	imgResource.baseArrayLayer = 0;
-	imgResource.layerCount = 1;
-	vkCmdClearColorImage( cmdBuff, rndCtx.depthPyramid.hndl, VK_IMAGE_LAYOUT_GENERAL, &clearCol, 1, &imgResource );
-
-
-
-
 	VkImageMemoryBarrier2KHR hiZReadBarrier = VkMakeImageBarrier2(
 		rndCtx.depthPyramid.hndl,
-		VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-		VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+		0,0,
 		VK_ACCESS_2_SHADER_READ_BIT_KHR,
 		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-		VK_IMAGE_LAYOUT_GENERAL,
+		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		VK_IMAGE_ASPECT_COLOR_BIT );
 
@@ -4104,6 +4070,7 @@ DepthPyramidMultiPass(
 		VkMakeImageBarrier2(
 			depthTarget.hndl,
 			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT_KHR,
+			// TODO: all gfx commands ?
 			VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT_KHR,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
@@ -4131,6 +4098,13 @@ DepthPyramidMultiPass(
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 
 	VkDescriptorImageInfo sourceDepth = { pointMinSampler, depthTarget.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+
+
+
+	VkMemoryBarrier2KHR executionBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
+	executionBarrier.srcStageMask = executionBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR;
+	executionBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR;
+	executionBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
 
 	for( u64 i = 0; i < depthPyramid.mipCount; ++i )
 	{
@@ -4166,25 +4140,28 @@ DepthPyramidMultiPass(
 								 VK_IMAGE_ASPECT_COLOR_BIT );
 
 		VkDependencyInfoKHR passDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-		passDependency.imageMemoryBarrierCount = 1;
-		passDependency.pImageMemoryBarriers = &reduceBarrier;
+		//passDependency.imageMemoryBarrierCount = 1;
+		//passDependency.pImageMemoryBarriers = &reduceBarrier;
+		passDependency.memoryBarrierCount = 1;
+		passDependency.pMemoryBarriers = &executionBarrier;
 		vkCmdPipelineBarrier2KHR( cmdBuff, &passDependency );
 
 	}
 
-	VkImageMemoryBarrier depthWriteBarrier = 
-		VkMakeImgBarrier( depthTarget.hndl, 
-						  VK_ACCESS_SHADER_READ_BIT, 
-						  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 
-						  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
-						  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 
-						  VK_IMAGE_ASPECT_DEPTH_BIT );
-	
-	vkCmdPipelineBarrier( cmdBuff, 
-						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
-						  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 
-						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 
-						  1, &depthWriteBarrier );
+	// TODO: do we need ?
+	//VkImageMemoryBarrier depthWriteBarrier = 
+	//	VkMakeImgBarrier( depthTarget.hndl, 
+	//					  VK_ACCESS_SHADER_READ_BIT, 
+	//					  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 
+	//					  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+	//					  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 
+	//					  VK_IMAGE_ASPECT_DEPTH_BIT );
+	//
+	//vkCmdPipelineBarrier( cmdBuff, 
+	//					  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+	//					  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 
+	//					  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 
+	//					  1, &depthWriteBarrier );
 }
 
 // TODO: optimize
@@ -4425,20 +4402,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	u64 currentFrameIdx = rndCtx.vFrameIdx;
 	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ rndCtx.vFrameIdx ];
+	// TODO: don't modulo frameIndex ?
 	rndCtx.vFrameIdx = ( rndCtx.vFrameIdx + 1 ) % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
-	assert( ( currentFrameIdx == 0 ) || ( currentFrameIdx == 1 ) );
 
-
-	VK_CHECK( VK_INTERNAL_ERROR( ( 
-		vkWaitForFences( dc.device, 1, &thisVFrame.hostSyncFence, true, 1'000'000'000 ) - VK_TIMEOUT ) > 0 ) );
+	VK_CHECK( VK_INTERNAL_ERROR( vkWaitForFences( dc.device, 1, &thisVFrame.hostSyncFence, true, UINT64_MAX ) > VK_TIMEOUT ) );
 	VK_CHECK( vkResetFences( dc.device, 1, &thisVFrame.hostSyncFence ) );
 
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
-
-	u32 imgIdx;
-	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 	
 	// TODO: swapchain resize ?
+	// TODO: barrier this stuff here
 	if( !rndCtx.offscreenFbo )
 	{
 		if( !rndCtx.depthTarget.hndl )
@@ -4637,14 +4610,14 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	VkImageMemoryBarrier2KHR beginFrameBarriers[] = {
 		VkMakeImageBarrier2(
 			rndCtx.colorTarget.hndl,
-			0, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+			0, 0,
 			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
 			VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			VK_IMAGE_ASPECT_COLOR_BIT ),
 		VkMakeImageBarrier2(
 			rndCtx.depthTarget.hndl,
-			0, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR,
+			0, 0,
 			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
 			VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -4655,11 +4628,14 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	begFrameDependency.pImageMemoryBarriers = beginFrameBarriers;
 	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &begFrameDependency );
 
-	// TODO: add z prepass + depth pyr here
-	// TODO: double pass culling/visibility
-
+	// Culling with past frame viz data 
+	// TODO: merge up to 256 meshes 
 	CullPass( thisVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
-	
+	// Depth prepass
+	// HiZ buffer
+
+
+
 	// NOTE: clear to 0 == BLACK and 0 == MAX_DEPTH ( inv depth )
 	VkClearValue clearVals[ 2 ] = {};
 	DrawIndexedIndirectPass( thisVFrame.cmdBuf,
@@ -4711,26 +4687,6 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 				   vkDbgCtx.pipeProg,
 				   projView,
 				   { 0,boxTrisVertexCount } );
-	
-	//mat4 idMat;
-	//XMStoreFloat4x4A( &idMat, XMMatrixIdentity() );
-	//DebugDrawPass( thisVFrame.cmdBuf,
-	//			   vkDbgCtx.drawAsLines,
-	//			   rndCtx.render2ndPass,
-	//			   rndCtx.offscreenFbo,
-	//			   screenspaceBoxBuff,
-	//			   vkDbgCtx.pipeProg,
-	//			   idMat,
-	//			   { 0,screenspaceBoxBuff.size / sizeof( dbg_vertex ) } );
-	
-	DepthPyramidMultiPass(
-		thisVFrame.cmdBuf,
-		rndCtx.compHiZPipeline,
-		rndCtx.quadMinSampler,
-		rndCtx.depthPyramidChain,
-		rndCtx.depthTarget,
-		rndCtx.depthPyramid,
-		depthPyramidMultiProgram );
 
 	// NOTE: inv( A * B ) = inv B * inv A
 	XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &globs->mainView ), proj );
@@ -4741,6 +4697,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	dbgLineGeomCache = ComputeSceneDebugBoundingBoxes( frustMat, entities );
 	std::memcpy( vkDbgCtx.dbgLinesBuff.hostVisible, std::data( dbgLineGeomCache ), BYTE_COUNT( dbgLineGeomCache ) );
 
+	// TODO: remove the depth target from these ?
 	// TODO: rethink
 	if( dbgDraw && ( freeCam || bvDraw ) )
 	{
@@ -4774,6 +4731,38 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		}
 		
 	}
+
+	DepthPyramidMultiPass(
+		thisVFrame.cmdBuf,
+		rndCtx.compHiZPipeline,
+		rndCtx.quadMinSampler,
+		rndCtx.depthPyramidChain,
+		rndCtx.depthTarget,
+		rndCtx.depthPyramid,
+		depthPyramidMultiProgram );
+
+
+	VkImageMemoryBarrier2KHR hizBeginBarriers[] = {
+		VkMakeImageBarrier2(
+			rndCtx.depthPyramid.hndl,
+			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+			0,
+			VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR,
+			VK_IMAGE_LAYOUT_GENERAL,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_ASPECT_COLOR_BIT )
+	};
+
+	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependency.imageMemoryBarrierCount = std::size( hizBeginBarriers );
+	dependency.pImageMemoryBarriers = hizBeginBarriers;
+	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &dependency );
+
+
+
+	u32 imgIdx;
+	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 
 	ToneMappingWithSrgb( thisVFrame.cmdBuf,
 						 rndCtx.compAvgLumPipe, 
