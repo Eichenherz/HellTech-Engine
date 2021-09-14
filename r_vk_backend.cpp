@@ -121,7 +121,6 @@ constexpr u32 MLET_CULL_WORKSIZE = 256;
 // TODO: cvars
 //====================CVARS====================//
 static bool colorBlending = 0;
-static bool occlusionCulling = 1;
 //==============================================//
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
@@ -3348,7 +3347,7 @@ inline static void VkInitInternalBuffers()
 static vk_program	gfxMergedProgram = {};
 static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
-static vk_program	drawcullCompProgram = {};
+static vk_program	cullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
 static vk_program	tonemapCompProgram = {};
@@ -3416,9 +3415,8 @@ void VkBackendInit()
 	}
 	{
 		vk_shader drawCull = VkLoadShader( "Shaders/draw_cull.comp.spv", dc.device );
-		drawcullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCull } );
-		rndCtx.compPipeline =
-			VkMakeComputePipeline( dc.device, 0, drawcullCompProgram.pipeLayout, drawCull.module, { OBJ_CULL_WORKSIZE,occlusionCulling } );
+		cullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCull } );
+		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { OBJ_CULL_WORKSIZE } );
 		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
 
 		vk_shader expansionComp = VkLoadShader( "Shaders/id_expander.comp.spv", dc.device );
@@ -3906,11 +3904,11 @@ DrawIndexedIndirectPass(
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
-
+	
 	vk_descriptor_info descriptors[] = { Descriptor( drawCmds ) };
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
-	
+	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff, 0, indexType );
 
 	vkCmdDrawIndexedIndirectCount( 
@@ -4473,6 +4471,8 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		{
 			hiZWidth = FloorPowOf2( sc.width );
 			hiZHeight = FloorPowOf2( sc.height );
+			u32 squareDim = std::min( hiZWidth, hiZHeight );
+			hiZWidth = hiZHeight = squareDim;
 			hiZMipCount = GetImgMipCountForPow2( hiZWidth, hiZHeight );
 		}
 		VK_CHECK( VK_INTERNAL_ERROR( !( hiZMipCount < MAX_MIP_LEVELS ) ) );
@@ -4673,11 +4673,10 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	std::memcpy( thisVFrame.frameData.hostVisible, ( u8* )globs, sizeof( *globs ) );
 
-	
 	VkClearValue clearVals[ 2 ] = {};
 	DrawIndexedIndirectPass( thisVFrame.cmdBuff,
 							 gfxZPrepass,
-							 zRndPass,
+							 rndCtx.renderPass,
 							 rndCtx.offscreenFbo,
 							 drawCmdBuff,
 							 drawCountBuff.hndl,
@@ -4686,6 +4685,19 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 							 instDescBuff.size / sizeof( instance_desc ),
 							 clearVals,
 							 zPrepassProgram );
+
+	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
+	XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
+	mat4 projView;
+	XMStoreFloat4x4A( &projView, xmProjView );
+	DebugDrawPass( thisVFrame.cmdBuff,
+				   vkDbgCtx.drawAsTriangles,
+				   rndCtx.render2ndPass,
+				   rndCtx.offscreenFbo,
+				   vkDbgCtx.dbgTrisBuff,
+				   vkDbgCtx.pipeProg,
+				   projView,
+				   { 0,boxTrisVertexCount } );
 
 	DepthPyramidMultiPass(
 		thisVFrame.cmdBuff,
@@ -4710,8 +4722,10 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
 
 	// TODO: merge up to 256 meshes 
-	CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, drawcullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
+	CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
 
+
+	// Emit depth + HzB
 
 	DrawIndexedIndirectPass( thisVFrame.cmdBuff,
 							 rndCtx.gfxPipeline,
@@ -4749,11 +4763,6 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMergedProgram );
 
-	
-	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
-	XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
-	mat4 projView;
-	XMStoreFloat4x4A( &projView, xmProjView );
 	DebugDrawPass( thisVFrame.cmdBuff,
 				   vkDbgCtx.drawAsTriangles,
 				   rndCtx.render2ndPass,
@@ -4845,17 +4854,19 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	dependencyAcquire.pImageMemoryBarriers = &hrdColTargetAcquire;
 	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependencyAcquire );
 
-	VkImageMemoryBarrier presentBarrier = VkMakeImgBarrier( sc.imgs[ imgIdx ],
-															VK_ACCESS_SHADER_WRITE_BIT, 0,
-															VK_IMAGE_LAYOUT_GENERAL,
-															VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-															VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
-	
-	vkCmdPipelineBarrier( thisVFrame.cmdBuff,
-						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-						  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 
-						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, 
-						  &presentBarrier );
+	VkImageMemoryBarrier2KHR presentWaitBarrier = VkMakeImageBarrier2(
+		sc.imgs[ imgIdx ],
+		VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+		0, 0,
+		VK_IMAGE_LAYOUT_GENERAL,
+		VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		VK_IMAGE_ASPECT_COLOR_BIT );
+
+	VkDependencyInfoKHR dependencyPresent = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependencyPresent.imageMemoryBarrierCount = 1;
+	dependencyPresent.pImageMemoryBarriers = &presentWaitBarrier;
+	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependencyPresent );
 
 	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
 

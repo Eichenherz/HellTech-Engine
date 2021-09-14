@@ -38,8 +38,8 @@ namespace std
 //////////////////////////////////////
 // CONSTS
 //////////////////////////////////////
-constexpr u32 SCREEN_WIDTH = 960;
-constexpr u32 SCREEN_HEIGHT = 600;
+constexpr u32 SCREEN_WIDTH = 1024;
+constexpr u32 SCREEN_HEIGHT = 640;
 constexpr u64 SYS_MEM_BYTES = 1 * GB;
 
 // TODO: remove extern ? 

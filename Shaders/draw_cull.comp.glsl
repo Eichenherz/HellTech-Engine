@@ -85,12 +85,12 @@ vec4 ProjectedSphereToAABB( vec3 viewSpaceCenter, float r, float perspDividedWid
 	return aabb;
 }
 
-
 shared uint workgrAtomicCounterShared = {};
 
 
+#define OCCLUSION_CULLING 1
+
 layout( local_size_x_id = 0 ) in;
-layout( constant_id = 1 ) const bool OCCLUSION_CULLING = false;
 
 layout( local_size_x = 64, local_size_y = 1, local_size_z = 1 ) in;
 void main()
@@ -109,6 +109,32 @@ void main()
 	vec3 boxMin = center - extent;
 	vec3 boxMax = center + extent;
 	
+
+	mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
+
+	vec3 boxSize = boxMax - boxMin;
+ 	
+    vec4 clipCorners[] = { 
+		mvp * vec4( boxMin, 1.0f ),
+		mvp * vec4( boxMin + vec3( boxSize.x, 0, 0 ), 1.0f ),
+		mvp * vec4( boxMin + vec3( 0, boxSize.y, 0 ), 1.0f ),
+		mvp * vec4( boxMin + vec3( 0, 0, boxSize.z ), 1.0f ),
+		mvp * vec4( boxMin + vec3( boxSize.xy, 0 ), 1.0f ),
+		mvp * vec4( boxMin + vec3( 0, boxSize.yz ), 1.0f ),
+		mvp * vec4( boxMin + vec3( boxSize.x, 0, boxSize.z ), 1.0f ),
+		mvp * vec4( boxMin + boxSize, 1.0f ) };
+
+	float minW = clipCorners[ 0 ].w;
+	float maxW = clipCorners[ 0 ].w;
+
+	
+	[[ unroll ]]
+	for( uint i = 1; i < 8; ++i )
+	{
+		minW = min( minW, clipCorners[ i ].w );
+		maxW = max( maxW, clipCorners[ i ].w );
+	}
+
 	// NOTE: frustum culling inspired by Nabla
 	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
 	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
@@ -119,8 +145,11 @@ void main()
 	
 
 	bool visible = true;
-	visible = visible && 
-		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
+
+	float closestProjW = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
+	bool intersectsNearPlane = closestProjW > 0.0f;
+
+	visible = visible && intersectsNearPlane;
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
@@ -128,62 +157,39 @@ void main()
 
 
 	// TODO: faster ?
-	// TODO: fix Nabla occlusion
+	// TODO: fix Nabla occlusion, use same code as for frstum figure it out
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
-	if( visible && !camInsideAabb && OCCLUSION_CULLING )
+	camInsideAabb = length( cam.worldPos - ( currentInst.localToWorld * vec4( center, 1.0f ) ).xyz ) < 
+	( length( ( currentInst.localToWorld * vec4( extent, 0.0f ) ).xyz ) + 0.000000001f );
+
+#ifdef OCCLUSION_CULLING
+	if( visible )// && !intersectsNearPlane )
 	{
-		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
-		
-		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
-		
-		// NOTE: if faulty occlusion, prolly this was uncommented 
-		//float xPosBound = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
-		//float yPosBound = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
-		//float xNegBound = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
-		//float yNegBound = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
-		//			    
-		//xPosBound = clamp( xPosBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
-		//yPosBound = clamp( yPosBound / perspZ, -1.0f, 1.0f ) * -0.5f + 0.5f;
-		//xNegBound = clamp( xNegBound / perspZ, -1.0f, 1.0f ) * 0.5f + 0.5f;
-		//yNegBound = clamp( yNegBound / perspZ, -1.0f, 1.0f ) * -0.5f + 0.5f;
-		//
-		//vec2 screenMin = vec2( min( xPosBound, xNegBound ), min( yPosBound, yNegBound ) );
-		//vec2 screenMax = vec2( max( xPosBound, xNegBound ), max( yPosBound, yNegBound ) );
-		//
-		//vec2 screenBoxSize = abs( screenMax - screenMin ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		//float mipLevel = min( floor( log2( max( screenBoxSize.x, screenBoxSize.y ) ) ), depthPyrLodCount );
-		//
-		//float sampledDepth = textureLod( minQuadDepthPyramid, ( screenMax + screenMin ) * 0.5f, mipLevel ).x;
-		//visible = visible && ( 1.0f / perspZ >= sampledDepth );
-	
-	
 		vec3 boxSize = boxMax - boxMin;
- 		
-        vec3 boxCorners[] = { boxMin,
-                                boxMin + vec3(boxSize.x,0,0),
-                                boxMin + vec3(0, boxSize.y,0),
-                                boxMin + vec3(0, 0, boxSize.z),
-                                boxMin + vec3(boxSize.xy,0),
-                                boxMin + vec3(0, boxSize.yz),
-                                boxMin + vec3(boxSize.x, 0, boxSize.z),
-                                boxMin + boxSize
-                             };
+		vec3 boxCorners[] = { 
+			boxMin,
+			boxMin + vec3( boxSize.x, 0, 0 ),
+			boxMin + vec3( 0, boxSize.y, 0 ),
+			boxMin + vec3( 0, 0, boxSize.z ),
+			boxMin + vec3( boxSize.xy, 0 ),
+			boxMin + vec3( 0, boxSize.yz ),
+			boxMin + vec3( boxSize.x, 0, boxSize.z ),
+			boxMin + boxSize };
 		
         vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
 		float minDepth = 0.0f;
-		mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
 		
         [[unroll]]
         for( int i = 0; i < 8; ++i )
         {
             //transform world space aaBox to NDC
-            vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
+            vec4 clipPos = mvp * vec4( boxCorners[ i ], 1.0f );
  		
 			minDepth = max( minDepth, clipPos.w );
             clipPos.xyz = clipPos.xyz / clipPos.w;
-			//debugPrintfEXT( "ClipPos = %v4f", clipPos );
+			debugPrintfEXT( "ClipPos = %v4f", clipPos );
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
             clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
  		
@@ -192,19 +198,21 @@ void main()
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
+		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
+		
 		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
-		visible = visible && ( sampledDepth * perspZ <= 1.0f );	
+		visible = visible && ( sampledDepth * closestProjW <= 1.0f );	
 
-		debugPrintfEXT( "minZ = %f", 1.0f / perspZ );
-		debugPrintfEXT( "perspZ = %f", perspZ );
+		debugPrintfEXT( "minZ = %f", 1.0f / closestProjW );
+		debugPrintfEXT( "closestProjW = %f", closestProjW );
 		debugPrintfEXT( "min = %v2f", minXY );
 		debugPrintfEXT( "max = %v2f", maxXY );
 		debugPrintfEXT( "mipLevel = %f", mipLevel );
 		debugPrintfEXT( "sampledDepth = %f", sampledDepth );
 		debugPrintfEXT( "minDepth = %f", 1.0f / minDepth );
 	}
-	
+#endif
 	
 	// TODO: must compute LOD based on AABB's screen area
 	//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
