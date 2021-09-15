@@ -490,8 +490,7 @@ VkTryAllocDeviceMem(
 	allocFlagsInfo.flags = // allocFlags;
 		//VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT |
 		VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-
-
+	
 	VkMemoryAllocateInfo memoryAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
 	memoryAllocateInfo.pNext = ( memTypeIdx == 0xA ) ? 0 : &allocFlagsInfo;
 	memoryAllocateInfo.allocationSize = size;
@@ -1079,7 +1078,8 @@ static inline virtual_frame VkCreateVirtualFrame(
 	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 	VK_CHECK( vkCreateFence( vkDevice, &fenceInfo, 0, &vrtFrame.hostSyncFence ) );
 
-	vrtFrame.frameData = VkCreateAllocBindBuffer( bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, arena );
+	vrtFrame.frameData = VkCreateAllocBindBuffer( 
+		bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, arena );
 
 	return vrtFrame;
 }
@@ -1248,7 +1248,7 @@ struct render_context
 	VkPipeline		gfxMergedPipeline;
 	VkPipeline		compPipeline;
 	VkPipeline		compHiZPipeline;
-	//VkPipeline		gfxTranspPipe;
+	
 	VkPipeline		compAvgLumPipe;
 	VkPipeline		compTonemapPipe;
 	VkPipeline      compExpanderPipe;
@@ -1364,6 +1364,10 @@ VkDbgUtilsMsgCallback(
 	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
 	void* userData
 ){
+	// NOTE: validation layer bug
+	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
+
+
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
 	{
 		std::string_view msgView = { callbackData->pMessage };
@@ -3122,7 +3126,9 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 	}
 
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
-										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+										   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+										   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 										   vkRscArena );
 	VkDbgNameObj( drawCmdBuff.hndl, dc.device, "Buff_Indirect_Draw_Cmds" );
 
@@ -3170,7 +3176,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 		sizeof( draw_command ),
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-		VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena );
 
 	//// NOTE: 1 to 1 corresp to instances
@@ -3879,12 +3886,14 @@ DrawIndexedIndirectPass(
 	VkRenderPass			vkRndPass,
 	VkFramebuffer			offscreenFbo,
 	const buffer_data&		drawCmds,
+	const buffer_data&		camData,
 	VkBuffer				drawCmdCount,
 	VkBuffer                indexBuff,
 	VkIndexType             indexType,
 	u32                     maxDrawCallCount,
 	const VkClearValue*		clearVals,
-	const vk_program&		program
+	const vk_program&		program,
+	bool                    fullPass
 ){
 	vk_label label = { cmdBuff,"Draw Indexed Indirect Pass",{} };
 
@@ -3905,9 +3914,15 @@ DrawIndexedIndirectPass(
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
 	
-	vk_descriptor_info descriptors[] = { Descriptor( drawCmds ) };
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+	if( fullPass )
+	{
+		vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+	}
+
+	struct { u64 vtxAddr, transfAddr, drawCmdAddr, camAddr; } push = {
+		globVertexBuff.devicePointer, instDescBuff.devicePointer, drawCmds.devicePointer, camData.devicePointer };
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( push ), &push );
+
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff, 0, indexType );
 
@@ -4679,12 +4694,14 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 							 rndCtx.renderPass,
 							 rndCtx.offscreenFbo,
 							 drawCmdBuff,
+							 thisVFrame.frameData,
 							 drawCountBuff.hndl,
 							 indexBuff.hndl,
 							 VK_INDEX_TYPE_UINT32,
 							 instDescBuff.size / sizeof( instance_desc ),
 							 clearVals,
-							 zPrepassProgram );
+							 zPrepassProgram,
+							 false );
 
 	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
 	XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
@@ -4726,18 +4743,19 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 
 	// Emit depth + HzB
-
-	DrawIndexedIndirectPass( thisVFrame.cmdBuff,
-							 rndCtx.gfxPipeline,
-							 rndCtx.renderPass,
-							 rndCtx.offscreenFbo,
-							 drawCmdBuff,
-							 drawCountBuff.hndl,
-							 indexBuff.hndl,
-							 VK_INDEX_TYPE_UINT32,
-							 instDescBuff.size / sizeof( instance_desc ),
-							 clearVals,
-							 gfxOpaqueProgram );
+	//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
+	//						 rndCtx.gfxPipeline,
+	//						 rndCtx.renderPass,
+	//						 rndCtx.offscreenFbo,
+	//						 drawCmdBuff,
+	//						 thisVFrame.frameData,
+	//						 drawCountBuff.hndl,
+	//						 indexBuff.hndl,
+	//						 VK_INDEX_TYPE_UINT32,
+	//						 instDescBuff.size / sizeof( instance_desc ),
+	//						 clearVals,
+	//						 gfxOpaqueProgram,
+	//						 true );
 
 	//DrawIndexedIndirectPass(
 	//	thisVFrame.cmdBuff,
@@ -4752,16 +4770,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMeshletProgram );
 
-	//DrawIndirectIndexedMerged(
-	//	thisVFrame.cmdBuff,
-	//	rndCtx.gfxMergedPipeline,
-	//	rndCtx.renderPass,
-	//	rndCtx.offscreenFbo,
-	//	indirectMergedIndexBuff,
-	//	drawMergedCmd,
-	//	drawMergedCountBuff,
-	//	clearVals,
-	//	gfxMergedProgram );
+	DrawIndirectIndexedMerged(
+		thisVFrame.cmdBuff,
+		rndCtx.gfxMergedPipeline,
+		rndCtx.renderPass,
+		rndCtx.offscreenFbo,
+		indirectMergedIndexBuff,
+		drawMergedCmd,
+		drawMergedCountBuff,
+		clearVals,
+		gfxMergedProgram );
 
 	DebugDrawPass( thisVFrame.cmdBuff,
 				   vkDbgCtx.drawAsTriangles,

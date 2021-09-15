@@ -4,31 +4,32 @@
 #extension GL_ARB_shader_draw_parameters : require
 #extension GL_GOOGLE_include_directive : require
 
-#define GLOBAL_RESOURCES
+//#define GLOBAL_RESOURCES
 
 
 #include "..\r_data_structs.h"
 #include "glsl_func_lib.h"
 
+
+layout( push_constant ) uniform block{
+	uint64_t vtxAddr;
+	uint64_t transfAddr;
+	uint64_t drawCmdAddr;
+	uint64_t camDataAddr;
+};
+
+
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
 	vertex vertices[];
-};
-layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_ref{ 
-	mesh_desc meshes[]; 
 };
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
 };
-//layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer draw_args_ref{
-//	draw_data drawArgs[];
-//};
-
-//layout( binding = 0 ) readonly buffer inst_desc_buffer{
-//	instance_desc instDescs[];
-//};
-
-layout( binding = 0 ) readonly buffer draw_cmd_buffer{
+layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer draw_cmd_ref{
 	draw_command drawCmd[];
+};
+layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
+	global_data camera;
 };
 
 
@@ -79,14 +80,15 @@ layout( location = 3 ) out vec2 oUv;
 layout( location = 4 ) out flat uint oMtlIdx;
 void main() 
 {
-	vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ gl_VertexIndex ];
+	vertex vtx = vtx_ref( vtxAddr ).vertices[ gl_VertexIndex ];
 	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
 	vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
-	uint di = drawCmd[ gl_DrawIDARB ].drawIdx;
-	instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ di ];
-	
+	uint di = draw_cmd_ref( drawCmdAddr ).drawCmd[ gl_DrawIDARB ].drawIdx;
+	instance_desc inst = inst_desc_ref( transfAddr ).instDescs[ di ];
+	global_data cam = cam_data_ref( camDataAddr ).camera;
+
 	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
 	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );

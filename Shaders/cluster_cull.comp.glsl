@@ -167,7 +167,7 @@ void main()
 	//bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );
 	//visible = visible && rangePassFilter;
 	//visible = visible && ( meshletIdx == 23 );
-	visible = ( meshletIdx == 23 );
+	//visible = ( meshletIdx == 23 );
 
 	//uvec4 ballotVisible = subgroupBallot( visible );
 	//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );

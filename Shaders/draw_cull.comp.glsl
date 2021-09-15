@@ -126,15 +126,11 @@ void main()
 		mvp * vec4( boxMin + vec3( boxSize.x, 0, boxSize.z ), 1.0f ),
 		mvp * vec4( boxMin + boxSize, 1.0f ) };
 
-
 	float minW = min( 
 		min( min( clipCorners[ 0 ].w, clipCorners[ 1 ].w ), min( clipCorners[ 2 ].w, clipCorners[ 3 ].w ) ),
 		min( min( clipCorners[ 4 ].w, clipCorners[ 5 ].w ), min( clipCorners[ 6 ].w, clipCorners[ 7 ].w ) ) );
 
 	bool intersectsNearZ = minW <= 0.0f;
-
-	
-
 
 	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
 	vec4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
@@ -144,8 +140,8 @@ void main()
 	
 	float maxProjW = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
 	
-	//debugPrintfEXT( "closestProjW = %f", closestProjW );
-	//debugPrintfEXT( "minW = %f", minW );
+	debugPrintfEXT( "maxProjW = %f", maxProjW );
+	debugPrintfEXT( "minW = %f", minW );
 
 	bool visible = true;
 	visible = visible && ( maxProjW > 0.0f );
@@ -155,7 +151,7 @@ void main()
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
 #ifdef OCCLUSION_CULLING
-	if( visible  && !intersectsNearZ )
+	if( visible && !intersectsNearZ )
 	{
 		vec3 boxSize = boxMax - boxMin;
 		vec3 boxCorners[] = { 
@@ -195,13 +191,13 @@ void main()
 		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
 		visible = visible && ( sampledDepth * maxProjW <= 1.0f );	
 
-		//debugPrintfEXT( "minZ = %f", 1.0f / closestProjW );
-		//debugPrintfEXT( "closestProjW = %f", closestProjW );
-		//debugPrintfEXT( "min = %v2f", minXY );
-		//debugPrintfEXT( "max = %v2f", maxXY );
-		//debugPrintfEXT( "mipLevel = %f", mipLevel );
-		//debugPrintfEXT( "sampledDepth = %f", sampledDepth );
-		//debugPrintfEXT( "minDepth = %f", 1.0f / minDepth );
+		debugPrintfEXT( "minZ = %f", 1.0f / maxProjW );
+		debugPrintfEXT( "maxProjW = %f", maxProjW );
+		debugPrintfEXT( "min = %v2f", minXY );
+		debugPrintfEXT( "max = %v2f", maxXY );
+		debugPrintfEXT( "mipLevel = %f", mipLevel );
+		debugPrintfEXT( "sampledDepth = %f", sampledDepth );
+		debugPrintfEXT( "minDepth = %f", 1.0f / minDepth );
 	}
 #endif
 	
