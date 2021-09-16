@@ -1394,8 +1394,8 @@ VkDbgUtilsMsgCallback(
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
 
@@ -2974,7 +2974,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 	}
 
 	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 1;
+	constexpr u64 drawCount = 3;
 	constexpr u64 lightCount = 4;
 	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
@@ -3695,7 +3695,7 @@ CullPass(
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( cullInfo ), &cullInfo );
 	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.x ), 1, 1 );
 
-#if 0
+#if 1
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
@@ -4747,19 +4747,19 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 
 	// Emit depth + HzB
-	DrawIndexedIndirectPass( thisVFrame.cmdBuff,
-							 rndCtx.gfxPipeline,
-							 rndCtx.renderPass,
-							 rndCtx.offscreenFbo,
-							 drawCmdBuff,
-							 thisVFrame.frameData,
-							 drawCountBuff.hndl,
-							 indexBuff.hndl,
-							 VK_INDEX_TYPE_UINT32,
-							 instDescBuff.size / sizeof( instance_desc ),
-							 clearVals,
-							 gfxOpaqueProgram,
-							 true );
+	//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
+	//						 rndCtx.gfxPipeline,
+	//						 rndCtx.renderPass,
+	//						 rndCtx.offscreenFbo,
+	//						 drawCmdBuff,
+	//						 thisVFrame.frameData,
+	//						 drawCountBuff.hndl,
+	//						 indexBuff.hndl,
+	//						 VK_INDEX_TYPE_UINT32,
+	//						 instDescBuff.size / sizeof( instance_desc ),
+	//						 clearVals,
+	//						 gfxOpaqueProgram,
+	//						 true );
 
 	//DrawIndexedIndirectPass(
 	//	thisVFrame.cmdBuff,
@@ -4774,16 +4774,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMeshletProgram );
 
-	//DrawIndirectIndexedMerged(
-	//	thisVFrame.cmdBuff,
-	//	rndCtx.gfxMergedPipeline,
-	//	rndCtx.renderPass,
-	//	rndCtx.offscreenFbo,
-	//	indirectMergedIndexBuff,
-	//	drawMergedCmd,
-	//	drawMergedCountBuff,
-	//	clearVals,
-	//	gfxMergedProgram );
+	DrawIndirectIndexedMerged(
+		thisVFrame.cmdBuff,
+		rndCtx.gfxMergedPipeline,
+		rndCtx.renderPass,
+		rndCtx.offscreenFbo,
+		indirectMergedIndexBuff,
+		drawMergedCmd,
+		drawMergedCountBuff,
+		clearVals,
+		gfxMergedProgram );
 
 	DebugDrawPass( thisVFrame.cmdBuff,
 				   vkDbgCtx.drawAsTriangles,
