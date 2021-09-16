@@ -95,7 +95,6 @@ void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	
 	if( globalIdx >= cullInfo.drawCallsCount ) return;
 	
 	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ globalIdx ];
@@ -124,30 +123,49 @@ void main()
 		mvp * vec4( boxMin + vec3( boxSize.x, 0, boxSize.z ), 1.0f ),
 		mvp * vec4( boxMin + boxSize, 1.0f ) };
 
-	float minW = min( 
-		min( min( clipCorners[ 0 ].w, clipCorners[ 1 ].w ), min( clipCorners[ 2 ].w, clipCorners[ 3 ].w ) ),
-		min( min( clipCorners[ 4 ].w, clipCorners[ 5 ].w ), min( clipCorners[ 6 ].w, clipCorners[ 7 ].w ) ) );
+	[[ unroll ]]
+	for( uint i = 0; i < 8; ++i )
+	{
+		debugPrintfEXT( "ClipPos = %v4f", clipCorners[ i ] );
+	}
 
-	float maxW = max( 
-		max( max( clipCorners[ 0 ].w, clipCorners[ 1 ].w ), max( clipCorners[ 2 ].w, clipCorners[ 3 ].w ) ),
-		max( max( clipCorners[ 4 ].w, clipCorners[ 5 ].w ), max( clipCorners[ 6 ].w, clipCorners[ 7 ].w ) ) );
-
-	bool intersectsNearZ = minW <= 0.0f;
-
-	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
-	vec4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
-	vec4 yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
-	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
-	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
+	mat4 trsMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
+	vec4 xPlanePos = trsMvp[ 3 ] + trsMvp[ 0 ];
+	vec4 yPlanePos = trsMvp[ 3 ] + trsMvp[ 1 ];
+	vec4 xPlaneNeg = trsMvp[ 3 ] - trsMvp[ 0 ];
+	vec4 yPlaneNeg = trsMvp[ 3 ] - trsMvp[ 1 ];
 	
 	
 	bool visible = true;
-	visible = visible && 
-		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
+	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) > -trsMvp[ 3 ].w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
+
+
+	float xMin = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
+	float yMin = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
+	float xMax = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
+	float yMax = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
+
+	float xMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
+	float yMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
+	float xMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
+	float yMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
+
+	debugPrintfEXT( "xMin = %f", xMin );
+	debugPrintfEXT( "yMin = %f", yMin );
+	debugPrintfEXT( "xMax = %f", xMax );
+	debugPrintfEXT( "yMax = %f", yMax );
+
+	debugPrintfEXT( "xMinNbl = %f", xMinNbl );
+	debugPrintfEXT( "yMinNbl = %f", yMinNbl );
+	debugPrintfEXT( "xMaxNbl = %f", xMaxNbl );
+	debugPrintfEXT( "yMaxNbl = %f", yMaxNbl );
+
+	float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
+	bool intersectsNearZ = minW <= 0.0f;
 
 	if( visible && !intersectsNearZ )
 	{
@@ -165,12 +183,11 @@ void main()
         vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
 		float maxZ = 0.0f;
-        [[unroll]]
+        [[ unroll ]]
         for( int i = 0; i < 8; ++i )
         {
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1.0f );
             clipPos.xyz = clipPos.xyz / clipPos.w;
-			//debugPrintfEXT( "ClipPos = %v4f", clipPos );
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
             clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
  		
@@ -184,9 +201,9 @@ void main()
 		
 		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
-		//float zNear = 0.5f;
-		//visible = visible && ( sampledDepth * maxProjW <= 1.0f * zNear );	
-		visible = visible && ( sampledDepth <= maxZ );	
+		float zNear = cam.proj[3][2];
+		visible = visible && ( sampledDepth * minW <= zNear );	
+		//visible = visible && ( sampledDepth <= maxZ );	
 	}
 	
 	// TODO: must compute LOD based on AABB's screen area
@@ -204,8 +221,6 @@ void main()
 	//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 	//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
 	
-	//visible = true;
-
 	if( visible )
 	{
 		uint drawCallIdx = atomicAdd( drawCallCount, 1 );

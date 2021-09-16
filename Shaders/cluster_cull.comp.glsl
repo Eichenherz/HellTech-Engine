@@ -91,33 +91,33 @@ void main()
 	
 	// NOTE: frustum culling inspired by Nabla
 	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
-	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
-	vec4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
-	vec4 yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
-	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
-	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
+	mat4 trsMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
+	vec4 xPlanePos = trsMvp[ 3 ] + trsMvp[ 0 ];
+	vec4 yPlanePos = trsMvp[ 3 ] + trsMvp[ 1 ];
+	vec4 xPlaneNeg = trsMvp[ 3 ] - trsMvp[ 0 ];
+	vec4 yPlaneNeg = trsMvp[ 3 ] - trsMvp[ 1 ];
 	
 	bool visible = true;
-	visible = visible &&
-		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
+	visible = visible &&( dot( mix( boxMax, boxMin, lessThan( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) > -trsMvp[ 3 ].w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
-
-	// TODO: in what space ?
-	// NOTE: cone culling 
-	//vec4 coneAxis = vec4( int( thisMeshlet.coneX ) / 127.0f, int( thisMeshlet.coneY ) / 127.0f, int( thisMeshlet.coneZ ) / 127.0f, 0.0f );
-	//coneAxis = normalize( currentInst.localToWorld * coneAxis );
-	//float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
-	//visible = visible && dot( cam.camViewDir, coneAxis.xyz ) < coneCutoff;
-
+ 
+	vec4 coneAxis = vec4( int( thisMeshlet.coneX ) / 127.0f, int( thisMeshlet.coneY ) / 127.0f, int( thisMeshlet.coneZ ) / 127.0f, 0.0f );
+	coneAxis = normalize( currentInst.localToWorld * coneAxis );
+	float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
 	
-	// TODO: near plane clipping instead of this
-	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
-	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
-	if( visible && !camInsideAabb )
+	vec3 centerAtCamOrigin = ( currentInst.localToWorld * vec4( center, 1.0f ) ).xyz - cam.worldPos;
+	float radiusInWorld = length( currentInst.localToWorld * vec4( extent, 0.0f ) );
+	
+	//visible = visible && ( dot( centerAtCamOrigin, coneAxis.xyz ) < coneCutoff * length( centerAtCamOrigin ) + radiusInWorld );
+
+	float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
+	bool intersectsNearZ = minW <= 0.0f;
+
+	if( visible && !intersectsNearZ )
 	{
 		vec3 boxSize = boxMax - boxMin;
  		
@@ -135,7 +135,7 @@ void main()
         vec2 maxXY = {};
 		float maxZ = 0.0f;
 
-		mat4 mvp = transpose( transpMvp );
+		mat4 mvp = transpose( trsMvp );
 		
         [[unroll]]
         for( int i = 0; i < 8; ++i )
@@ -159,11 +159,6 @@ void main()
 		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
 		visible = visible && ( sampledDepth <= maxZ );	
 	}
-
-	//bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );
-	//visible = visible && rangePassFilter;
-	//visible = visible && ( meshletIdx == 23 );
-	//visible = ( meshletIdx == 23 );
 
 	//uvec4 ballotVisible = subgroupBallot( visible );
 	//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
