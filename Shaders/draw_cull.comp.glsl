@@ -88,8 +88,6 @@ vec4 ProjectedSphereToAABB( vec3 viewSpaceCenter, float r, float perspDividedWid
 shared uint workgrAtomicCounterShared = {};
 
 
-#define OCCLUSION_CULLING 1
-
 layout( local_size_x_id = 0 ) in;
 
 layout( local_size_x = 64, local_size_y = 1, local_size_z = 1 ) in;
@@ -130,7 +128,7 @@ void main()
 		min( min( clipCorners[ 0 ].w, clipCorners[ 1 ].w ), min( clipCorners[ 2 ].w, clipCorners[ 3 ].w ) ),
 		min( min( clipCorners[ 4 ].w, clipCorners[ 5 ].w ), min( clipCorners[ 6 ].w, clipCorners[ 7 ].w ) ) );
 
-	bool intersectsNearZ = minW <= 0.0f;
+	bool intersectsNearZ = ( minW - 2.0f ) <= 0.0f;
 
 	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
 	vec4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
@@ -150,8 +148,8 @@ void main()
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
-#ifdef OCCLUSION_CULLING
 	if( visible && !intersectsNearZ )
+	//if( false )
 	{
 		vec3 boxSize = boxMax - boxMin;
 		vec3 boxCorners[] = { 
@@ -199,7 +197,6 @@ void main()
 		debugPrintfEXT( "sampledDepth = %f", sampledDepth );
 		debugPrintfEXT( "minDepth = %f", 1.0f / minDepth );
 	}
-#endif
 	
 	// TODO: must compute LOD based on AABB's screen area
 	//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );

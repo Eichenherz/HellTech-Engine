@@ -1391,6 +1391,15 @@ VkDbgUtilsMsgCallback(
 
 #endif
 
+constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+};
+
+
 // TODO: gfx_api_instance ?
 struct vk_instance
 {
@@ -1473,17 +1482,9 @@ inline static vk_instance VkMakeInstance()
 	VkInstanceCreateInfo instInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 #ifdef _VK_DEBUG_
 
-	VkValidationFeatureEnableEXT enabled[] = {
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
-	};
-
 	VkValidationFeaturesEXT vkValidationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
-	vkValidationFeatures.enabledValidationFeatureCount = std::size( enabled );
-	vkValidationFeatures.pEnabledValidationFeatures = enabled;
+	vkValidationFeatures.enabledValidationFeatureCount = std::size( enabledValidationFeats );
+	vkValidationFeatures.pEnabledValidationFeatures = enabledValidationFeats;
 
 	VkDebugUtilsMessengerCreateInfoEXT vkDbgExt = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
 	vkDbgExt.pNext = vkValidationLayerFeatures ? &vkValidationFeatures : 0;
@@ -3694,6 +3695,7 @@ CullPass(
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( cullInfo ), &cullInfo );
 	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.x ), 1, 1 );
 
+#if 0
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
@@ -3819,6 +3821,8 @@ CullPass(
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff3.hndl, 0 );
 	}
 
+
+#endif // 0
 	// TODO: revisit triangle culling
 
 	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
@@ -4743,19 +4747,19 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 
 	// Emit depth + HzB
-	//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
-	//						 rndCtx.gfxPipeline,
-	//						 rndCtx.renderPass,
-	//						 rndCtx.offscreenFbo,
-	//						 drawCmdBuff,
-	//						 thisVFrame.frameData,
-	//						 drawCountBuff.hndl,
-	//						 indexBuff.hndl,
-	//						 VK_INDEX_TYPE_UINT32,
-	//						 instDescBuff.size / sizeof( instance_desc ),
-	//						 clearVals,
-	//						 gfxOpaqueProgram,
-	//						 true );
+	DrawIndexedIndirectPass( thisVFrame.cmdBuff,
+							 rndCtx.gfxPipeline,
+							 rndCtx.renderPass,
+							 rndCtx.offscreenFbo,
+							 drawCmdBuff,
+							 thisVFrame.frameData,
+							 drawCountBuff.hndl,
+							 indexBuff.hndl,
+							 VK_INDEX_TYPE_UINT32,
+							 instDescBuff.size / sizeof( instance_desc ),
+							 clearVals,
+							 gfxOpaqueProgram,
+							 true );
 
 	//DrawIndexedIndirectPass(
 	//	thisVFrame.cmdBuff,
@@ -4770,16 +4774,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMeshletProgram );
 
-	DrawIndirectIndexedMerged(
-		thisVFrame.cmdBuff,
-		rndCtx.gfxMergedPipeline,
-		rndCtx.renderPass,
-		rndCtx.offscreenFbo,
-		indirectMergedIndexBuff,
-		drawMergedCmd,
-		drawMergedCountBuff,
-		clearVals,
-		gfxMergedProgram );
+	//DrawIndirectIndexedMerged(
+	//	thisVFrame.cmdBuff,
+	//	rndCtx.gfxMergedPipeline,
+	//	rndCtx.renderPass,
+	//	rndCtx.offscreenFbo,
+	//	indirectMergedIndexBuff,
+	//	drawMergedCmd,
+	//	drawMergedCountBuff,
+	//	clearVals,
+	//	gfxMergedProgram );
 
 	DebugDrawPass( thisVFrame.cmdBuff,
 				   vkDbgCtx.drawAsTriangles,
