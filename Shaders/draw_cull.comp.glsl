@@ -109,7 +109,7 @@ void main()
 	
 	// TODO: culling inspired by Nabla
 	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
-
+	// TODO: cleanup revisit same in cluster culling
 	mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
 
 	vec3 boxSize = boxMax - boxMin;
@@ -140,19 +140,15 @@ void main()
 	vec4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
 	vec4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 	
-	float maxProjW = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
 	
-	debugPrintfEXT( "maxProjW = %f", maxProjW );
-	debugPrintfEXT( "minW = %f", minW );
-
 	bool visible = true;
-	visible = visible && ( maxProjW > 0.0f );
+	visible = visible && 
+		( dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
-	// TODO: must compare NDC max Z and sampledDepth
 	if( visible && !intersectsNearZ )
 	{
 		vec3 boxSize = boxMax - boxMin;

@@ -114,16 +114,11 @@ void main()
 	//visible = visible && dot( cam.camViewDir, coneAxis.xyz ) < coneCutoff;
 
 	
-
+	// TODO: near plane clipping instead of this
 	vec3 localCamPos = ( inverse( currentInst.localToWorld ) * vec4( cam.worldPos, 1 ) ).xyz;
 	bool camInsideAabb = all( greaterThanEqual( localCamPos, boxMin ) ) && all( lessThanEqual( localCamPos, boxMax ) );
-	//if( visible && !camInsideAabb )
-	if( false )
+	if( visible && !camInsideAabb )
 	{
-		// TODO: use this perspZ or compute per min/max Bound ? 
-		float perspZ = dot( mix( boxMax, boxMin, lessThan( transpMvp[ 3 ].xyz, vec3( 0.0f ) ) ), transpMvp[ 3 ].xyz ) + transpMvp[ 3 ].w;
-		
-		
 		vec3 boxSize = boxMax - boxMin;
  		
         vec3 boxCorners[] = { 
@@ -138,7 +133,7 @@ void main()
 		
         vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
-		float minZ = 0.0f;
+		float maxZ = 0.0f;
 
 		mat4 mvp = transpose( transpMvp );
 		
@@ -154,6 +149,7 @@ void main()
  		
             minXY = min( clipPos.xy, minXY );
             maxXY = max( clipPos.xy, maxXY );
+			maxZ = max( maxZ, clipPos.z );
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
@@ -161,7 +157,7 @@ void main()
 		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 		
 		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
-		visible = visible && ( sampledDepth * perspZ <= 1.0f );	
+		visible = visible && ( sampledDepth <= maxZ );	
 	}
 
 	//bool rangePassFilter = ( meshletIdx < 64 ) && ( meshletIdx > 12 );
