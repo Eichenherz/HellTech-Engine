@@ -128,7 +128,11 @@ void main()
 		min( min( clipCorners[ 0 ].w, clipCorners[ 1 ].w ), min( clipCorners[ 2 ].w, clipCorners[ 3 ].w ) ),
 		min( min( clipCorners[ 4 ].w, clipCorners[ 5 ].w ), min( clipCorners[ 6 ].w, clipCorners[ 7 ].w ) ) );
 
-	bool intersectsNearZ = ( minW - 2.0f ) <= 0.0f;
+	float maxW = max( 
+		max( max( clipCorners[ 0 ].w, clipCorners[ 1 ].w ), max( clipCorners[ 2 ].w, clipCorners[ 3 ].w ) ),
+		max( max( clipCorners[ 4 ].w, clipCorners[ 5 ].w ), max( clipCorners[ 6 ].w, clipCorners[ 7 ].w ) ) );
+
+	bool intersectsNearZ = minW <= 0.0f;
 
 	mat4 transpMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
 	vec4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
@@ -148,8 +152,8 @@ void main()
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
+	// TODO: must compare NDC max Z and sampledDepth
 	if( visible && !intersectsNearZ )
-	//if( false )
 	{
 		vec3 boxSize = boxMax - boxMin;
 		vec3 boxCorners[] = { 
@@ -164,15 +168,11 @@ void main()
 		
         vec2 minXY = vec2( 1 );
         vec2 maxXY = {};
-		float minDepth = 0.0f;
-		
+		float maxZ = 0.0f;
         [[unroll]]
         for( int i = 0; i < 8; ++i )
         {
-            //transform world space aaBox to NDC
             vec4 clipPos = mvp * vec4( boxCorners[ i ], 1.0f );
- 		
-			minDepth = max( minDepth, clipPos.w );
             clipPos.xyz = clipPos.xyz / clipPos.w;
 			//debugPrintfEXT( "ClipPos = %v4f", clipPos );
             clipPos.xy = clamp( clipPos.xy, -1, 1 );
@@ -180,6 +180,7 @@ void main()
  		
             minXY = min( clipPos.xy, minXY );
             maxXY = max( clipPos.xy, maxXY );
+			maxZ = max( maxZ, clipPos.z );
         }
 		
 		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
@@ -187,15 +188,9 @@ void main()
 		
 		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
-		visible = visible && ( sampledDepth * maxProjW <= 1.0f );	
-
-		debugPrintfEXT( "minZ = %f", 1.0f / maxProjW );
-		debugPrintfEXT( "maxProjW = %f", maxProjW );
-		debugPrintfEXT( "min = %v2f", minXY );
-		debugPrintfEXT( "max = %v2f", maxXY );
-		debugPrintfEXT( "mipLevel = %f", mipLevel );
-		debugPrintfEXT( "sampledDepth = %f", sampledDepth );
-		debugPrintfEXT( "minDepth = %f", 1.0f / minDepth );
+		//float zNear = 0.5f;
+		//visible = visible && ( sampledDepth * maxProjW <= 1.0f * zNear );	
+		visible = visible && ( sampledDepth <= maxZ );	
 	}
 	
 	// TODO: must compute LOD based on AABB's screen area
