@@ -69,139 +69,130 @@ layout( binding = 8, scalar ) writeonly buffer draw_indir{
 shared uint workgrAtomicCounterShared = {};
 
 
-layout( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	if( globalIdx >= totalMeshletCount ) return;
-
-	uint64_t mid = meshletIdBuff[ globalIdx ];
-	uint parentInstId = uint( mid & uint( -1 ) );
-	uint meshletIdx = uint( mid >> 32 );
-
-	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ parentInstId ];
-	meshlet thisMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
-
-	vec3 center = thisMeshlet.center;
-	vec3 extent = abs( thisMeshlet.extent );
-	
-	vec3 boxMin = ( center - extent ).xyz;
-	vec3 boxMax = ( center + extent ).xyz;
-	
-	// NOTE: frustum culling inspired by Nabla
-	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
-	mat4 trsMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
-	vec4 xPlanePos = trsMvp[ 3 ] + trsMvp[ 0 ];
-	vec4 yPlanePos = trsMvp[ 3 ] + trsMvp[ 1 ];
-	vec4 xPlaneNeg = trsMvp[ 3 ] - trsMvp[ 0 ];
-	vec4 yPlaneNeg = trsMvp[ 3 ] - trsMvp[ 1 ];
-	
-	bool visible = true;
-	visible = visible &&( dot( mix( boxMax, boxMin, lessThan( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) > -trsMvp[ 3 ].w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
-
- 
-	vec4 coneAxis = vec4( int( thisMeshlet.coneX ) / 127.0f, int( thisMeshlet.coneY ) / 127.0f, int( thisMeshlet.coneZ ) / 127.0f, 0.0f );
-	coneAxis = normalize( currentInst.localToWorld * coneAxis );
-	float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
-	
-	vec3 centerAtCamOrigin = ( currentInst.localToWorld * vec4( center, 1.0f ) ).xyz - cam.worldPos;
-	float radiusInWorld = length( currentInst.localToWorld * vec4( extent, 0.0f ) );
-	
-	//visible = visible && ( dot( centerAtCamOrigin, coneAxis.xyz ) < coneCutoff * length( centerAtCamOrigin ) + radiusInWorld );
-
-	float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
-	bool intersectsNearZ = minW <= 0.0f;
-
-	if( visible && !intersectsNearZ )
+	if( globalIdx < totalMeshletCount )
 	{
-		vec3 boxSize = boxMax - boxMin;
- 		
-        vec3 boxCorners[] = { 
-			boxMin,
-			boxMin + vec3( boxSize.x, 0, 0 ),
-			boxMin + vec3( 0, boxSize.y, 0 ),
-			boxMin + vec3( 0, 0, boxSize.z ),
-			boxMin + vec3( boxSize.xy, 0 ),
-			boxMin + vec3( 0, boxSize.yz ),
-			boxMin + vec3( boxSize.x, 0, boxSize.z ),
-			boxMax };
-		
-        vec2 minXY = vec2( 1 );
-        vec2 maxXY = {};
-		float maxZ = 0.0f;
+		uint64_t mid = meshletIdBuff[ globalIdx ];
+		uint parentInstId = uint( mid & uint( -1 ) );
+		uint meshletIdx = uint( mid >> 32 );
 
-		mat4 mvp = transpose( trsMvp );
-		
-        [[unroll]]
-        for( int i = 0; i < 8; ++i )
-        {
-            vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
- 		
-            clipPos.xyz = clipPos.xyz / clipPos.w;
+		instance_desc parentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ parentInstId ];
+		meshlet thisMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
 
-            clipPos.xy = clamp( clipPos.xy, -1, 1 );
-            clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
- 		
-            minXY = min( clipPos.xy, minXY );
-            maxXY = max( clipPos.xy, maxXY );
-			maxZ = max( maxZ, clipPos.z );
-        }
+		vec3 center = thisMeshlet.center;
+		vec3 extent = abs( thisMeshlet.extent );
 		
-		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
-		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
+		vec3 boxMin = center - extent;
+		vec3 boxMax = center + extent;
 		
-		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
-		visible = visible && ( sampledDepth <= maxZ );	
+		// NOTE: frustum culling inspired by Nabla
+		// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
+		mat4 trsMvp = transpose( cam.proj * cam.mainView * parentInst.localToWorld );
+		vec4 xPlanePos = trsMvp[ 3 ] + trsMvp[ 0 ];
+		vec4 yPlanePos = trsMvp[ 3 ] + trsMvp[ 1 ];
+		vec4 xPlaneNeg = trsMvp[ 3 ] - trsMvp[ 0 ];
+		vec4 yPlaneNeg = trsMvp[ 3 ] - trsMvp[ 1 ];
+		
+		bool visible = true;
+		visible = visible &&( dot( mix( boxMax, boxMin, lessThan( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) > -trsMvp[ 3 ].w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
+
+		// TODO: cone culling
+		//vec4 coneApexWorld = parentInst.localToWorld * vec4( thisMeshlet.coneApex, 1.0f );
+		//vec4 coneAxisWorld = vec4( thisMeshlet.coneAxis, 0.0f );
+		//float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
+		//visible = visible && !( dot( normalize( coneApexWorld.xyz - cam.worldPos ), normalize( coneAxisWorld.xyz ) ) >= coneCutoff );
+
+		float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
+		bool intersectsNearZ = minW <= 0.0f;
+
+		if( visible && !intersectsNearZ )
+		//if( false )
+		{
+			vec3 boxSize = boxMax - boxMin;
+ 			
+		    vec3 boxCorners[] = { 
+				boxMin,
+				boxMin + vec3( boxSize.x, 0, 0 ),
+				boxMin + vec3( 0, boxSize.y, 0 ),
+				boxMin + vec3( 0, 0, boxSize.z ),
+				boxMin + vec3( boxSize.xy, 0 ),
+				boxMin + vec3( 0, boxSize.yz ),
+				boxMin + vec3( boxSize.x, 0, boxSize.z ),
+				boxMax };
+			
+		    vec2 minXY = vec2( 1 );
+		    vec2 maxXY = {};
+			float maxZ = 0.0f;
+
+			mat4 mvp = transpose( trsMvp );
+			
+		    [[unroll]]
+		    for( int i = 0; i < 8; ++i )
+		    {
+		        vec4 clipPos = mvp * vec4( boxCorners[ i ], 1 );
+ 			
+		        clipPos.xyz = clipPos.xyz / clipPos.w;
+
+		        clipPos.xy = clamp( clipPos.xy, -1, 1 );
+		        clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
+ 			
+		        minXY = min( clipPos.xy, minXY );
+		        maxXY = max( clipPos.xy, maxXY );
+				maxZ = max( maxZ, clipPos.z );
+		    }
+			
+			vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
+			float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
+			float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
+			
+			float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+			visible = visible && ( sampledDepth <= maxZ );	
+		}
+
+		//uvec4 ballotVisible = subgroupBallot( visible );
+		//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
+		//
+		//if( subgrActiveInvocationsCount == 0 ) return;
+		//// TODO: shared atomics + global atomics ?
+		//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+		//
+		//uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+		//uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
+
+		if( visible )
+		{
+			uint slotIdx = atomicAdd( drawCallCount, 1 );
+			
+			visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
+			visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
+			visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
+			// NOTE: want all the indices
+			visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( thisMeshlet.triangleCount ) * 3 );
+
+			drawCmd[ slotIdx ].drawIdx = parentInstId;
+			drawCmd[ slotIdx ].indexCount = uint( thisMeshlet.triangleCount ) * 3;
+			drawCmd[ slotIdx ].instanceCount = 1;
+			drawCmd[ slotIdx ].firstIndex = thisMeshlet.triBufOffset;
+			drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
+			drawCmd[ slotIdx ].firstInstance = 0;
+
+			dbgDrawCmd[ slotIdx ].drawIdx = mid;
+			dbgDrawCmd[ slotIdx ].firstVertex = 0;
+			dbgDrawCmd[ slotIdx ].vertexCount = 24;
+			dbgDrawCmd[ slotIdx ].instanceCount = 1;
+			dbgDrawCmd[ slotIdx ].firstInstance = 0;
+		}				
 	}
 
-	//uvec4 ballotVisible = subgroupBallot( visible );
-	//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
-	//
-	//if( subgrActiveInvocationsCount == 0 ) return;
-	//// TODO: shared atomics + global atomics ?
-	//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
-	//
-	//uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-	//uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
-
-	if( visible )
-	{
-		uint slotIdx = atomicAdd( drawCallCount, 1 );
-
-		//visibleMeshlets[ slotIdx ].instId = parentInstId;
-		//visibleMeshlets[ slotIdx ].expOffset = thisMeshlet.triBufOffset;
-		//// NOTE: want all the indices
-		//visibleMeshlets[ slotIdx ].expCount = uint( thisMeshlet.triangleCount ) * 3;
-
-		
-		visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
-		visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
-		visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
-		// NOTE: want all the indices
-		visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( thisMeshlet.triangleCount ) * 3 );
-
-		drawCmd[ slotIdx ].drawIdx = parentInstId;
-		drawCmd[ slotIdx ].indexCount = uint( thisMeshlet.triangleCount ) * 3;
-		drawCmd[ slotIdx ].instanceCount = 1;
-		drawCmd[ slotIdx ].firstIndex = thisMeshlet.triBufOffset;
-		drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
-		drawCmd[ slotIdx ].firstInstance = 0;
-
-		dbgDrawCmd[ slotIdx ].drawIdx = mid;
-		dbgDrawCmd[ slotIdx ].firstVertex = 0;
-		dbgDrawCmd[ slotIdx ].vertexCount = 24;
-		dbgDrawCmd[ slotIdx ].instanceCount = 1;
-		dbgDrawCmd[ slotIdx ].firstInstance = 0;
-	}				
-
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-
 
 	barrier();
 	memoryBarrier();

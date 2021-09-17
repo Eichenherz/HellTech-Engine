@@ -3169,7 +3169,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 
 
 	indirectMergedIndexBuff = VkCreateAllocBindBuffer( 
-		std::size( instDesc ) * fileDesc.idxRange.size, 
+		10 * MB,
+		//std::size( instDesc ) * fileDesc.idxRange.size, 
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
 		vkRscArena );
 
@@ -4693,58 +4694,62 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	std::memcpy( thisVFrame.frameData.hostVisible, ( u8* )globs, sizeof( *globs ) );
 
 	VkClearValue clearVals[ 2 ] = {};
-	DrawIndexedIndirectPass( thisVFrame.cmdBuff,
-							 gfxZPrepass,
-							 rndCtx.renderPass,
-							 rndCtx.offscreenFbo,
-							 drawCmdBuff,
-							 thisVFrame.frameData,
-							 drawCountBuff.hndl,
-							 indexBuff.hndl,
-							 VK_INDEX_TYPE_UINT32,
-							 instDescBuff.size / sizeof( instance_desc ),
-							 clearVals,
-							 zPrepassProgram,
-							 false );
 
 	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
 	XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
 	mat4 projView;
 	XMStoreFloat4x4A( &projView, xmProjView );
-	DebugDrawPass( thisVFrame.cmdBuff,
-				   vkDbgCtx.drawAsTriangles,
-				   rndCtx.render2ndPass,
-				   rndCtx.offscreenFbo,
-				   vkDbgCtx.dbgTrisBuff,
-				   vkDbgCtx.pipeProg,
-				   projView,
-				   { 0,boxTrisVertexCount } );
 
-	DepthPyramidMultiPass(
-		thisVFrame.cmdBuff,
-		rndCtx.compHiZPipeline,
-		rndCtx.quadMinSampler,
-		rndCtx.depthPyramidChain,
-		rndCtx.depthTarget,
-		rndCtx.depthPyramid,
-		depthPyramidMultiProgram );
+	if( !freeCam )
+	{
+		DrawIndexedIndirectPass( thisVFrame.cmdBuff,
+								 gfxZPrepass,
+								 rndCtx.renderPass,
+								 rndCtx.offscreenFbo,
+								 drawCmdBuff,
+								 thisVFrame.frameData,
+								 drawCountBuff.hndl,
+								 indexBuff.hndl,
+								 VK_INDEX_TYPE_UINT32,
+								 instDescBuff.size / sizeof( instance_desc ),
+								 clearVals,
+								 zPrepassProgram,
+								 false );
+		
+		DebugDrawPass( thisVFrame.cmdBuff,
+					   vkDbgCtx.drawAsTriangles,
+					   rndCtx.render2ndPass,
+					   rndCtx.offscreenFbo,
+					   vkDbgCtx.dbgTrisBuff,
+					   vkDbgCtx.pipeProg,
+					   projView,
+					   { 0,boxTrisVertexCount } );
+		
+		DepthPyramidMultiPass(
+			thisVFrame.cmdBuff,
+			rndCtx.compHiZPipeline,
+			rndCtx.quadMinSampler,
+			rndCtx.depthPyramidChain,
+			rndCtx.depthTarget,
+			rndCtx.depthPyramid,
+			depthPyramidMultiProgram );
+		
+		
+		VkBufferMemoryBarrier2KHR clearDrawCountBarrier = VkMakeBufferBarrier2(
+			drawCountBuff.hndl,
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR );
+		
+		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		dependency.bufferMemoryBarrierCount = 1;
+		dependency.pBufferMemoryBarriers = &clearDrawCountBarrier;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
 
-
-	VkBufferMemoryBarrier2KHR clearDrawCountBarrier = VkMakeBufferBarrier2(
-		drawCountBuff.hndl,
-		VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-		VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR,
-		VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-		VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR );
-
-	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	dependency.bufferMemoryBarrierCount = 1;
-	dependency.pBufferMemoryBarriers = &clearDrawCountBarrier;
-	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
-
-	// TODO: merge up to 256 meshes 
-	CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
-
+		// TODO: merge up to 256 meshes 
+		CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
+	}
 
 	// Emit depth + HzB
 	//DrawIndexedIndirectPass( thisVFrame.cmdBuff,

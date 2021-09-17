@@ -95,148 +95,148 @@ void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	if( globalIdx >= cullInfo.drawCallsCount ) return;
-	
-	instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ globalIdx ];
-	mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
-	
-	vec3 center = currentMesh.center;
-	vec3 extent = abs( currentMesh.extent );
-	
-	vec3 boxMin = center - extent;
-	vec3 boxMax = center + extent;
-	
-	// TODO: culling inspired by Nabla
-	// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
-	// TODO: cleanup revisit same in cluster culling
-	mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
-
-	vec3 boxSize = boxMax - boxMin;
- 	
-    vec4 clipCorners[] = { 
-		mvp * vec4( boxMin, 1.0f ),
-		mvp * vec4( boxMin + vec3( boxSize.x, 0, 0 ), 1.0f ),
-		mvp * vec4( boxMin + vec3( 0, boxSize.y, 0 ), 1.0f ),
-		mvp * vec4( boxMin + vec3( 0, 0, boxSize.z ), 1.0f ),
-		mvp * vec4( boxMin + vec3( boxSize.xy, 0 ), 1.0f ),
-		mvp * vec4( boxMin + vec3( 0, boxSize.yz ), 1.0f ),
-		mvp * vec4( boxMin + vec3( boxSize.x, 0, boxSize.z ), 1.0f ),
-		mvp * vec4( boxMin + boxSize, 1.0f ) };
-
-	[[ unroll ]]
-	for( uint i = 0; i < 8; ++i )
+	if( globalIdx < cullInfo.drawCallsCount )
 	{
-		debugPrintfEXT( "ClipPos = %v4f", clipCorners[ i ] );
-	}
+		instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ globalIdx ];
+		mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
+		
+		vec3 center = currentMesh.center;
+		vec3 extent = abs( currentMesh.extent );
+		
+		vec3 boxMin = center - extent;
+		vec3 boxMax = center + extent;
+		
+		// TODO: culling inspired by Nabla
+		// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
+		// TODO: cleanup revisit same in cluster culling
+		mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
 
-	mat4 trsMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
-	vec4 xPlanePos = trsMvp[ 3 ] + trsMvp[ 0 ];
-	vec4 yPlanePos = trsMvp[ 3 ] + trsMvp[ 1 ];
-	vec4 xPlaneNeg = trsMvp[ 3 ] - trsMvp[ 0 ];
-	vec4 yPlaneNeg = trsMvp[ 3 ] - trsMvp[ 1 ];
-	
-	
-	bool visible = true;
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) > -trsMvp[ 3 ].w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
-	visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
-
-
-	float xMin = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
-	float yMin = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
-	float xMax = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
-	float yMax = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
-
-	float xMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
-	float yMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
-	float xMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
-	float yMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
-
-	debugPrintfEXT( "xMin = %f", xMin );
-	debugPrintfEXT( "yMin = %f", yMin );
-	debugPrintfEXT( "xMax = %f", xMax );
-	debugPrintfEXT( "yMax = %f", yMax );
-
-	debugPrintfEXT( "xMinNbl = %f", xMinNbl );
-	debugPrintfEXT( "yMinNbl = %f", yMinNbl );
-	debugPrintfEXT( "xMaxNbl = %f", xMaxNbl );
-	debugPrintfEXT( "yMaxNbl = %f", yMaxNbl );
-
-	float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
-	bool intersectsNearZ = minW <= 0.0f;
-
-	if( visible && !intersectsNearZ )
-	{
 		vec3 boxSize = boxMax - boxMin;
-		vec3 boxCorners[] = { 
-			boxMin,
-			boxMin + vec3( boxSize.x, 0, 0 ),
-			boxMin + vec3( 0, boxSize.y, 0 ),
-			boxMin + vec3( 0, 0, boxSize.z ),
-			boxMin + vec3( boxSize.xy, 0 ),
-			boxMin + vec3( 0, boxSize.yz ),
-			boxMin + vec3( boxSize.x, 0, boxSize.z ),
-			boxMin + boxSize };
-		
-        vec2 minXY = vec2( 1 );
-        vec2 maxXY = {};
-		float maxZ = 0.0f;
-        [[ unroll ]]
-        for( int i = 0; i < 8; ++i )
-        {
-            vec4 clipPos = mvp * vec4( boxCorners[ i ], 1.0f );
-            clipPos.xyz = clipPos.xyz / clipPos.w;
-            clipPos.xy = clamp( clipPos.xy, -1, 1 );
-            clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
  		
-            minXY = min( clipPos.xy, minXY );
-            maxXY = max( clipPos.xy, maxXY );
-			maxZ = max( maxZ, clipPos.z );
-        }
+		vec4 clipCorners[] = { 
+			mvp * vec4( boxMin, 1.0f ),
+			mvp * vec4( boxMin + vec3( boxSize.x, 0, 0 ), 1.0f ),
+			mvp * vec4( boxMin + vec3( 0, boxSize.y, 0 ), 1.0f ),
+			mvp * vec4( boxMin + vec3( 0, 0, boxSize.z ), 1.0f ),
+			mvp * vec4( boxMin + vec3( boxSize.xy, 0 ), 1.0f ),
+			mvp * vec4( boxMin + vec3( 0, boxSize.yz ), 1.0f ),
+			mvp * vec4( boxMin + vec3( boxSize.x, 0, boxSize.z ), 1.0f ),
+			mvp * vec4( boxMin + boxSize, 1.0f ) };
+
+		[[ unroll ]]
+		for( uint i = 0; i < 8; ++i )
+		{
+			//debugPrintfEXT( "ClipPos = %v4f", clipCorners[ i ] );
+		}
+
+		mat4 trsMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
+		vec4 xPlanePos = trsMvp[ 3 ] + trsMvp[ 0 ];
+		vec4 yPlanePos = trsMvp[ 3 ] + trsMvp[ 1 ];
+		vec4 xPlaneNeg = trsMvp[ 3 ] - trsMvp[ 0 ];
+		vec4 yPlaneNeg = trsMvp[ 3 ] - trsMvp[ 1 ];
 		
-		vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-		float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
 		
-		float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
-		float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
-		float zNear = cam.proj[3][2];
-		visible = visible && ( sampledDepth * minW <= zNear );	
-		//visible = visible && ( sampledDepth <= maxZ );	
+		bool visible = true;
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) > -trsMvp[ 3 ].w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) > -xPlanePos.w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
+		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
+
+
+		float xMin = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
+		float yMin = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
+		float xMax = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
+		float yMax = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
+
+		float xMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
+		float yMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
+		float xMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
+		float yMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
+
+		//debugPrintfEXT( "xMin = %f", xMin );
+		//debugPrintfEXT( "yMin = %f", yMin );
+		//debugPrintfEXT( "xMax = %f", xMax );
+		//debugPrintfEXT( "yMax = %f", yMax );
+		//
+		//debugPrintfEXT( "xMinNbl = %f", xMinNbl );
+		//debugPrintfEXT( "yMinNbl = %f", yMinNbl );
+		//debugPrintfEXT( "xMaxNbl = %f", xMaxNbl );
+		//debugPrintfEXT( "yMaxNbl = %f", yMaxNbl );
+
+		float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
+		bool intersectsNearZ = minW <= 0.0f;
+
+		if( visible && !intersectsNearZ )
+		{
+			vec3 boxSize = boxMax - boxMin;
+			vec3 boxCorners[] = { 
+				boxMin,
+				boxMin + vec3( boxSize.x, 0, 0 ),
+				boxMin + vec3( 0, boxSize.y, 0 ),
+				boxMin + vec3( 0, 0, boxSize.z ),
+				boxMin + vec3( boxSize.xy, 0 ),
+				boxMin + vec3( 0, boxSize.yz ),
+				boxMin + vec3( boxSize.x, 0, boxSize.z ),
+				boxMin + boxSize };
+			
+		    vec2 minXY = vec2( 1 );
+		    vec2 maxXY = {};
+			float maxZ = 0.0f;
+		    [[ unroll ]]
+		    for( int i = 0; i < 8; ++i )
+		    {
+		        vec4 clipPos = mvp * vec4( boxCorners[ i ], 1.0f );
+		        clipPos.xyz = clipPos.xyz / clipPos.w;
+		        clipPos.xy = clamp( clipPos.xy, -1, 1 );
+		        clipPos.xy = clipPos.xy * vec2( 0.5, -0.5 ) + vec2( 0.5, 0.5 );
+ 			
+		        minXY = min( clipPos.xy, minXY );
+		        maxXY = max( clipPos.xy, maxXY );
+				maxZ = max( maxZ, clipPos.z );
+		    }
+			
+			vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
+			float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
+			
+			float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
+			float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+			float zNear = cam.proj[3][2];
+			visible = visible && ( sampledDepth * minW <= zNear );	
+			//visible = visible && ( sampledDepth <= maxZ );	
+		}
+		
+		// TODO: must compute LOD based on AABB's screen area
+		//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
+		//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
+		mesh_lod lod = currentMesh.lods[ 0 ];
+		
+		//uvec4 ballotVisible = subgroupBallot( visible );
+		//uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
+		//
+		//if( visibleInstCount == 0 ) return;
+		//// TODO: shared atomics + global atomics ?
+		//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
+		//
+		//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+		//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
+		
+		if( visible )
+		{
+			uint drawCallIdx = atomicAdd( drawCallCount, 1 );
+		
+			visibleInstsChunks[ drawCallIdx ].instId = globalIdx;
+			visibleInstsChunks[ drawCallIdx ].expOffset = lod.meshletOffset;
+			visibleInstsChunks[ drawCallIdx ].expCount = lod.meshletCount;
+		
+			drawCmd[ drawCallIdx ].drawIdx = globalIdx;
+			drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
+			drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
+			drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
+			drawCmd[ drawCallIdx ].instanceCount = 1;
+			drawCmd[ drawCallIdx ].firstInstance = 0;
+		}
 	}
-	
-	// TODO: must compute LOD based on AABB's screen area
-	//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
-	//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
-	mesh_lod lod = currentMesh.lods[ 0 ];
-	
-	//uvec4 ballotVisible = subgroupBallot( visible );
-	//uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
-	//
-	//if( visibleInstCount == 0 ) return;
-	//// TODO: shared atomics + global atomics ?
-	//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
-	//
-	//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-	//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
-	
-	if( visible )
-	{
-		uint drawCallIdx = atomicAdd( drawCallCount, 1 );
-	
-		visibleInstsChunks[ drawCallIdx ].instId = globalIdx;
-		visibleInstsChunks[ drawCallIdx ].expOffset = lod.meshletOffset;
-		visibleInstsChunks[ drawCallIdx ].expCount = lod.meshletCount;
-	
-		drawCmd[ drawCallIdx ].drawIdx = globalIdx;
-		drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
-		drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
-		drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
-		drawCmd[ drawCallIdx ].instanceCount = 1;
-		drawCmd[ drawCallIdx ].firstInstance = 0;
-	}
-	
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 

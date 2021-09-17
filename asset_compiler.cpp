@@ -578,6 +578,8 @@ static void MeshoptMakeMeshlets(
 			meshlet data = {};
 			data.center = aabb.Center;
 			data.extent = aabb.Extents;
+			data.coneAxis = *( const XMFLOAT3* ) bounds.cone_axis;
+			data.coneApex = *( const XMFLOAT3* ) bounds.cone_apex;
 			data.coneX = bounds.cone_axis_s8[ 0 ];
 			data.coneY = bounds.cone_axis_s8[ 1 ];
 			data.coneZ = bounds.cone_axis_s8[ 2 ];
