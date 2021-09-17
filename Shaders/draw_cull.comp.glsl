@@ -211,30 +211,30 @@ void main()
 		//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 		mesh_lod lod = currentMesh.lods[ 0 ];
 		
-		//uvec4 ballotVisible = subgroupBallot( visible );
-		//uint visibleInstCount = subgroupBallotBitCount( ballotVisible );
-		//
-		//if( visibleInstCount == 0 ) return;
-		//// TODO: shared atomics + global atomics ?
-		//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, visibleInstCount ) : 0;
-		//
-		//uint visibleInstIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-		//uint drawCallIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + visibleInstIdx;
-		
-		if( visible )
+		uvec4 ballotVisible = subgroupBallot( visible );
+		uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
+		if( subgrActiveInvocationsCount > 0 ) 
 		{
-			uint drawCallIdx = atomicAdd( drawCallCount, 1 );
+			// TODO: shared atomics + global atomics ?
+			uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+			uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+			uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 		
-			visibleInstsChunks[ drawCallIdx ].instId = globalIdx;
-			visibleInstsChunks[ drawCallIdx ].expOffset = lod.meshletOffset;
-			visibleInstsChunks[ drawCallIdx ].expCount = lod.meshletCount;
-		
-			drawCmd[ drawCallIdx ].drawIdx = globalIdx;
-			drawCmd[ drawCallIdx ].indexCount = lod.indexCount;
-			drawCmd[ drawCallIdx ].firstIndex = lod.indexOffset;
-			drawCmd[ drawCallIdx ].vertexOffset = currentMesh.vertexOffset;
-			drawCmd[ drawCallIdx ].instanceCount = 1;
-			drawCmd[ drawCallIdx ].firstInstance = 0;
+			if( visible )
+			{
+				//uint slotIdx = atomicAdd( drawCallCount, 1 );
+			
+				visibleInstsChunks[ slotIdx ].instId = globalIdx;
+				visibleInstsChunks[ slotIdx ].expOffset = lod.meshletOffset;
+				visibleInstsChunks[ slotIdx ].expCount = lod.meshletCount;
+			
+				drawCmd[ slotIdx ].drawIdx = globalIdx;
+				drawCmd[ slotIdx ].indexCount = lod.indexCount;
+				drawCmd[ slotIdx ].firstIndex = lod.indexOffset;
+				drawCmd[ slotIdx ].vertexOffset = currentMesh.vertexOffset;
+				drawCmd[ slotIdx ].instanceCount = 1;
+				drawCmd[ slotIdx ].firstInstance = 0;
+			}
 		}
 	}
 

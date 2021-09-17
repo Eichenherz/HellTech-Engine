@@ -157,39 +157,39 @@ void main()
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
 
-		//uvec4 ballotVisible = subgroupBallot( visible );
-		//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
-		//
-		//if( subgrActiveInvocationsCount == 0 ) return;
-		//// TODO: shared atomics + global atomics ?
-		//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
-		//
-		//uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-		//uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
-
-		if( visible )
+		uvec4 ballotVisible = subgroupBallot( visible );
+		uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
+		if( subgrActiveInvocationsCount > 0 ) 
 		{
-			uint slotIdx = atomicAdd( drawCallCount, 1 );
-			
-			visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
-			visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
-			visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
-			// NOTE: want all the indices
-			visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( thisMeshlet.triangleCount ) * 3 );
+			// TODO: shared atomics + global atomics ?
+			uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+			uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+			uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
-			drawCmd[ slotIdx ].drawIdx = parentInstId;
-			drawCmd[ slotIdx ].indexCount = uint( thisMeshlet.triangleCount ) * 3;
-			drawCmd[ slotIdx ].instanceCount = 1;
-			drawCmd[ slotIdx ].firstIndex = thisMeshlet.triBufOffset;
-			drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
-			drawCmd[ slotIdx ].firstInstance = 0;
+			if( visible )
+			{
+				//uint slotIdx = atomicAdd( drawCallCount, 1 );
+				
+				visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
+				visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
+				visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
+				// NOTE: want all the indices
+				visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( thisMeshlet.triangleCount ) * 3 );
 
-			dbgDrawCmd[ slotIdx ].drawIdx = mid;
-			dbgDrawCmd[ slotIdx ].firstVertex = 0;
-			dbgDrawCmd[ slotIdx ].vertexCount = 24;
-			dbgDrawCmd[ slotIdx ].instanceCount = 1;
-			dbgDrawCmd[ slotIdx ].firstInstance = 0;
-		}				
+				drawCmd[ slotIdx ].drawIdx = parentInstId;
+				drawCmd[ slotIdx ].indexCount = uint( thisMeshlet.triangleCount ) * 3;
+				drawCmd[ slotIdx ].instanceCount = 1;
+				drawCmd[ slotIdx ].firstIndex = thisMeshlet.triBufOffset;
+				drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
+				drawCmd[ slotIdx ].firstInstance = 0;
+
+				dbgDrawCmd[ slotIdx ].drawIdx = mid;
+				dbgDrawCmd[ slotIdx ].firstVertex = 0;
+				dbgDrawCmd[ slotIdx ].vertexCount = 24;
+				dbgDrawCmd[ slotIdx ].instanceCount = 1;
+				dbgDrawCmd[ slotIdx ].firstInstance = 0;
+			}
+		}
 	}
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
