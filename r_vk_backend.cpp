@@ -2974,7 +2974,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 	}
 
 	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 3;
+	constexpr u64 drawCount = 4;
 	constexpr u64 lightCount = 4;
 	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
@@ -3140,7 +3140,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 											  vkRscArena );
 	VkDbgNameObj( drawCmdDbgBuff.hndl, dc.device, "Buff_Indirect_Dbg_Draw_Cmds" );
 
-	drawCmdAabbsBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( draw_command ),
+	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
 												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -3160,11 +3160,11 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 	visibleInstsBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * 3 * sizeof( u32 ),
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 												vkRscArena );
-	visibleMeshletsBuff = VkCreateAllocBindBuffer( std::size( mletView ) * 3 * sizeof( u32 ),
+	visibleMeshletsBuff = VkCreateAllocBindBuffer( 10 * MB,//std::size( mletView ) * 3 * sizeof( u32 ),
 												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 												   vkRscArena );
 
-	meshletIdBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
+	meshletIdBuff = VkCreateAllocBindBuffer( 1000 * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
 	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
 
 

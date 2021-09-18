@@ -157,18 +157,18 @@ void main()
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
 
-		uvec4 ballotVisible = subgroupBallot( visible );
-		uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
-		if( subgrActiveInvocationsCount > 0 ) 
-		{
-			// TODO: shared atomics + global atomics ?
-			uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
-			uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-			uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
+		//uvec4 ballotVisible = subgroupBallot( visible );
+		//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
+		//if( subgrActiveInvocationsCount > 0 ) 
+		//{
+		//	// TODO: shared atomics + global atomics ?
+		//	uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+		//	uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+		//	uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
 			if( visible )
 			{
-				//uint slotIdx = atomicAdd( drawCallCount, 1 );
+				uint slotIdx = atomicAdd( drawCallCount, 1 );
 				
 				visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
 				visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
@@ -189,7 +189,7 @@ void main()
 				dbgDrawCmd[ slotIdx ].instanceCount = 1;
 				dbgDrawCmd[ slotIdx ].firstInstance = 0;
 			}
-		}
+		//}
 	}
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
