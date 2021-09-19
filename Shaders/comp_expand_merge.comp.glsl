@@ -48,7 +48,7 @@ layout( binding = 6 ) coherent buffer atomic_cnt{
 };
 
 
-const uint meshletsPerWorkgr = 8;
+const uint meshletsPerWorkgr = 32;
 
 shared uint idxBuffOffsetLDS = {};
 shared uint workgrAtomicCounterShared = {};
@@ -91,9 +91,11 @@ void main()
 		uint vertexOffset = visibleMeshlets[ meshletIdx ].vtxOffset;
 		uint thisIdxCount = uint( visibleMeshlets[ meshletIdx ].idxCount );
 		
-		for( uint i = 0; i < thisIdxCount; i += gl_WorkGroupSize.x )
+		//for( uint i = 0; i < thisIdxCount; i += gl_WorkGroupSize.x )
+		for( uint i = 0; i < thisIdxCount; ++i )
 		{
-			uint slotIdx = i + gl_LocalInvocationID.x;
+			//uint slotIdx = i + gl_LocalInvocationID.x;
+			uint slotIdx = i;
 			// TODO: wavefront select ?
 			if( slotIdx < thisIdxCount )
 			{
@@ -111,8 +113,8 @@ void main()
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 
-	barrier();
-	memoryBarrier();
+	//barrier();
+	//memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		drawCmd.drawIdx = -1; // Don't use

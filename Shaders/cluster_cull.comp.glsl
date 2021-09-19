@@ -68,6 +68,7 @@ layout( binding = 8, scalar ) writeonly buffer draw_indir{
 
 shared uint workgrAtomicCounterShared = {};
 
+const uint meshletsPerWorkGr = 32;
 
 layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 void main()
@@ -157,6 +158,9 @@ void main()
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
 
+		visible = true;
+		//visible = ( parentInstId < 3 ) || ( meshletIdx < 31 );
+
 		//uvec4 ballotVisible = subgroupBallot( visible );
 		//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
 		//if( subgrActiveInvocationsCount > 0 ) 
@@ -169,7 +173,7 @@ void main()
 			if( visible )
 			{
 				uint slotIdx = atomicAdd( drawCallCount, 1 );
-				
+
 				visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
 				visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
 				visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
@@ -194,12 +198,12 @@ void main()
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 
-	barrier();
-	memoryBarrier();
+	//barrier();
+	//memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
-		uint trisExpDispatch = ( drawCallCount + 7 ) / 8;
+		uint trisExpDispatch = ( drawCallCount + meshletsPerWorkGr - 1 ) / meshletsPerWorkGr;
 		dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
 		// NOTE: reset atomicCounter
 		workgrAtomicCounter = 0;

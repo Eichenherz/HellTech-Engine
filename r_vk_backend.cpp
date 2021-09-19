@@ -476,7 +476,7 @@ VkFindMemTypeIdx(
 }
 
 // TODO: move alloc flags ?
-// TODO: issue with device address host visible and device local
+// NOTE: NV driver bug not allow HOST_VISIBLE + VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT for uniforms
 inline static VkDeviceMemory
 VkTryAllocDeviceMem(
 	VkDevice								vkDevice,
@@ -492,7 +492,11 @@ VkTryAllocDeviceMem(
 		VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
 	
 	VkMemoryAllocateInfo memoryAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+#if 1
 	memoryAllocateInfo.pNext = ( memTypeIdx == 0xA ) ? 0 : &allocFlagsInfo;
+#else
+	memoryAllocateInfo.pNext = &allocFlagsInfo;
+#endif
 	memoryAllocateInfo.allocationSize = size;
 	memoryAllocateInfo.memoryTypeIndex = memTypeIdx;
 
@@ -2975,7 +2979,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 
 	constexpr u64 randSeed = 42;
 	constexpr u64 drawCount = 4;
-	constexpr u64 lightCount = 4;
+	constexpr u64 lightCount = 6;
 	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
 
@@ -3140,11 +3144,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 											  vkRscArena );
 	VkDbgNameObj( drawCmdDbgBuff.hndl, dc.device, "Buff_Indirect_Dbg_Draw_Cmds" );
 
-	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-												vkRscArena );
 	// TODO: use per wave stuff ?
 	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -3164,7 +3163,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 												   vkRscArena );
 
-	meshletIdBuff = VkCreateAllocBindBuffer( 1000 * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
+	meshletIdBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
 	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
 
 
@@ -3173,6 +3172,13 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 		//std::size( instDesc ) * fileDesc.idxRange.size, 
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
 		vkRscArena );
+
+	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+												vkRscArena );
+
 
 	drawMergedCmd = VkCreateAllocBindBuffer(
 		sizeof( draw_command ),
@@ -3570,11 +3576,9 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 }
 
-// TODO: wtf reseting draws?
-// TODO: merge surviving meshlets
 // TODO: meshlet cone culling 
 // TODO: must pass vertexOffset around somehow
-// TODO: revisit triangle culling
+// TODO: revisit triangle culling ?
 inline static void 
 CullPass( 
 	VkCommandBuffer			cmdBuff, 
@@ -3696,6 +3700,7 @@ CullPass(
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( cullInfo ), &cullInfo );
 	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.x ), 1, 1 );
 
+	
 #if 1
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
@@ -3734,7 +3739,7 @@ CullPass(
 			cmdBuff, expanderCompProgram.descUpdateTemplate, expanderCompProgram.pipeLayout, 0, pushDesc );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff.hndl, 0 );
 	}
-
+	
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff2.hndl,
@@ -3778,7 +3783,7 @@ CullPass(
 			cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, clusterCullCompProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff2.hndl, 0 );
 	}
-
+	
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff3.hndl,
@@ -3822,9 +3827,7 @@ CullPass(
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff3.hndl, 0 );
 	}
 
-
 #endif // 0
-	// TODO: revisit triangle culling
 
 	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
 		VkMakeBufferBarrier2( 
@@ -4750,7 +4753,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		// TODO: merge up to 256 meshes 
 		CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
 	}
-
+	
 	// Emit depth + HzB
 	//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
 	//						 rndCtx.gfxPipeline,
