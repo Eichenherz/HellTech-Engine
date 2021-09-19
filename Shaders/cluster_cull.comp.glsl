@@ -68,7 +68,7 @@ layout( binding = 8, scalar ) writeonly buffer draw_indir{
 
 shared uint workgrAtomicCounterShared = {};
 
-const uint meshletsPerWorkgr = 8;
+const uint meshletsPerWorkgr = 32;
 
 layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 void main()

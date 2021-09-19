@@ -246,13 +246,15 @@ struct device
 	u8				waveSize;
 };
 
-// TODO: what about integrated devices ?
 inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
 {
 	constexpr VkPhysicalDeviceType PREFFERED_PHYSICAL_DEVICE_TYPE = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
 	constexpr const char* ENABLED_DEVICE_EXTS[] = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+
+		//VK_KHR_PRESENT_ID_EXTENSION_NAME,
+		//VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
 		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
 
