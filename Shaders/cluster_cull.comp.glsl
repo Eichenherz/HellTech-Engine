@@ -68,7 +68,7 @@ layout( binding = 8, scalar ) writeonly buffer draw_indir{
 
 shared uint workgrAtomicCounterShared = {};
 
-const uint meshletsPerWorkGr = 32;
+const uint meshletsPerWorkgr = 8;
 
 layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 void main()
@@ -203,7 +203,7 @@ void main()
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
-		uint trisExpDispatch = ( drawCallCount + meshletsPerWorkGr - 1 ) / meshletsPerWorkGr;
+		uint trisExpDispatch = ( drawCallCount + meshletsPerWorkgr - 1 ) / meshletsPerWorkgr;
 		dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
 		// NOTE: reset atomicCounter
 		workgrAtomicCounter = 0;
