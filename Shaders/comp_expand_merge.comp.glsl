@@ -3,6 +3,7 @@
 #extension GL_KHR_shader_subgroup_basic: require
 #extension GL_KHR_shader_subgroup_arithmetic: require
 #extension GL_KHR_shader_subgroup_ballot: require
+#extension GL_KHR_shader_subgroup_vote: require
 
 #extension GL_GOOGLE_include_directive: require
 
@@ -100,6 +101,10 @@ void main()
 		for( uint i = 0; i < thisIdxCount; i += gl_WorkGroupSize.x )
 		{
 			uint slotIdx = i + gl_LocalInvocationID.x; 
+
+			// TODO:
+			//bool execMask = subgroupAll( slotIdx < thisIdxCount );
+
 			if( slotIdx < thisIdxCount )
 			{
 				uint8_t tri = mlet_tri_ref( meshletTriAddr ).meshletTriangles[ tirangleOffset + slotIdx ];

@@ -34,15 +34,6 @@ layout( binding = 3 ) buffer draw_cmd_count{
 	uint drawCallCount;
 };
 
-//struct expandee_info
-//{
-//	uint instId;
-//	uint expOffset;
-//	uint expCount;
-//};
-//layout( binding = 4 ) writeonly buffer triangle_ids{
-//	expandee_info visibleMeshlets[];
-//};
 struct meshlet_info
 {
 	uint triOffset;
@@ -63,14 +54,14 @@ layout( binding = 7 ) buffer disptach_indirect{
 };
 
 layout( binding = 8, scalar ) writeonly buffer draw_indir{
-	draw_indirect dbgDrawCmd[];
+	draw_indirect dbgBBoxDrawCmd[];
 };
 
 shared uint workgrAtomicCounterShared = {};
 
 const uint meshletsPerWorkgr = 32;
 
-layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
@@ -187,11 +178,11 @@ void main()
 				drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
 				drawCmd[ slotIdx ].firstInstance = 0;
 
-				dbgDrawCmd[ slotIdx ].drawIdx = mid;
-				dbgDrawCmd[ slotIdx ].firstVertex = 0;
-				dbgDrawCmd[ slotIdx ].vertexCount = 24;
-				dbgDrawCmd[ slotIdx ].instanceCount = 1;
-				dbgDrawCmd[ slotIdx ].firstInstance = 0;
+				dbgBBoxDrawCmd[ slotIdx ].drawIdx = mid;
+				dbgBBoxDrawCmd[ slotIdx ].firstVertex = 0;
+				dbgBBoxDrawCmd[ slotIdx ].vertexCount = 24;
+				dbgBBoxDrawCmd[ slotIdx ].instanceCount = 1;
+				dbgBBoxDrawCmd[ slotIdx ].firstInstance = 0;
 			}
 		//}
 	}

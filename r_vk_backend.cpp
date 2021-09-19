@@ -3186,7 +3186,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 		sizeof( draw_command ),
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-		VK_BUFFER_USAGE_TRANSFER_DST_BIT |
 		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena );
 
@@ -3977,7 +3976,7 @@ DrawIndirectPass(
 	struct { mat4 viewProj; vec4 color; } push = { viewProjMat, { 255,0,0,0 } };
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( push ), &push );
 
-	u32 maxDrawCnt = meshletBuff.size / sizeof( meshlet );
+	u32 maxDrawCnt = drawCmds.size / sizeof( draw_indirect );
 	vkCmdDrawIndirectCount(
 		cmdBuff, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCmdCount, 0, maxDrawCnt, sizeof( draw_indirect ) );
 

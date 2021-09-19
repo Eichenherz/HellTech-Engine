@@ -1,5 +1,9 @@
 #version 460
 
+#extension GL_KHR_shader_subgroup_basic: require
+#extension GL_KHR_shader_subgroup_arithmetic: require
+#extension GL_KHR_shader_subgroup_ballot: require
+
 #extension GL_GOOGLE_include_directive: require
 
 #include "..\r_data_structs.h"
@@ -37,22 +41,20 @@ layout( binding = 5 ) buffer disptach_indirect{
 
 // TODO: push const or spec const ?
 const uint clustersPerWorkgr = 4;
-const uint destWorkgrSize = 256;
+const uint destWorkgrSize = 1;
 
 shared uint expandeeOffsetLDS = {};
 shared uint workgrAtomicCounterShared = {};
 
 
-layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint workGrIdx = gl_WorkGroupID.x;
 	
-	// NOTE: inside workgr so we can order invocations
 	if( gl_LocalInvocationID.x == 0 )
 	{
 		uint perWorkgrExpCount = 0;
-		[[ unroll ]] 
 		for( uint ii = 0; ii < clustersPerWorkgr; ++ii )
 		{
 			uint clusterIdx = workGrIdx * clustersPerWorkgr + ii;
@@ -68,11 +70,16 @@ void main()
 
 	barrier();
 	memoryBarrier();
-	[[ unroll ]] 
 	for( uint ii = 0; ii < clustersPerWorkgr; ++ii )
 	{
-		uint clusterIdx = workGrIdx * clustersPerWorkgr + ii;
-	
+		uint clusterIdx;
+		if( subgroupElect() )
+		{
+			clusterIdx = workGrIdx * clustersPerWorkgr + ii;
+		}
+		
+		clusterIdx = subgroupBroadcastFirst( clusterIdx );
+
 		if( clusterIdx >= visibleClustersCount ) break;
 		
 		uint parentInstId = visibleClusters[ clusterIdx ].instId;
@@ -99,8 +106,6 @@ void main()
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 
 
-	barrier();
-	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		uint expandeeCullDispatch = ( expandeeCount + destWorkgrSize - 1 ) / destWorkgrSize;
