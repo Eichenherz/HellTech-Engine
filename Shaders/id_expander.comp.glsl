@@ -41,7 +41,7 @@ layout( binding = 5 ) buffer disptach_indirect{
 
 // TODO: push const or spec const ?
 const uint clustersPerWorkgr = 4;
-const uint destWorkgrSize = 1;
+const uint destWorkgrSize = 256;
 
 shared uint expandeeOffsetLDS = {};
 shared uint workgrAtomicCounterShared = {};

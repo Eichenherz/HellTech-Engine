@@ -206,25 +206,23 @@ void main()
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
 		
-		visible = true;
-
 		// TODO: must compute LOD based on AABB's screen area
 		//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
 		//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );
 		mesh_lod lod = currentMesh.lods[ 0 ];
 		
-		//uvec4 ballotVisible = subgroupBallot( visible );
-		//uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
-		//if( subgrActiveInvocationsCount > 0 ) 
-		//{
-		//	// TODO: shared atomics + global atomics ?
-		//	uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
-		//	uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
-		//	uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
+		uvec4 ballotVisible = subgroupBallot( visible );
+		uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
+		if( subgrActiveInvocationsCount > 0 ) 
+		{
+			// TODO: shared atomics + global atomics ?
+			uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+			uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
+			uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 		
 			if( visible )
 			{
-				uint slotIdx = atomicAdd( drawCallCount, 1 );
+				//uint slotIdx = atomicAdd( drawCallCount, 1 );
 			
 				visibleInstsChunks[ slotIdx ].instId = globalIdx;
 				visibleInstsChunks[ slotIdx ].expOffset = lod.meshletOffset;
@@ -237,13 +235,11 @@ void main()
 				drawCmd[ slotIdx ].instanceCount = 1;
 				drawCmd[ slotIdx ].firstInstance = 0;
 			}
-		//}
+		}
 	}
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 
-	//barrier();
-	//memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
