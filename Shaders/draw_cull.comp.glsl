@@ -168,6 +168,7 @@ void main()
 		bool intersectsNearZ = minW <= 0.0f;
 
 		if( visible && !intersectsNearZ )
+		//{}if( false )
 		{
 			vec3 boxSize = boxMax - boxMin;
 			vec3 boxCorners[] = { 
@@ -205,7 +206,7 @@ void main()
 			//visible = visible && ( sampledDepth * minW <= zNear );	
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
-		visible = true;
+		//visible = true;
 		// TODO: must compute LOD based on AABB's screen area
 		//float lodLevel = log2( max( 1, distance( center.xyz, cam.camPos ) - length( extent ) ) );
 		//uint lodIdx = clamp( uint( lodLevel ), 0, currentMesh.lodCount - 1 );

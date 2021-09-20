@@ -106,7 +106,7 @@ void main()
 		bool intersectsNearZ = minW <= 0.0f;
 
 		if( visible && !intersectsNearZ )
-		//if( false )
+		//{}if( false )
 		{
 			vec3 boxSize = boxMax - boxMin;
  			
@@ -148,7 +148,7 @@ void main()
 			float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
-
+		//visible = true;
 		uvec4 ballotVisible = subgroupBallot( visible );
 		uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
 		if( subgrActiveInvocationsCount > 0 ) 
