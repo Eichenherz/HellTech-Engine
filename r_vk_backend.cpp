@@ -265,6 +265,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
 		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
 
+		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME
 	};
@@ -3993,6 +3994,7 @@ DrawIndirectIndexedMerged(
 	const buffer_data&      indexBuff,
 	const buffer_data&      drawCmds,
 	const buffer_data&      drawCount,
+	const buffer_data&      camData,
 	const VkClearValue*     clearVals,
 	const vk_program&       program,
 	const vk_global_descriptor& globDesc = globBindlessDesc
@@ -4017,7 +4019,11 @@ DrawIndirectIndexedMerged(
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globDesc.set, 0, 0 );
+	//vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globDesc.set, 0, 0 );
+
+	struct { u64 vtxAddr, transfAddr, camAddr; } push = {
+		globVertexBuff.devicePointer, instDescBuff.devicePointer, camData.devicePointer };
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( push ), &push );
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
 
@@ -4706,20 +4712,32 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	if( !freeCam )
 	{
-		DrawIndexedIndirectPass( thisVFrame.cmdBuff,
-								 gfxZPrepass,
-								 rndCtx.renderPass,
-								 rndCtx.offscreenFbo,
-								 drawCmdBuff,
-								 thisVFrame.frameData,
-								 drawCountBuff.hndl,
-								 indexBuff.hndl,
-								 VK_INDEX_TYPE_UINT32,
-								 instDescBuff.size / sizeof( instance_desc ),
-								 clearVals,
-								 zPrepassProgram,
-								 false );
+		//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
+		//						 gfxZPrepass,
+		//						 rndCtx.renderPass,
+		//						 rndCtx.offscreenFbo,
+		//						 drawCmdBuff,
+		//						 thisVFrame.frameData,
+		//						 drawCountBuff.hndl,
+		//						 indexBuff.hndl,
+		//						 VK_INDEX_TYPE_UINT32,
+		//						 instDescBuff.size / sizeof( instance_desc ),
+		//						 clearVals,
+		//						 zPrepassProgram,
+		//						 false );
 		
+		DrawIndirectIndexedMerged(
+			thisVFrame.cmdBuff,
+			gfxZPrepass,
+			rndCtx.renderPass,
+			rndCtx.offscreenFbo,
+			indirectMergedIndexBuff,
+			drawMergedCmd,
+			drawMergedCountBuff,
+			thisVFrame.frameData,
+			clearVals,
+			zPrepassProgram );
+
 		DebugDrawPass( thisVFrame.cmdBuff,
 					   vkDbgCtx.drawAsTriangles,
 					   rndCtx.render2ndPass,
@@ -4754,8 +4772,9 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		// TODO: merge up to 256 meshes 
 		CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
 	}
-	
+
 	// Emit depth + HzB
+	
 	//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
 	//						 rndCtx.gfxPipeline,
 	//						 rndCtx.renderPass,
@@ -4783,6 +4802,9 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMeshletProgram );
 
+	vkCmdBindDescriptorSets(
+		thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+
 	DrawIndirectIndexedMerged(
 		thisVFrame.cmdBuff,
 		rndCtx.gfxMergedPipeline,
@@ -4791,6 +4813,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		indirectMergedIndexBuff,
 		drawMergedCmd,
 		drawMergedCountBuff,
+		thisVFrame.frameData,
 		clearVals,
 		gfxMergedProgram );
 
