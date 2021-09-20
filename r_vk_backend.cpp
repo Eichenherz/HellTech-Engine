@@ -3664,6 +3664,13 @@ CullPass(
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+
+		VkMakeBufferBarrier2(
+			indirectMergedIndexBuff.hndl,
+			VK_ACCESS_2_INDEX_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR,
+			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
@@ -4758,7 +4765,8 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		
 		
 		VkBufferMemoryBarrier2KHR clearDrawCountBarrier = VkMakeBufferBarrier2(
-			drawCountBuff.hndl,
+			//drawCountBuff.hndl,
+			drawMergedCountBuff.hndl,
 			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
