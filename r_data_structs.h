@@ -135,6 +135,9 @@ struct meshlet
 	vec3	center;
 	vec3	extent;
 
+	vec3    coneAxis;
+	vec3    coneApex;
+
 	int8_t	coneX, coneY, coneZ, coneCutoff;
 
 	uint	vtxBufOffset;

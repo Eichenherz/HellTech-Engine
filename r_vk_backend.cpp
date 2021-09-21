@@ -121,7 +121,6 @@ constexpr u32 MLET_CULL_WORKSIZE = 256;
 // TODO: cvars
 //====================CVARS====================//
 static bool colorBlending = 0;
-static bool occlusionCulling = 1;
 //==============================================//
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
@@ -209,12 +208,12 @@ static const DXPacked::XMCOLOR magenta = { 255u, 0u, 255u, 1 };
 // TODO: degub-on-off
 struct vk_label
 {
-	const VkCommandBuffer& cmdBuf;
+	const VkCommandBuffer& cmdBuff;
 
 	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
-		: cmdBuf{ cmdBuff }
+		: cmdBuff{ cmdBuff }
 	{
-		assert( cmdBuf );
+		assert( cmdBuff );
 
 		VkDebugUtilsLabelEXT dbgLabel = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
 		dbgLabel.pLabelName = labelName;
@@ -222,12 +221,12 @@ struct vk_label
 		dbgLabel.color[ 1 ] = col.g;
 		dbgLabel.color[ 2 ] = col.b;
 		dbgLabel.color[ 3 ] = col.a;
-		vkCmdBeginDebugUtilsLabelEXT( cmdBuf, &dbgLabel );
+		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
 	}
 	inline ~vk_label()
 	{
-		assert( cmdBuf );
-		vkCmdEndDebugUtilsLabelEXT( cmdBuf );
+		assert( cmdBuff );
+		vkCmdEndDebugUtilsLabelEXT( cmdBuff );
 	}
 };
 
@@ -247,13 +246,15 @@ struct device
 	u8				waveSize;
 };
 
-// TODO: what about integrated devices ?
 inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
 {
 	constexpr VkPhysicalDeviceType PREFFERED_PHYSICAL_DEVICE_TYPE = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
 	constexpr const char* ENABLED_DEVICE_EXTS[] = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+
+		//VK_KHR_PRESENT_ID_EXTENSION_NAME,
+		//VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
 		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
 
@@ -264,6 +265,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
 		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
 
+		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME
 	};
@@ -477,7 +479,7 @@ VkFindMemTypeIdx(
 }
 
 // TODO: move alloc flags ?
-// TODO: issue with device address host visible and device local
+// NOTE: NV driver bug not allow HOST_VISIBLE + VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT for uniforms
 inline static VkDeviceMemory
 VkTryAllocDeviceMem(
 	VkDevice								vkDevice,
@@ -491,10 +493,13 @@ VkTryAllocDeviceMem(
 	allocFlagsInfo.flags = // allocFlags;
 		//VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT |
 		VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-
-
+	
 	VkMemoryAllocateInfo memoryAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+#if 1
 	memoryAllocateInfo.pNext = ( memTypeIdx == 0xA ) ? 0 : &allocFlagsInfo;
+#else
+	memoryAllocateInfo.pNext = &allocFlagsInfo;
+#endif
 	memoryAllocateInfo.allocationSize = size;
 	memoryAllocateInfo.memoryTypeIndex = memTypeIdx;
 
@@ -1045,7 +1050,7 @@ struct virtual_frame
 {
 	buffer_data		frameData;
 	VkCommandPool	cmdPool;
-	VkCommandBuffer cmdBuf;
+	VkCommandBuffer cmdBuff;
 	VkSemaphore		canGetImgSema;
 	VkSemaphore		canPresentSema;
 	VkFence			hostSyncFence;
@@ -1070,7 +1075,7 @@ static inline virtual_frame VkCreateVirtualFrame(
 	cmdBuffAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	cmdBuffAllocInfo.commandBufferCount = 1;
 	cmdBuffAllocInfo.commandPool = vrtFrame.cmdPool;
-	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &vrtFrame.cmdBuf ) );
+	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &vrtFrame.cmdBuff ) );
 
 	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
@@ -1080,7 +1085,8 @@ static inline virtual_frame VkCreateVirtualFrame(
 	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 	VK_CHECK( vkCreateFence( vkDevice, &fenceInfo, 0, &vrtFrame.hostSyncFence ) );
 
-	vrtFrame.frameData = VkCreateAllocBindBuffer( bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, arena );
+	vrtFrame.frameData = VkCreateAllocBindBuffer( 
+		bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, arena );
 
 	return vrtFrame;
 }
@@ -1249,7 +1255,7 @@ struct render_context
 	VkPipeline		gfxMergedPipeline;
 	VkPipeline		compPipeline;
 	VkPipeline		compHiZPipeline;
-	//VkPipeline		gfxTranspPipe;
+	
 	VkPipeline		compAvgLumPipe;
 	VkPipeline		compTonemapPipe;
 	VkPipeline      compExpanderPipe;
@@ -1281,12 +1287,15 @@ struct render_context
 inline static VkRenderPass
 VkMakeRenderPass(
 	VkDevice	vkDevice,
+	bool        clearColor,
+	bool        clearDepth,
+	u32         colorTargetSlot,
+	u32         depthTargetSlot,
 	VkFormat	colorFormat,
-	VkFormat	depthFormat,
-	bool		overDraw
+	VkFormat	depthFormat
 ){
-	VkAttachmentReference colorAttachement = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-	VkAttachmentReference depthAttachement = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+	VkAttachmentReference colorAttachement = { colorTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
+	VkAttachmentReference depthAttachement = { depthTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
 
 	VkSubpassDescription subpassDescr = {};
 	subpassDescr.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -1297,22 +1306,21 @@ VkMakeRenderPass(
 	VkAttachmentDescription attachmentDescriptions[ 2 ] = {};
 	attachmentDescriptions[ 0 ].format = colorFormat;
 	attachmentDescriptions[ 0 ].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachmentDescriptions[ 0 ].loadOp = overDraw ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+	attachmentDescriptions[ 0 ].loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 	attachmentDescriptions[ 0 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 	attachmentDescriptions[ 0 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	attachmentDescriptions[ 0 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	attachmentDescriptions[ 0 ].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	attachmentDescriptions[ 0 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+	attachmentDescriptions[ 0 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
 
 	attachmentDescriptions[ 1 ].format = depthFormat;
 	attachmentDescriptions[ 1 ].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachmentDescriptions[ 1 ].loadOp = overDraw ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+	attachmentDescriptions[ 1 ].loadOp = clearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 	attachmentDescriptions[ 1 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	// secondPass ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
 	attachmentDescriptions[ 1 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	attachmentDescriptions[ 1 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attachmentDescriptions[ 1 ].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	attachmentDescriptions[ 1 ].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	attachmentDescriptions[ 1 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+	attachmentDescriptions[ 1 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
 
 	VkRenderPassCreateInfo renderPassInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
 	renderPassInfo.attachmentCount = std::size( attachmentDescriptions );
@@ -1363,6 +1371,10 @@ VkDbgUtilsMsgCallback(
 	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
 	void* userData
 ){
+	// NOTE: validation layer bug
+	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
+
+
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
 	{
 		std::string_view msgView = { callbackData->pMessage };
@@ -1385,6 +1397,15 @@ VkDbgUtilsMsgCallback(
 }
 
 #endif
+
+constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+};
+
 
 // TODO: gfx_api_instance ?
 struct vk_instance
@@ -1468,17 +1489,9 @@ inline static vk_instance VkMakeInstance()
 	VkInstanceCreateInfo instInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 #ifdef _VK_DEBUG_
 
-	VkValidationFeatureEnableEXT enabled[] = {
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
-	};
-
 	VkValidationFeaturesEXT vkValidationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
-	vkValidationFeatures.enabledValidationFeatureCount = std::size( enabled );
-	vkValidationFeatures.pEnabledValidationFeatures = enabled;
+	vkValidationFeatures.enabledValidationFeatureCount = std::size( enabledValidationFeats );
+	vkValidationFeatures.pEnabledValidationFeatures = enabledValidationFeats;
 
 	VkDebugUtilsMessengerCreateInfoEXT vkDbgExt = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
 	vkDbgExt.pNext = vkValidationLayerFeatures ? &vkValidationFeatures : 0;
@@ -1901,6 +1914,7 @@ struct vk_gfx_pipeline_state
 	bool				depthWrite = VK_TRUE;
 	bool				depthTestEnable = VK_TRUE;
 };
+// TODO: shader stages more general
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
 // TODO: entry point name
@@ -1923,6 +1937,7 @@ VkPipeline VkMakeGfxPipeline(
 	shaderStagesInfo[ 1 ].module = fs;
 	shaderStagesInfo[ 1 ].pName = SHADER_ENTRY_POINT;
 
+	u32 shaderStagesCount = bool( vs ) + bool( fs );
 
 	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
 	inAsmStateInfo.topology = pipelineState.primTopology;
@@ -1974,7 +1989,7 @@ VkPipeline VkMakeGfxPipeline(
 
 
 	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-	pipelineInfo.stageCount = std::size( shaderStagesInfo );
+	pipelineInfo.stageCount = shaderStagesCount;// std::size( shaderStagesInfo );
 	pipelineInfo.pStages = shaderStagesInfo;
 	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
 	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
@@ -2230,7 +2245,7 @@ static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
 }
 // TODO: memory stuff
 // TODO: constexpr special file
-static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& idxData, u64 numIters )
+static void GenerateIcosphere( std::vector<dbg_vertex>& vtxData, std::vector<u32>& idxData, u64 numIters )
 {
 	constexpr u64 ICOSAHEDRON_FACE_NUM = 20;
 	constexpr u64 ICOSAHEDRON_VTX_NUM = 12;
@@ -2334,47 +2349,25 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 		idxData = idxCache;
 	}
 
-	// TODO: 2 normals per vertex ? how ?
-	std::vector<vec3> normals( std::size( vtxCache ), vec3{} );
-
-	for( u64 t = 0; t < std::size( idxData ); t += 3 )
-	{
-		u32 i0 = idxData[ t ];
-		u32 i1 = idxData[ t + 1 ];
-		u32 i2 = idxData[ t + 2 ];
-
-		vec3 v0 = vtxCache[ i0 ];
-		vec3 v1 = vtxCache[ i1 ];
-		vec3 v2 = vtxCache[ i2 ];
-
-		DirectX::XMVECTOR common = DirectX::XMLoadFloat3( &v0 );
-		DirectX::XMVECTOR v10 = DirectX::XMVectorSubtract( DirectX::XMLoadFloat3( &v1 ), common );
-		DirectX::XMVECTOR v20 = DirectX::XMVectorSubtract( DirectX::XMLoadFloat3( &v2 ), common );
-		DirectX::XMVECTOR normal = DirectX::XMVector3Cross( v10, v20 );
-
-		DirectX::XMStoreFloat3( &normals[ i0 ],
-								DirectX::XMVector3Normalize( DirectX::XMVectorAdd( normal, DirectX::XMLoadFloat3( &normals[ i0 ] ) ) ) );
-		DirectX::XMStoreFloat3( &normals[ i1 ],
-								DirectX::XMVector3Normalize( DirectX::XMVectorAdd( normal, DirectX::XMLoadFloat3( &normals[ i1 ] ) ) ) );
-		DirectX::XMStoreFloat3( &normals[ i2 ],
-								DirectX::XMVector3Normalize( DirectX::XMVectorAdd( normal, DirectX::XMLoadFloat3( &normals[ i2 ] ) ) ) );
-	}
-
 	vtxData.resize( std::size( vtxCache ) );
+
+	vec4 col = {};
 
 	for( u64 i = 0; i < std::size( vtxCache ); ++i )
 	{
 		vtxData[ i ] = {};
-		vtxData[ i ].px = vtxCache[ i ].x;
-		vtxData[ i ].py = vtxCache[ i ].y;
-		vtxData[ i ].pz = vtxCache[ i ].z;
-		vec2 n = OctaNormalEncode( normals[ i ] );
-		vtxData[ i ].snorm8octNx = FloatToSnorm8( n.x );
-		vtxData[ i ].snorm8octNy = FloatToSnorm8( n.y );
+		vtxData[ i ].pos.x = vtxCache[ i ].x;
+		vtxData[ i ].pos.y = vtxCache[ i ].y;
+		vtxData[ i ].pos.z = vtxCache[ i ].z;
+		vtxData[ i ].pos.w = 1.0f;
+		vtxData[ i ].col = col;
+		
 	}
 }
-static void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
+static void GenerateBoxCube( std::vector<dbg_vertex>& vtx, std::vector<u32>& idx )
 {
+	using namespace DirectX;
+
 	constexpr float w = 0.5f;
 	constexpr float h = 0.5f;
 	constexpr float t = 0.5f;
@@ -2396,37 +2389,39 @@ static void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
 	constexpr vec2 l = OctaNormalEncode( { -1,0,0 } );
 	constexpr vec2 r = OctaNormalEncode( { 1,0,0 } );
 
-	vertex vertices[] = {
+	constexpr XMFLOAT4 col = {};
+
+	dbg_vertex vertices[] = {
 		// Bottom
-		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
-		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
-		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
-		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
 		// Left					
-		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
-		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
-		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
-		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c4.x,c4.y,c4.z,1.0f}, col },
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
 		// Front				
-		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
-		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
-		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
-		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
+		{ {c4.x,c4.y,c4.z,1.0f}, col },
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
 		// Back					
-		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
-		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
-		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
-		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
 		// Right				
-		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
-		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
-		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
-		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
 		// Top					
-		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
-		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
-		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
-		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c4.x,c4.y,c4.z,1.0f}, col }
 	};
 
 	u32 indices[] = {
@@ -2477,14 +2472,14 @@ inline hndl32<T> Hndl32FromMagicAndIdx( u64 m, u64 i )
 // TODO: handled container
 // TODO: extract magicId from resources ?
 template<typename T>
-struct resource_container
+struct resource_vector
 {
 	std::vector<T> rsc;
 	u32 magicCounter;
 };
 
 template<typename T>
-inline const T& GetResourceFromHndl( hndl32<T> h, const resource_container<T>& buf )
+inline const T& GetResourceFromHndl( hndl32<T> h, const resource_vector<T>& buf )
 {
 	assert( std::size( buf ) );
 	assert( h );
@@ -2495,7 +2490,7 @@ inline const T& GetResourceFromHndl( hndl32<T> h, const resource_container<T>& b
 	return entry;
 }
 template<typename T>
-inline hndl32<T> PushResourceToContainer( T& rsc, resource_container<T>& buf )
+inline hndl32<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 {
 	u32 magicCounter = buf.magicCounter++;
 	rsc.magicId = magicCounter;
@@ -2505,7 +2500,7 @@ inline hndl32<T> PushResourceToContainer( T& rsc, resource_container<T>& buf )
 }
 
 
-static resource_container<image> textures;
+static resource_vector<image> textures;
 
 // TODO: recycle_queue
 // TODO: rethink
@@ -2545,7 +2540,7 @@ StagingManagerPushForRecycle( VkBuffer stagingBuf, staging_manager& stgMngr )
 // TODO: remove/improve 
 static inline void
 VkStageCopyUploadBuffer(
-	VkCommandBuffer		cmdBuf,
+	VkCommandBuffer		cmdBuff,
 	const char*			name,
 	const u8*			pData,
 	u64					copyDataSize,
@@ -2564,7 +2559,7 @@ VkStageCopyUploadBuffer(
 	StagingManagerPushForRecycle( stagingBuf.hndl, stagingMngr );
 
 	VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
-	vkCmdCopyBuffer( cmdBuf, stagingBuf.hndl, dstBuff.hndl, 1, &copyRegion );
+	vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, dstBuff.hndl, 1, &copyRegion );
 }
 
 struct box_bounds
@@ -2637,7 +2632,6 @@ static inline debug_context VkInitDebugCtx(
 	vkDestroyShaderModule( vkDevice, frag.module, 0 );
 
 	dbgCtx.dbgLinesBuff = VkCreateAllocBindBuffer( 512 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
-		//1 * MB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vkHostComArena );
 	dbgCtx.dbgTrisBuff = VkCreateAllocBindBuffer( 128 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
 
 	return dbgCtx;
@@ -2648,7 +2642,7 @@ constexpr u64 boxLineVertexCount = 24u;
 constexpr u64 boxTrisVertexCount = 36u;
 /*
 // NOTE: corners are stored in this way:
-// NOTE: courtesy of Nabla - Devsh
+// NOTE: courtesy of Nabla
 //	   /3--------/7
 //	  / |       / |
 //	 /  |      /  |
@@ -2880,7 +2874,7 @@ static buffer_data drawVisibilityBuff;
 
 static buffer_data drawMergedCmd;
 
-static inline void VkUploadResources( VkCommandBuffer cmdBuf )
+static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 {
 	using namespace DirectX;
 
@@ -2967,8 +2961,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 
 	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 1;
-	constexpr u64 lightCount = 4;
+	constexpr u64 drawCount = 4;
+	constexpr u64 lightCount = 6;
 	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
 
@@ -2997,7 +2991,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
 	{
 		const u8* pVtxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset;
-		VkStageCopyUploadBuffer( cmdBuf, "Buff_Vtx", pVtxData, fileDesc.vtxRange.size, globVertexBuff, stagingManager );
+		VkStageCopyUploadBuffer( cmdBuff, "Buff_Vtx", pVtxData, fileDesc.vtxRange.size, globVertexBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2( 
 			globVertexBuff.hndl, 
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3017,7 +3011,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
-		vkCmdCopyBuffer( cmdBuf, stagingBuf.hndl, indexBuff.hndl, 1, &copyRegion );
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, indexBuff.hndl, 1, &copyRegion );
 		buffBarriers.push_back( VkMakeBufferBarrier2( 
 			indexBuff.hndl, 
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3027,7 +3021,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 	{
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Mesh_Desc", (const u8*) std::data( meshes ), BYTE_COUNT( meshes ), meshBuff, stagingManager );
+			cmdBuff, "Buff_Mesh_Desc", (const u8*) std::data( meshes ), BYTE_COUNT( meshes ), meshBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3037,7 +3031,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 	{
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Lights", (const u8*) std::data( lights ), BYTE_COUNT( lights ), lightsBuff, stagingManager );
+			cmdBuff, "Buff_Lights", (const u8*) std::data( lights ), BYTE_COUNT( lights ), lightsBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			lightsBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3048,7 +3042,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 	{
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Inst_Descs", (const u8*) std::data( instDesc ), BYTE_COUNT( instDesc ), instDescBuff, stagingManager );
+			cmdBuff, "Buff_Inst_Descs", (const u8*) std::data( instDesc ), BYTE_COUNT( instDesc ), instDescBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			instDescBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3059,7 +3053,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 	{
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Mtrls", (const u8*) std::data( mtrls ), BYTE_COUNT( mtrls ), materialsBuff, stagingManager );
+			cmdBuff, "Buff_Mtrls", (const u8*) std::data( mtrls ), BYTE_COUNT( mtrls ), materialsBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			materialsBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3070,7 +3064,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 	{
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Meshlets", (const u8*) std::data( mletView ), BYTE_COUNT( mletView ), meshletBuff, stagingManager );
+			cmdBuff, "Buff_Meshlets", (const u8*) std::data( mletView ), BYTE_COUNT( mletView ), meshletBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3083,7 +3077,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 			( u32* )( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsVtxRange.offset ),
 			fileDesc.mletsVtxRange.size / sizeof( u32 ) };
 		VkStageCopyUploadBuffer(
-			cmdBuf, "Buff_Meshlet_Vtx", (const u8*) std::data( mletVtxView ), BYTE_COUNT( mletVtxView ), meshletVtxBuff, stagingManager );
+			cmdBuff, "Buff_Meshlet_Vtx", (const u8*) std::data( mletVtxView ), BYTE_COUNT( mletVtxView ), meshletVtxBuff, stagingManager );
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletVtxBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3109,7 +3103,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
-		vkCmdCopyBuffer( cmdBuf, stagingBuf.hndl, meshletTrisBuff.hndl, 1, &copyRegion );
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletTrisBuff.hndl, 1, &copyRegion );
 
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletTrisBuff.hndl,
@@ -3120,7 +3114,9 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	}
 
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
-										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+										   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+										   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 										   vkRscArena );
 	VkDbgNameObj( drawCmdBuff.hndl, dc.device, "Buff_Indirect_Draw_Cmds" );
 
@@ -3131,11 +3127,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 											  vkRscArena );
 	VkDbgNameObj( drawCmdDbgBuff.hndl, dc.device, "Buff_Indirect_Dbg_Draw_Cmds" );
 
-	drawCmdAabbsBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( draw_command ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-												vkRscArena );
 	// TODO: use per wave stuff ?
 	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -3151,24 +3142,32 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	visibleInstsBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * 3 * sizeof( u32 ),
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 												vkRscArena );
-	visibleMeshletsBuff = VkCreateAllocBindBuffer( std::size( mletView ) * 3 * sizeof( u32 ),
+	visibleMeshletsBuff = VkCreateAllocBindBuffer( 10 * MB,//std::size( mletView ) * 3 * sizeof( u32 ),
 												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 												   vkRscArena );
 
-	meshletIdBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
+	meshletIdBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
 	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
 
 
 	indirectMergedIndexBuff = VkCreateAllocBindBuffer( 
-		std::size( instDesc ) * fileDesc.idxRange.size, 
+		10 * MB,
+		//std::size( instDesc ) * fileDesc.idxRange.size, 
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
 		vkRscArena );
+
+	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+												vkRscArena );
+
 
 	drawMergedCmd = VkCreateAllocBindBuffer(
 		sizeof( draw_command ),
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-		VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena );
 
 	//// NOTE: 1 to 1 corresp to instances
@@ -3207,7 +3206,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 		VkDependencyInfoKHR imitImagesDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
 		imitImagesDependency.imageMemoryBarrierCount = std::size( imageBarriers );
 		imitImagesDependency.pImageMemoryBarriers = std::data( imageBarriers );
-		vkCmdPipelineBarrier2KHR( cmdBuf, &imitImagesDependency );
+		vkCmdPipelineBarrier2KHR( cmdBuff, &imitImagesDependency );
 
 		imageBarriers.resize( 0 );
 
@@ -3228,7 +3227,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 			imgCopyRegion.imageSubresource.layerCount = 1;
 			imgCopyRegion.imageOffset = VkOffset3D{};
 			imgCopyRegion.imageExtent = { u32( dst.width ),u32( dst.height ),1 };
-			vkCmdCopyBufferToImage( cmdBuf, stagingBuff.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
+			vkCmdCopyBufferToImage( cmdBuff, stagingBuff.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
 
 			imageBarriers.push_back( VkMakeImageBarrier2(
 				dst.hndl,
@@ -3247,7 +3246,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuf )
 	uploadDependency.pBufferMemoryBarriers = std::data( buffBarriers );
 	uploadDependency.imageMemoryBarrierCount = std::size( imageBarriers );
 	uploadDependency.pImageMemoryBarriers = std::data( imageBarriers );
-	vkCmdPipelineBarrier2KHR( cmdBuf, &uploadDependency );
+	vkCmdPipelineBarrier2KHR( cmdBuff, &uploadDependency );
 }
 
 static buffer_data drawCountBuff;
@@ -3345,7 +3344,7 @@ inline static void VkInitInternalBuffers()
 static vk_program	gfxMergedProgram = {};
 static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
-static vk_program	drawcullCompProgram = {};
+static vk_program	cullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
 static vk_program	tonemapCompProgram = {};
@@ -3356,6 +3355,10 @@ static vk_program   expMergeCompProgram = {};
 
 static vk_program   dbgDrawProgram = {};
 static VkPipeline   gfxDrawIndirDbg = {};
+
+static vk_program   zPrepassProgram = {};
+static VkPipeline   gfxZPrepass = {};
+static VkRenderPass zRndPass = {};
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3369,15 +3372,24 @@ void VkBackendInit()
 	sc = VkMakeSwapchain( dc.device,dc.gpu, vkSurf, dc.gfxQueueIdx, VK_FORMAT_B8G8R8A8_UNORM );
 
 
-	rndCtx.renderPass = VkMakeRenderPass( dc.device, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, false );
-	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, true );
+	rndCtx.renderPass = VkMakeRenderPass( dc.device, 1, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
+	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 0, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
+	//zRndPass = VkMakeRenderPass( dc.device, 0, 1, VK_ATTACHMENT_UNUSED, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
+	zRndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
 
-	// TODO: ?
-	//VkPipelineCache pipelineCache = 0;
-
+	
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
 
+	{
+		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 
+		vk_gfx_pipeline_state zPrepass = {};
+
+		zPrepassProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertZPre } );
+		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, zRndPass, zPrepassProgram.pipeLayout, vertZPre.module, 0, zPrepass );
+
+		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
+	}
 	{
 		vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", dc.device );
 		vk_shader normalCol = VkLoadShader( "Shaders/normal_col.frag.spv", dc.device );
@@ -3400,9 +3412,8 @@ void VkBackendInit()
 	}
 	{
 		vk_shader drawCull = VkLoadShader( "Shaders/draw_cull.comp.spv", dc.device );
-		drawcullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCull } );
-		rndCtx.compPipeline =
-			VkMakeComputePipeline( dc.device, 0, drawcullCompProgram.pipeLayout, drawCull.module, { OBJ_CULL_WORKSIZE,occlusionCulling } );
+		cullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCull } );
+		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { OBJ_CULL_WORKSIZE } );
 		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
 
 		vk_shader expansionComp = VkLoadShader( "Shaders/id_expander.comp.spv", dc.device );
@@ -3494,6 +3505,10 @@ void VkBackendInit()
 	VkInitInternalBuffers();
 
 	vkDbgCtx = VkInitDebugCtx( dc.device, rndCtx.renderPass, dc.gpuProps );
+
+
+	rndCtx.quadMinSampler =
+		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
 }
 
 inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
@@ -3543,11 +3558,9 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 }
 
-// TODO: wtf reseting draws?
-// TODO: merge surviving meshlets
 // TODO: meshlet cone culling 
 // TODO: must pass vertexOffset around somehow
-// TODO: revisit triangle culling
+// TODO: revisit triangle culling ?
 inline static void 
 CullPass( 
 	VkCommandBuffer			cmdBuff, 
@@ -3578,8 +3591,8 @@ CullPass(
 	VkBufferMemoryBarrier2KHR beginCullBarriers[] = {
 		VkMakeBufferBarrier2( 
 			drawCmdBuff.hndl,
-			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR,
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR,
 			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
 		VkMakeBufferBarrier2( 
@@ -3631,12 +3644,20 @@ CullPass(
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+
+		VkMakeBufferBarrier2(
+			indirectMergedIndexBuff.hndl,
+			VK_ACCESS_2_INDEX_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR,
+			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
 	};
 
 	VkImageMemoryBarrier2KHR hiZReadBarrier = VkMakeImageBarrier2(
 		rndCtx.depthPyramid.hndl,
-		0,0,
+		VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 		VK_ACCESS_2_SHADER_READ_BIT_KHR,
 		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -3650,10 +3671,6 @@ CullPass(
 	dependency.pImageMemoryBarriers = &hiZReadBarrier;
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 
-	
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
-
 	VkDescriptorImageInfo depthPyramidInfo = { minQuadSampler, depthPyramid.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	
 	vk_descriptor_info pushDescs[] = {   
@@ -3666,10 +3683,14 @@ CullPass(
 		Descriptor( drawCmdBuff )
 	};
 
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
+	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( cullInfo ), &cullInfo );
 	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.x ), 1, 1 );
 
+	
+#if 1
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
@@ -3707,7 +3728,7 @@ CullPass(
 			cmdBuff, expanderCompProgram.descUpdateTemplate, expanderCompProgram.pipeLayout, 0, pushDesc );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff.hndl, 0 );
 	}
-
+	
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff2.hndl,
@@ -3751,7 +3772,7 @@ CullPass(
 			cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, clusterCullCompProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff2.hndl, 0 );
 	}
-
+	
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff3.hndl,
@@ -3795,7 +3816,7 @@ CullPass(
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff3.hndl, 0 );
 	}
 
-	// TODO: revisit triangle culling
+#endif // 0
 
 	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
 		VkMakeBufferBarrier2( 
@@ -3862,12 +3883,14 @@ DrawIndexedIndirectPass(
 	VkRenderPass			vkRndPass,
 	VkFramebuffer			offscreenFbo,
 	const buffer_data&		drawCmds,
+	const buffer_data&		camData,
 	VkBuffer				drawCmdCount,
 	VkBuffer                indexBuff,
 	VkIndexType             indexType,
 	u32                     maxDrawCallCount,
 	const VkClearValue*		clearVals,
-	const vk_program&		program
+	const vk_program&		program,
+	bool                    fullPass
 ){
 	vk_label label = { cmdBuff,"Draw Indexed Indirect Pass",{} };
 
@@ -3887,11 +3910,17 @@ DrawIndexedIndirectPass(
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
-
-	vk_descriptor_info descriptors[] = { Descriptor( drawCmds ) };
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
 	
+	if( fullPass )
+	{
+		vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+	}
+
+	struct { u64 vtxAddr, transfAddr, drawCmdAddr, camAddr; } push = {
+		globVertexBuff.devicePointer, instDescBuff.devicePointer, drawCmds.devicePointer, camData.devicePointer };
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( push ), &push );
+
+
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff, 0, indexType );
 
 	vkCmdDrawIndexedIndirectCount( 
@@ -3935,7 +3964,7 @@ DrawIndirectPass(
 	struct { mat4 viewProj; vec4 color; } push = { viewProjMat, { 255,0,0,0 } };
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( push ), &push );
 
-	u32 maxDrawCnt = meshletBuff.size / sizeof( meshlet );
+	u32 maxDrawCnt = drawCmds.size / sizeof( draw_indirect );
 	vkCmdDrawIndirectCount(
 		cmdBuff, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCmdCount, 0, maxDrawCnt, sizeof( draw_indirect ) );
 
@@ -3952,6 +3981,7 @@ DrawIndirectIndexedMerged(
 	const buffer_data&      indexBuff,
 	const buffer_data&      drawCmds,
 	const buffer_data&      drawCount,
+	const buffer_data&      camData,
 	const VkClearValue*     clearVals,
 	const vk_program&       program,
 	const vk_global_descriptor& globDesc = globBindlessDesc
@@ -3976,7 +4006,11 @@ DrawIndirectIndexedMerged(
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globDesc.set, 0, 0 );
+	//vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globDesc.set, 0, 0 );
+
+	struct { u64 vtxAddr, transfAddr, camAddr; } push = {
+		globVertexBuff.devicePointer, instDescBuff.devicePointer, camData.devicePointer };
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( push ), &push );
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
 
@@ -3985,6 +4019,8 @@ DrawIndirectIndexedMerged(
 
 	vkCmdEndRenderPass( cmdBuff );
 }
+
+
 // TODO: must remake single pass
 inline static void
 DepthPyramidPass(
@@ -4074,7 +4110,7 @@ DepthPyramidMultiPass(
 			VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT_KHR,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
 			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			VK_IMAGE_ASPECT_DEPTH_BIT ),
 
@@ -4149,19 +4185,32 @@ DepthPyramidMultiPass(
 	}
 
 	// TODO: do we need ?
-	//VkImageMemoryBarrier depthWriteBarrier = 
-	//	VkMakeImgBarrier( depthTarget.hndl, 
-	//					  VK_ACCESS_SHADER_READ_BIT, 
-	//					  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 
-	//					  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
-	//					  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 
-	//					  VK_IMAGE_ASPECT_DEPTH_BIT );
-	//
-	//vkCmdPipelineBarrier( cmdBuff, 
-	//					  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
-	//					  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 
-	//					  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 
-	//					  1, &depthWriteBarrier );
+	VkImageMemoryBarrier2KHR hizEndBarriers[] = {
+		VkMakeImageBarrier2(
+			depthTarget.hndl,
+			VK_ACCESS_2_SHADER_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT_KHR | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			VK_IMAGE_ASPECT_DEPTH_BIT ),
+
+		VkMakeImageBarrier2(
+			depthPyramid.hndl,
+			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+			VK_ACCESS_2_SHADER_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+			VK_IMAGE_LAYOUT_GENERAL,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_ASPECT_COLOR_BIT )
+	};
+
+	VkDependencyInfoKHR dependencyEnd = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependencyEnd.imageMemoryBarrierCount = std::size( hizEndBarriers );
+	dependencyEnd.pImageMemoryBarriers = hizEndBarriers;
+	vkCmdPipelineBarrier2KHR( cmdBuff, &dependencyEnd );
 }
 
 // TODO: optimize
@@ -4204,7 +4253,7 @@ ToneMappingWithSrgb(
 																		VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
 																		VK_ACCESS_2_SHADER_READ_BIT_KHR,
 																		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-																		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+																		VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
 																		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 																		VK_IMAGE_ASPECT_COLOR_BIT );
 
@@ -4237,7 +4286,7 @@ ToneMappingWithSrgb(
 	// TONEMAPPING w/ GAMMA sRGB
 	VkImageMemoryBarrier2KHR scWriteBarrier =
 		VkMakeImageBarrier2( scImg,
-							 0, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR,
+							 0, 0,
 							 VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 							 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 							 VK_IMAGE_LAYOUT_UNDEFINED,
@@ -4280,14 +4329,14 @@ ToneMappingWithSrgb(
 // TODO: color depth toggle stuff
 inline static void
 DebugDrawPass(
-	VkCommandBuffer			cmdBuff,
-	VkPipeline				vkPipeline,
-	VkRenderPass			vkRndPass,
-	VkFramebuffer			offscreenFbo,
-	const buffer_data& drawBuff,
-	const vk_program& program,
-	const mat4& projView,
-	range					drawRange
+	VkCommandBuffer		cmdBuff,
+	VkPipeline			vkPipeline,
+	VkRenderPass		vkRndPass,
+	VkFramebuffer	    offscreenFbo,
+	const buffer_data&  drawBuff,
+	const vk_program&   program,
+	const mat4&         projView,
+	range		        drawRange
 ){
 	vk_label label = { cmdBuff,"Dbg Draw Pass",{} };
 
@@ -4394,7 +4443,7 @@ ComputeSceneDebugBoundingBoxes(
 	return dbgGeom;
 }
 
-// TODO: batch barriers
+// TODO: pass cam data via push const
 void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 {
 	using namespace DirectX;
@@ -4409,74 +4458,108 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	VK_CHECK( vkResetFences( dc.device, 1, &thisVFrame.hostSyncFence ) );
 
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
-	
-	// TODO: swapchain resize ?
-	// TODO: barrier this stuff here
-	if( !rndCtx.offscreenFbo )
-	{
-		if( !rndCtx.depthTarget.hndl )
-		{
-			VkImageUsageFlags depthTargetUsg = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-			rndCtx.depthTarget = 
-				VkCreateAllocBindImage( rndCtx.desiredDepthFormat, depthTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
-			VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
 
-			u32 hiZWidth = 0;
-			u32 hiZHeight = 0;
-			u32 hiZMipCount = 0;
-			// TODO: place depth pyr elsewhere 
-			if constexpr( !multiPassDepthPyramid )
-			{
-				// TODO: make conservative ?
-				hiZWidth = ( sc.width ) / 2;
-				hiZHeight = ( sc.height ) / 2;
-				hiZMipCount = GetImgMipCount( hiZWidth, hiZHeight );
-			}
-			else
-			{
-				hiZWidth = FloorPowOf2( sc.width );
-				hiZHeight = FloorPowOf2( sc.height );
-				hiZMipCount = GetImgMipCountForPow2( hiZWidth, hiZHeight );
-			}
-			VK_CHECK( VK_INTERNAL_ERROR( !( hiZMipCount < MAX_MIP_LEVELS ) ) );
-			VkImageUsageFlags hiZUsg = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT 
-				| VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-			VkFormat depthFormat = VK_FORMAT_R32_SFLOAT;
-			rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg,{ hiZWidth, hiZHeight, 1 }, hiZMipCount, vkAlbumArena );
-			VkDbgNameObj( rndCtx.depthPyramid.hndl, dc.device, "Img_Depth_Pyramid" );
-
-			for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
-			{
-				rndCtx.depthPyramidChain[ i ] = 
-					VkMakeImgView( dc.device, rndCtx.depthPyramid.hndl, rndCtx.depthPyramid.nativeFormat, i, 1 );
-			}
-
-			rndCtx.quadMinSampler = 
-				VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-		}
-
-		if( !rndCtx.colorTarget.hndl )
-		{
-			VkImageUsageFlags colorTargetUsg =
-				VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-			rndCtx.colorTarget = 
-				VkCreateAllocBindImage( rndCtx.desiredColorFormat, colorTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
-			VkDbgNameObj( rndCtx.colorTarget.hndl, dc.device, "Img_Render_Target_Color" );
-		}
-
-		VkImageView fboAttach[] = { rndCtx.colorTarget.view, rndCtx.depthTarget.view };
-		rndCtx.offscreenFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, fboAttach, std::size( fboAttach ), sc.width, sc.height );
-	}
 
 	VkCommandBufferBeginInfo cmdBufBegInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	vkBeginCommandBuffer( thisVFrame.cmdBuf, &cmdBufBegInfo );
+	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
+
+
+	// TODO: swapchain resize ?
+	if( !rndCtx.depthTarget.hndl )
+	{
+		VkImageUsageFlags depthTargetUsg = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		rndCtx.depthTarget =
+			VkCreateAllocBindImage( rndCtx.desiredDepthFormat, depthTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
+
+		u32 hiZWidth = 0;
+		u32 hiZHeight = 0;
+		u32 hiZMipCount = 0;
+		// TODO: place depth pyr elsewhere 
+		if constexpr( !multiPassDepthPyramid )
+		{
+			// TODO: make conservative ?
+			hiZWidth = ( sc.width ) / 2;
+			hiZHeight = ( sc.height ) / 2;
+			hiZMipCount = GetImgMipCount( hiZWidth, hiZHeight );
+		}
+		else
+		{
+			hiZWidth = FloorPowOf2( sc.width );
+			hiZHeight = FloorPowOf2( sc.height );
+			u32 squareDim = std::min( hiZWidth, hiZHeight );
+			hiZWidth = hiZHeight = squareDim;
+			hiZMipCount = GetImgMipCountForPow2( hiZWidth, hiZHeight );
+		}
+		VK_CHECK( VK_INTERNAL_ERROR( !( hiZMipCount < MAX_MIP_LEVELS ) ) );
+		VkImageUsageFlags hiZUsg = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+			| VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+		VkFormat depthFormat = VK_FORMAT_R32_SFLOAT;
+		rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { hiZWidth, hiZHeight, 1 }, hiZMipCount, vkAlbumArena );
+		VkDbgNameObj( rndCtx.depthPyramid.hndl, dc.device, "Img_Depth_Pyramid" );
+
+		for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
+		{
+			rndCtx.depthPyramidChain[ i ] =
+				VkMakeImgView( dc.device, rndCtx.depthPyramid.hndl, rndCtx.depthPyramid.nativeFormat, i, 1 );
+		}
+
+
+		VkImageMemoryBarrier2KHR initBarriers[] = {
+		VkMakeImageBarrier2(
+			rndCtx.depthTarget.hndl,
+			0, 0,
+			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			VK_IMAGE_ASPECT_DEPTH_BIT ),
+		VkMakeImageBarrier2(
+			rndCtx.depthPyramid.hndl,
+			0, 0,
+			0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_ASPECT_COLOR_BIT )
+		};
+		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		dependency.imageMemoryBarrierCount = std::size( initBarriers );
+		dependency.pImageMemoryBarriers = initBarriers;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+	}
+
+	if( !rndCtx.colorTarget.hndl )
+	{
+		VkImageUsageFlags colorTargetUsg =
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		rndCtx.colorTarget =
+			VkCreateAllocBindImage( rndCtx.desiredColorFormat, colorTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		VkDbgNameObj( rndCtx.colorTarget.hndl, dc.device, "Img_Render_Target_Color" );
+
+		VkImageMemoryBarrier2KHR initBarrier = VkMakeImageBarrier2(
+			rndCtx.colorTarget.hndl,
+			0, 0,
+			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			VK_IMAGE_ASPECT_COLOR_BIT );
+		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		dependency.imageMemoryBarrierCount = 1;
+		dependency.pImageMemoryBarriers = &initBarrier;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+	}
+
+	if( !rndCtx.offscreenFbo )
+	{
+		VkImageView fboAttach[] = { rndCtx.colorTarget.view, rndCtx.depthTarget.view };
+		rndCtx.offscreenFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, fboAttach, std::size( fboAttach ), sc.width, sc.height );
+	}
 
 	// TODO: async, multi-threaded, etc
 	static bool rescUploaded = 0;
 	if( !rescUploaded )
 	{
-		VkUploadResources( thisVFrame.cmdBuf );
+		VkUploadResources( thisVFrame.cmdBuff );
 		rescUploaded = 1;
 	
 		global_bdas bdas = {};
@@ -4561,10 +4644,10 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	static bool initBuffers = 0;
 	if( !initBuffers )
 	{
-		vkCmdFillBuffer( thisVFrame.cmdBuf, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
-		vkCmdFillBuffer( thisVFrame.cmdBuf, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
+		vkCmdFillBuffer( thisVFrame.cmdBuff, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
+		vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
 		// TODO: rename 
-		vkCmdFillBuffer( thisVFrame.cmdBuf, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
+		vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
 
 		VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
 			VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
@@ -4587,7 +4670,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		VkDependencyInfoKHR initBuffsDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
 		initBuffsDependency.bufferMemoryBarrierCount = std::size( initBuffersBarriers );
 		initBuffsDependency.pBufferMemoryBarriers = initBuffersBarriers;
-		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &initBuffsDependency );
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &initBuffsDependency );
 
 		initBuffers = 1;
 	}
@@ -4607,51 +4690,95 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	std::memcpy( thisVFrame.frameData.hostVisible, ( u8* )globs, sizeof( *globs ) );
 
-	VkImageMemoryBarrier2KHR beginFrameBarriers[] = {
-		VkMakeImageBarrier2(
-			rndCtx.colorTarget.hndl,
-			0, 0,
-			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			VK_IMAGE_ASPECT_COLOR_BIT ),
-		VkMakeImageBarrier2(
-			rndCtx.depthTarget.hndl,
-			0, 0,
-			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			VK_IMAGE_ASPECT_DEPTH_BIT )
-	};
-	VkDependencyInfoKHR begFrameDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	begFrameDependency.imageMemoryBarrierCount = std::size( beginFrameBarriers );
-	begFrameDependency.pImageMemoryBarriers = beginFrameBarriers;
-	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &begFrameDependency );
-
-	// Culling with past frame viz data 
-	// TODO: merge up to 256 meshes 
-	CullPass( thisVFrame.cmdBuf, rndCtx.compPipeline, drawcullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
-	// Depth prepass
-	// HiZ buffer
-
-
-
-	// NOTE: clear to 0 == BLACK and 0 == MAX_DEPTH ( inv depth )
 	VkClearValue clearVals[ 2 ] = {};
-	DrawIndexedIndirectPass( thisVFrame.cmdBuf,
-							 rndCtx.gfxPipeline,
-							 rndCtx.renderPass,
-							 rndCtx.offscreenFbo,
-							 drawCmdBuff,
-							 drawCountBuff.hndl,
-							 indexBuff.hndl,
-							 VK_INDEX_TYPE_UINT32,
-							 instDescBuff.size / sizeof( instance_desc ),
-							 clearVals,
-							 gfxOpaqueProgram );
+
+	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
+	XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
+	mat4 projView;
+	XMStoreFloat4x4A( &projView, xmProjView );
+
+	if( !freeCam )
+	{
+		//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
+		//						 gfxZPrepass,
+		//						 rndCtx.renderPass,
+		//						 rndCtx.offscreenFbo,
+		//						 drawCmdBuff,
+		//						 thisVFrame.frameData,
+		//						 drawCountBuff.hndl,
+		//						 indexBuff.hndl,
+		//						 VK_INDEX_TYPE_UINT32,
+		//						 instDescBuff.size / sizeof( instance_desc ),
+		//						 clearVals,
+		//						 zPrepassProgram,
+		//						 false );
+		
+		DrawIndirectIndexedMerged(
+			thisVFrame.cmdBuff,
+			gfxZPrepass,
+			rndCtx.renderPass,
+			rndCtx.offscreenFbo,
+			indirectMergedIndexBuff,
+			drawMergedCmd,
+			drawMergedCountBuff,
+			thisVFrame.frameData,
+			clearVals,
+			zPrepassProgram );
+
+		DebugDrawPass( thisVFrame.cmdBuff,
+					   vkDbgCtx.drawAsTriangles,
+					   rndCtx.render2ndPass,
+					   rndCtx.offscreenFbo,
+					   vkDbgCtx.dbgTrisBuff,
+					   vkDbgCtx.pipeProg,
+					   projView,
+					   { 0,boxTrisVertexCount } );
+		
+		DepthPyramidMultiPass(
+			thisVFrame.cmdBuff,
+			rndCtx.compHiZPipeline,
+			rndCtx.quadMinSampler,
+			rndCtx.depthPyramidChain,
+			rndCtx.depthTarget,
+			rndCtx.depthPyramid,
+			depthPyramidMultiProgram );
+		
+		
+		VkBufferMemoryBarrier2KHR clearDrawCountBarrier = VkMakeBufferBarrier2(
+			//drawCountBuff.hndl,
+			drawMergedCountBuff.hndl,
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR );
+		
+		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		dependency.bufferMemoryBarrierCount = 1;
+		dependency.pBufferMemoryBarriers = &clearDrawCountBarrier;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+
+		// TODO: merge up to 256 meshes 
+		CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
+	}
+
+	// Emit depth + HzB
+	
+	//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
+	//						 rndCtx.gfxPipeline,
+	//						 rndCtx.renderPass,
+	//						 rndCtx.offscreenFbo,
+	//						 drawCmdBuff,
+	//						 thisVFrame.frameData,
+	//						 drawCountBuff.hndl,
+	//						 indexBuff.hndl,
+	//						 VK_INDEX_TYPE_UINT32,
+	//						 instDescBuff.size / sizeof( instance_desc ),
+	//						 clearVals,
+	//						 gfxOpaqueProgram,
+	//						 true );
 
 	//DrawIndexedIndirectPass(
-	//	thisVFrame.cmdBuf,
+	//	thisVFrame.cmdBuff,
 	//	rndCtx.gfxMeshletPipeline,
 	//	rndCtx.renderPass,
 	//	rndCtx.offscreenFbo,
@@ -4663,23 +4790,22 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//	clearVals,
 	//	gfxMeshletProgram );
 
-	//DrawIndirectIndexedMerged(
-	//	thisVFrame.cmdBuf,
-	//	rndCtx.gfxMergedPipeline,
-	//	rndCtx.renderPass,
-	//	rndCtx.offscreenFbo,
-	//	indirectMergedIndexBuff,
-	//	drawMergedCmd,
-	//	drawMergedCountBuff,
-	//	clearVals,
-	//	gfxMergedProgram );
+	vkCmdBindDescriptorSets(
+		thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
-	
-	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
-	XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
-	mat4 projView;
-	XMStoreFloat4x4A( &projView, xmProjView );
-	DebugDrawPass( thisVFrame.cmdBuf,
+	DrawIndirectIndexedMerged(
+		thisVFrame.cmdBuff,
+		rndCtx.gfxMergedPipeline,
+		rndCtx.renderPass,
+		rndCtx.offscreenFbo,
+		indirectMergedIndexBuff,
+		drawMergedCmd,
+		drawMergedCountBuff,
+		thisVFrame.frameData,
+		clearVals,
+		gfxMergedProgram );
+
+	DebugDrawPass( thisVFrame.cmdBuff,
 				   vkDbgCtx.drawAsTriangles,
 				   rndCtx.render2ndPass,
 				   rndCtx.offscreenFbo,
@@ -4709,7 +4835,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		drawRange.size = ( freeCam && bvDraw ) ? std::size( dbgLineGeomCache ) : ( freeCam ? boxLineVertexCount : frustBoxOffset );
 
 
-		DebugDrawPass( thisVFrame.cmdBuf,
+		DebugDrawPass( thisVFrame.cmdBuff,
 					   vkDbgCtx.drawAsLines,
 					   rndCtx.render2ndPass,
 					   rndCtx.offscreenFbo,
@@ -4720,7 +4846,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 		if( bvDraw )
 		{
-			DrawIndirectPass( thisVFrame.cmdBuf,
+			DrawIndirectPass( thisVFrame.cmdBuff,
 							  gfxDrawIndirDbg,
 							  rndCtx.render2ndPass,
 							  rndCtx.offscreenFbo,
@@ -4733,7 +4859,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	}
 
 	DepthPyramidMultiPass(
-		thisVFrame.cmdBuf,
+		thisVFrame.cmdBuff,
 		rndCtx.compHiZPipeline,
 		rndCtx.quadMinSampler,
 		rndCtx.depthPyramidChain,
@@ -4742,29 +4868,11 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		depthPyramidMultiProgram );
 
 
-	VkImageMemoryBarrier2KHR hizBeginBarriers[] = {
-		VkMakeImageBarrier2(
-			rndCtx.depthPyramid.hndl,
-			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			0,
-			VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR,
-			VK_IMAGE_LAYOUT_GENERAL,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			VK_IMAGE_ASPECT_COLOR_BIT )
-	};
-
-	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	dependency.imageMemoryBarrierCount = std::size( hizBeginBarriers );
-	dependency.pImageMemoryBarriers = hizBeginBarriers;
-	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuf, &dependency );
-
-
 
 	u32 imgIdx;
 	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 
-	ToneMappingWithSrgb( thisVFrame.cmdBuf,
+	ToneMappingWithSrgb( thisVFrame.cmdBuff,
 						 rndCtx.compAvgLumPipe, 
 						 rndCtx.compTonemapPipe,
 						 avgLumCompProgram, 
@@ -4774,19 +4882,35 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 						 sc.imgViews[ imgIdx ],
 						 dt );
 	
-	VkImageMemoryBarrier presentBarrier = VkMakeImgBarrier( sc.imgs[ imgIdx ],
-															VK_ACCESS_SHADER_WRITE_BIT, 0,
-															VK_IMAGE_LAYOUT_GENERAL,
-															VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-															VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 );
-	
-	vkCmdPipelineBarrier( thisVFrame.cmdBuf,
-						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-						  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 
-						  VK_DEPENDENCY_BY_REGION_BIT, 0, 0, 0, 0, 1, 
-						  &presentBarrier );
+	VkImageMemoryBarrier2KHR hrdColTargetAcquire = VkMakeImageBarrier2(
+		rndCtx.colorTarget.hndl,
+		VK_ACCESS_2_SHADER_READ_BIT_KHR,
+		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+		0, 0,
+		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+		VK_IMAGE_ASPECT_COLOR_BIT );
 
-	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuf ) );
+	VkDependencyInfoKHR dependencyAcquire = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependencyAcquire.imageMemoryBarrierCount = 1;
+	dependencyAcquire.pImageMemoryBarriers = &hrdColTargetAcquire;
+	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependencyAcquire );
+
+	VkImageMemoryBarrier2KHR presentWaitBarrier = VkMakeImageBarrier2(
+		sc.imgs[ imgIdx ],
+		VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+		0, 0,
+		VK_IMAGE_LAYOUT_GENERAL,
+		VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		VK_IMAGE_ASPECT_COLOR_BIT );
+
+	VkDependencyInfoKHR dependencyPresent = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependencyPresent.imageMemoryBarrierCount = 1;
+	dependencyPresent.pImageMemoryBarriers = &presentWaitBarrier;
+	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependencyPresent );
+
+	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
 
 	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	submitInfo.waitSemaphoreCount = 1;
@@ -4794,7 +4918,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	submitInfo.pWaitDstStageMask = &waitDstStageMsk;
 	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &thisVFrame.cmdBuf;
+	submitInfo.pCommandBuffers = &thisVFrame.cmdBuff;
 	submitInfo.signalSemaphoreCount = 1;
 	submitInfo.pSignalSemaphores = &thisVFrame.canPresentSema;
 	// NOTE: queue submit has implicit host sync for trivial stuff

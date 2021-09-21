@@ -1,5 +1,9 @@
 #version 460
 
+#extension GL_KHR_shader_subgroup_basic: require
+#extension GL_KHR_shader_subgroup_arithmetic: require
+#extension GL_KHR_shader_subgroup_ballot: require
+#extension GL_KHR_shader_subgroup_vote: require
 
 #extension GL_GOOGLE_include_directive: require
 
@@ -48,22 +52,20 @@ layout( binding = 6 ) coherent buffer atomic_cnt{
 };
 
 
-const uint meshletsPerWorkgr = 8;
+const uint meshletsPerWorkgr = 32;
 
 shared uint idxBuffOffsetLDS = {};
 shared uint workgrAtomicCounterShared = {};
 
-// TODO: balace out meshlets sizes etc
-layout( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
+// TODO: increase size ?
+layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
 	uint workGrIdx = gl_WorkGroupID.x;
 	
-	// NOTE: inside workgr so we can order invocations
 	if( gl_LocalInvocationID.x == 0 )
 	{
 		uint perWorkgrCount = 0;
-		[[ unroll ]] 
 		for( uint mi = 0; mi < meshletsPerWorkgr; ++mi )
 		{
 			uint meshletIdx = workGrIdx * meshletsPerWorkgr + mi;
@@ -79,13 +81,18 @@ void main()
 
 	barrier();
 	memoryBarrier();
-	[[ unroll ]] 
 	for( uint mi = 0; mi < meshletsPerWorkgr; ++mi )
 	{
-		uint meshletIdx = workGrIdx * meshletsPerWorkgr + mi;
-	
+		uint meshletIdx;
+		if( subgroupElect() )
+		{
+			meshletIdx = workGrIdx * meshletsPerWorkgr + mi;
+		}
+		
+		meshletIdx = subgroupBroadcastFirst( meshletIdx );
+
 		if( meshletIdx >= visibleMeshletsCount ) break;
-	
+
 		uint16_t parentInstId = visibleMeshlets[ meshletIdx ].instId;
 		uint tirangleOffset = visibleMeshlets[ meshletIdx ].triOffset;
 		uint vertexOffset = visibleMeshlets[ meshletIdx ].vtxOffset;
@@ -93,8 +100,11 @@ void main()
 		
 		for( uint i = 0; i < thisIdxCount; i += gl_WorkGroupSize.x )
 		{
-			uint slotIdx = i + gl_LocalInvocationID.x;
-			// TODO: wavefront select ?
+			uint slotIdx = i + gl_LocalInvocationID.x; 
+
+			// TODO:
+			//bool execMask = subgroupAll( slotIdx < thisIdxCount );
+
 			if( slotIdx < thisIdxCount )
 			{
 				uint8_t tri = mlet_tri_ref( meshletTriAddr ).meshletTriangles[ tirangleOffset + slotIdx ];
@@ -105,8 +115,7 @@ void main()
 		
 		barrier();
 		groupMemoryBarrier();
-		if( gl_LocalInvocationID.x == 0 ) idxBuffOffsetLDS += thisIdxCount;
-		
+		if( gl_LocalInvocationID.x == 0 ) idxBuffOffsetLDS += thisIdxCount;	
 	}
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
