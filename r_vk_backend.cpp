@@ -2245,7 +2245,7 @@ static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
 }
 // TODO: memory stuff
 // TODO: constexpr special file
-static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& idxData, u64 numIters )
+static void GenerateIcosphere( std::vector<dbg_vertex>& vtxData, std::vector<u32>& idxData, u64 numIters )
 {
 	constexpr u64 ICOSAHEDRON_FACE_NUM = 20;
 	constexpr u64 ICOSAHEDRON_VTX_NUM = 12;
@@ -2349,47 +2349,25 @@ static void GenerateIcosphere( std::vector<vertex>& vtxData, std::vector<u32>& i
 		idxData = idxCache;
 	}
 
-	// TODO: 2 normals per vertex ? how ?
-	std::vector<vec3> normals( std::size( vtxCache ), vec3{} );
-
-	for( u64 t = 0; t < std::size( idxData ); t += 3 )
-	{
-		u32 i0 = idxData[ t ];
-		u32 i1 = idxData[ t + 1 ];
-		u32 i2 = idxData[ t + 2 ];
-
-		vec3 v0 = vtxCache[ i0 ];
-		vec3 v1 = vtxCache[ i1 ];
-		vec3 v2 = vtxCache[ i2 ];
-
-		DirectX::XMVECTOR common = DirectX::XMLoadFloat3( &v0 );
-		DirectX::XMVECTOR v10 = DirectX::XMVectorSubtract( DirectX::XMLoadFloat3( &v1 ), common );
-		DirectX::XMVECTOR v20 = DirectX::XMVectorSubtract( DirectX::XMLoadFloat3( &v2 ), common );
-		DirectX::XMVECTOR normal = DirectX::XMVector3Cross( v10, v20 );
-
-		DirectX::XMStoreFloat3( &normals[ i0 ],
-								DirectX::XMVector3Normalize( DirectX::XMVectorAdd( normal, DirectX::XMLoadFloat3( &normals[ i0 ] ) ) ) );
-		DirectX::XMStoreFloat3( &normals[ i1 ],
-								DirectX::XMVector3Normalize( DirectX::XMVectorAdd( normal, DirectX::XMLoadFloat3( &normals[ i1 ] ) ) ) );
-		DirectX::XMStoreFloat3( &normals[ i2 ],
-								DirectX::XMVector3Normalize( DirectX::XMVectorAdd( normal, DirectX::XMLoadFloat3( &normals[ i2 ] ) ) ) );
-	}
-
 	vtxData.resize( std::size( vtxCache ) );
+
+	vec4 col = {};
 
 	for( u64 i = 0; i < std::size( vtxCache ); ++i )
 	{
 		vtxData[ i ] = {};
-		vtxData[ i ].px = vtxCache[ i ].x;
-		vtxData[ i ].py = vtxCache[ i ].y;
-		vtxData[ i ].pz = vtxCache[ i ].z;
-		vec2 n = OctaNormalEncode( normals[ i ] );
-		vtxData[ i ].snorm8octNx = FloatToSnorm8( n.x );
-		vtxData[ i ].snorm8octNy = FloatToSnorm8( n.y );
+		vtxData[ i ].pos.x = vtxCache[ i ].x;
+		vtxData[ i ].pos.y = vtxCache[ i ].y;
+		vtxData[ i ].pos.z = vtxCache[ i ].z;
+		vtxData[ i ].pos.w = 1.0f;
+		vtxData[ i ].col = col;
+		
 	}
 }
-static void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
+static void GenerateBoxCube( std::vector<dbg_vertex>& vtx, std::vector<u32>& idx )
 {
+	using namespace DirectX;
+
 	constexpr float w = 0.5f;
 	constexpr float h = 0.5f;
 	constexpr float t = 0.5f;
@@ -2411,37 +2389,39 @@ static void GenerateBoxCube( std::vector<vertex>& vtx, std::vector<u32>& idx )
 	constexpr vec2 l = OctaNormalEncode( { -1,0,0 } );
 	constexpr vec2 r = OctaNormalEncode( { 1,0,0 } );
 
-	vertex vertices[] = {
+	constexpr XMFLOAT4 col = {};
+
+	dbg_vertex vertices[] = {
 		// Bottom
-		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
-		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
-		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
-		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( d.x ),FloatToSnorm8( d.y )},
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
 		// Left					
-		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
-		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
-		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
-		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( l.x ),FloatToSnorm8( l.y )},
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c4.x,c4.y,c4.z,1.0f}, col },
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
 		// Front				
-		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
-		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
-		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
-		{c0.x,c0.y,c0.z,		0,0,0,		FloatToSnorm8( f.x ),FloatToSnorm8( f.y )},
+		{ {c4.x,c4.y,c4.z,1.0f}, col },
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
 		// Back					
-		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
-		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
-		{c3.x,c3.y,c3.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
-		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( b.x ),FloatToSnorm8( b.y )},
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
 		// Right				
-		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
-		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
-		{c2.x,c2.y,c2.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
-		{c1.x,c1.y,c1.z,		0,0,0,		FloatToSnorm8( r.x ),FloatToSnorm8( r.y )},
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
 		// Top					
-		{c7.x,c7.y,c7.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
-		{c6.x,c6.y,c6.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
-		{c5.x,c5.y,c5.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
-		{c4.x,c4.y,c4.z,		0,0,0,		FloatToSnorm8( u.x ),FloatToSnorm8( u.y )},
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c4.x,c4.y,c4.z,1.0f}, col }
 	};
 
 	u32 indices[] = {
@@ -2492,14 +2472,14 @@ inline hndl32<T> Hndl32FromMagicAndIdx( u64 m, u64 i )
 // TODO: handled container
 // TODO: extract magicId from resources ?
 template<typename T>
-struct resource_container
+struct resource_vector
 {
 	std::vector<T> rsc;
 	u32 magicCounter;
 };
 
 template<typename T>
-inline const T& GetResourceFromHndl( hndl32<T> h, const resource_container<T>& buf )
+inline const T& GetResourceFromHndl( hndl32<T> h, const resource_vector<T>& buf )
 {
 	assert( std::size( buf ) );
 	assert( h );
@@ -2510,7 +2490,7 @@ inline const T& GetResourceFromHndl( hndl32<T> h, const resource_container<T>& b
 	return entry;
 }
 template<typename T>
-inline hndl32<T> PushResourceToContainer( T& rsc, resource_container<T>& buf )
+inline hndl32<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 {
 	u32 magicCounter = buf.magicCounter++;
 	rsc.magicId = magicCounter;
@@ -2520,7 +2500,7 @@ inline hndl32<T> PushResourceToContainer( T& rsc, resource_container<T>& buf )
 }
 
 
-static resource_container<image> textures;
+static resource_vector<image> textures;
 
 // TODO: recycle_queue
 // TODO: rethink
@@ -2662,7 +2642,7 @@ constexpr u64 boxLineVertexCount = 24u;
 constexpr u64 boxTrisVertexCount = 36u;
 /*
 // NOTE: corners are stored in this way:
-// NOTE: courtesy of Nabla - Devsh
+// NOTE: courtesy of Nabla
 //	   /3--------/7
 //	  / |       / |
 //	 /  |      /  |
@@ -4463,7 +4443,7 @@ ComputeSceneDebugBoundingBoxes(
 	return dbgGeom;
 }
 
-// TODO: batch barriers
+// TODO: pass cam data via push const
 void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 {
 	using namespace DirectX;
