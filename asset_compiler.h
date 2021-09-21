@@ -65,18 +65,6 @@ struct image_metadata
 	u8				layerCount = 1;
 };
 
-struct binary_mesh_desc
-{
-	//MESH_ATTRIBUTE_TYPE attributeType[ 6 ];
-	float	aabbMin[ 3 ];
-	float	aabbMax[ 3 ];
-	range	vtxRange;
-	range	lodRanges[ 4 ];
-	range	mletRanges[ 4 ];
-	u32		materialIndex;
-	u8		lodCount = 1;
-};
-
 struct drak_file_header
 {
 	char magik[ 4 ] = "DRK";

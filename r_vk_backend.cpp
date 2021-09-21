@@ -2874,11 +2874,13 @@ static buffer_data drawVisibilityBuff;
 
 static buffer_data drawMergedCmd;
 
+
 static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 {
 	using namespace DirectX;
 
 	std::vector<u8> binaryData;
+	// TODO: add renderable_instances
 	// TODO: extra checks and stuff ?
 	// TODO: add data offset and use that
 	// TODO: ensure SoA layout of data
@@ -2898,8 +2900,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 	const drak_file_desc& fileDesc = *(drak_file_desc*) ( std::data( binaryData ) + offset );
 	offset += sizeof( drak_file_desc );
 
-	const std::span<binary_mesh_desc> meshDesc = { (binary_mesh_desc*) ( std::data( binaryData ) + offset ),fileDesc.meshesCount };
-	offset += BYTE_COUNT( meshDesc );
+	const std::span<mesh_desc> meshes = { (mesh_desc*) ( std::data( binaryData ) + offset ),fileDesc.meshesCount };
+	offset += BYTE_COUNT( meshes );
 	// TODO: must manage ?
 	const std::span<material_data> mtrlDesc = { (material_data*) ( std::data( binaryData ) + offset ),fileDesc.mtrlsCount };
 	offset += BYTE_COUNT( mtrlDesc );
@@ -2914,40 +2916,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 		fileDesc.mletsRange.size / sizeof( meshlet ) };
 
 	assert( std::size( mletView ) < u16( -1 ) );
-
-	std::vector<mesh_desc> meshes;
-	// TODO: must make mesh and binary_mesh_desc the same
-	for( const binary_mesh_desc& m : meshDesc )
-	{
-		meshes.push_back( {} );
-		mesh_desc& out = meshes[ std::size( meshes ) - 1 ];
-		out.vertexCount = m.vtxRange.size;
-		out.vertexOffset = m.vtxRange.offset;
-
-		assert( m.lodCount <= u8( -1 ) );
-		out.lodCount = m.lodCount;
-		for( u64 i = 0; i < m.lodCount; ++i )
-		{
-			out.lods[ i ].indexCount = m.lodRanges[ i ].size;
-			out.lods[ i ].indexOffset = m.lodRanges[ i ].offset;
-			out.lods[ i ].meshletCount = m.mletRanges[ i ].size;
-			out.lods[ i ].meshletOffset = m.mletRanges[ i ].offset;
-		}
-
-		//out.aabbMin = *( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
-		//out.aabbMax = *( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
-
-		{
-			XMVECTOR xmm0 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
-			XMVECTOR xmm1 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
-			XMVECTOR center = XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f );
-			XMVECTOR extent = XMVectorAbs( XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
-			XMStoreFloat3( &out.center, center );
-			XMStoreFloat3( &out.extent, extent );
-			XMStoreFloat3( &out.aabbMin, XMVectorAdd( center, extent ) );
-			XMStoreFloat3( &out.aabbMax, XMVectorSubtract( center, extent ) );
-		}
-	}
 
 	assert( std::size( textures.rsc ) == 0 );
 	std::vector<material_data> mtrls = {};
@@ -2986,6 +2954,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 			entities.meshletAabbs.push_back( BoxMinMaxFromCenterExtent( XMLoadFloat3( &mlet.center ), XMLoadFloat3( &mlet.extent ) ) );
 		}
 	}
+
+
 
 	// NOTE: upload buffers
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;

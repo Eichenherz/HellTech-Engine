@@ -485,12 +485,9 @@ inline u64 MeshoptReindexMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan
 	u64		idxCount = std::size( idxSpan );
 
 	std::vector<u32> remap( vtxCount );
-	u64 newVtxCount = meshopt_generateVertexRemap( std::data( remap ),
-												   indices,
-												   idxCount,
-												   vertices,
-												   vtxCount,
-												   sizeof( vertices[ 0 ] ) );
+	u64 newVtxCount = meshopt_generateVertexRemap( 
+		std::data( remap ), indices, idxCount, vertices, vtxCount, sizeof( vertices[ 0 ] ) );
+
 	assert( newVtxCount <= vtxCount );
 	if( newVtxCount == vtxCount ) return newVtxCount;
 
@@ -499,41 +496,28 @@ inline u64 MeshoptReindexMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan
 	return newVtxCount;
 }
 
-struct meshlets_data
-{
-	std::vector<meshlet> meshlets;
-	std::vector<u32> vtxIndirBuf;
-	std::vector<u8> triangleBuf;
-};
-// NOTE: fuck C++ constness thing
-// TODO: store outputs
-// TODO: rewrite meshopt_computeMeshletBounds to output aabbs ?
+constexpr u64 MAX_VERTICES = 128;
+constexpr u64 MAX_TRIANGLES = 256;
+constexpr float CONE_WEIGHT = 0.8f;
+// TODO: fuck C++ constness thing
+// TODO: data offseting for more meshes
 static void MeshoptMakeMeshlets(
-	const std::vector<vertex>&	vertices,
+	const std::span<vertex>	    vtxSpan,
 	const std::vector<u32>&		lodIndices,
-	binary_mesh_desc&			meshDesc,
+	const std::vector<range>&   lods,
 	std::vector<meshlet>&		mletsDesc,
 	std::vector<u32>&			vtxIndirBuf,
-	std::vector<u8>&			triangleBuf
+	std::vector<u8>&			triangleBuf,
+	std::vector<range>&         outMeshletLods
 ){
 	using namespace DirectX;
-
-
-	constexpr u64 MAX_VERTICES = 128;
-	constexpr u64 MAX_TRIANGLES = 256;
-	constexpr float CONE_WEIGHT = 0.8f;
-
 	
 	std::vector<meshopt_Meshlet> meshlets;
 	std::vector<u32> meshletVertices;
 	std::vector<u8> meshletTriangles;
 
-	const std::span<vertex> vtxSpan = { 
-		const_cast<vertex*>( std::data( vertices ) ) + meshDesc.vtxRange.offset,meshDesc.vtxRange.size };
-
-	for( u64 li = 0; li < meshDesc.lodCount; ++li )
+	for( range lodRange : lods )
 	{
-		const range& lodRange = meshDesc.lodRanges[ li ];
 		const std::span<u32> lodIdx = { const_cast<u32*>( std::data( lodIndices ) ) + lodRange.offset,lodRange.size };
 
 		u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( lodIdx ), MAX_VERTICES, MAX_TRIANGLES );
@@ -553,7 +537,7 @@ static void MeshoptMakeMeshlets(
 		meshletTriangles.resize( last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
 
 		u64 mletOffset = std::size( mletsDesc );
-		meshDesc.mletRanges[ li ] = { mletOffset,meshletCount };
+		outMeshletLods.push_back( { mletOffset,meshletCount } );
 
 		for( u64 mi = 0; mi < std::size( meshlets ); ++mi )
 		{
@@ -609,158 +593,121 @@ inline void MeshoptOptimizeMesh( std::span<vertex> vtxSpan, std::span<u32> idxSp
 	meshopt_optimizeVertexFetch( vertices, indices, idxCount, vertices, vtxCount, sizeof( vertices[ 0 ] ) );
 }
 
-// TODO: no indicesOffset
+constexpr u64 lodMaxCount = 4;
+// TODO: indicesOut offset ?
 inline u64 MeshoptMakeMeshLods(
 	const std::span<vertex> verticesView,
 	const std::span<u32>	indicesView,
-	u64						indicesOutOffset,
 	u32*					indicesOut,
-	std::vector<mesh_lod>&	outMeshLods
+	std::vector<range>&	    meshLods
 ){
 	constexpr float ERROR_THRESHOLD = 1e-2f;
 	constexpr float reductionFactor = 0.85f;
 
-	std::vector<mesh_lod> meshLods( std::size( outMeshLods ) );
-	meshLods[ 0 ].indexCount = std::size( indicesView );
-	meshLods[ 0 ].indexOffset = indicesOutOffset;
+	assert( meshLods[ 0 ].size );
 
+	u64 totalIndexCount = 0;
 	u64 meshLodsCount = 1;
 	for( ; meshLodsCount < std::size( meshLods ); ++meshLodsCount )
 	{
-		const mesh_lod& prevLod = meshLods[ meshLodsCount - 1 ];
-		const u32* prevIndices = indicesOut + prevLod.indexOffset;
-		u32 nextIndicesOffset = prevLod.indexOffset + prevLod.indexCount;
+		const range& prevLod = meshLods[ meshLodsCount - 1 ];
+		const u32* prevIndices = indicesOut + prevLod.offset;
+		u32 nextIndicesOffset = prevLod.offset + prevLod.size;
 		u32* nextIndices = indicesOut + nextIndicesOffset;
 
 		u64 nextIndicesCount = meshopt_simplify( nextIndices,
 												 prevIndices,
-												 prevLod.indexCount,
+												 prevLod.size,
 												 &verticesView[ 0 ].px,
 												 std::size( verticesView ),
 												 sizeof( verticesView[ 0 ] ),
-												 float( prevLod.indexCount ) * reductionFactor,
+												 float( prevLod.size ) * reductionFactor,
 												 ERROR_THRESHOLD );
 
-		assert( nextIndicesCount <= prevLod.indexCount );
+		assert( nextIndicesCount <= prevLod.size );
 
 		meshopt_optimizeVertexCache( nextIndices, nextIndices, nextIndicesCount, std::size( verticesView ) );
 		// NOTE: reached the error bound
-		if( nextIndicesCount == prevLod.indexCount ) break;
+		if( nextIndicesCount == prevLod.size ) break;
 
-		meshLods[ meshLodsCount ].indexCount = nextIndicesCount;
-		meshLods[ meshLodsCount ].indexOffset = nextIndicesOffset;
+		meshLods[ meshLodsCount ].size = nextIndicesCount;
+		meshLods[ meshLodsCount ].offset = nextIndicesOffset;
+
+		totalIndexCount += nextIndicesCount;
 	}
 
 	meshLods.resize( meshLodsCount );
-	u64 totalIndexCount = 0;
-	for( const mesh_lod& l : meshLods ) totalIndexCount += l.indexCount;
-
-	outMeshLods = std::move( meshLods );
+	
 	return totalIndexCount;
 }
+
 // TODO: world handedness
-// TODO: remove mtlIndex from vertex
 // TODO: use u16 idx
 // TODO: quantize pos + uvs
 // TODO: revisit index offsets and stuff
-static void AssembleMeshAndOptimize(
-	const std::vector<float>&			attrStreams,
-	const std::vector<imported_mesh>&	rawMeshes,
-	const std::vector<u32>&				importedIndices,
-	std::vector<vertex>&				vertices,
-	std::vector<u32>&					indices,
-	std::vector<binary_mesh_desc>&		meshDescs
+// TODO: expose mem ops ?
+static std::pair<range, range> AssembleAndOptimizeMesh(
+	const std::vector<float>& attrStreams,
+	const std::vector<u32>&   importedIndices,
+	const imported_mesh&      rawMesh,
+	std::vector<vertex>&      vertices,
+	std::vector<u32>&         indices
 ){
-	meshDescs.reserve( std::size( rawMeshes ) );
+	u64 vtxAttrCount = rawMesh.posStreamRange.size / 3;
+	u64 vtxOffset = std::size( vertices );
+	vertices.resize( vtxOffset + vtxAttrCount );
 
-	for( const imported_mesh& m : rawMeshes )
+	vertex* firstVertex = &vertices[ vtxOffset ];
+	for( u64 i = 0; i < vtxAttrCount; ++i )
 	{
-		// NOTE: assemble
-		assert( ( ( ( m.posStreamRange.size / 3 ) == ( m.normalStreamRange.size / 3 ) ) ==
-				  ( ( m.tanStreamRange.size / 3 ) == ( m.uvsStreamRange.size / 2 ) ) ) );
+		const float* posStream = std::data( attrStreams ) + rawMesh.posStreamRange.offset;
 
-		u64 vtxAttrCount = m.posStreamRange.size / 3;
-		u64 vtxOffset = std::size( vertices );
-		vertices.resize( vtxOffset + vtxAttrCount );
-
-		vertex* firstVertex = &vertices[ vtxOffset ];
-		for( u64 i = 0; i < vtxAttrCount; ++i )
-		{
-			const float* posStream = std::data( attrStreams ) + m.posStreamRange.offset;
-
-			firstVertex[ i ].px = -posStream[ i * 3 + 0 ];
-			firstVertex[ i ].py = posStream[ i * 3 + 1 ];
-			firstVertex[ i ].pz = posStream[ i * 3 + 2 ];
-		}
-		for( u64 i = 0; i < vtxAttrCount; ++i )
-		{
-			const float* normalStream = std::data( attrStreams ) + m.normalStreamRange.offset;
-			const float* tanStream = std::data( attrStreams ) + m.tanStreamRange.offset;
-
-			float nx = -normalStream[ i * 3 + 0 ];
-			float ny = normalStream[ i * 3 + 1 ];
-			float nz = normalStream[ i * 3 + 2 ];
-			float tx = tanStream[ i * 3 + 0 ];
-			float ty = tanStream[ i * 3 + 1 ];
-			float tz = tanStream[ i * 3 + 2 ];
-
-			vec2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
-			float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
-
-			firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
-			firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
-			firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
-		}
-		for( u64 i = 0; i < vtxAttrCount; ++i )
-		{
-			const float* uvsStream = std::data( attrStreams ) + m.uvsStreamRange.offset;
-
-			firstVertex[ i ].tu = uvsStream[ i * 2 + 0 ];
-			firstVertex[ i ].tv = uvsStream[ i * 2 + 1 ];
-		}
-
-		assert( sizeof( importedIndices[ 0 ] ) == sizeof( indices[ 0 ] ) );
-		constexpr u64 lodMaxCount = 4;
-		u64 idxOffset = std::size( indices );
-		indices.resize( idxOffset + m.idxRange.size * lodMaxCount );
-
-		for( u64 i = 0; i < m.idxRange.size; ++i )
-		{
-			indices[ idxOffset + i ] = importedIndices[ m.idxRange.offset + i ] + vtxOffset;
-		}
-		
-		// NOTE: optimize and lod
-		u64 newVtxCount = MeshoptReindexMesh( { std::data( vertices ) + vtxOffset,vtxAttrCount },
-											  { std::data( indices ) + idxOffset, m.idxRange.size } );
-		//vertices.resize( vtxOffset + newVtxCount );
-		MeshoptOptimizeMesh( { firstVertex,vtxAttrCount }, { std::data( indices ) + idxOffset, m.idxRange.size } );
-
-		std::vector<mesh_lod> meshLods( lodMaxCount );
-		u64 totalIndexCount = MeshoptMakeMeshLods( 
-			{ std::data( vertices ) + vtxOffset,vtxAttrCount },
-			{ std::data( indices ) + m.idxRange.offset, m.idxRange.size },
-			idxOffset,
-			std::data( indices ),
-			meshLods );
-		indices.resize( idxOffset + totalIndexCount );
-
-		meshDescs.push_back( {} );
-		binary_mesh_desc& mesh = meshDescs[ std::size( meshDescs ) - 1 ];
-		mesh.vtxRange = { vtxOffset, u32( std::size( vertices ) - vtxOffset ) };
-		mesh.lodCount = std::size( meshLods );
-		for( u64 l = 0; l < std::size( meshLods ); ++l )
-		{
-			mesh.lodRanges[ l ].offset = meshLods[ l ].indexOffset;
-			mesh.lodRanges[ l ].size = meshLods[ l ].indexCount;
-		}
-		mesh.aabbMin[ 0 ] = -m.aabbMin[ 0 ];
-		mesh.aabbMin[ 1 ] = m.aabbMin[ 1 ];
-		mesh.aabbMin[ 2 ] = m.aabbMin[ 2 ];
-		mesh.aabbMax[ 0 ] = -m.aabbMax[ 0 ];
-		mesh.aabbMax[ 1 ] = m.aabbMax[ 1 ];
-		mesh.aabbMax[ 2 ] = m.aabbMax[ 2 ];
-		mesh.materialIndex = m.mtlIdx;
+		firstVertex[ i ].px = -posStream[ i * 3 + 0 ];
+		firstVertex[ i ].py = posStream[ i * 3 + 1 ];
+		firstVertex[ i ].pz = posStream[ i * 3 + 2 ];
 	}
+	for( u64 i = 0; i < vtxAttrCount; ++i )
+	{
+		const float* normalStream = std::data( attrStreams ) + rawMesh.normalStreamRange.offset;
+		const float* tanStream = std::data( attrStreams ) + rawMesh.tanStreamRange.offset;
+
+		float nx = -normalStream[ i * 3 + 0 ];
+		float ny = normalStream[ i * 3 + 1 ];
+		float nz = normalStream[ i * 3 + 2 ];
+		float tx = tanStream[ i * 3 + 0 ];
+		float ty = tanStream[ i * 3 + 1 ];
+		float tz = tanStream[ i * 3 + 2 ];
+
+		DirectX::XMFLOAT2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
+		float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
+
+		firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
+		firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
+		firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
+	}
+	for( u64 i = 0; i < vtxAttrCount; ++i )
+	{
+		const float* uvsStream = std::data( attrStreams ) + rawMesh.uvsStreamRange.offset;
+
+		firstVertex[ i ].tu = uvsStream[ i * 2 + 0 ];
+		firstVertex[ i ].tv = uvsStream[ i * 2 + 1 ];
+	}
+
+	u64 idxOffset = std::size( indices );
+	indices.resize( idxOffset + rawMesh.idxRange.size * lodMaxCount );
+
+	for( u64 i = 0; i < rawMesh.idxRange.size; ++i )
+	{
+		indices[ idxOffset + i ] = importedIndices[ rawMesh.idxRange.offset + i ] + vtxOffset;
+	}
+
+	// NOTE: optimize and lod
+	u64 newVtxCount = MeshoptReindexMesh( { std::data( vertices ) + vtxOffset,vtxAttrCount },
+										  { std::data( indices ) + idxOffset, rawMesh.idxRange.size } );
+	vertices.resize( vtxOffset + newVtxCount );
+	MeshoptOptimizeMesh( { firstVertex,vtxAttrCount }, { std::data( indices ) + idxOffset, rawMesh.idxRange.size } );
+
+	return{ { vtxOffset, u32( std::size( vertices ) - vtxOffset ) }, { idxOffset, rawMesh.idxRange.size } };
 }
 
 // TODO: distinction between element range and byte range
@@ -771,6 +718,8 @@ void CompileGlbAssetToBinary(
 	const std::vector<u8>&	glbData, 
 	std::vector<u8>&		drakAsset
 ){
+	using namespace DirectX;
+
 	std::vector<float>				meshAttrs;
 	std::vector<u32>				rawIndices;
 	std::vector<imported_mesh>		rawMeshDescs;
@@ -778,7 +727,7 @@ void CompileGlbAssetToBinary(
 	std::vector<vertex>				vertices;
 	std::vector<u32>				indices;
 	std::vector<u8>					texBin;
-	std::vector<binary_mesh_desc>	meshDescs;
+	std::vector<mesh_desc>	        meshDescs;
 	std::vector<material_data>		mtrlDescs;
 	std::vector<image_metadata>		imgDescs;
 
@@ -787,11 +736,70 @@ void CompileGlbAssetToBinary(
 	std::vector<u8>					mletsTris;
 
 	LoadGlbFile( glbData, meshAttrs, rawIndices, texBin, imgDescs, mtrlDescs, rawMeshDescs );
-	AssembleMeshAndOptimize( meshAttrs, rawMeshDescs, rawIndices, vertices, indices, meshDescs );
-	for( binary_mesh_desc& m : meshDescs )
+
+	meshDescs.reserve( std::size( rawMeshDescs ) );
+	// TODO: expose lod loop ?
+	for( const imported_mesh& m : rawMeshDescs )
 	{
-		MeshoptMakeMeshlets( vertices, indices, m, mlets, mletsVtx, mletsTris );
+		{
+			u32 posAttrCount = m.posStreamRange.size / 3;
+			u32 normalAttrCount = m.normalStreamRange.size / 3;
+			u32 tanAttrCount = m.tanStreamRange.size / 3;
+			u32 uvsAttrCount = m.uvsStreamRange.size / 2;
+			assert( ( posAttrCount == normalAttrCount ) &&
+					( posAttrCount == tanAttrCount ) &&
+					( posAttrCount == uvsAttrCount ) );
+
+			assert( sizeof( rawIndices[ 0 ] ) == sizeof( indices[ 0 ] ) );
+		}
+
+		auto[ vtxRange, idxRange ] = AssembleAndOptimizeMesh( meshAttrs, rawIndices, m, vertices, indices );
+
+		std::vector<range> idxLods( lodMaxCount );
+		idxLods[ 0 ] = idxRange;
+		u64 totalIndexCount = MeshoptMakeMeshLods(
+			{ std::data( vertices ) + vtxRange.offset,vtxRange.size }, { std::data( indices ) + idxRange.offset, idxRange.size },
+			std::data( indices ),
+			idxLods );
+		indices.resize( idxRange.offset + totalIndexCount );
+
+		const std::span<vertex> vtxSpan = { std::data( vertices ) + vtxRange.offset,vtxRange.size };
+		std::vector<range> meshletLods;
+		MeshoptMakeMeshlets( vtxSpan, indices, idxLods, mlets, mletsVtx, mletsTris, meshletLods );
+
+		assert( std::size( idxLods ) == std::size( meshletLods ) );
+
+		meshDescs.push_back( {} );
+
+		mesh_desc& meshOut = meshDescs[ std::size( meshDescs ) - 1 ];
+		meshOut.vertexCount = vtxRange.size;
+		meshOut.vertexOffset = vtxRange.offset;
+		meshOut.lodCount = std::size( idxLods );
+		for( u64 l = 0; l < std::size( idxLods ); ++l )
+		{
+			meshOut.lods[ l ].indexCount = idxLods[ l ].size;
+			meshOut.lods[ l ].indexOffset = idxLods[ l ].offset;
+			meshOut.lods[ l ].meshletCount = meshletLods[ l ].size;
+			meshOut.lods[ l ].meshletOffset = meshletLods[ l ].offset;
+		}
+
+		meshOut.aabbMin = { -m.aabbMin[ 0 ], m.aabbMin[ 1 ], m.aabbMin[ 2 ] };
+		meshOut.aabbMax = { -m.aabbMax[ 0 ], m.aabbMax[ 1 ], m.aabbMax[ 2 ] };
+		
+		{
+			XMVECTOR xmm0 = XMLoadFloat3( &meshOut.aabbMin );
+			XMVECTOR xmm1 = XMLoadFloat3( &meshOut.aabbMax );
+			XMVECTOR center = XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f );
+			XMVECTOR extent = XMVectorAbs( XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
+			XMStoreFloat3( &meshOut.center, center );
+			XMStoreFloat3( &meshOut.extent, extent );
+			//XMStoreFloat3( &out.aabbMin, XMVectorAdd( center, extent ) );
+			//XMStoreFloat3( &out.aabbMax, XMVectorSubtract( center, extent ) );
+		}
+
+		//meshOut.materialIndex = rawMesh.mtlIdx;
 	}
+
 
 	u64 descOffset = sizeof( drak_file_header ) + sizeof( drak_file_desc );
 	u64 totalFileDescSize = BYTE_COUNT( meshDescs ) + BYTE_COUNT( mtrlDescs ) + BYTE_COUNT( imgDescs );
