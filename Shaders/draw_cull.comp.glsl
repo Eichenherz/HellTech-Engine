@@ -113,21 +113,21 @@ void main()
 
 		vec3 boxSize = boxMax - boxMin;
  		
-		vec4 clipCorners[] = { 
-			mvp * vec4( boxMin, 1.0f ),
-			mvp * vec4( boxMin + vec3( boxSize.x, 0, 0 ), 1.0f ),
-			mvp * vec4( boxMin + vec3( 0, boxSize.y, 0 ), 1.0f ),
-			mvp * vec4( boxMin + vec3( 0, 0, boxSize.z ), 1.0f ),
-			mvp * vec4( boxMin + vec3( boxSize.xy, 0 ), 1.0f ),
-			mvp * vec4( boxMin + vec3( 0, boxSize.yz ), 1.0f ),
-			mvp * vec4( boxMin + vec3( boxSize.x, 0, boxSize.z ), 1.0f ),
-			mvp * vec4( boxMin + boxSize, 1.0f ) };
-
-		[[ unroll ]]
-		for( uint i = 0; i < 8; ++i )
-		{
-			//debugPrintfEXT( "ClipPos = %v4f", clipCorners[ i ] );
-		}
+		//vec4 clipCorners[] = { 
+		//	mvp * vec4( boxMin, 1.0f ),
+		//	mvp * vec4( boxMin + vec3( boxSize.x, 0, 0 ), 1.0f ),
+		//	mvp * vec4( boxMin + vec3( 0, boxSize.y, 0 ), 1.0f ),
+		//	mvp * vec4( boxMin + vec3( 0, 0, boxSize.z ), 1.0f ),
+		//	mvp * vec4( boxMin + vec3( boxSize.xy, 0 ), 1.0f ),
+		//	mvp * vec4( boxMin + vec3( 0, boxSize.yz ), 1.0f ),
+		//	mvp * vec4( boxMin + vec3( boxSize.x, 0, boxSize.z ), 1.0f ),
+		//	mvp * vec4( boxMin + boxSize, 1.0f ) };
+		//
+		//[[ unroll ]]
+		//for( uint i = 0; i < 8; ++i )
+		//{
+		//	debugPrintfEXT( "ClipPos = %v4f", clipCorners[ i ] );
+		//}
 
 		mat4 trsMvp = transpose( cam.proj * cam.mainView * currentInst.localToWorld );
 		vec4 xPlanePos = trsMvp[ 3 ] + trsMvp[ 0 ];
@@ -144,15 +144,15 @@ void main()
 		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
 
 
-		float xMin = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
-		float yMin = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
-		float xMax = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
-		float yMax = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
-
-		float xMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
-		float yMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
-		float xMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
-		float yMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
+		//float xMin = dot( mix( boxMax, boxMin, lessThan( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
+		//float yMin = dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
+		//float xMax = dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
+		//float yMax = dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
+		//
+		//float xMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlanePos.xyz, vec3( 0.0f ) ) ), xPlanePos.xyz ) + xPlanePos.w;
+		//float yMinNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) + yPlanePos.w;
+		//float xMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) + xPlaneNeg.w;
+		//float yMaxNbl = dot( mix( boxMax, boxMin, greaterThanEqual( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) + yPlaneNeg.w;
 
 		//debugPrintfEXT( "xMin = %f", xMin );
 		//debugPrintfEXT( "yMin = %f", yMin );
@@ -241,6 +241,8 @@ void main()
 
 	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
 
+	barrier();
+	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
