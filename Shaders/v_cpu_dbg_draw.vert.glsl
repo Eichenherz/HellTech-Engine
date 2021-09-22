@@ -15,7 +15,6 @@ layout( binding = 0 ) readonly buffer dbg_vtx_buff{
 };
 
 layout( location = 0 ) out vec3 oCol;
-
 void main()
 {
 	dbg_vertex v = dbgGeomBuff[ gl_VertexIndex ];

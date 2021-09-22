@@ -76,7 +76,7 @@ void main()
 		meshlet thisMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
 
 		vec3 center = thisMeshlet.center;
-		vec3 extent = abs( thisMeshlet.extent );
+		vec3 extent = thisMeshlet.extent;
 		
 		vec3 boxMin = center - extent;
 		vec3 boxMax = center + extent;
