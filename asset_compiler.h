@@ -4,7 +4,6 @@
 
 // TODO: remove these includes
 #include <vector>
-#include "r_data_structs.h"
 
 
 enum texture_format : u8
@@ -63,18 +62,6 @@ struct image_metadata
 	texture_type	type;
 	u8				mipCount = 1;
 	u8				layerCount = 1;
-};
-
-struct binary_mesh_desc
-{
-	//MESH_ATTRIBUTE_TYPE attributeType[ 6 ];
-	float	aabbMin[ 3 ];
-	float	aabbMax[ 3 ];
-	range	vtxRange;
-	range	lodRanges[ 4 ];
-	range	mletRanges[ 4 ];
-	u32		materialIndex;
-	u8		lodCount = 1;
 };
 
 struct drak_file_header

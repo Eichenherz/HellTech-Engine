@@ -1559,6 +1559,7 @@ struct group_size
 	u32 z;
 };
 
+// TODO: don't need to keep desc set layout after initing stuff ?
 // TODO: vk_shader_program ?
 // TODO: put shader module inside ?
 struct vk_program
@@ -2568,13 +2569,10 @@ struct box_bounds
 	DirectX::XMFLOAT3 max;
 };
 
-// TODO: better inst to meshlet mapping
 struct entities_data
 {
 	std::vector<DirectX::XMFLOAT4X4A> transforms;
 	std::vector<box_bounds> instAabbs;
-	std::vector<box_bounds> meshletAabbs;
-	std::vector<range> instToMeshletRange;
 };
 
 // TODO: use instancing 4 drawing ?
@@ -2599,8 +2597,8 @@ static inline debug_context VkInitDebugCtx(
 ){
 	debug_context dbgCtx = {};
 
-	vk_shader vert = VkLoadShader( "Shaders/box_debug.vert.spv", vkDevice );
-	vk_shader frag = VkLoadShader( "Shaders/normal_col.frag.spv", vkDevice );
+	vk_shader vert = VkLoadShader( "Shaders/v_cpu_dbg_draw.vert.spv", vkDevice );
+	vk_shader frag = VkLoadShader( "Shaders/f_pass_col.frag.spv", vkDevice );
 
 	dbgCtx.pipeProg = VkMakePipelineProgram( vkDevice, gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vert, &frag } );
 
@@ -2699,37 +2697,115 @@ TrnasformBoxVertices(
 	}
 }
 
+// TODO: draw them filled ? 
+// TODO: rethink ?
 
+// TODO: remove ?
+inline void WriteBoundingBoxLines(
+	const DirectX::XMFLOAT4X4A& mat, 
+	const DirectX::XMFLOAT3& min, 
+	const DirectX::XMFLOAT3& max,
+	const DirectX::XMFLOAT4& col,
+	dbg_vertex* thisLineRange
+){
+	using namespace DirectX;
+
+	XMFLOAT4 boxVertices[ 8 ] = {};
+	TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), min, max, boxVertices );
+
+	for( u64 ii = 0; ii < boxLineVertexCount; ++ii )
+	{
+		thisLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
+	}
+}
+
+inline std::vector<dbg_vertex>
+ComputeSceneDebugBoundingBoxes(
+	DirectX::XMMATRIX frustDrawMat,
+	const entities_data& entities
+){
+	using namespace DirectX;
+
+	assert( std::size( entities.instAabbs ) == std::size( entities.transforms ) );
+	assert( boxLineVertexCount == std::size( boxLineIndices ) );
+
+	u64 entitiesCount = std::size( entities.transforms );
+	std::vector<dbg_vertex> dbgGeom;
+	// NOTE: + boxLineVertexCount for frustum
+	dbgGeom.resize( entitiesCount * boxLineVertexCount + boxLineVertexCount );
+
+	for( u64 i = 0; i < entitiesCount; ++i )
+	{
+		const box_bounds& aabb = entities.instAabbs[ i ];
+		const XMFLOAT4X4A& mat = entities.transforms[ i ];
+
+		XMFLOAT4 boxVertices[ 8 ] = {};
+		TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
+
+		dbg_vertex* boxLineRange = std::data( dbgGeom ) + i * boxLineVertexCount;
+		constexpr XMFLOAT4 col = { 255.0f,255.0f,0.0f,1.0f };
+		for( u64 ii = 0; ii < boxLineVertexCount; ++ii )
+		{
+			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
+		}
+	}
+
+	u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
+
+	XMFLOAT4 boxVertices[ 8 ] = {};
+	TrnasformBoxVertices( frustDrawMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
+
+	dbg_vertex* boxLineRange = std::data( dbgGeom ) + frustBoxOffset;
+	constexpr XMFLOAT4 frustCol = { 0.0f, 255.0f, 255.0f, 1.0f };
+	for( u64 i = 0; i < boxLineVertexCount; ++i )
+	{
+		boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],frustCol };
+	}
+
+	return dbgGeom;
+}
+
+
+static entities_data entities;
 static std::vector<dbg_vertex> dbgLineGeomCache;
 
 static buffer_data screenspaceBoxBuff;
+
+static buffer_data globVertexBuff;
+// TODO: use indirect merged index buffer
+static buffer_data indexBuff;
+static buffer_data meshBuff;
+
+static buffer_data meshletBuff;
+// TODO: store u8x4 vtx in here ?
+static buffer_data meshletVtxBuff;
+static buffer_data meshletTrisBuff;
+
+// TODO:
+static buffer_data transformsBuff;
+
+static buffer_data materialsBuff;
+static buffer_data instDescBuff;
+static buffer_data lightsBuff;
+
+static buffer_data indirectMergedIndexBuff;
+
+static buffer_data visibleInstsBuff;
+static buffer_data meshletIdBuff;
+static buffer_data visibleMeshletsBuff;
+
+static buffer_data drawCmdBuff;
+static buffer_data drawCmdAabbsBuff;
+static buffer_data drawCmdDbgBuff;
+static buffer_data drawVisibilityBuff;
+
+static buffer_data drawMergedCmd;
 
 
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
 //constexpr char glbPath[] = "D:\\3d models\\WaterBottle.glb";
 //constexpr char drakPath[] = "Assets/WaterBottle.drak";
-
-static entities_data entities;
-// TODO: revisit remake improve
-// TODO: staging clean up
-// TODO: re make offsets, ranges, etc
-
-inline box_bounds XM_CALLCONV BoxMinMaxFromCenterExtent( DirectX::XMVECTOR center, DirectX::XMVECTOR extent )
-{
-	using namespace DirectX;
-
-	XMVECTOR boxMin = XMVectorAdd( center, extent );
-	XMVECTOR boxMax = XMVectorSubtract( center, extent );
-	
-	box_bounds box = {};
-
-	XMStoreFloat3( &box.min, boxMin );
-	XMStoreFloat3( &box.max, boxMax );
-
-	return box;
-}
-
 constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
 // TODO: remove ?
 inline static std::vector<instance_desc>
@@ -2737,7 +2813,6 @@ SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrl
 {
 	using namespace DirectX;
 
-	assert( mtrlCount == 1 );
 	std::vector<instance_desc> insts( drawCount );
 	float scale = 1.0f;
 	for( instance_desc& i : insts )
@@ -2771,66 +2846,8 @@ SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrl
 
 	return insts;
 }
-
-inline static void
-SpawnRandomInstances(
-	const std::span<mesh_desc> meshes,
-	u64 drawCount,
-	u64 mtrlCount,
-	float sceneRadius,
-	std::vector<instance_desc>& instsOut,
-	std::vector<mat4>& transfsOut
-){
-	using namespace DirectX;
-
-	assert( mtrlCount == 1 );
-
-	std::vector<instance_desc> insts( drawCount );
-	std::vector<mat4> transfs( drawCount );
-
-	float scale = 1.0f;
-	for( u64 ii = 0; ii < drawCount; ++ii )
-	{
-		instance_desc& i = insts[ ii ];
-		mat4& t = transfs[ ii ];
-
-		i.transfIdx = ii;
-		i.meshIdx = rand() % std::size( meshes );
-		i.mtrlIdx = 0;
-		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-
-		XMVECTOR axis = XMVector3Normalize(
-			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 0 ) );
-		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
-
-		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
-		XMVECTOR quat = XMQuaternionIdentity();
-		XMStoreFloat4( &i.rot, quat );
-
-		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
-		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
-		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
-
-		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
-
-		XMStoreFloat4x4A( &i.localToWorld, localToWorld );
-		XMStoreFloat4x4A( &t, localToWorld );
-	}
-
-	instsOut = std::move( insts );
-	transfsOut = std::move( transfs );
-}
-
 inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float sceneRadius )
 {
-	constexpr bool drawLightDbgSphere = 0;
-
 	std::vector<light_data> lights( lightCount );
 	for( light_data& l : lights )
 	{
@@ -2843,42 +2860,12 @@ inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float s
 
 	return lights;
 }
-
-static buffer_data globVertexBuff;
-// TODO: use indirect merged index buffer
-static buffer_data indexBuff;
-static buffer_data meshBuff;
-
-static buffer_data meshletBuff;
-// TODO: store u8x4 vtx in here ?
-static buffer_data meshletVtxBuff;
-static buffer_data meshletTrisBuff;
-
-// TODO:
-static buffer_data transformsBuff;
-
-static buffer_data materialsBuff;
-static buffer_data instDescBuff;
-static buffer_data lightsBuff;
-
-static buffer_data indirectMergedIndexBuff;
-
-static buffer_data visibleInstsBuff;
-static buffer_data meshletIdBuff;
-static buffer_data visibleMeshletsBuff;
-
-static buffer_data drawCmdBuff;
-static buffer_data drawCmdAabbsBuff;
-static buffer_data drawCmdDbgBuff;
-static buffer_data drawVisibilityBuff;
-
-static buffer_data drawMergedCmd;
-
-static inline void VkUploadResources( VkCommandBuffer cmdBuff )
+// TODO: staging clean up
+// TODO: re make offsets, ranges, etc
+static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& entities )
 {
-	using namespace DirectX;
-
 	std::vector<u8> binaryData;
+	// TODO: add renderable_instances
 	// TODO: extra checks and stuff ?
 	// TODO: add data offset and use that
 	// TODO: ensure SoA layout of data
@@ -2898,9 +2885,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 	const drak_file_desc& fileDesc = *(drak_file_desc*) ( std::data( binaryData ) + offset );
 	offset += sizeof( drak_file_desc );
 
-	const std::span<binary_mesh_desc> meshDesc = { (binary_mesh_desc*) ( std::data( binaryData ) + offset ),fileDesc.meshesCount };
-	offset += BYTE_COUNT( meshDesc );
-	// TODO: must manage ?
+	const std::span<mesh_desc> meshes = { (mesh_desc*) ( std::data( binaryData ) + offset ),fileDesc.meshesCount };
+	offset += BYTE_COUNT( meshes );
 	const std::span<material_data> mtrlDesc = { (material_data*) ( std::data( binaryData ) + offset ),fileDesc.mtrlsCount };
 	offset += BYTE_COUNT( mtrlDesc );
 	const std::span<image_metadata> imgDesc = { (image_metadata*) ( std::data( binaryData ) + offset ),fileDesc.texCount };
@@ -2914,40 +2900,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 		fileDesc.mletsRange.size / sizeof( meshlet ) };
 
 	assert( std::size( mletView ) < u16( -1 ) );
-
-	std::vector<mesh_desc> meshes;
-	// TODO: must make mesh and binary_mesh_desc the same
-	for( const binary_mesh_desc& m : meshDesc )
-	{
-		meshes.push_back( {} );
-		mesh_desc& out = meshes[ std::size( meshes ) - 1 ];
-		out.vertexCount = m.vtxRange.size;
-		out.vertexOffset = m.vtxRange.offset;
-
-		assert( m.lodCount <= u8( -1 ) );
-		out.lodCount = m.lodCount;
-		for( u64 i = 0; i < m.lodCount; ++i )
-		{
-			out.lods[ i ].indexCount = m.lodRanges[ i ].size;
-			out.lods[ i ].indexOffset = m.lodRanges[ i ].offset;
-			out.lods[ i ].meshletCount = m.mletRanges[ i ].size;
-			out.lods[ i ].meshletOffset = m.mletRanges[ i ].offset;
-		}
-
-		//out.aabbMin = *( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
-		//out.aabbMax = *( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
-
-		{
-			XMVECTOR xmm0 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMin[ 0 ] );
-			XMVECTOR xmm1 = XMLoadFloat3( (const XMFLOAT3*) &m.aabbMax[ 0 ] );
-			XMVECTOR center = XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f );
-			XMVECTOR extent = XMVectorAbs( XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
-			XMStoreFloat3( &out.center, center );
-			XMStoreFloat3( &out.extent, extent );
-			XMStoreFloat3( &out.aabbMin, XMVectorAdd( center, extent ) );
-			XMStoreFloat3( &out.aabbMax, XMVectorSubtract( center, extent ) );
-		}
-	}
 
 	assert( std::size( textures.rsc ) == 0 );
 	std::vector<material_data> mtrls = {};
@@ -2966,26 +2918,21 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
 
+	assert( std::size( mtrls ) == 1 );
 	std::vector<instance_desc> instDesc = SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRad );
 	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad );
 
 	assert( std::size( instDesc ) < u16( -1 ) );
 
-	// TODO: improve
+
 	for( const instance_desc& ii : instDesc )
 	{
 		const mesh_desc& m = meshes[ ii.meshIdx ];
 		entities.transforms.push_back( ii.localToWorld );
-		entities.instAabbs.push_back( BoxMinMaxFromCenterExtent( XMLoadFloat3( &m.center ), XMLoadFloat3( &m.extent ) ) );
-		entities.instToMeshletRange.push_back( { m.lods[ 0 ].meshletOffset, m.lods[ 0 ].meshletCount } );
-
-		const range mletRange = entities.instToMeshletRange.back();
-		for( u64 mi = 0; mi < mletRange.size; ++mi )
-		{
-			const meshlet& mlet = mletView[ mletRange.offset + mi ];
-			entities.meshletAabbs.push_back( BoxMinMaxFromCenterExtent( XMLoadFloat3( &mlet.center ), XMLoadFloat3( &mlet.extent ) ) );
-		}
+		entities.instAabbs.push_back( { m.aabbMin, m.aabbMax } );
 	}
+
+
 
 	// NOTE: upload buffers
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
@@ -3059,7 +3006,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff )
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			//VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ) );
 			VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ) );
 	}
 	{
@@ -3392,7 +3338,7 @@ void VkBackendInit()
 	}
 	{
 		vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", dc.device );
-		vk_shader normalCol = VkLoadShader( "Shaders/normal_col.frag.spv", dc.device );
+		vk_shader normalCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
 
 		vk_gfx_pipeline_state lineDrawPipelineState = {};
 		lineDrawPipelineState.blendCol = VK_FALSE;
@@ -3462,7 +3408,7 @@ void VkBackendInit()
 	}
 	{
 		vk_shader vertMeshlet = VkLoadShader( "Shaders/meshlet.vert.spv", dc.device );
-		vk_shader fragCol = VkLoadShader( "Shaders/normal_col.frag.spv", dc.device );
+		vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
 		vk_gfx_pipeline_state meshletState = {};
 		gfxMeshletProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertMeshlet, &fragCol } );
 		rndCtx.gfxMeshletPipeline = VkMakeGfxPipeline( 
@@ -4364,84 +4310,6 @@ DebugDrawPass(
 	vkCmdEndRenderPass( cmdBuff );
 }
 
-// TODO: rethink ?
-inline std::vector<dbg_vertex> 
-ComputeSceneDebugBoundingBoxes( 
-	DirectX::XMMATRIX frustDrawMat,
-	const entities_data& entities
-){
-	using namespace DirectX;
-
-	assert( ( std::size( entities.instAabbs ) == std::size( entities.transforms ) ) && 
-			( std::size( entities.instAabbs ) == std::size( entities.instToMeshletRange ) ) );
-
-	u64 entitiesCount = std::size( entities.transforms );
-	u64 meshletsCount = std::size( entities.meshletAabbs );
-	std::vector<dbg_vertex> dbgGeom;
-	//dbgGeom.resize( ( entitiesCount + meshletsCount ) * boxLineVertexCount + boxLineVertexCount );
-	dbgGeom.resize( entitiesCount * boxLineVertexCount + boxLineVertexCount );
-
-	
-	for( u64 i = 0; i < entitiesCount; ++i )
-	{
-		const box_bounds& aabb = entities.instAabbs[ i ];
-		const XMFLOAT4X4A& mat = entities.transforms[ i ];
-
-		XMFLOAT4 boxVertices[ 8 ] = {};
-		constexpr XMFLOAT4 col = { 255.0f,255.0f,0.0f,1.0f };
-		TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
-
-		std::span<dbg_vertex> boxLineRange = { std::data( dbgGeom ) + i * boxLineVertexCount, boxLineVertexCount };
-		assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
-		for( u64 ii = 0; ii < std::size( boxLineRange ); ++ii )
-		{
-			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
-		}
-	}
-	
-	//u64 meshletsOffset = entitiesCount * boxLineVertexCount;
-	//
-	//for( u64 i = 0; i < entitiesCount; ++i )
-	//{
-	//	const XMFLOAT4X4A& mat = entities.transforms[ i ];
-	//	const range& mletRange = entities.instToMeshletRange[ i ];
-	//
-	//	constexpr XMFLOAT4 col = { 255.0f,0.0f,0.0f,1.0f };
-	//
-	//	for( u64 mi = 0; mi < mletRange.size; ++mi )
-	//	{
-	//		const box_bounds& aabb = entities.meshletAabbs[ mi + mletRange.offset ];
-	//
-	//		XMFLOAT4 boxVertices[ 8 ] = {};
-	//		TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
-	//
-	//		std::span<dbg_vertex> boxLineRange = { 
-	//			std::data( dbgGeom ) + meshletsOffset + mi * boxLineVertexCount, boxLineVertexCount };
-	//
-	//		assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
-	//		for( u64 ii = 0; ii < std::size( boxLineRange ); ++ii )
-	//		{
-	//			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
-	//		}
-	//	}
-	//}
-
-	// TODO: write frustum
-	//u64 frustBoxOffset = ( std::size( entities.instAabbs ) + std::size( entities.meshletAabbs ) ) * boxLineVertexCount;
-	u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
-
-	XMFLOAT4 boxVertices[ 8 ] = {};
-	TrnasformBoxVertices( frustDrawMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
-
-	std::span<dbg_vertex> boxLineRange = { std::data( dbgGeom ) + frustBoxOffset,boxLineVertexCount };
-	assert( std::size( boxLineRange ) == std::size( boxLineIndices ) );
-	for( u64 i = 0; i < std::size( boxLineRange ); ++i )
-	{
-		boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],{ 0.0f, 255.0f, 255.0f, 1.0f } };
-	}
-
-	return dbgGeom;
-}
 
 // TODO: pass cam data via push const
 void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
@@ -4559,7 +4427,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	static bool rescUploaded = 0;
 	if( !rescUploaded )
 	{
-		VkUploadResources( thisVFrame.cmdBuff );
+		VkUploadResources( thisVFrame.cmdBuff, entities );
 		rescUploaded = 1;
 	
 		global_bdas bdas = {};
@@ -4757,6 +4625,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		dependency.pBufferMemoryBarriers = &clearDrawCountBarrier;
 		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
 
+		// TODO: Aaltonen double draw ? ( not double culling )
 		// TODO: merge up to 256 meshes 
 		CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
 	}

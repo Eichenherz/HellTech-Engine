@@ -101,7 +101,7 @@ void main()
 		mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
 		
 		vec3 center = currentMesh.center;
-		vec3 extent = abs( currentMesh.extent );
+		vec3 extent = currentMesh.extent;
 		
 		vec3 boxMin = center - extent;
 		vec3 boxMax = center + extent;
