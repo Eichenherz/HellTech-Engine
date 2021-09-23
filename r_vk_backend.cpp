@@ -275,11 +275,13 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
-	VkPhysicalDeviceSubgroupProperties waveProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES };
+	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT };
+	VkPhysicalDeviceSubgroupProperties waveProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
 	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
 
-
+	
 	VkPhysicalDeviceIndexTypeUint8FeaturesEXT uint8IdxFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT };
 	VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR zeroInitWorkgrMemFeatures =
@@ -1283,78 +1285,6 @@ struct render_context
 	u8				framesInFlight = VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 };
 
-// TODO: make general ?
-inline static VkRenderPass
-VkMakeRenderPass(
-	VkDevice	vkDevice,
-	bool        clearColor,
-	bool        clearDepth,
-	u32         colorTargetSlot,
-	u32         depthTargetSlot,
-	VkFormat	colorFormat,
-	VkFormat	depthFormat
-){
-	VkAttachmentReference colorAttachement = { colorTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
-	VkAttachmentReference depthAttachement = { depthTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
-
-	VkSubpassDescription subpassDescr = {};
-	subpassDescr.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-	subpassDescr.colorAttachmentCount = 1;
-	subpassDescr.pColorAttachments = &colorAttachement;
-	subpassDescr.pDepthStencilAttachment = &depthAttachement;
-
-	VkAttachmentDescription attachmentDescriptions[ 2 ] = {};
-	attachmentDescriptions[ 0 ].format = colorFormat;
-	attachmentDescriptions[ 0 ].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachmentDescriptions[ 0 ].loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-	attachmentDescriptions[ 0 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	attachmentDescriptions[ 0 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-	attachmentDescriptions[ 0 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-
-	attachmentDescriptions[ 1 ].format = depthFormat;
-	attachmentDescriptions[ 1 ].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachmentDescriptions[ 1 ].loadOp = clearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-	attachmentDescriptions[ 1 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	attachmentDescriptions[ 1 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	attachmentDescriptions[ 1 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attachmentDescriptions[ 1 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-	attachmentDescriptions[ 1 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-
-	VkRenderPassCreateInfo renderPassInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
-	renderPassInfo.attachmentCount = std::size( attachmentDescriptions );
-	renderPassInfo.pAttachments = attachmentDescriptions;
-	renderPassInfo.subpassCount = 1;
-	renderPassInfo.pSubpasses = &subpassDescr;
-
-	VkRenderPass rndPass;
-	VK_CHECK( vkCreateRenderPass( vkDevice, &renderPassInfo, 0, &rndPass ) );
-	return rndPass;
-}
-
-inline static VkFramebuffer
-VkMakeFramebuffer(
-	VkDevice		vkDevice,
-	VkRenderPass	vkRndPass,
-	VkImageView*	attachements,
-	u32				attachementCount,
-	u32				width,
-	u32				height
-){
-	VkFramebufferCreateInfo fboInfo = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
-	fboInfo.renderPass = vkRndPass;
-	fboInfo.attachmentCount = attachementCount;
-	fboInfo.pAttachments = attachements;
-	fboInfo.width = width;
-	fboInfo.height = height;
-	fboInfo.layers = 1;
-
-	VkFramebuffer fbo;
-	VK_CHECK( vkCreateFramebuffer( vkDevice, &fboInfo, 0, &fbo ) );
-	return fbo;
-}
-
 static render_context rndCtx;
 
 
@@ -1565,6 +1495,7 @@ struct vk_program
 	VkPipelineLayout			pipeLayout;
 	VkDescriptorUpdateTemplate	descUpdateTemplate;
 	VkShaderStageFlags			pushConstStages;
+	VkDescriptorSetLayout       descSetLayout;
 	group_size					groupSize;
 };
 
@@ -1855,8 +1786,9 @@ vk_program VkMakePipelineProgram(
 		VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &program.descUpdateTemplate ) );
 	}
 	
-	vkDestroyDescriptorSetLayout( vkDevice, descSetLayout, 0 );
+	//vkDestroyDescriptorSetLayout( vkDevice, descSetLayout, 0 );
 
+	program.descSetLayout = descSetLayout;
 	program.pushConstStages = std::size( pushConstRanges ) ? pushConstRanges[ 0 ].stageFlags : 0;
 	program.groupSize = gs;
 
@@ -1893,9 +1825,11 @@ struct vk_gfx_pipeline_state
 	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT;
 	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	float               extraPrimitiveOverestimationSize = 0.0f;
 	bool				blendCol = colorBlending;
-	bool				depthWrite = VK_TRUE;
-	bool				depthTestEnable = VK_TRUE;
+	bool				depthWrite = true;
+	bool				depthTestEnable = true;
+	bool                conservativeRasterEnable = false;
 };
 // TODO: shader stages more general
 // TODO: specialization for gfx ?
@@ -1935,16 +1869,20 @@ VkPipeline VkMakeGfxPipeline(
 	dynamicStateInfo.dynamicStateCount = std::size( dynamicStates );
 	dynamicStateInfo.pDynamicStates = dynamicStates;
 
+	// TODO: place inside if ?
+	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState =
+	{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT };
+	conservativeRasterState.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
+	conservativeRasterState.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize;
+	
 	VkPipelineRasterizationStateCreateInfo rasterInfo = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+	rasterInfo.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0;
 	rasterInfo.depthClampEnable = 0;
 	rasterInfo.rasterizerDiscardEnable = 0;
 	rasterInfo.polygonMode = pipelineState.polyMode;
 	rasterInfo.cullMode = pipelineState.cullFlags;
 	rasterInfo.frontFace = pipelineState.frontFace;
 	rasterInfo.lineWidth = 1.0f;
-
-	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
 	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
 	depthStencilState.depthTestEnable = pipelineState.depthTestEnable;
@@ -1970,6 +1908,9 @@ VkPipeline VkMakeGfxPipeline(
 	colorBlendStateInfo.attachmentCount = 1;
 	colorBlendStateInfo.pAttachments = &blendConfig;
 
+	// TODO: only if we use frag
+	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
 	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 	pipelineInfo.stageCount = shaderStagesCount;// std::size( shaderStagesInfo );
@@ -2024,6 +1965,89 @@ VkPipeline VkMakeComputePipeline(
 	return pipeline;
 }
 
+// TODO: make general ?
+inline static VkRenderPass
+VkMakeRenderPass(
+	VkDevice	vkDevice,
+	bool        clearColor,
+	bool        clearDepth,
+	u32         colorTargetSlot,
+	u32         depthTargetSlot,
+	VkFormat	colorFormat,
+	VkFormat	depthFormat
+){
+	VkAttachmentReference colorAttachement = { colorTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
+	VkAttachmentReference depthAttachement = { depthTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
+
+	VkSubpassDescription subpassDescr = {};
+	subpassDescr.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+	subpassDescr.colorAttachmentCount = 1;
+	subpassDescr.pColorAttachments = &colorAttachement;
+	subpassDescr.pDepthStencilAttachment = &depthAttachement;
+
+	VkAttachmentDescription attachmentDescriptions[ 2 ] = {};
+	attachmentDescriptions[ 0 ].format = colorFormat;
+	attachmentDescriptions[ 0 ].samples = VK_SAMPLE_COUNT_1_BIT;
+	attachmentDescriptions[ 0 ].loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+	attachmentDescriptions[ 0 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	attachmentDescriptions[ 0 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	attachmentDescriptions[ 0 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	attachmentDescriptions[ 0 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+	attachmentDescriptions[ 0 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+
+	attachmentDescriptions[ 1 ].format = depthFormat;
+	attachmentDescriptions[ 1 ].samples = VK_SAMPLE_COUNT_1_BIT;
+	attachmentDescriptions[ 1 ].loadOp = clearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+	attachmentDescriptions[ 1 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	attachmentDescriptions[ 1 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	attachmentDescriptions[ 1 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	attachmentDescriptions[ 1 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+	attachmentDescriptions[ 1 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+
+	VkRenderPassCreateInfo renderPassInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+	renderPassInfo.attachmentCount = std::size( attachmentDescriptions );
+	renderPassInfo.pAttachments = attachmentDescriptions;
+	renderPassInfo.subpassCount = 1;
+	renderPassInfo.pSubpasses = &subpassDescr;
+
+	VkRenderPass rndPass;
+	VK_CHECK( vkCreateRenderPass( vkDevice, &renderPassInfo, 0, &rndPass ) );
+	return rndPass;
+}
+
+inline static VkFramebuffer
+VkMakeFramebuffer(
+	VkDevice		vkDevice,
+	VkRenderPass	vkRndPass,
+	VkImageView* attachements,
+	u32				attachementCount,
+	u32				width,
+	u32				height
+){
+	VkFramebufferCreateInfo fboInfo = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+	fboInfo.renderPass = vkRndPass;
+	fboInfo.attachmentCount = attachementCount;
+	fboInfo.pAttachments = attachements;
+	fboInfo.width = width;
+	fboInfo.height = height;
+	fboInfo.layers = 1;
+
+	VkFramebuffer fbo;
+	VK_CHECK( vkCreateFramebuffer( vkDevice, &fboInfo, 0, &fbo ) );
+	return fbo;
+}
+
+// TODO: rename to program 
+// TODO: what about push descriptors ?
+// TODO: what about descriptors ?
+// TODO: what about spec consts
+struct vk_pipeline
+{
+	VkPipeline prog;
+	VkPipelineLayout layout;
+	// TODO: store push consts data ?
+};
+
 
 // TODO: stretchy buffer ?
 // TODO: remove std::stuff ?
@@ -2031,8 +2055,6 @@ VkPipeline VkMakeComputePipeline(
 //static vector<std::function<void()>> deviceGlobalDeletionQueue;
 
 //#define VK_APPEND_DESTROYER( VkObjectDestroyerLambda ) deviceGlobalDeletionQueue.push_back( [=](){ VkObjectDestroyer; } )
-
-
 
 
 #include "r_data_structs.h"
@@ -3301,6 +3323,9 @@ static VkPipeline   gfxDrawIndirDbg = {};
 static vk_program   zPrepassProgram = {};
 static VkPipeline   gfxZPrepass = {};
 static VkRenderPass zRndPass = {};
+
+
+static vk_pipeline  lighCullProgam = {};
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3326,7 +3351,7 @@ void VkBackendInit()
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 
 		vk_gfx_pipeline_state zPrepass = {};
-
+		zPrepass.conservativeRasterEnable = true;
 		zPrepassProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertZPre } );
 		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, zRndPass, zPrepassProgram.pipeLayout, vertZPre.module, 0, zPrepass );
 
@@ -3438,10 +3463,31 @@ void VkBackendInit()
 
 		vkDestroyShaderModule( dc.device, downsampler.module, 0 );
 	}
-	{
-		vk_shader lightCullVtx = VkLoadShader( "Shaders/v_light_cull.vert.spv", dc.device );
-		vk_shader lightCullFrag = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
 
+	{
+		std::vector<u8> vtxSpv = SysReadFile( "Shaders/v_light_cull.vert.spv" );
+		std::vector<u8> fragSpv = SysReadFile( "Shaders/f_pass_col.frag.spv" );
+		
+		VkShaderModule vtx = VkMakeShaderModule( dc.device, ( const u32* ) std::data( vtxSpv ), std::size( vtxSpv ) );
+		VkShaderModule frag = VkMakeShaderModule( dc.device, ( const u32* ) std::data( fragSpv ), std::size( fragSpv ) );
+
+		VkPipelineLayout layout = {};
+
+		VkPushConstantRange pushConstRange = {};
+		pushConstRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		pushConstRange.size = sizeof( mat4 ) + 2 * sizeof( u64 );
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+		pipelineLayoutInfo.pushConstantRangeCount = 1;
+		pipelineLayoutInfo.pPushConstantRanges = &pushConstRange;
+		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipelineLayoutInfo, 0, &layout ) );
+
+		vk_gfx_pipeline_state state = { .blendCol = false, .depthWrite = false };
+
+		VkPipeline pipeline = 0;// VkMakeGfxPipeline( dc.device, 0, 0, layout, vtx, frag, state );
+
+		vk_pipeline program = { pipeline, layout };
+
+		lighCullProgam = program;
 	}
 
 
