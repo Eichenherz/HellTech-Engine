@@ -1531,7 +1531,6 @@ extern HINSTANCE hInst;
 extern HWND hWnd;
 
 
-
 // TODO: tewak ? make own ?
 // TODO: provide with own allocators
 #define WIN32
@@ -1540,13 +1539,12 @@ extern HWND hWnd;
 // TODO: variable entry point
 constexpr char SHADER_ENTRY_POINT[] = "main";
 
+// TODO: rethink 
 // TODO: cache shader ?
 struct vk_shader
 {
 	VkShaderModule	module;
 	std::vector<u8>	spvByteCode;
-	// TODO: use this ? or keep hardcoded in MakePipeline func
-	//VkShaderStageFlagBits	stage;
 	u64				timestamp;
 	char			entryPointName[ 32 ];
 };
@@ -1559,13 +1557,12 @@ struct group_size
 	u32 z;
 };
 
-// TODO: don't need to keep desc set layout after initing stuff ?
+// TODO: should make obsolete
 // TODO: vk_shader_program ?
 // TODO: put shader module inside ?
 struct vk_program
 {
 	VkPipelineLayout			pipeLayout;
-	VkDescriptorSetLayout		descSetLayout;
 	VkDescriptorUpdateTemplate	descUpdateTemplate;
 	VkShaderStageFlags			pushConstStages;
 	group_size					groupSize;
@@ -1581,14 +1578,10 @@ struct vk_descriptor_info
 
 	vk_descriptor_info() = default;
 	
-	vk_descriptor_info( VkBuffer buff, u64 offset, u64 range ) 
-		: buff{ buff, offset, range }{}
-	vk_descriptor_info( VkDescriptorBufferInfo buffInfo ) 
-		: buff{ buffInfo }{}
-	vk_descriptor_info( VkSampler sampler, VkImageView view, VkImageLayout imgLayout ) 
-		: img{ sampler, view, imgLayout }{}
-	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) 
-		: img{ imgInfo }{}
+	vk_descriptor_info( VkBuffer buff, u64 offset, u64 range ) : buff{ buff, offset, range }{}
+	vk_descriptor_info( VkDescriptorBufferInfo buffInfo ) : buff{ buffInfo }{}
+	vk_descriptor_info( VkSampler sampler, VkImageView view, VkImageLayout imgLayout ) : img{ sampler, view, imgLayout }{}
+	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo }{}
 };
 
 enum vk_global_descriptor_slot : u8
@@ -1732,8 +1725,6 @@ inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice 
 	return shader;
 }
 
-// TODO: rewrite the whole shader pipe system
-// TODO: rewrite 
 inline static void VkReflectShaderLayout(
 	const VkPhysicalDeviceProperties&			gpuProps,
 	const std::vector<u8>&						spvByteCode,
@@ -1817,23 +1808,18 @@ vk_program VkMakePipelineProgram(
 	
 	for( vk_shader* s : shaders )
 	{
-		VkReflectShaderLayout( gpuProps,
-							   s->spvByteCode,
-							   bindings,
-							   pushConstRanges,
-							   gs,
-							   s->entryPointName,
-							   std::size( s->entryPointName ) );
+		VkReflectShaderLayout( 
+			gpuProps, s->spvByteCode, bindings, pushConstRanges, gs, s->entryPointName, std::size( s->entryPointName ) );
 	}
 		
-
+	VkDescriptorSetLayout descSetLayout = {};
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
 	descSetLayoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
 	descSetLayoutInfo.bindingCount = std::size( bindings );
 	descSetLayoutInfo.pBindings = std::data( bindings );
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &program.descSetLayout ) );
+	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &descSetLayout ) );
 
-	VkDescriptorSetLayout setLayouts[] = { program.descSetLayout, bindlessLayout };
+	VkDescriptorSetLayout setLayouts[] = { descSetLayout, bindlessLayout };
 
 	VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
 	pipeLayoutInfo.setLayoutCount = std::size( setLayouts );
@@ -1862,13 +1848,15 @@ vk_program VkMakePipelineProgram(
 		templateInfo.descriptorUpdateEntryCount = std::size( entries );
 		templateInfo.pDescriptorUpdateEntries = std::data( entries );
 		templateInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
-		templateInfo.descriptorSetLayout = program.descSetLayout;
+		templateInfo.descriptorSetLayout = descSetLayout;
 		templateInfo.pipelineBindPoint = bindPoint;
 		templateInfo.pipelineLayout = program.pipeLayout;
 		templateInfo.set = 0;
 		VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &program.descUpdateTemplate ) );
 	}
 	
+	vkDestroyDescriptorSetLayout( vkDevice, descSetLayout, 0 );
+
 	program.pushConstStages = std::size( pushConstRanges ) ? pushConstRanges[ 0 ].stageFlags : 0;
 	program.groupSize = gs;
 
@@ -1877,13 +1865,7 @@ vk_program VkMakePipelineProgram(
 
 // TODO: 
 inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
-{
-	vkDestroyDescriptorUpdateTemplate( vkDevice, program->descUpdateTemplate, 0 );
-	vkDestroyPipelineLayout( vkDevice, program->pipeLayout, 0 );
-	vkDestroyDescriptorSetLayout( vkDevice, program->descSetLayout, 0 );
-
-	*program = {};
-}
+{}
 
 inline static VkSpecializationInfo
 VkMakeSpecializationInfo(
@@ -2044,7 +2026,7 @@ VkPipeline VkMakeComputePipeline(
 
 
 // TODO: stretchy buffer ?
-// TODO: remove std::stuff
+// TODO: remove std::stuff ?
 //#include <functional>
 //static vector<std::function<void()>> deviceGlobalDeletionQueue;
 
@@ -2159,6 +2141,7 @@ VkMakeImageInfo(
 
 	return imgInfo;
 }
+
 inline VkImageCreateInfo VkGetImageInfoFromMetadata( const image_metadata& meta, VkImageUsageFlags usageFlags )
 {
 	VkImageCreateInfo imgInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -2174,34 +2157,6 @@ inline VkImageCreateInfo VkGetImageInfoFromMetadata( const image_metadata& meta,
 	imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
 	return imgInfo;
-}
-
-// TODO: remove duplicates ?
-constexpr float SignNonZero( float e )
-{
-	return ( e >= 0.0f ) ? 1.0f : -1.0f;
-}
-constexpr float ConstexprFabs( float n )
-{
-	return ( n >= 0.0f ) ? n : -n;
-}
-constexpr vec2 OctaNormalEncode( vec3 n )
-{
-	// NOTE: Project the sphere onto the octahedron, and then onto the xy plane
-	float absLen = ConstexprFabs( n.x ) + ConstexprFabs( n.y ) + ConstexprFabs( n.z );
-	float absNorm = ( absLen == 0.0f ) ? 0.0f : 1.0f / absLen;
-	float nx = n.x * absNorm;
-	float ny = n.y * absNorm;
-
-	// NOTE: Reflect the folds of the lower hemisphere over the diagonals
-	float octaX = ( n.z < 0.f ) ? ( 1.0f - ConstexprFabs( ny ) ) * SignNonZero( nx ) : nx;
-	float octaY = ( n.z < 0.f ) ? ( 1.0f - ConstexprFabs( nx ) ) * SignNonZero( ny ) : ny;
-
-	return { octaX, octaY };
-}
-inline u8 FloatToSnorm8( float e )
-{
-	return std::round( 127.5f + e * 127.5f );
 }
 
 
@@ -2562,13 +2517,6 @@ static void GenerateBoxCube( std::vector<dbg_vertex>& vtx, std::vector<u32>& idx
 	vec3 c6 = { -w,-h, t };
 	vec3 c7 = { w,-h, t };
 
-	constexpr vec2 u = OctaNormalEncode( { 0,1,0 } );
-	constexpr vec2 d = OctaNormalEncode( { 0,-1,0 } );
-	constexpr vec2 f = OctaNormalEncode( { 0,0,1 } );
-	constexpr vec2 b = OctaNormalEncode( { 0,0,-1 } );
-	constexpr vec2 l = OctaNormalEncode( { -1,0,0 } );
-	constexpr vec2 r = OctaNormalEncode( { 1,0,0 } );
-
 	constexpr XMFLOAT4 col = {};
 
 	dbg_vertex vertices[] = {
@@ -2923,13 +2871,25 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 	std::vector<DirectX::XMFLOAT3> proxyVtx;
 	std::vector<u32> proxyIdx;
-	GenerateIcosphere( proxyVtx, proxyIdx, 8 );
+	GenerateIcosphere( proxyVtx, proxyIdx, 3 );
 	// TODO: stupid templates
-	u64 uniqueVtxCount = MeshoptReindexMesh( 
-		std::span<DirectX::XMFLOAT3>{ proxyVtx }, { std::begin( proxyIdx ),std::end( proxyIdx ) } );
+	u64 uniqueVtxCount = MeshoptReindexMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
 	proxyVtx.resize( uniqueVtxCount );
-	MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, { std::begin( proxyIdx ),std::end( proxyIdx ) } );
+	MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
 
+	assert( std::size( lights ) < u16( -1 ) );
+	assert( std::size( proxyVtx ) < u16( -1 ) );
+	// NOTE: becaue there's only one type of light
+	u64 initialSize = std::size( proxyIdx );
+	proxyIdx.resize( initialSize * std::size( lights ) );
+	for( u64 li = 0; li < std::size( lights ); ++li )
+	{
+		u64 idxBuffOffset = initialSize * li;
+		for( u64 ii = 0; ii < initialSize; ++ii )
+		{
+			proxyIdx[ idxBuffOffset + ii ] = u32( proxyIdx[ ii ] & u16( -1 ) ) | ( u32( li ) << 16 );
+		}
+	}
 
 	// TODO: make easier to use 
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
@@ -3356,12 +3316,12 @@ void VkBackendInit()
 
 	rndCtx.renderPass = VkMakeRenderPass( dc.device, 1, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
 	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 0, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
-	//zRndPass = VkMakeRenderPass( dc.device, 0, 1, VK_ATTACHMENT_UNUSED, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
 	zRndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
 
 	
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
 
+	// TODO: remove .type. from shader use type prefix instead
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 
@@ -3478,6 +3438,13 @@ void VkBackendInit()
 
 		vkDestroyShaderModule( dc.device, downsampler.module, 0 );
 	}
+	{
+		vk_shader lightCullVtx = VkLoadShader( "Shaders/v_light_cull.vert.spv", dc.device );
+		vk_shader lightCullFrag = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
+
+	}
+
+
 
 	for( u64 vfi = 0; vfi < rndCtx.framesInFlight; ++vfi )
 	{
