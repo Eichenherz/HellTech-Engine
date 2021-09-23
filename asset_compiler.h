@@ -4,7 +4,7 @@
 
 // TODO: remove these includes
 #include <vector>
-
+#include <span>
 
 enum texture_format : u8
 {
@@ -92,3 +92,5 @@ struct drak_file_desc
 using PfnReadFile = std::vector<u8>( * )( const char* );
 
 void CompileGlbAssetToBinary( const std::vector<u8>& glbData, std::vector<u8>& drakAsset );
+template<typename T> extern u64 MeshoptReindexMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );
+template<typename T> extern void MeshoptOptimizeMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );

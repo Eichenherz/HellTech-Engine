@@ -476,10 +476,12 @@ LoadGlbFile(
 	mtrlDescs = std::move( materials );
 }
 
+// TODO: avoid template madness ?
 // TODO: mesh triangulate ?
-inline u64 MeshoptReindexMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan )
+template<typename T>
+u64 MeshoptReindexMesh( std::span<T> vtxSpan, std::span<u32> idxSpan )
 {
-	vertex* vertices = std::data( vtxSpan );
+	T*      vertices = std::data( vtxSpan );
 	u32*	indices = std::data( idxSpan );
 	u64		vtxCount = std::size( vtxSpan );
 	u64		idxCount = std::size( idxSpan );
@@ -495,6 +497,27 @@ inline u64 MeshoptReindexMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan
 	meshopt_remapVertexBuffer( vertices, vertices, vtxCount, sizeof( vertices[ 0 ] ), std::data( remap ) );
 	return newVtxCount;
 }
+
+template<typename T> float* GetCompX( T* );
+template<> inline float* GetCompX( vertex* v ){ return &( v->px ); }
+template<> inline float* GetCompX( DirectX::XMFLOAT3* v ){ return &( v->x ); }
+
+template<typename T>
+void MeshoptOptimizeMesh( std::span<T> vtxSpan, std::span<u32> idxSpan )
+{
+	T*      vertices = std::data( vtxSpan );
+	u32*    indices = std::data( idxSpan );
+	u64		vtxCount = std::size( vtxSpan );
+	u64		idxCount = std::size( idxSpan );
+
+	meshopt_optimizeVertexCache( indices, indices, idxCount, vtxCount );
+	//meshopt_optimizeOverdraw( indices, indices, idxCount, &vertices[ 0 ].px, vtxCount, sizeof( vertices[ 0 ] ), 1.05f );
+	meshopt_optimizeOverdraw( indices, indices, idxCount, GetCompX( &vertices[ 0 ] ), vtxCount, sizeof( vertices[ 0 ] ), 1.05f );
+	meshopt_optimizeVertexFetch( vertices, indices, idxCount, vertices, vtxCount, sizeof( vertices[ 0 ] ) );
+}
+
+template u64 MeshoptReindexMesh( std::span<DirectX::XMFLOAT3> vtxSpan, std::span<u32> idxSpan );
+template void MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3> vtxSpan, std::span<u32> idxSpan );
 
 constexpr u64 MAX_VERTICES = 128;
 constexpr u64 MAX_TRIANGLES = 256;
@@ -579,18 +602,6 @@ static void MeshoptMakeMeshlets(
 		vtxIndirBuf.insert( std::end( vtxIndirBuf ), std::begin( meshletVertices ), std::end( meshletVertices ) );
 		triangleBuf.insert( std::end( triangleBuf ), std::begin( meshletTriangles ), std::end( meshletTriangles ) );
 	}
-}
-
-inline void MeshoptOptimizeMesh( std::span<vertex> vtxSpan, std::span<u32> idxSpan )
-{
-	vertex* vertices = std::data( vtxSpan );
-	u32*	indices = std::data( idxSpan );
-	u64		vtxCount = std::size( vtxSpan );
-	u64		idxCount = std::size( idxSpan );
-
-	meshopt_optimizeVertexCache( indices, indices, idxCount, vtxCount );
-	meshopt_optimizeOverdraw( indices, indices, idxCount, &vertices[ 0 ].px, vtxCount, sizeof( vertices[ 0 ] ), 1.05f );
-	meshopt_optimizeVertexFetch( vertices, indices, idxCount, vertices, vtxCount, sizeof( vertices[ 0 ] ) );
 }
 
 constexpr u64 lodMaxCount = 4;
@@ -702,10 +713,11 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 	}
 
 	// NOTE: optimize and lod
-	u64 newVtxCount = MeshoptReindexMesh( { std::data( vertices ) + vtxOffset,vtxAttrCount },
-										  { std::data( indices ) + idxOffset, rawMesh.idxRange.size } );
+	u64 newVtxCount = MeshoptReindexMesh( 
+		std::span<vertex>{ std::data( vertices ) + vtxOffset,vtxAttrCount }, 
+		{ std::data( indices ) + idxOffset, rawMesh.idxRange.size } );
 	vertices.resize( vtxOffset + newVtxCount );
-	MeshoptOptimizeMesh( { firstVertex,vtxAttrCount }, { std::data( indices ) + idxOffset, rawMesh.idxRange.size } );
+	MeshoptOptimizeMesh( std::span<vertex>{ firstVertex,vtxAttrCount }, { std::data( indices ) + idxOffset, rawMesh.idxRange.size } );
 
 	return{ { vtxOffset, u32( std::size( vertices ) - vtxOffset ) }, { idxOffset, rawMesh.idxRange.size } };
 }

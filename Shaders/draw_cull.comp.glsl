@@ -59,32 +59,6 @@ layout( binding = 6 ) writeonly buffer draw_cmd{
 	draw_command drawCmd[];
 };
 
-// NOTE: https://research.nvidia.com/publication/2d-polyhedral-bounds-clipped-perspective-projected-3d-sphere 
-// && niagara renderer by zeux
-vec4 ProjectedSphereToAABB( vec3 viewSpaceCenter, float r, float perspDividedWidth, float perspDividedHeight )
-{
-	vec2 cXZ = viewSpaceCenter.xz;
-	vec2 vXZ = vec2( sqrt( dot( cXZ, cXZ ) - r * r ), r );
-	vec2 minX = mat2( vXZ.x, vXZ.y, -vXZ.y, vXZ.x ) * cXZ;
-	vec2 maxX = mat2( vXZ.x, -vXZ.y, vXZ.y, vXZ.x ) * cXZ;
-
-	vec2 cYZ = viewSpaceCenter.yz;
-	vec2 vYZ = vec2( sqrt( dot( cYZ, cYZ ) - r * r ), r );
-	vec2 minY = mat2( vYZ.x, -vYZ.y, vYZ.y, vYZ.x ) * cYZ;
-	vec2 maxY = mat2( vYZ.x, vYZ.y, -vYZ.y, vYZ.x ) * cYZ;
-
-	// NOTE: quick and dirty projection
-	vec4 aabb = vec4( ( minX.x / minX.y ) * perspDividedWidth,
-					  ( minY.x / minY.y ) * perspDividedHeight,
-					  ( maxX.x / maxX.y ) * perspDividedWidth,
-					  ( maxY.x / maxY.y ) * perspDividedHeight );
-
-	// NOTE: from NDC to texture UV space 
-	aabb = aabb.xyzw * vec4( 0.5, -0.5, 0.5, -0.5 ) + vec4( 0.5, 0.5, 0.5, 0.5 );
-
-	return aabb;
-}
-
 shared uint workgrAtomicCounterShared = {};
 
 

@@ -2238,209 +2238,6 @@ inline VkSampler VkMakeSampler(
 }
 
 
-
-static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
-{
-	assert( count % 3 == 0 );
-	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
-}
-// TODO: memory stuff
-// TODO: constexpr special file
-static void GenerateIcosphere( std::vector<dbg_vertex>& vtxData, std::vector<u32>& idxData, u64 numIters )
-{
-	constexpr u64 ICOSAHEDRON_FACE_NUM = 20;
-	constexpr u64 ICOSAHEDRON_VTX_NUM = 12;
-
-	constexpr float X = 0.525731112119133606f;
-	constexpr float Z = 0.850650808352039932f;
-	constexpr float N = 0;
-
-	constexpr vec3 vertices[ ICOSAHEDRON_VTX_NUM ] =
-	{
-		{-X,N,Z}, {X,N,Z}, {-X,N,-Z}, {X,N,-Z},
-		{N,Z,X}, {N,Z,-X}, {N,-Z,X}, {N,-Z,-X},
-		{Z,X,N}, {-Z,X, N}, {Z,-X,N}, {-Z,-X, N}
-	};
-
-	u32 triangles[ 3 * ICOSAHEDRON_FACE_NUM ] =
-	{
-		0,4,1,	0,9,4,	9,5,4,	4,5,8,	4,8,1,
-		8,10,1,	8,3,10,	5,3,8,	5,2,3,	2,7,3,
-		7,10,3,	7,6,10,	7,11,6,	11,0,6,	0,1,6,
-		6,1,10,	9,0,11,	9,11,2,	9,2,5,	7,2,11
-	};
-
-	if constexpr( worldLeftHanded ) ReverseTriangleWinding( triangles, std::size( triangles ) );
-
-	std::vector<vec3> vtxCache;
-	std::vector<u32> idxCache;
-
-	vtxCache = { std::begin( vertices ), std::end( vertices ) };
-	idxData = { std::begin( triangles ),std::end( triangles ) };
-
-	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * std::exp2( numIters ) );
-	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
-	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
-	
-
-	for( u64 i = 0; i < numIters; ++i )
-	{
-		for( u64 t = 0; t < std::size( idxData ); t += 3 )
-		{
-			u32 i0 = idxData[ t ];
-			u32 i1 = idxData[ t + 1 ];
-			u32 i2 = idxData[ t + 2 ];
-
-			vec3 v0 = vtxCache[ i0 ];
-			vec3 v1 = vtxCache[ i1 ];
-			vec3 v2 = vtxCache[ i2 ];
-
-			vec3 m01, m12, m20;
-			DirectX::XMStoreFloat3( &m01, DirectX::XMVector3Normalize( DirectX::XMVectorAdd(
-				DirectX::XMLoadFloat3( &v0 ), DirectX::XMLoadFloat3( &v1 ) ) ) );
-			DirectX::XMStoreFloat3( &m12, DirectX::XMVector3Normalize( DirectX::XMVectorAdd( 
-				DirectX::XMLoadFloat3( &v1 ), DirectX::XMLoadFloat3( &v2 ) ) ) );
-			DirectX::XMStoreFloat3( &m20, DirectX::XMVector3Normalize( DirectX::XMVectorAdd( 
-				DirectX::XMLoadFloat3( &v2 ), DirectX::XMLoadFloat3( &v0 ) ) ) );
-
-			u32 idxOffset = std::size( vtxCache ) - 1;
-
-			vtxCache.push_back( m01 );
-			vtxCache.push_back( m12 );
-			vtxCache.push_back( m20 );
-
-			if constexpr( !worldLeftHanded )
-			{
-				idxCache.push_back( idxOffset + 1 );
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( i0 );
-
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( i2 );
-				idxCache.push_back( idxOffset + 3 );
-
-				idxCache.push_back( idxOffset + 1 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( idxOffset + 3 );
-				
-				idxCache.push_back( i1 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( idxOffset + 1 );
-			} 
-			else
-			{
-				idxCache.push_back( i0 );
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( idxOffset + 1 );
-
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( i2 );
-				idxCache.push_back( idxOffset + 2 );
-
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( idxOffset + 1 );
-
-				idxCache.push_back( idxOffset + 1 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( i1 );
-			}
-		}
-
-		idxData = idxCache;
-	}
-
-	vtxData.resize( std::size( vtxCache ) );
-
-	vec4 col = {};
-
-	for( u64 i = 0; i < std::size( vtxCache ); ++i )
-	{
-		vtxData[ i ] = {};
-		vtxData[ i ].pos.x = vtxCache[ i ].x;
-		vtxData[ i ].pos.y = vtxCache[ i ].y;
-		vtxData[ i ].pos.z = vtxCache[ i ].z;
-		vtxData[ i ].pos.w = 1.0f;
-		vtxData[ i ].col = col;
-		
-	}
-}
-static void GenerateBoxCube( std::vector<dbg_vertex>& vtx, std::vector<u32>& idx )
-{
-	using namespace DirectX;
-
-	constexpr float w = 0.5f;
-	constexpr float h = 0.5f;
-	constexpr float t = 0.5f;
-
-	vec3 c0 = { w, h,-t };
-	vec3 c1 = {-w, h,-t };
-	vec3 c2 = {-w,-h,-t };
-	vec3 c3 = { w,-h,-t };
-
-	vec3 c4 = { w, h, t };
-	vec3 c5 = {-w, h, t };
-	vec3 c6 = {-w,-h, t };
-	vec3 c7 = { w,-h, t };
-
-	constexpr vec2 u = OctaNormalEncode( { 0,1,0 } );
-	constexpr vec2 d = OctaNormalEncode( { 0,-1,0 } );
-	constexpr vec2 f = OctaNormalEncode( { 0,0,1 } );
-	constexpr vec2 b = OctaNormalEncode( { 0,0,-1 } );
-	constexpr vec2 l = OctaNormalEncode( { -1,0,0 } );
-	constexpr vec2 r = OctaNormalEncode( { 1,0,0 } );
-
-	constexpr XMFLOAT4 col = {};
-
-	dbg_vertex vertices[] = {
-		// Bottom
-		{ {c0.x,c0.y,c0.z,1.0f}, col },
-		{ {c1.x,c1.y,c1.z,1.0f}, col },
-		{ {c2.x,c2.y,c2.z,1.0f}, col },
-		{ {c3.x,c3.y,c3.z,1.0f}, col },
-		// Left					
-		{ {c7.x,c7.y,c7.z,1.0f}, col },
-		{ {c4.x,c4.y,c4.z,1.0f}, col },
-		{ {c0.x,c0.y,c0.z,1.0f}, col },
-		{ {c3.x,c3.y,c3.z,1.0f}, col },
-		// Front				
-		{ {c4.x,c4.y,c4.z,1.0f}, col },
-		{ {c5.x,c5.y,c5.z,1.0f}, col },
-		{ {c1.x,c1.y,c1.z,1.0f}, col },
-		{ {c0.x,c0.y,c0.z,1.0f}, col },
-		// Back					
-		{ {c6.x,c6.y,c6.z,1.0f}, col },
-		{ {c7.x,c7.y,c7.z,1.0f}, col },
-		{ {c3.x,c3.y,c3.z,1.0f}, col },
-		{ {c2.x,c2.y,c2.z,1.0f}, col },
-		// Right				
-		{ {c5.x,c5.y,c5.z,1.0f}, col },
-		{ {c6.x,c6.y,c6.z,1.0f}, col },
-		{ {c2.x,c2.y,c2.z,1.0f}, col },
-		{ {c1.x,c1.y,c1.z,1.0f}, col },
-		// Top					
-		{ {c7.x,c7.y,c7.z,1.0f}, col },
-		{ {c6.x,c6.y,c6.z,1.0f}, col },
-		{ {c5.x,c5.y,c5.z,1.0f}, col },
-		{ {c4.x,c4.y,c4.z,1.0f}, col }
-	};
-
-	u32 indices[] = {
-			0, 1, 3,        1, 2, 3,        // Bottom	
-			4, 5, 7,        5, 6, 7,        // Left
-			8, 9, 11,       9, 10, 11,      // Front
-			12, 13, 15,     13, 14, 15,     // Back
-			16, 17, 19,     17, 18, 19,	    // Right
-			20, 21, 23,     21, 22, 23	    // Top
-	};
-
-	if constexpr( worldLeftHanded ) ReverseTriangleWinding( indices, std::size( indices ) );
-
-	vtx.insert( std::end( vtx ), std::begin( vertices ), std::end( vertices ) );
-	idx.insert( std::end( idx ), std::begin( indices ), std::end( indices ) );
-}
-
-
 template<typename T>
 struct hndl32
 {
@@ -2636,6 +2433,193 @@ static inline debug_context VkInitDebugCtx(
 }
 
 
+static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
+{
+	assert( count % 3 == 0 );
+	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
+}
+// TODO: improve ?
+static void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vector<u32>& idxData, u64 numIters )
+{
+	using namespace DirectX;
+
+	constexpr u64 ICOSAHEDRON_FACE_NUM = 20;
+	constexpr u64 ICOSAHEDRON_VTX_NUM = 12;
+
+	constexpr float X = 0.525731112119133606f;
+	constexpr float Z = 0.850650808352039932f;
+	constexpr float N = 0;
+
+	constexpr XMFLOAT3 vertices[ ICOSAHEDRON_VTX_NUM ] =
+	{
+		{-X,N,Z}, {X,N,Z}, {-X,N,-Z}, {X,N,-Z},
+		{N,Z,X}, {N,Z,-X}, {N,-Z,X}, {N,-Z,-X},
+		{Z,X,N}, {-Z,X, N}, {Z,-X,N}, {-Z,-X, N}
+	};
+
+	u32 triangles[ 3 * ICOSAHEDRON_FACE_NUM ] =
+	{
+		0,4,1,	0,9,4,	9,5,4,	4,5,8,	4,8,1,
+		8,10,1,	8,3,10,	5,3,8,	5,2,3,	2,7,3,
+		7,10,3,	7,6,10,	7,11,6,	11,0,6,	0,1,6,
+		6,1,10,	9,0,11,	9,11,2,	9,2,5,	7,2,11
+	};
+
+	if constexpr( worldLeftHanded ) ReverseTriangleWinding( triangles, std::size( triangles ) );
+
+	std::vector<XMFLOAT3> vtxCache;
+	std::vector<u32> idxCache;
+
+	vtxCache = { std::begin( vertices ), std::end( vertices ) };
+	idxData = { std::begin( triangles ),std::end( triangles ) };
+
+	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * std::exp2( numIters ) );
+	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
+	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
+
+
+	for( u64 i = 0; i < numIters; ++i )
+	{
+		for( u64 t = 0; t < std::size( idxData ); t += 3 )
+		{
+			u32 i0 = idxData[ t ];
+			u32 i1 = idxData[ t + 1 ];
+			u32 i2 = idxData[ t + 2 ];
+
+			XMVECTOR v0 = XMLoadFloat3( &vtxCache[ i0 ] );
+			XMVECTOR v1 = XMLoadFloat3( &vtxCache[ i1 ] );
+			XMVECTOR v2 = XMLoadFloat3( &vtxCache[ i2 ] );
+			XMFLOAT3 m01, m12, m20;
+			XMStoreFloat3( &m01, XMVector3Normalize( XMVectorAdd( v0, v1 ) ) );
+			XMStoreFloat3( &m12, XMVector3Normalize( XMVectorAdd( v1, v2 ) ) );
+			XMStoreFloat3( &m20, XMVector3Normalize( XMVectorAdd( v2, v0 ) ) );
+
+			u32 idxOffset = std::size( vtxCache ) - 1;
+
+			vtxCache.push_back( m01 );
+			vtxCache.push_back( m12 );
+			vtxCache.push_back( m20 );
+
+			if constexpr( !worldLeftHanded )
+			{
+				idxCache.push_back( idxOffset + 1 );
+				idxCache.push_back( idxOffset + 3 );
+				idxCache.push_back( i0 );
+
+				idxCache.push_back( idxOffset + 2 );
+				idxCache.push_back( i2 );
+				idxCache.push_back( idxOffset + 3 );
+
+				idxCache.push_back( idxOffset + 1 );
+				idxCache.push_back( idxOffset + 2 );
+				idxCache.push_back( idxOffset + 3 );
+
+				idxCache.push_back( i1 );
+				idxCache.push_back( idxOffset + 2 );
+				idxCache.push_back( idxOffset + 1 );
+			}
+			else
+			{
+				idxCache.push_back( i0 );
+				idxCache.push_back( idxOffset + 3 );
+				idxCache.push_back( idxOffset + 1 );
+
+				idxCache.push_back( idxOffset + 3 );
+				idxCache.push_back( i2 );
+				idxCache.push_back( idxOffset + 2 );
+
+				idxCache.push_back( idxOffset + 3 );
+				idxCache.push_back( idxOffset + 2 );
+				idxCache.push_back( idxOffset + 1 );
+
+				idxCache.push_back( idxOffset + 1 );
+				idxCache.push_back( idxOffset + 2 );
+				idxCache.push_back( i1 );
+			}
+		}
+
+		idxData = idxCache;
+	}
+
+	vtxData = std::move( vtxCache );
+}
+// TODO: remove ?
+static void GenerateBoxCube( std::vector<dbg_vertex>& vtx, std::vector<u32>& idx )
+{
+	using namespace DirectX;
+
+	constexpr float w = 0.5f;
+	constexpr float h = 0.5f;
+	constexpr float t = 0.5f;
+
+	vec3 c0 = { w, h,-t };
+	vec3 c1 = { -w, h,-t };
+	vec3 c2 = { -w,-h,-t };
+	vec3 c3 = { w,-h,-t };
+
+	vec3 c4 = { w, h, t };
+	vec3 c5 = { -w, h, t };
+	vec3 c6 = { -w,-h, t };
+	vec3 c7 = { w,-h, t };
+
+	constexpr vec2 u = OctaNormalEncode( { 0,1,0 } );
+	constexpr vec2 d = OctaNormalEncode( { 0,-1,0 } );
+	constexpr vec2 f = OctaNormalEncode( { 0,0,1 } );
+	constexpr vec2 b = OctaNormalEncode( { 0,0,-1 } );
+	constexpr vec2 l = OctaNormalEncode( { -1,0,0 } );
+	constexpr vec2 r = OctaNormalEncode( { 1,0,0 } );
+
+	constexpr XMFLOAT4 col = {};
+
+	dbg_vertex vertices[] = {
+		// Bottom
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
+		// Left					
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c4.x,c4.y,c4.z,1.0f}, col },
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
+		// Front				
+		{ {c4.x,c4.y,c4.z,1.0f}, col },
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
+		{ {c0.x,c0.y,c0.z,1.0f}, col },
+		// Back					
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c3.x,c3.y,c3.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
+		// Right				
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c2.x,c2.y,c2.z,1.0f}, col },
+		{ {c1.x,c1.y,c1.z,1.0f}, col },
+		// Top					
+		{ {c7.x,c7.y,c7.z,1.0f}, col },
+		{ {c6.x,c6.y,c6.z,1.0f}, col },
+		{ {c5.x,c5.y,c5.z,1.0f}, col },
+		{ {c4.x,c4.y,c4.z,1.0f}, col }
+	};
+
+	u32 indices[] = {
+			0, 1, 3,        1, 2, 3,        // Bottom	
+			4, 5, 7,        5, 6, 7,        // Left
+			8, 9, 11,       9, 10, 11,      // Front
+			12, 13, 15,     13, 14, 15,     // Back
+			16, 17, 19,     17, 18, 19,	    // Right
+			20, 21, 23,     21, 22, 23	    // Top
+	};
+
+	if constexpr( worldLeftHanded ) ReverseTriangleWinding( indices, std::size( indices ) );
+
+	vtx.insert( std::end( vtx ), std::begin( vertices ), std::end( vertices ) );
+	idx.insert( std::end( idx ), std::begin( indices ), std::end( indices ) );
+}
+
+
 constexpr u64 boxLineVertexCount = 24u;
 constexpr u64 boxTrisVertexCount = 36u;
 /*
@@ -2768,6 +2752,10 @@ ComputeSceneDebugBoundingBoxes(
 
 static entities_data entities;
 static std::vector<dbg_vertex> dbgLineGeomCache;
+
+
+static buffer_data proxyGeomBuff;
+static buffer_data proxyIdxBuff;
 
 static buffer_data screenspaceBoxBuff;
 
@@ -2933,8 +2921,17 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	}
 
 
+	std::vector<DirectX::XMFLOAT3> proxyVtx;
+	std::vector<u32> proxyIdx;
+	GenerateIcosphere( proxyVtx, proxyIdx, 8 );
+	// TODO: stupid templates
+	u64 uniqueVtxCount = MeshoptReindexMesh( 
+		std::span<DirectX::XMFLOAT3>{ proxyVtx }, { std::begin( proxyIdx ),std::end( proxyIdx ) } );
+	proxyVtx.resize( uniqueVtxCount );
+	MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, { std::begin( proxyIdx ),std::end( proxyIdx ) } );
 
-	// NOTE: upload buffers
+
+	// TODO: make easier to use 
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
 	{
 		const u8* pVtxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset;
@@ -3058,6 +3055,45 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_INDEX_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
 	}
+
+
+	{
+		proxyGeomBuff = VkCreateAllocBindBuffer(
+			BYTE_COUNT( proxyVtx ), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+		VkDbgNameObj( proxyGeomBuff.hndl, dc.device, "Buff_Proxy_Vtx" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( proxyVtx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, std::data( proxyVtx ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, proxyGeomBuff.hndl, 1, &copyRegion );
+		buffBarriers.push_back( VkMakeBufferBarrier2(
+			proxyGeomBuff.hndl,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+			VK_ACCESS_2_SHADER_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ) );
+	}
+	{
+		proxyIdxBuff = VkCreateAllocBindBuffer(
+			BYTE_COUNT( proxyIdx ), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+		VkDbgNameObj( proxyIdxBuff.hndl, dc.device, "Buff_Proxy_Idx" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( proxyIdx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, std::data( proxyIdx ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, proxyIdxBuff.hndl, 1, &copyRegion );
+		buffBarriers.push_back( VkMakeBufferBarrier2(
+			proxyIdxBuff.hndl,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+			VK_ACCESS_2_INDEX_READ_BIT_KHR,
+			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
+	}
+
 
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
 										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
