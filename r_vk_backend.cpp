@@ -303,19 +303,19 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		std::vector<VkExtensionProperties> availableExts( extsNum );
 		if( vkEnumerateDeviceExtensionProperties( availableDevices[ i ], 0, &extsNum, std::data( availableExts ) ) ) continue;
 
-		for( u64 i = 0; i < std::size( ENABLED_DEVICE_EXTS ); ++i )
+		for( std::string_view requiredExt : ENABLED_DEVICE_EXTS )
 		{
 			bool foundExt = false;
-			for( u64 j = 0; j < extsNum; ++j )
+			for( VkExtensionProperties& availableExt : availableExts )
 			{
-				if( !strcmp( ENABLED_DEVICE_EXTS[ i ], availableExts[ j ].extensionName ) )
+				if( requiredExt == availableExt.extensionName )
 				{
 					foundExt = true;
 					break;
 				}
 			}
 			if( !foundExt ) goto NEXT_DEVICE;
-		}
+		};
 
 		vkGetPhysicalDeviceProperties2( availableDevices[ i ], &gpuProps2 );
 		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_2 ) continue;
@@ -1381,15 +1381,17 @@ inline static vk_instance VkMakeInstance()
 	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, 0 ) );
 	std::vector<VkExtensionProperties> givenExts( vkExtsNum );
 	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, std::data( givenExts ) ) );
-	for( u32 i = 0; i < std::size( ENABLED_INST_EXTS ); ++i )
+	for( std::string_view requiredExt : ENABLED_INST_EXTS )
 	{
 		bool foundExt = false;
-		for( u32 j = 0; j < vkExtsNum; ++j )
-			if( !strcmp( ENABLED_INST_EXTS[ i ], givenExts[ j ].extensionName ) )
+		for( VkExtensionProperties& availableExt : givenExts )
+		{
+			if( requiredExt == availableExt.extensionName )
 			{
 				foundExt = true;
 				break;
 			}
+		}
 		VK_CHECK( VK_INTERNAL_ERROR( !foundExt ) );
 	};
 
@@ -1397,17 +1399,20 @@ inline static vk_instance VkMakeInstance()
 	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, 0 ) );
 	std::vector<VkLayerProperties> layersAvailable( layerCount );
 	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, std::data( layersAvailable ) ) );
-	for( u32 i = 0; i < std::size( LAYERS ); ++i )
+	for( std::string_view requiredLayer : LAYERS )
 	{
 		bool foundLayer = false;
-		for( u32 j = 0; j < layerCount; ++j )
-			if( !strcmp( LAYERS[ i ], layersAvailable[ j ].layerName ) )
+		for( VkLayerProperties& availableLayer : layersAvailable )
+		{
+			if( requiredLayer == availableLayer.layerName )
 			{
 				foundLayer = true;
 				break;
 			}
+		}
 		VK_CHECK( VK_INTERNAL_ERROR( !foundLayer ) );
 	}
+
 
 	VkInstance vkInstance = 0;
 	VkDebugUtilsMessengerEXT vkDbgUtilsMsgExt = 0;
@@ -1826,10 +1831,10 @@ struct vk_gfx_pipeline_state
 	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 	float               extraPrimitiveOverestimationSize = 0.0f;
-	bool				blendCol = colorBlending;
+	bool                conservativeRasterEnable = false;
 	bool				depthWrite = true;
 	bool				depthTestEnable = true;
-	bool                conservativeRasterEnable = false;
+	bool				blendCol = colorBlending;
 };
 // TODO: shader stages more general
 // TODO: specialization for gfx ?
@@ -3473,21 +3478,22 @@ void VkBackendInit()
 
 		VkPipelineLayout layout = {};
 
-		VkPushConstantRange pushConstRange = {};
-		pushConstRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-		pushConstRange.size = sizeof( mat4 ) + 2 * sizeof( u64 );
+		VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( mat4 ) + 2 * sizeof( u64 ) };
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
 		pipelineLayoutInfo.pushConstantRangeCount = 1;
 		pipelineLayoutInfo.pPushConstantRanges = &pushConstRange;
 		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipelineLayoutInfo, 0, &layout ) );
 
-		vk_gfx_pipeline_state state = { .blendCol = false, .depthWrite = false };
+		vk_gfx_pipeline_state state = { .conservativeRasterEnable = true, .depthWrite = false, .blendCol = false };
 
 		VkPipeline pipeline = 0;// VkMakeGfxPipeline( dc.device, 0, 0, layout, vtx, frag, state );
 
 		vk_pipeline program = { pipeline, layout };
 
 		lighCullProgam = program;
+
+		vkDestroyShaderModule( dc.device, vtx, 0 );
+		vkDestroyShaderModule( dc.device, frag, 0 );
 	}
 
 
