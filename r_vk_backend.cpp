@@ -230,6 +230,177 @@ struct vk_label
 	}
 };
 
+#ifdef _VK_DEBUG_
+
+#include <iostream>
+
+VKAPI_ATTR VkBool32 VKAPI_CALL
+VkDbgUtilsMsgCallback(
+	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
+	VkDebugUtilsMessageTypeFlagsEXT				msgType,
+	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
+	void* userData
+){
+	// NOTE: validation layer bug
+	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
+
+
+	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
+	{
+		std::string_view msgView = { callbackData->pMessage };
+		std::cout << msgView.substr( msgView.rfind( "| " ) + 2 ) << "\n";
+
+		return VK_FALSE;
+	}
+
+	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
+	{
+		std::cout << ">>> VK_WARNING <<<\n";
+	}
+	else if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT )
+	{
+		std::cout << ">>> VK_ERROR <<<\n";
+	}
+	std::cout << callbackData->pMessageIdName << "\n" << callbackData->pMessage << "\n" << "\n";
+
+	return VK_FALSE;
+}
+
+#endif
+
+constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+};
+
+static u64 VK_DLL = 0;
+
+// TODO: gfx_api_instance ?
+struct vk_instance
+{
+	VkInstance inst;
+	VkDebugUtilsMessengerEXT dbgMsg;
+};
+
+inline static vk_instance VkMakeInstance()
+{
+	constexpr const char* ENABLED_INST_EXTS[] =
+	{
+		VK_KHR_SURFACE_EXTENSION_NAME,
+	#ifdef VK_USE_PLATFORM_WIN32_KHR
+		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+	#endif // VK_USE_PLATFORM_WIN32_KHR
+	#ifdef _VK_DEBUG_
+		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+	#endif // _VK_DEBUG_
+	};
+
+	constexpr const char* LAYERS[] =
+	{
+	#ifdef _VK_DEBUG_
+		"VK_LAYER_KHRONOS_validation",
+		//"VK_LAYER_LUNARG_api_dump"
+	#endif // _VK_DEBUG_
+	};
+
+	VK_CHECK( VK_INTERNAL_ERROR( !( VK_DLL = SysDllLoad( "vulkan-1.dll" ) ) ) );
+
+	// TODO: full vk file generation ?
+
+	vkGetInstanceProcAddr = ( PFN_vkGetInstanceProcAddr ) SysGetProcAddr( VK_DLL, "vkGetInstanceProcAddr" );
+	vkCreateInstance = ( PFN_vkCreateInstance ) vkGetInstanceProcAddr( 0, "vkCreateInstance" );
+	vkEnumerateInstanceExtensionProperties =
+		( PFN_vkEnumerateInstanceExtensionProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceExtensionProperties" );
+	vkEnumerateInstanceLayerProperties =
+		( PFN_vkEnumerateInstanceLayerProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceLayerProperties" );
+	vkEnumerateInstanceVersion = ( PFN_vkEnumerateInstanceVersion ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceVersion" );
+
+	u32 vkExtsNum = 0;
+	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, 0 ) );
+	std::vector<VkExtensionProperties> givenExts( vkExtsNum );
+	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, std::data( givenExts ) ) );
+	for( std::string_view requiredExt : ENABLED_INST_EXTS )
+	{
+		bool foundExt = false;
+		for( VkExtensionProperties& availableExt : givenExts )
+		{
+			if( requiredExt == availableExt.extensionName )
+			{
+				foundExt = true;
+				break;
+			}
+		}
+		VK_CHECK( VK_INTERNAL_ERROR( !foundExt ) );
+	};
+
+	u32 layerCount = 0;
+	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, 0 ) );
+	std::vector<VkLayerProperties> layersAvailable( layerCount );
+	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, std::data( layersAvailable ) ) );
+	for( std::string_view requiredLayer : LAYERS )
+	{
+		bool foundLayer = false;
+		for( VkLayerProperties& availableLayer : layersAvailable )
+		{
+			if( requiredLayer == availableLayer.layerName )
+			{
+				foundLayer = true;
+				break;
+			}
+		}
+		VK_CHECK( VK_INTERNAL_ERROR( !foundLayer ) );
+	}
+
+
+	VkInstance vkInstance = 0;
+	VkDebugUtilsMessengerEXT vkDbgUtilsMsgExt = 0;
+
+	VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+	VK_CHECK( vkEnumerateInstanceVersion( &appInfo.apiVersion ) );
+	VK_CHECK( VK_INTERNAL_ERROR( appInfo.apiVersion < VK_API_VERSION_1_2 ) );
+
+	VkInstanceCreateInfo instInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+#ifdef _VK_DEBUG_
+
+	VkValidationFeaturesEXT vkValidationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
+	vkValidationFeatures.enabledValidationFeatureCount = std::size( enabledValidationFeats );
+	vkValidationFeatures.pEnabledValidationFeatures = enabledValidationFeats;
+
+	VkDebugUtilsMessengerCreateInfoEXT vkDbgExt = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+	vkDbgExt.pNext = vkValidationLayerFeatures ? &vkValidationFeatures : 0;
+	vkDbgExt.messageSeverity =
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
+	vkDbgExt.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+	vkDbgExt.pfnUserCallback = VkDbgUtilsMsgCallback;
+
+	instInfo.pNext = &vkDbgExt;
+#endif
+	instInfo.pApplicationInfo = &appInfo;
+	instInfo.enabledLayerCount = std::size( LAYERS );
+	instInfo.ppEnabledLayerNames = LAYERS;
+	instInfo.enabledExtensionCount = std::size( ENABLED_INST_EXTS );
+	instInfo.ppEnabledExtensionNames = ENABLED_INST_EXTS;
+	VK_CHECK( vkCreateInstance( &instInfo, 0, &vkInstance ) );
+
+	VkLoadInstanceProcs( vkInstance, *vkGetInstanceProcAddr );
+
+#ifdef _VK_DEBUG_
+	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, 0, &vkDbgUtilsMsgExt ) );
+#endif
+
+	return { vkInstance, vkDbgUtilsMsgExt };
+}
+
+// TODO: keep global ?
+static VkInstance				vkInst = 0;
+static VkDebugUtilsMessengerEXT	vkDbgMsg = 0;
+
+
 // TODO: separate GPU and logical device ?
 // TODO: physical_device_info ?
 struct device
@@ -1240,6 +1411,12 @@ VkMakeSwapchain(
 	return sc;
 }
 
+
+static VkSurfaceKHR				vkSurf = 0;
+
+// TODO: where to place these ?
+extern HINSTANCE hInst;
+extern HWND hWnd;
 static swapchain sc;
 
 
@@ -1286,184 +1463,6 @@ struct render_context
 };
 
 static render_context rndCtx;
-
-
-static u64 VK_DLL = 0;
-
-#ifdef _VK_DEBUG_
-
-#include <iostream>
-
-VKAPI_ATTR VkBool32 VKAPI_CALL
-VkDbgUtilsMsgCallback(
-	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
-	VkDebugUtilsMessageTypeFlagsEXT				msgType,
-	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
-	void* userData
-){
-	// NOTE: validation layer bug
-	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
-
-
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
-	{
-		std::string_view msgView = { callbackData->pMessage };
-		std::cout << msgView.substr( msgView.rfind( "| " ) + 2 ) << "\n";
-
-		return VK_FALSE;
-	}
-
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
-	{
-		std::cout << ">>> VK_WARNING <<<\n";
-	}
-	else if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT )
-	{
-		std::cout << ">>> VK_ERROR <<<\n";
-	}
-	std::cout << callbackData->pMessageIdName << "\n" << callbackData->pMessage << "\n" << "\n";
-
-	return VK_FALSE;
-}
-
-#endif
-
-constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
-};
-
-
-// TODO: gfx_api_instance ?
-struct vk_instance
-{
-	VkInstance inst;
-	VkDebugUtilsMessengerEXT dbgMsg;
-};
-
-inline static vk_instance VkMakeInstance()
-{
-	constexpr const char* ENABLED_INST_EXTS[] =
-	{
-		VK_KHR_SURFACE_EXTENSION_NAME,
-	#ifdef VK_USE_PLATFORM_WIN32_KHR
-		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-	#endif // VK_USE_PLATFORM_WIN32_KHR
-	#ifdef _VK_DEBUG_
-		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-	#endif // _VK_DEBUG_
-	};
-
-	constexpr const char* LAYERS[] =
-	{
-	#ifdef _VK_DEBUG_
-		"VK_LAYER_KHRONOS_validation",
-		//"VK_LAYER_LUNARG_api_dump"
-	#endif // _VK_DEBUG_
-	};
-
-	VK_CHECK( VK_INTERNAL_ERROR( !( VK_DLL = SysDllLoad( "vulkan-1.dll" ) ) ) );
-
-	// TODO: full vk file generation ?
-
-	vkGetInstanceProcAddr = ( PFN_vkGetInstanceProcAddr ) SysGetProcAddr( VK_DLL, "vkGetInstanceProcAddr" );
-	vkCreateInstance = ( PFN_vkCreateInstance ) vkGetInstanceProcAddr( 0, "vkCreateInstance" );
-	vkEnumerateInstanceExtensionProperties =
-		( PFN_vkEnumerateInstanceExtensionProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceExtensionProperties" );
-	vkEnumerateInstanceLayerProperties =
-		( PFN_vkEnumerateInstanceLayerProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceLayerProperties" );
-	vkEnumerateInstanceVersion = ( PFN_vkEnumerateInstanceVersion ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceVersion" );
-
-	u32 vkExtsNum = 0;
-	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, 0 ) );
-	std::vector<VkExtensionProperties> givenExts( vkExtsNum );
-	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, std::data( givenExts ) ) );
-	for( std::string_view requiredExt : ENABLED_INST_EXTS )
-	{
-		bool foundExt = false;
-		for( VkExtensionProperties& availableExt : givenExts )
-		{
-			if( requiredExt == availableExt.extensionName )
-			{
-				foundExt = true;
-				break;
-			}
-		}
-		VK_CHECK( VK_INTERNAL_ERROR( !foundExt ) );
-	};
-
-	u32 layerCount = 0;
-	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, 0 ) );
-	std::vector<VkLayerProperties> layersAvailable( layerCount );
-	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, std::data( layersAvailable ) ) );
-	for( std::string_view requiredLayer : LAYERS )
-	{
-		bool foundLayer = false;
-		for( VkLayerProperties& availableLayer : layersAvailable )
-		{
-			if( requiredLayer == availableLayer.layerName )
-			{
-				foundLayer = true;
-				break;
-			}
-		}
-		VK_CHECK( VK_INTERNAL_ERROR( !foundLayer ) );
-	}
-
-
-	VkInstance vkInstance = 0;
-	VkDebugUtilsMessengerEXT vkDbgUtilsMsgExt = 0;
-
-	VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-	VK_CHECK( vkEnumerateInstanceVersion( &appInfo.apiVersion ) );
-	VK_CHECK( VK_INTERNAL_ERROR( appInfo.apiVersion < VK_API_VERSION_1_2 ) );
-
-	VkInstanceCreateInfo instInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
-#ifdef _VK_DEBUG_
-
-	VkValidationFeaturesEXT vkValidationFeatures = { VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
-	vkValidationFeatures.enabledValidationFeatureCount = std::size( enabledValidationFeats );
-	vkValidationFeatures.pEnabledValidationFeatures = enabledValidationFeats;
-
-	VkDebugUtilsMessengerCreateInfoEXT vkDbgExt = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
-	vkDbgExt.pNext = vkValidationLayerFeatures ? &vkValidationFeatures : 0;
-	vkDbgExt.messageSeverity =
-		VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
-		VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-		VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
-	vkDbgExt.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-	vkDbgExt.pfnUserCallback = VkDbgUtilsMsgCallback;
-
-	instInfo.pNext = &vkDbgExt;
-#endif
-	instInfo.pApplicationInfo = &appInfo;
-	instInfo.enabledLayerCount = std::size( LAYERS );
-	instInfo.ppEnabledLayerNames = LAYERS;
-	instInfo.enabledExtensionCount = std::size( ENABLED_INST_EXTS );
-	instInfo.ppEnabledExtensionNames = ENABLED_INST_EXTS;
-	VK_CHECK( vkCreateInstance( &instInfo, 0, &vkInstance ) );
-
-	VkLoadInstanceProcs( vkInstance, *vkGetInstanceProcAddr );
-
-#ifdef _VK_DEBUG_
-	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, 0, &vkDbgUtilsMsgExt ) );
-#endif
-
-	return { vkInstance, vkDbgUtilsMsgExt };
-}
-
-// TODO: keep global ?
-static VkInstance				vkInst = 0;
-static VkDebugUtilsMessengerEXT	vkDbgMsg = 0;
-
-static VkSurfaceKHR				vkSurf = 0;
-
-// TODO: where to place these ?
-extern HINSTANCE hInst;
-extern HWND hWnd;
 
 
 // TODO: tewak ? make own ?
@@ -1970,47 +1969,50 @@ VkPipeline VkMakeComputePipeline(
 	return pipeline;
 }
 
-// TODO: make general ?
+
 inline static VkRenderPass
 VkMakeRenderPass(
-	VkDevice	vkDevice,
-	bool        clearColor,
-	bool        clearDepth,
-	u32         colorTargetSlot,
-	u32         depthTargetSlot,
-	VkFormat	colorFormat,
-	VkFormat	depthFormat
+	VkDevice vkDevice,
+	u64      depthSlot,
+	u64      colSlot,
+	bool     depthLoadClear,
+	bool     colLoadClear,
+	VkFormat depthFormat,
+	VkFormat colFormat
 ){
-	VkAttachmentReference colorAttachement = { colorTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
-	VkAttachmentReference depthAttachement = { depthTargetSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
+	assert( ( ( depthSlot != -1 ) && depthFormat ) || ( ( colSlot != -1 ) && colFormat ) );
+	// NOTE: support any permutation of 0 and 1 ;
+	assert( colSlot * depthSlot == 0 );
+
+	VkAttachmentReference colorAttachement = { colSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
+	VkAttachmentReference depthAttachement = { depthSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
 
 	VkSubpassDescription subpassDescr = {};
 	subpassDescr.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-	subpassDescr.colorAttachmentCount = 1;
-	subpassDescr.pColorAttachments = &colorAttachement;
-	subpassDescr.pDepthStencilAttachment = &depthAttachement;
+	subpassDescr.colorAttachmentCount = ( colSlot != -1 ) ? 1 : 0;
+	subpassDescr.pColorAttachments = ( colSlot != -1 ) ? &colorAttachement : 0;
+	subpassDescr.pDepthStencilAttachment = ( depthSlot != -1 ) ? &depthAttachement : 0;
 
 	VkAttachmentDescription attachmentDescriptions[ 2 ] = {};
-	attachmentDescriptions[ 0 ].format = colorFormat;
-	attachmentDescriptions[ 0 ].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachmentDescriptions[ 0 ].loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-	attachmentDescriptions[ 0 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	attachmentDescriptions[ 0 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-	attachmentDescriptions[ 0 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-
-	attachmentDescriptions[ 1 ].format = depthFormat;
-	attachmentDescriptions[ 1 ].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachmentDescriptions[ 1 ].loadOp = clearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-	attachmentDescriptions[ 1 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	attachmentDescriptions[ 1 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	attachmentDescriptions[ 1 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attachmentDescriptions[ 1 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-	attachmentDescriptions[ 1 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-
+	// NOTE: invariants for now
+	attachmentDescriptions[ 0 ].samples = attachmentDescriptions[ 1 ].samples = VK_SAMPLE_COUNT_1_BIT;
+	attachmentDescriptions[ 0 ].storeOp = attachmentDescriptions[ 1 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	attachmentDescriptions[ 0 ].stencilLoadOp = attachmentDescriptions[ 1 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	attachmentDescriptions[ 0 ].stencilStoreOp = attachmentDescriptions[ 1 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	attachmentDescriptions[ 0 ].initialLayout = attachmentDescriptions[ 1 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+	attachmentDescriptions[ 0 ].finalLayout = attachmentDescriptions[ 1 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+	if( colSlot != -1 )
+	{
+		attachmentDescriptions[ colSlot ].format = colFormat;
+		attachmentDescriptions[ colSlot ].loadOp = colLoadClear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+	}
+	if( depthSlot != -1 )
+	{
+		attachmentDescriptions[ depthSlot ].format = depthFormat;
+		attachmentDescriptions[ depthSlot ].loadOp = depthLoadClear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+	}
 	VkRenderPassCreateInfo renderPassInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
-	renderPassInfo.attachmentCount = std::size( attachmentDescriptions );
+	renderPassInfo.attachmentCount = std::max( i64( depthSlot ), i64( colSlot ) ) + 1;
 	renderPassInfo.pAttachments = attachmentDescriptions;
 	renderPassInfo.subpassCount = 1;
 	renderPassInfo.pSubpasses = &subpassDescr;
@@ -2024,7 +2026,7 @@ inline static VkFramebuffer
 VkMakeFramebuffer(
 	VkDevice		vkDevice,
 	VkRenderPass	vkRndPass,
-	VkImageView* attachements,
+	VkImageView*    attachements,
 	u32				attachementCount,
 	u32				width,
 	u32				height
@@ -3344,9 +3346,9 @@ void VkBackendInit()
 	sc = VkMakeSwapchain( dc.device,dc.gpu, vkSurf, dc.gfxQueueIdx, VK_FORMAT_B8G8R8A8_UNORM );
 
 
-	rndCtx.renderPass = VkMakeRenderPass( dc.device, 1, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
-	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 0, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
-	zRndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 1, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat );
+	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
+	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
+	zRndPass = VkMakeRenderPass( dc.device, 0, -1, 1, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
 
 	
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
@@ -4391,9 +4393,9 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	// TODO: swapchain resize ?
 	if( !rndCtx.depthTarget.hndl )
 	{
-		VkImageUsageFlags depthTargetUsg = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-		rndCtx.depthTarget =
-			VkCreateAllocBindImage( rndCtx.desiredDepthFormat, depthTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		constexpr VkImageUsageFlags depthTargetUsg = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		rndCtx.depthTarget = VkCreateAllocBindImage( 
+			rndCtx.desiredDepthFormat, depthTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
 		VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
 
 		u32 hiZWidth = 0;
@@ -4453,10 +4455,10 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	if( !rndCtx.colorTarget.hndl )
 	{
-		VkImageUsageFlags colorTargetUsg =
+		constexpr VkImageUsageFlags colorTargetUsg =
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-		rndCtx.colorTarget =
-			VkCreateAllocBindImage( rndCtx.desiredColorFormat, colorTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		rndCtx.colorTarget = VkCreateAllocBindImage( 
+			rndCtx.desiredColorFormat, colorTargetUsg, { sc.width,sc.height,1 }, 1, vkAlbumArena );
 		VkDbgNameObj( rndCtx.colorTarget.hndl, dc.device, "Img_Render_Target_Color" );
 
 		VkImageMemoryBarrier2KHR initBarrier = VkMakeImageBarrier2(
@@ -4472,11 +4474,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
 	}
 
-	if( !rndCtx.offscreenFbo )
-	{
-		VkImageView fboAttach[] = { rndCtx.colorTarget.view, rndCtx.depthTarget.view };
-		rndCtx.offscreenFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, fboAttach, std::size( fboAttach ), sc.width, sc.height );
-	}
+	// TODO: creating too many fboss per frame recording might have some perf impact
+    // TODO: if perf impact then store inside a hashmap/cache map
+	// TODO: deffer delete these
+	VkImageView attachments[] = { rndCtx.depthTarget.view,rndCtx.colorTarget.view };
+	u32 fboWidth = rndCtx.depthTarget.width;
+	u32 fboHeight = rndCtx.depthTarget.height;
+	assert( rndCtx.depthTarget.width == rndCtx.colorTarget.width );
+	assert( rndCtx.depthTarget.height == rndCtx.colorTarget.height );
+	VkFramebuffer depthFbo = VkMakeFramebuffer( dc.device, zRndPass, attachments, 1, fboWidth, fboHeight );
+	VkFramebuffer depthColFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, attachments, 2, fboWidth, fboHeight );
 
 	// TODO: async, multi-threaded, etc
 	static bool rescUploaded = 0;
@@ -4639,8 +4646,8 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		DrawIndirectIndexedMerged(
 			thisVFrame.cmdBuff,
 			gfxZPrepass,
-			rndCtx.renderPass,
-			rndCtx.offscreenFbo,
+			zRndPass,
+			depthFbo,
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
@@ -4651,7 +4658,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		DebugDrawPass( thisVFrame.cmdBuff,
 					   vkDbgCtx.drawAsTriangles,
 					   rndCtx.render2ndPass,
-					   rndCtx.offscreenFbo,
+					   depthColFbo,
 					   vkDbgCtx.dbgTrisBuff,
 					   vkDbgCtx.pipeProg,
 					   projView,
@@ -4721,7 +4728,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		thisVFrame.cmdBuff,
 		rndCtx.gfxMergedPipeline,
 		rndCtx.renderPass,
-		rndCtx.offscreenFbo,
+		depthColFbo,
 		indirectMergedIndexBuff,
 		drawMergedCmd,
 		drawMergedCountBuff,
@@ -4732,7 +4739,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	DebugDrawPass( thisVFrame.cmdBuff,
 				   vkDbgCtx.drawAsTriangles,
 				   rndCtx.render2ndPass,
-				   rndCtx.offscreenFbo,
+				   depthColFbo,
 				   vkDbgCtx.dbgTrisBuff,
 				   vkDbgCtx.pipeProg,
 				   projView,
@@ -4762,7 +4769,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		DebugDrawPass( thisVFrame.cmdBuff,
 					   vkDbgCtx.drawAsLines,
 					   rndCtx.render2ndPass,
-					   rndCtx.offscreenFbo,
+					   depthColFbo,
 					   vkDbgCtx.dbgLinesBuff,
 					   vkDbgCtx.pipeProg,
 					   projView,
@@ -4773,7 +4780,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 			DrawIndirectPass( thisVFrame.cmdBuff,
 							  gfxDrawIndirDbg,
 							  rndCtx.render2ndPass,
-							  rndCtx.offscreenFbo,
+							  depthColFbo,
 							  drawCmdAabbsBuff,
 							  drawCountDbgBuff.hndl,
 							  dbgDrawProgram,
