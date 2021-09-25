@@ -168,10 +168,7 @@ constexpr VkObjectType VkGetObjTypeFromHandle()
 	if_same_type( VkSurfaceKHR ) return VK_OBJECT_TYPE_SURFACE_KHR;
 	if_same_type( VkSwapchainKHR ) return VK_OBJECT_TYPE_SURFACE_KHR;
 	if_same_type( VkSurfaceKHR ) return VK_OBJECT_TYPE_SWAPCHAIN_KHR;
-	if_same_type( VkSurfaceKHR ) return VK_OBJECT_TYPE_SURFACE_KHR;
-	if_same_type( VkSurfaceKHR ) return VK_OBJECT_TYPE_SURFACE_KHR;
-	if_same_type( VkSurfaceKHR ) return VK_OBJECT_TYPE_SURFACE_KHR;
-
+	
 	assert( 0 );
 	return VK_OBJECT_TYPE_UNKNOWN;
 
@@ -1455,8 +1452,6 @@ struct render_context
 	VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
 	VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-	VkFramebuffer	offscreenFbo;
-
 	virtual_frame	vrtFrames[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 	u32				vFrameIdx = 0;
 	u8				framesInFlight = VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
@@ -1969,7 +1964,7 @@ VkPipeline VkMakeComputePipeline(
 	return pipeline;
 }
 
-
+// TODO: must make own assert thing
 inline static VkRenderPass
 VkMakeRenderPass(
 	VkDevice vkDevice,
@@ -2811,6 +2806,39 @@ SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrl
 
 	return insts;
 }
+inline static std::vector<DirectX::XMFLOAT4X4A> SpawmRandomTransforms( u64 instCount, float sceneRadius, float globalScale )
+{
+	using namespace DirectX;
+
+	std::vector<XMFLOAT4X4A> transf( instCount );
+	for( XMFLOAT4X4A& t : transf )
+	{
+		float posX = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		float posY = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		float posZ = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
+		float scale = globalScale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
+
+		XMVECTOR axis = XMVector3Normalize(
+			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
+						 0 ) );
+		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
+
+		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
+		XMVECTOR quat = XMQuaternionIdentity();
+		
+		XMMATRIX scaleM = XMMatrixScaling( scale, scale, scale );
+		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
+		XMMATRIX moveM = XMMatrixTranslation( posX, posY, posZ );
+
+		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
+
+		XMStoreFloat4x4A( &t, localToWorld );
+	}
+
+	return transf;
+}
 inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float sceneRadius )
 {
 	std::vector<light_data> lights( lightCount );
@@ -3330,6 +3358,7 @@ static VkPipeline   gfxDrawIndirDbg = {};
 static vk_program   zPrepassProgram = {};
 static VkPipeline   gfxZPrepass = {};
 static VkRenderPass zRndPass = {};
+static VkRenderPass depthReadRndPass = {};
 
 
 static vk_pipeline  lighCullProgam = {};
@@ -3349,6 +3378,7 @@ void VkBackendInit()
 	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
 	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
 	zRndPass = VkMakeRenderPass( dc.device, 0, -1, 1, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
+	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
 
 	
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
@@ -3473,7 +3503,7 @@ void VkBackendInit()
 
 	{
 		std::vector<u8> vtxSpv = SysReadFile( "Shaders/v_light_cull.vert.spv" );
-		std::vector<u8> fragSpv = SysReadFile( "Shaders/f_pass_col.frag.spv" );
+		std::vector<u8> fragSpv = SysReadFile( "Shaders/f_light_cull.frag.spv" );
 		
 		VkShaderModule vtx = VkMakeShaderModule( dc.device, ( const u32* ) std::data( vtxSpv ), std::size( vtxSpv ) );
 		VkShaderModule frag = VkMakeShaderModule( dc.device, ( const u32* ) std::data( fragSpv ), std::size( fragSpv ) );
@@ -3488,7 +3518,7 @@ void VkBackendInit()
 
 		vk_gfx_pipeline_state state = { .conservativeRasterEnable = true, .depthWrite = false, .blendCol = false };
 
-		VkPipeline pipeline = 0;// VkMakeGfxPipeline( dc.device, 0, 0, layout, vtx, frag, state );
+		VkPipeline pipeline = VkMakeGfxPipeline( dc.device, 0, depthReadRndPass, layout, vtx, 0, state );
 
 		vk_pipeline program = { pipeline, layout };
 
