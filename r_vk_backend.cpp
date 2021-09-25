@@ -812,7 +812,6 @@ struct buffer_data
 	//u64				offset = 0;
 	u8*				hostVisible = 0;
 	u64				devicePointer = 0;
-	u32				magicId;
 };
 
 inline VkDescriptorBufferInfo Descriptor( const buffer_data& b )
@@ -831,7 +830,6 @@ struct image
 	VkImageView		view;
 	VkDeviceMemory	mem;
 	VkFormat		nativeFormat;
-	u32				magicId;
 	u16				width;
 	u16				height;
 	u8				layerCount;
@@ -2251,7 +2249,8 @@ inline hndl32<T> Hndl32FromMagicAndIdx( u64 m, u64 i )
 template<typename T>
 struct resource_vector
 {
-	std::vector<T> rsc;
+	struct resource { T data; u32 magicId; };
+	std::vector<resource> rsc;
 	u32 magicCounter;
 };
 
@@ -2264,14 +2263,13 @@ inline const T& GetResourceFromHndl( hndl32<T> h, const resource_vector<T>& buf 
 	const T& entry = buf[ IdxFromHndl32( h ) ];
 	assert( entry.magicId == MagicFromHndl32( h ) );
 
-	return entry;
+	return entry.data;
 }
 template<typename T>
 inline hndl32<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 {
 	u32 magicCounter = buf.magicCounter++;
-	rsc.magicId = magicCounter;
-	buf.rsc.push_back( rsc );
+	buf.rsc.push_back( { rsc, magicCounter } );
 
 	return Hndl32FromMagicAndIdx<T>( magicCounter, std::size( buf.rsc ) );
 }
@@ -3216,7 +3214,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		for( u64 i = 0; i < std::size( imgDesc ); ++i )
 		{
-			const image& dst = textures.rsc[ i + newTexturesOffset ];
+			const image& dst = textures.rsc[ i + newTexturesOffset ].data;
 
 			VkBufferImageCopy imgCopyRegion = {};
 			imgCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -4566,9 +4564,9 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	
 		std::vector<VkDescriptorImageInfo> texDescs;
 		texDescs.reserve( std::size( textures.rsc ) );
-		for( const image& i : textures.rsc )
+		for( const auto& i : textures.rsc )
 		{
-			texDescs.push_back( { 0, i.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } );
+			texDescs.push_back( { 0, i.data.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } );
 		}
 
 		VkWriteDescriptorSet texUpdates = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
