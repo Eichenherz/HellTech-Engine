@@ -11,7 +11,11 @@
 
 
 layout( push_constant ) uniform block{
-	uint64_t lightTilesAddr;
+	uint64_t	lightTilesAddr;
+	uint		tileSize;
+	uint		tileRowLen;
+	uint		tileWordCount;
+	uint		tileMaxLightsLog2;
 };
 
 
@@ -30,27 +34,27 @@ const uint TILE_ROW_LEN = 1; //smth
 layout( early_fragment_tests ) in;
 void main()
 {
-	uvec2 tileId = uvec2( gl_FragCoord.xy ) % TILE_SIZE;
-	uint tileIndex = tileId.y * TILE_ROW_LEN + tileId.x;
-	uint lightBit = 1u << ( lightId % 32 );
-	uint lightWord = lightId / 32;
-
-	uint wordIndex = tileIndex * TILE_WORDS_STRIDE + lightWord;
-
-	uint key = wordIndex << TILE_GRID_MAX_LIGHTS_LOG2;
-
-	uvec4 waveMask;
-	for(;;)
-	{
-		uint firstInvocationVal = subgroupBroadcastFirst( key );
-		waveMask = subgroupBallot( firstInvocationVal == key );
-		if( firstInvocationVal == key ) break;
-	}
-
-	uint hash = subgroupBallotInclusiveBitCount( waveMask );
-	[[ branch ]]
-	if( hash == 0 )
-	{
-		atomicOr(  tile_ref( lightTilesAddr ).lightTiles[ wordIndex ], lightBit );
-	}
+	//uvec2 tileId = uvec2( gl_FragCoord.xy ) % tileSize;
+	//uint tileIndex = tileId.y * tileRowLen + tileId.x;
+	//uint lightBit = 1u << ( lightId % 32 );
+	//uint lightWord = lightId / 32;
+	//
+	//uint wordIndex = tileIndex * tileWordCount + lightWord;
+	//
+	//uint key = wordIndex << tileMaxLightsLog2;
+	//
+	//uvec4 waveMask;
+	//for(;;)
+	//{
+	//	uint firstInvocationVal = subgroupBroadcastFirst( key );
+	//	waveMask = subgroupBallot( firstInvocationVal == key );
+	//	if( firstInvocationVal == key ) break;
+	//}
+	//
+	//uint hash = subgroupBallotInclusiveBitCount( waveMask );
+	//[[ branch ]]
+	//if( hash == 0 )
+	//{
+	//	atomicOr(  tile_ref( lightTilesAddr ).lightTiles[ wordIndex ], lightBit );
+	//}
 }

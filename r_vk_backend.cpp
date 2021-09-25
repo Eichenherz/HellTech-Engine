@@ -2043,7 +2043,7 @@ VkMakeFramebuffer(
 // TODO: what about spec consts
 struct vk_pipeline
 {
-	VkPipeline prog;
+	VkPipeline pipeline;
 	VkPipelineLayout layout;
 	// TODO: store push consts data ?
 };
@@ -2759,7 +2759,6 @@ static buffer_data drawVisibilityBuff;
 
 static buffer_data drawMergedCmd;
 
-
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
 //constexpr char glbPath[] = "D:\\3d models\\WaterBottle.glb";
@@ -2851,6 +2850,18 @@ inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float s
 
 	return lights;
 }
+
+constexpr u64 randSeed = 42;
+constexpr u64 drawCount = 5;
+constexpr u64 lightCount = 6;
+constexpr float sceneRad = 40.0f;
+
+constexpr u64 tileSize = 8u;
+constexpr u64 tileRowSize = ( SCREEN_WIDTH + tileSize - 1 ) / tileSize;
+constexpr u64 tileCount = tileRowSize * ( SCREEN_HEIGHT + tileSize - 1 ) / tileSize;
+constexpr u64 wordsPerTile = ( lightCount + 31 ) / 32;
+
+static buffer_data tileBuff;
 // TODO: staging clean up
 // TODO: re make offsets, ranges, etc
 static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& entities )
@@ -2903,10 +2914,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		refM.occRoughMetalIdx += std::size( textures.rsc );
 	}
 
-	constexpr u64 randSeed = 42;
-	constexpr u64 drawCount = 4;
-	constexpr u64 lightCount = 6;
-	constexpr float sceneRad = 40.0f;
 	std::srand( randSeed );
 
 	assert( std::size( mtrls ) == 1 );
@@ -3109,6 +3116,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
 	}
 
+	tileBuff = VkCreateAllocBindBuffer( tileCount * wordsPerTile * sizeof( u32 ),
+										VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+										vkRscArena );
+	VkDbgNameObj( tileBuff.hndl, dc.device, "Buff_Tiles" );
 
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
 										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
@@ -3166,14 +3177,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
 		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena );
-
-	//// NOTE: 1 to 1 corresp to instances
-	//transformsBuff = VkCreateAllocBindBuffer(
-	//	sizeof( DirectX::XMFLOAT4X4A ) * std::size( instDesc ),
-	//	VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-	//	VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-	//	vkRscArena );
-	//VkDbgNameObj( transformsBuff.hndl, dc.device, "Buff_Transforms" );
 
 	// NOTE: create and texture uploads
 	std::vector<VkImageMemoryBarrier2KHR> imageBarriers;
@@ -3508,14 +3511,15 @@ void VkBackendInit()
 
 		VkPipelineLayout layout = {};
 
-		VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( mat4 ) + 2 * sizeof( u64 ) };
+		VkPushConstantRange pushConstRanges[ 2 ] = {};
+		pushConstRanges[ 0 ] = { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( mat4 ) + 2 * sizeof( u64 ) };
+		pushConstRanges[ 1 ] = { VK_SHADER_STAGE_FRAGMENT_BIT, pushConstRanges[ 0 ].size, sizeof( u64 ) + 4 * sizeof( u32 ) };
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-		pipelineLayoutInfo.pushConstantRangeCount = 1;
-		pipelineLayoutInfo.pPushConstantRanges = &pushConstRange;
+		pipelineLayoutInfo.pushConstantRangeCount = std::size( pushConstRanges );
+		pipelineLayoutInfo.pPushConstantRanges = pushConstRanges;
 		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipelineLayoutInfo, 0, &layout ) );
 
 		vk_gfx_pipeline_state state = { .conservativeRasterEnable = true, .depthWrite = false, .blendCol = false };
-
 		VkPipeline pipeline = VkMakeGfxPipeline( dc.device, 0, depthReadRndPass, layout, vtx, 0, state );
 
 		vk_pipeline program = { pipeline, layout };
@@ -3904,6 +3908,51 @@ CullPass(
 	dependencyEnd.bufferMemoryBarrierCount = std::size( endCullBarriers );
 	dependencyEnd.pBufferMemoryBarriers = endCullBarriers;
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependencyEnd );
+}
+
+// TODO: pass more params
+inline static void
+CullRasterizeLightProxy(
+	VkCommandBuffer cmdBuff,
+	const vk_pipeline& program,
+	VkRenderPass vkRndPass,
+	VkFramebuffer fbo,
+	const DirectX::XMFLOAT4X4A& viewProjMat
+){
+	vk_label label = { cmdBuff,"Gfx_Cull_Rast_Lights",{} };
+
+	VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	rndPassBegInfo.renderPass = vkRndPass;
+	rndPassBegInfo.framebuffer = fbo;
+	rndPassBegInfo.renderArea = scissor;
+
+	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline );
+
+	u64 tileMaxLightsLog2 = std::log2( lightCount );
+
+	struct { mat4 viewProj; u64 geomAddr; u64 lightAddr; } vertPush = {
+		viewProjMat, proxyGeomBuff.devicePointer, lightsBuff.devicePointer };
+	vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( vertPush ), &vertPush );
+
+	struct { u64 tileBuffAddr; u32 tileSize; u32 tileRowLen; u32 tileWordCount; u32 tileMaxLightsLog2; } fragPush = {
+		tileBuff.devicePointer, tileSize, tileRowSize, wordsPerTile,tileMaxLightsLog2 };
+	vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof( vertPush ), sizeof( fragPush ), &fragPush );
+
+
+	vkCmdBindIndexBuffer( cmdBuff, proxyIdxBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
+	vkCmdDrawIndexed( cmdBuff, proxyIdxBuff.size / sizeof( u32 ), 1, 0, 0, 0 );
+
+
+	vkCmdEndRenderPass( cmdBuff );
 }
 
 // TODO: redesign
@@ -4645,7 +4694,6 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	globalDataUpdate.descriptorCount = 1;
 	globalDataUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
 	globalDataUpdate.pBufferInfo = &uboInfo;
-	// TODO: remove this ?
 	vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
 
 	std::memcpy( thisVFrame.frameData.hostVisible, ( u8* )globs, sizeof( *globs ) );
@@ -4654,7 +4702,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	XMMATRIX proj = XMLoadFloat4x4A( &globs->proj );
 	XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &globs->activeView ), proj );
-	mat4 projView;
+	XMFLOAT4X4A projView;
 	XMStoreFloat4x4A( &projView, xmProjView );
 
 	if( !freeCam )
@@ -4775,12 +4823,16 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 				   projView,
 				   { 0,boxTrisVertexCount } );
 
+
+	CullRasterizeLightProxy( thisVFrame.cmdBuff, lighCullProgam, depthReadRndPass, depthFbo, projView );
+
+
 	// NOTE: inv( A * B ) = inv B * inv A
 	XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &globs->mainView ), proj );
 	XMVECTOR det = XMMatrixDeterminant( invFrustMat );
 	assert( XMVectorGetX( det ) );
 	XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
-	// TODO: might need to sync or double buffer
+	// TODO: might need to double buffer
 	dbgLineGeomCache = ComputeSceneDebugBoundingBoxes( frustMat, entities );
 	std::memcpy( vkDbgCtx.dbgLinesBuff.hostVisible, std::data( dbgLineGeomCache ), BYTE_COUNT( dbgLineGeomCache ) );
 
@@ -4788,7 +4840,6 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	// TODO: rethink
 	if( dbgDraw && ( freeCam || bvDraw ) )
 	{
-		////u64 frustBoxOffset = ( std::size( entities.instAabbs ) + std::size( entities.meshletAabbs ) ) * boxLineVertexCount;
 		u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
 		
 		range drawRange = {};
