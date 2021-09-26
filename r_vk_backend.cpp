@@ -1213,7 +1213,6 @@ VkMakeImageBarrier2(
 
 
 
-// TODO: add VkFramebuffer here ?
 struct virtual_frame
 {
 	buffer_data		frameData;
@@ -1221,7 +1220,6 @@ struct virtual_frame
 	VkCommandBuffer cmdBuff;
 	VkSemaphore		canGetImgSema;
 	VkSemaphore		canPresentSema;
-	VkFence			hostSyncFence;
 };
 
 // TODO: buffer_desc ?
@@ -1249,10 +1247,6 @@ static inline virtual_frame VkCreateVirtualFrame(
 	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
 	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrame.canPresentSema ) );
 
-	VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-	VK_CHECK( vkCreateFence( vkDevice, &fenceInfo, 0, &vrtFrame.hostSyncFence ) );
-
 	vrtFrame.frameData = VkCreateAllocBindBuffer( 
 		bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, arena );
 
@@ -1271,6 +1265,10 @@ struct swapchain
 	u16				height;
 	u8				imgCount;
 };
+
+// TODO: where to place these ?
+extern HINSTANCE hInst;
+extern HWND hWnd;
 
 inline static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
 {
@@ -1407,11 +1405,7 @@ VkMakeSwapchain(
 }
 
 
-static VkSurfaceKHR				vkSurf = 0;
-
-// TODO: where to place these ?
-extern HINSTANCE hInst;
-extern HWND hWnd;
+static VkSurfaceKHR vkSurf;
 static swapchain sc;
 
 
@@ -1816,7 +1810,7 @@ VkMakeSpecializationInfo(
 	return specInfo;
 }
 
-// TODO: config struct
+
 struct vk_gfx_pipeline_state
 {
 	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL;
@@ -1843,11 +1837,11 @@ VkPipeline VkMakeGfxPipeline(
 	const vk_gfx_pipeline_state& pipelineState
 ){
 	VkPipelineShaderStageCreateInfo shaderStagesInfo[ 2 ] = {};
-	shaderStagesInfo[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shaderStagesInfo[ 0 ].sType = shaderStagesInfo[ 1 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+
 	shaderStagesInfo[ 0 ].stage = VK_SHADER_STAGE_VERTEX_BIT;
 	shaderStagesInfo[ 0 ].module = vs;
 	shaderStagesInfo[ 0 ].pName = SHADER_ENTRY_POINT;
-	shaderStagesInfo[ 1 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	shaderStagesInfo[ 1 ].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 	shaderStagesInfo[ 1 ].module = fs;
 	shaderStagesInfo[ 1 ].pName = SHADER_ENTRY_POINT;
@@ -2048,15 +2042,6 @@ struct vk_pipeline
 	VkPipelineLayout layout;
 	// TODO: store push consts data ?
 };
-
-
-// TODO: stretchy buffer ?
-// TODO: remove std::stuff ?
-//#include <functional>
-//static vector<std::function<void()>> deviceGlobalDeletionQueue;
-
-//#define VK_APPEND_DESTROYER( VkObjectDestroyerLambda ) deviceGlobalDeletionQueue.push_back( [=](){ VkObjectDestroyer; } )
-
 
 #include "r_data_structs.h"
 
@@ -2278,7 +2263,7 @@ inline hndl32<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 
 static resource_vector<image> textures;
 
-// TODO: recycle_queue
+// TODO: recycle_queue for more objects
 // TODO: rethink
 // TODO: async 
 // TODO: MT 
@@ -2290,53 +2275,18 @@ struct staging_manager
 		u64			frameId;
 	};
 	std::vector<upload_job>		pendingUploads;
-	VkSemaphore					timelineUploadSema;
 	u64							semaSignalCounter;
 };
 
+inline static void
+StagingManagerPushForRecycle( VkBuffer stagingBuf, staging_manager& stgMngr, u64 currentFrameId )
+{
+	stgMngr.pendingUploads.push_back( { stagingBuf,currentFrameId } );
+}
+
+
 static staging_manager stagingManager;
 
-inline static staging_manager 
-CreateInitStagingManager( VkDevice vkDevice )
-{
-	staging_manager stgMngr = {};
-	
-	VkSemaphoreTypeCreateInfo timelineInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
-	timelineInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-	timelineInfo.initialValue = 0;
-	VkSemaphoreCreateInfo timelineSemaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timelineInfo };
-	VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &stgMngr.timelineUploadSema ) );
-}
-inline static void
-StagingManagerPushForRecycle( VkBuffer stagingBuf, staging_manager& stgMngr )
-{
-	stgMngr.pendingUploads.push_back( { stagingBuf,stgMngr.semaSignalCounter } );
-}
-
-// TODO: remove/improve 
-static inline void
-VkStageCopyUploadBuffer(
-	VkCommandBuffer		cmdBuff,
-	const char*			name,
-	const u8*			pData,
-	u64					copyDataSize,
-	buffer_data&		dstBuff,
-	staging_manager&	stagingMngr
-){
-	dstBuff = VkCreateAllocBindBuffer( copyDataSize,
-									   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-									   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-									   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-									   vkRscArena );
-	VkDbgNameObj( dstBuff.hndl, dc.device, name );
-
-	buffer_data stagingBuf = VkCreateAllocBindBuffer( copyDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-	std::memcpy( stagingBuf.hostVisible, pData, stagingBuf.size );
-	StagingManagerPushForRecycle( stagingBuf.hndl, stagingMngr );
-
-	VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
-	vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, dstBuff.hndl, 1, &copyRegion );
-}
 
 struct box_bounds
 {
@@ -2865,7 +2815,7 @@ constexpr u64 wordsPerTile = ( lightCount + 31 ) / 32;
 static buffer_data tileBuff;
 // TODO: staging clean up
 // TODO: re make offsets, ranges, etc
-static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& entities )
+static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& entities, u64 currentFrameId )
 {
 	std::vector<u8> binaryData;
 	// TODO: add renderable_instances
@@ -2961,7 +2911,20 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
 	{
 		const u8* pVtxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset;
-		VkStageCopyUploadBuffer( cmdBuff, "Buff_Vtx", pVtxData, fileDesc.vtxRange.size, globVertexBuff, stagingManager );
+		globVertexBuff = VkCreateAllocBindBuffer( fileDesc.vtxRange.size,
+												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												  vkRscArena );
+		VkDbgNameObj( globVertexBuff.hndl, dc.device, "Buff_Vtx" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( fileDesc.vtxRange.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, pVtxData, stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, globVertexBuff.hndl, 1, &copyRegion );
+
 		buffBarriers.push_back( VkMakeBufferBarrier2( 
 			globVertexBuff.hndl, 
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -2978,7 +2941,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( copyDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
 		std::memcpy( stagingBuf.hostVisible, pIdxData, stagingBuf.size );
-		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, indexBuff.hndl, 1, &copyRegion );
@@ -2990,8 +2953,20 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
 	}
 	{
-		VkStageCopyUploadBuffer(
-			cmdBuff, "Buff_Mesh_Desc", (const u8*) std::data( meshes ), BYTE_COUNT( meshes ), meshBuff, stagingManager );
+		meshBuff = VkCreateAllocBindBuffer( BYTE_COUNT( meshes ),
+												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												  vkRscArena );
+		VkDbgNameObj( meshBuff.hndl, dc.device, "Buff_Mesh_Desc" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( meshes ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( meshes ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshBuff.hndl, 1, &copyRegion );
+
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3000,19 +2975,42 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ) );
 	}
 	{
-		VkStageCopyUploadBuffer(
-			cmdBuff, "Buff_Lights", (const u8*) std::data( lights ), BYTE_COUNT( lights ), lightsBuff, stagingManager );
+		lightsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( lights ),
+											VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+											VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											vkRscArena );
+		VkDbgNameObj( lightsBuff.hndl, dc.device, "Buff_Lights" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( lights ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( lights ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, lightsBuff.hndl, 1, &copyRegion );
+
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			lightsBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			//VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ) );
 			VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ) );
 	}
 	{
-		VkStageCopyUploadBuffer(
-			cmdBuff, "Buff_Inst_Descs", (const u8*) std::data( instDesc ), BYTE_COUNT( instDesc ), instDescBuff, stagingManager );
+		instDescBuff = VkCreateAllocBindBuffer( BYTE_COUNT( instDesc ),
+											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+											  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											  vkRscArena );
+		VkDbgNameObj( instDescBuff.hndl, dc.device, "Buff_Inst_Descs" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( instDesc ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( instDesc ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, instDescBuff.hndl, 1, &copyRegion );
+
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			instDescBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3022,8 +3020,20 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 	}
 	{
-		VkStageCopyUploadBuffer(
-			cmdBuff, "Buff_Mtrls", (const u8*) std::data( mtrls ), BYTE_COUNT( mtrls ), materialsBuff, stagingManager );
+		materialsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mtrls ),
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												vkRscArena );
+		VkDbgNameObj( materialsBuff.hndl, dc.device, "Buff_Mtrls" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mtrls ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( mtrls ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, materialsBuff.hndl, 1, &copyRegion );
+
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			materialsBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3032,8 +3042,20 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ) );
 	}
 	{
-		VkStageCopyUploadBuffer(
-			cmdBuff, "Buff_Meshlets", (const u8*) std::data( mletView ), BYTE_COUNT( mletView ), meshletBuff, stagingManager );
+		meshletBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mletView ),
+												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+												 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												 vkRscArena );
+		VkDbgNameObj( meshletBuff.hndl, dc.device, "Buff_Meshlets" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mletView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( mletView ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletBuff.hndl, 1, &copyRegion );
+
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3045,8 +3067,21 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		const std::span<u32> mletVtxView = {
 			( u32* )( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsVtxRange.offset ),
 			fileDesc.mletsVtxRange.size / sizeof( u32 ) };
-		VkStageCopyUploadBuffer(
-			cmdBuff, "Buff_Meshlet_Vtx", (const u8*) std::data( mletVtxView ), BYTE_COUNT( mletVtxView ), meshletVtxBuff, stagingManager );
+
+		meshletVtxBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mletVtxView ),
+											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+											   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											   vkRscArena );
+		VkDbgNameObj( meshletVtxBuff.hndl, dc.device, "Buff_Meshlet_Vtx" );
+
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mletVtxView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( mletVtxView ), stagingBuf.size );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
+
+		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletVtxBuff.hndl, 1, &copyRegion );
+
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletVtxBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -3069,7 +3104,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mletTriView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
 		std::memcpy( stagingBuf.hostVisible, std::data( mletTriView ), stagingBuf.size );
-		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletTrisBuff.hndl, 1, &copyRegion );
@@ -3094,7 +3129,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( proxyVtx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
 		std::memcpy( stagingBuf.hostVisible, std::data( proxyVtx ), stagingBuf.size );
-		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, proxyGeomBuff.hndl, 1, &copyRegion );
@@ -3112,7 +3147,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( proxyIdx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
 		std::memcpy( stagingBuf.hostVisible, std::data( proxyIdx ), stagingBuf.size );
-		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager );
+		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, proxyIdxBuff.hndl, 1, &copyRegion );
@@ -3223,7 +3258,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		buffer_data stagingBuff = VkCreateAllocBindBuffer( fileDesc.texRange.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
 		const u8* pTexBinData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.texRange.offset;
 		std::memcpy( stagingBuff.hostVisible, pTexBinData, stagingBuff.size );
-		StagingManagerPushForRecycle( stagingBuff.hndl, stagingManager );
+		StagingManagerPushForRecycle( stagingBuff.hndl, stagingManager, currentFrameId );
 
 		for( u64 i = 0; i < std::size( imgDesc ); ++i )
 		{
@@ -3610,6 +3645,7 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 }
 
+// TODO: "supply line" descriptor instead of push
 // TODO: meshlet cone culling 
 // TODO: must pass vertexOffset around somehow
 // TODO: revisit triangle culling ?
@@ -4480,9 +4516,6 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	waitInfo.pValues = &currentFrameIdx;
 	VK_CHECK( VK_INTERNAL_ERROR( vkWaitSemaphores( dc.device, &waitInfo, UINT64_MAX ) > VK_TIMEOUT ) );
 
-	//VK_CHECK( VK_INTERNAL_ERROR( vkWaitForFences( dc.device, 1, &thisVFrame.hostSyncFence, true, UINT64_MAX ) > VK_TIMEOUT ) );
-	//VK_CHECK( vkResetFences( dc.device, 1, &thisVFrame.hostSyncFence ) );
-
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
 
 
@@ -4590,7 +4623,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	static bool rescUploaded = 0;
 	if( !rescUploaded )
 	{
-		VkUploadResources( thisVFrame.cmdBuff, entities );
+		VkUploadResources( thisVFrame.cmdBuff, entities, currentFrameIdx );
 		rescUploaded = 1;
 	
 		global_bdas bdas = {};
@@ -4712,6 +4745,12 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		initBuffers = 1;
 	}
 	
+	// TODO: bestroy buffers
+	// TODO: reclaim memory
+	if( std::size( stagingManager.pendingUploads ) )
+	{
+	}
+
 	// TODO: run 1 for every frame in flight
 	VkDescriptorBufferInfo uboInfo = { thisVFrame.frameData.hndl, 0, sizeof( *globs ) };
 
@@ -4936,12 +4975,12 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
 
+
+
 	VkSemaphore signalSemas[] = { thisVFrame.canPresentSema, rndCtx.timelineSema };
 	u64 signalValues[] = { 0, rndCtx.vFrameIdx };
 	
 	VkTimelineSemaphoreSubmitInfo timelineInfo = { VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
-	//timelineInfo.waitSemaphoreValueCount = 1;
-	//timelineInfo.pWaitSemaphoreValues = &waitValue;
 	timelineInfo.signalSemaphoreValueCount = std::size( signalValues );
 	timelineInfo.pSignalSemaphoreValues = signalValues;
 
@@ -4953,12 +4992,9 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	submitInfo.pWaitDstStageMask = &waitDstStageMsk;
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &thisVFrame.cmdBuff;
-	//submitInfo.signalSemaphoreCount = 1;
-	//submitInfo.pSignalSemaphores = &thisVFrame.canPresentSema;
 	submitInfo.signalSemaphoreCount = std::size( signalSemas );
 	submitInfo.pSignalSemaphores = signalSemas;
 	// NOTE: queue submit has implicit host sync for trivial stuff
-	//VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, thisVFrame.hostSyncFence ) );
 	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, 0 ) );
 
 	VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
