@@ -85,31 +85,6 @@ struct drak_file_footer
 	u32 contentVer = 0;
 };
 
-struct drak_file_header
-{
-	char magik[ 4 ] = "DRK";
-	u32 drakVer = 0;
-	u32 contentVer = 0;
-};
-// NOTE - all offsets and ranges are relative to dataOffset
-// TODO: rethink drak file layout
-struct drak_file_desc
-{
-	range vtxRange;
-	range idxRange;
-	range texRange;
-	range mletsRange;
-	range mletsVtxRange;
-	range mletsTrisRange;
-
-	u32	dataOffset;
-	u32	compressedSize;
-	u32	originalSize;
-	u32	meshesCount;
-	u32	mtrlsCount;
-	u32	texCount;
-};
-
 using PfnReadFile = std::vector<u8>( * )( const char* );
 
 void CompileGlbAssetToBinary( const std::vector<u8>& glbData, std::vector<u8>& drakAsset );

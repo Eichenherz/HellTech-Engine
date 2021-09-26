@@ -824,32 +824,32 @@ void CompileGlbAssetToBinary(
 	u8* pOutData = std::data( outData );
 	const u8* pDataBegin = std::data( outData );
 
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( meshDescs ), BYTE_COUNT( meshDescs ) ) + BYTE_COUNT( meshDescs );
 	fileFooter.meshesByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( meshDescs ) };
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( meshDescs ), BYTE_COUNT( meshDescs ) ) + BYTE_COUNT( meshDescs );
 
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mtrlDescs ), BYTE_COUNT( mtrlDescs ) ) + BYTE_COUNT( mtrlDescs );
 	fileFooter.mtrlsByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mtrlDescs ) };
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mtrlDescs ), BYTE_COUNT( mtrlDescs ) ) + BYTE_COUNT( mtrlDescs );
 
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( imgDescs ), BYTE_COUNT( imgDescs ) ) + BYTE_COUNT( imgDescs );
 	fileFooter.imgsByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( imgDescs ) };
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( imgDescs ), BYTE_COUNT( imgDescs ) ) + BYTE_COUNT( imgDescs );
 
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) ) + BYTE_COUNT( vertices );
 	fileFooter.vtxByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( vertices ) };
-
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) ) + BYTE_COUNT( vertices );
+	
+	fileFooter.idxByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( indices ) };
 	pOutData = ( u8* ) std::memcpy( pOutData, std::data( indices ), BYTE_COUNT( indices ) ) + BYTE_COUNT( indices );
-	fileFooter.idxByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( vertices ) };
-
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mlets ), BYTE_COUNT( mlets ) ) + BYTE_COUNT( mlets );
+	
 	fileFooter.mletsByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mlets ) };
-
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mletsVtx ), BYTE_COUNT( mletsVtx ) ) + BYTE_COUNT( mletsVtx );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mlets ), BYTE_COUNT( mlets ) ) + BYTE_COUNT( mlets );
+	
 	fileFooter.mletsVtxByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mletsVtx ) };
-
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mletsTris ), BYTE_COUNT( mletsTris ) ) + BYTE_COUNT( mletsTris );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mletsVtx ), BYTE_COUNT( mletsVtx ) ) + BYTE_COUNT( mletsVtx );
+	
 	fileFooter.mletsTrisByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mletsTris ) };
-
-	pOutData = ( u8* ) std::memcpy( pOutData, std::data( texBin ), BYTE_COUNT( texBin ) ) + BYTE_COUNT( texBin );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mletsTris ), BYTE_COUNT( mletsTris ) ) + BYTE_COUNT( mletsTris );
+	
 	fileFooter.texBinByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( texBin ) };
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( texBin ), BYTE_COUNT( texBin ) ) + BYTE_COUNT( texBin );
 	
 	*( drak_file_footer*) ( std::data( outData ) + totalDataSize ) = fileFooter;
 

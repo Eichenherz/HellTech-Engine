@@ -2833,26 +2833,23 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		}
 	}
 
+	const drak_file_footer& fileFooter =
+		*( drak_file_footer* ) ( std::data( binaryData ) + std::size( binaryData ) - sizeof( drak_file_footer ) );
+	{
+		using namespace std;
+		assert( "DRAK"sv == fileFooter.magik );
+	}
+	const std::span<mesh_desc> meshes = { 
+		(mesh_desc*) ( std::data( binaryData ) + fileFooter.meshesByteRange.offset ),
+		fileFooter.meshesByteRange.size / sizeof( mesh_desc ) };
+
+	const std::span<material_data> mtrlDesc = {
+		( material_data* ) ( std::data( binaryData ) + fileFooter.mtrlsByteRange.offset ),
+		fileFooter.mtrlsByteRange.size / sizeof( material_data ) };
 	
-	u64 offset = sizeof( drak_file_header );
-	const drak_file_desc& fileDesc = *(drak_file_desc*) ( std::data( binaryData ) + offset );
-	offset += sizeof( drak_file_desc );
-
-	const std::span<mesh_desc> meshes = { (mesh_desc*) ( std::data( binaryData ) + offset ),fileDesc.meshesCount };
-	offset += BYTE_COUNT( meshes );
-	const std::span<material_data> mtrlDesc = { (material_data*) ( std::data( binaryData ) + offset ),fileDesc.mtrlsCount };
-	offset += BYTE_COUNT( mtrlDesc );
-	const std::span<image_metadata> imgDesc = { (image_metadata*) ( std::data( binaryData ) + offset ),fileDesc.texCount };
-
-	const std::span<vertex> vtxView = { 
-		(vertex*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset ),
-		fileDesc.vtxRange.size / sizeof( vertex ) };
-
-	const std::span<meshlet> mletView = { 
-		(meshlet*) ( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsRange.offset ),
-		fileDesc.mletsRange.size / sizeof( meshlet ) };
-
-	assert( std::size( mletView ) < u16( -1 ) );
+	const std::span<image_metadata> imgDesc = {
+		( image_metadata* ) ( std::data( binaryData ) + fileFooter.imgsByteRange.offset ),
+		fileFooter.imgsByteRange.size / sizeof( image_metadata ) };
 
 	assert( std::size( textures.rsc ) == 0 );
 	std::vector<material_data> mtrls = {};
@@ -2910,16 +2907,17 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	// TODO: make easier to use 
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
 	{
-		const u8* pVtxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.vtxRange.offset;
-		globVertexBuff = VkCreateAllocBindBuffer( fileDesc.vtxRange.size,
+		const std::span<u8> vtxView = { std::data( binaryData ) + fileFooter.vtxByteRange.offset, fileFooter.vtxByteRange.size };
+		
+		globVertexBuff = VkCreateAllocBindBuffer( std::size( vtxView ),
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 												  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
 												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 												  vkRscArena );
 		VkDbgNameObj( globVertexBuff.hndl, dc.device, "Buff_Vtx" );
 
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( fileDesc.vtxRange.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-		std::memcpy( stagingBuf.hostVisible, pVtxData, stagingBuf.size );
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( vtxView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, std::data( vtxView ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
@@ -2933,14 +2931,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ) );
 	}
 	{
-		const u8* pIdxData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.idxRange.offset;
-		u64 copyDataSize = fileDesc.idxRange.size;
-		indexBuff = 
-			VkCreateAllocBindBuffer( copyDataSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+		const std::span<u8> idxSpan = { std::data( binaryData ) + fileFooter.idxByteRange.offset, fileFooter.idxByteRange.size };
+
+		indexBuff = VkCreateAllocBindBuffer(
+			std::size( idxSpan ), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 		VkDbgNameObj( indexBuff.hndl, dc.device, "Buff_Idx" );
 
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( copyDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-		std::memcpy( stagingBuf.hostVisible, pIdxData, stagingBuf.size );
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( idxSpan ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, std::data( idxSpan ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
@@ -3042,15 +3040,19 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ) );
 	}
 	{
-		meshletBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mletView ),
+		const std::span<u8> mletView = { std::data( binaryData ) + fileFooter.mletsByteRange.offset,fileFooter.mletsByteRange.size };
+		
+		assert( fileFooter.mletsByteRange.size < u16( -1 ) * sizeof( meshlet ) );
+
+		meshletBuff = VkCreateAllocBindBuffer( std::size( mletView ),
 												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 												 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
 												 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 												 vkRscArena );
 		VkDbgNameObj( meshletBuff.hndl, dc.device, "Buff_Meshlets" );
 
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mletView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( mletView ), stagingBuf.size );
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, std::data( mletView ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
@@ -3064,19 +3066,19 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ) );
 	}
 	{
-		const std::span<u32> mletVtxView = {
-			( u32* )( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsVtxRange.offset ),
-			fileDesc.mletsVtxRange.size / sizeof( u32 ) };
+		const std::span<u8> mletVtxView = { 
+			std::data( binaryData ) + fileFooter.mletsVtxByteRange.offset,
+			fileFooter.mletsVtxByteRange.size };
 
-		meshletVtxBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mletVtxView ),
+		meshletVtxBuff = VkCreateAllocBindBuffer( std::size( mletVtxView ),
 											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
 											   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 											   vkRscArena );
 		VkDbgNameObj( meshletVtxBuff.hndl, dc.device, "Buff_Meshlet_Vtx" );
 
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mletVtxView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( mletVtxView ), stagingBuf.size );
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletVtxView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, std::data( mletVtxView ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
@@ -3091,10 +3093,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	}
 	{
 		const std::span<u8> mletTriView = {
-			( u8* )( std::data( binaryData ) + fileDesc.dataOffset + fileDesc.mletsTrisRange.offset ),
-			fileDesc.mletsTrisRange.size / sizeof( u8 ) };
+			std::data( binaryData ) + fileFooter.mletsTrisByteRange.offset,
+			fileFooter.mletsTrisByteRange.size };
 
-		meshletTrisBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mletTriView ),
+		meshletTrisBuff = VkCreateAllocBindBuffer( std::size( mletTriView ),
 												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 												   VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
 												   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -3102,7 +3104,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 												   vkRscArena );
 		VkDbgNameObj( meshletTrisBuff.hndl, dc.device, "Buff_Meshlet_Tris" );
 
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mletTriView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletTriView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
 		std::memcpy( stagingBuf.hostVisible, std::data( mletTriView ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
@@ -3173,11 +3175,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 										   vkRscArena );
 	VkDbgNameObj( drawCmdBuff.hndl, dc.device, "Buff_Indirect_Draw_Cmds" );
 
-	drawCmdDbgBuff = VkCreateAllocBindBuffer( std::size( mletView ) * sizeof( draw_command ),
-											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-											  vkRscArena );
+	drawCmdDbgBuff = VkCreateAllocBindBuffer( 
+		( fileFooter.mletsByteRange.size / sizeof( meshlet ) )* sizeof( draw_command ),
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		vkRscArena );
 	VkDbgNameObj( drawCmdDbgBuff.hndl, dc.device, "Buff_Indirect_Dbg_Draw_Cmds" );
 
 	// TODO: use per wave stuff ?
@@ -3255,8 +3256,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		imageBarriers.resize( 0 );
 
-		buffer_data stagingBuff = VkCreateAllocBindBuffer( fileDesc.texRange.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-		const u8* pTexBinData = std::data( binaryData ) + fileDesc.dataOffset + fileDesc.texRange.offset;
+		const u8* pTexBinData = std::data( binaryData ) + fileFooter.texBinByteRange.offset;
+
+		buffer_data stagingBuff = VkCreateAllocBindBuffer( 
+			fileFooter.texBinByteRange.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
 		std::memcpy( stagingBuff.hostVisible, pTexBinData, stagingBuff.size );
 		StagingManagerPushForRecycle( stagingBuff.hndl, stagingManager, currentFrameId );
 
