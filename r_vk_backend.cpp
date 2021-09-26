@@ -1451,7 +1451,8 @@ struct render_context
 	VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 	virtual_frame	vrtFrames[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
-	u32				vFrameIdx = 0;
+	VkSemaphore     timelineSema;
+	u64				vFrameIdx = 0;
 	u8				framesInFlight = VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 };
 
@@ -2521,7 +2522,7 @@ static void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vec
 	vtxData = std::move( vtxCache );
 }
 // TODO: remove ?
-static void GenerateBoxCube( std::vector<dbg_vertex>& vtx, std::vector<u32>& idx )
+static void GenerateBoxCube( std::vector<DirectX::XMFLOAT4>& vtx, std::vector<u32>& idx )
 {
 	using namespace DirectX;
 
@@ -2529,49 +2530,49 @@ static void GenerateBoxCube( std::vector<dbg_vertex>& vtx, std::vector<u32>& idx
 	constexpr float h = 0.5f;
 	constexpr float t = 0.5f;
 
-	vec3 c0 = { w, h,-t };
-	vec3 c1 = { -w, h,-t };
-	vec3 c2 = { -w,-h,-t };
-	vec3 c3 = { w,-h,-t };
+	XMFLOAT3 c0 = { w, h,-t };
+	XMFLOAT3 c1 = { -w, h,-t };
+	XMFLOAT3 c2 = { -w,-h,-t };
+	XMFLOAT3 c3 = { w,-h,-t };
 
-	vec3 c4 = { w, h, t };
-	vec3 c5 = { -w, h, t };
-	vec3 c6 = { -w,-h, t };
-	vec3 c7 = { w,-h, t };
+	XMFLOAT3 c4 = { w, h, t };
+	XMFLOAT3 c5 = { -w, h, t };
+	XMFLOAT3 c6 = { -w,-h, t };
+	XMFLOAT3 c7 = { w,-h, t };
 
 	constexpr XMFLOAT4 col = {};
 
-	dbg_vertex vertices[] = {
+	XMFLOAT4 vertices[] = {
 		// Bottom
-		{ {c0.x,c0.y,c0.z,1.0f}, col },
-		{ {c1.x,c1.y,c1.z,1.0f}, col },
-		{ {c2.x,c2.y,c2.z,1.0f}, col },
-		{ {c3.x,c3.y,c3.z,1.0f}, col },
+		{c0.x,c0.y,c0.z,1.0f},
+		{c1.x,c1.y,c1.z,1.0f},
+		{c2.x,c2.y,c2.z,1.0f},
+		{c3.x,c3.y,c3.z,1.0f},
 		// Left					
-		{ {c7.x,c7.y,c7.z,1.0f}, col },
-		{ {c4.x,c4.y,c4.z,1.0f}, col },
-		{ {c0.x,c0.y,c0.z,1.0f}, col },
-		{ {c3.x,c3.y,c3.z,1.0f}, col },
-		// Front				
-		{ {c4.x,c4.y,c4.z,1.0f}, col },
-		{ {c5.x,c5.y,c5.z,1.0f}, col },
-		{ {c1.x,c1.y,c1.z,1.0f}, col },
-		{ {c0.x,c0.y,c0.z,1.0f}, col },
-		// Back					
-		{ {c6.x,c6.y,c6.z,1.0f}, col },
-		{ {c7.x,c7.y,c7.z,1.0f}, col },
-		{ {c3.x,c3.y,c3.z,1.0f}, col },
-		{ {c2.x,c2.y,c2.z,1.0f}, col },
-		// Right				
-		{ {c5.x,c5.y,c5.z,1.0f}, col },
-		{ {c6.x,c6.y,c6.z,1.0f}, col },
-		{ {c2.x,c2.y,c2.z,1.0f}, col },
-		{ {c1.x,c1.y,c1.z,1.0f}, col },
-		// Top					
-		{ {c7.x,c7.y,c7.z,1.0f}, col },
-		{ {c6.x,c6.y,c6.z,1.0f}, col },
-		{ {c5.x,c5.y,c5.z,1.0f}, col },
-		{ {c4.x,c4.y,c4.z,1.0f}, col }
+		{c7.x,c7.y,c7.z,1.0f },
+		{c4.x,c4.y,c4.z,1.0f },
+		{c0.x,c0.y,c0.z,1.0f },
+		{c3.x,c3.y,c3.z,1.0f },
+		// Front			
+		{c4.x,c4.y,c4.z,1.0f },
+		{c5.x,c5.y,c5.z,1.0f },
+		{c1.x,c1.y,c1.z,1.0f },
+		{c0.x,c0.y,c0.z,1.0f },
+		// Back				
+		{c6.x,c6.y,c6.z,1.0f },
+		{c7.x,c7.y,c7.z,1.0f },
+		{c3.x,c3.y,c3.z,1.0f },
+		{c2.x,c2.y,c2.z,1.0f },
+		// Right			
+		{c5.x,c5.y,c5.z,1.0f },
+		{c6.x,c6.y,c6.z,1.0f },
+		{c2.x,c2.y,c2.z,1.0f },
+		{c1.x,c1.y,c1.z,1.0f },
+		// Top				
+		{c7.x,c7.y,c7.z,1.0f },
+		{c6.x,c6.y,c6.z,1.0f },
+		{c5.x,c5.y,c5.z,1.0f },
+		{c4.x,c4.y,c4.z,1.0f }
 	};
 
 	u32 indices[] = {
@@ -2853,7 +2854,7 @@ inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float s
 
 constexpr u64 randSeed = 42;
 constexpr u64 drawCount = 5;
-constexpr u64 lightCount = 6;
+constexpr u64 lightCount = 100;
 constexpr float sceneRad = 40.0f;
 
 constexpr u64 tileSize = 8u;
@@ -2918,7 +2919,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 	assert( std::size( mtrls ) == 1 );
 	std::vector<instance_desc> instDesc = SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRad );
-	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad );
+	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad * 0.75f );
 
 	assert( std::size( instDesc ) < u16( -1 ) );
 
@@ -2933,25 +2934,28 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 	std::vector<DirectX::XMFLOAT3> proxyVtx;
 	std::vector<u32> proxyIdx;
-	GenerateIcosphere( proxyVtx, proxyIdx, 3 );
-	// TODO: stupid templates
-	u64 uniqueVtxCount = MeshoptReindexMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
-	proxyVtx.resize( uniqueVtxCount );
-	MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
-
-	assert( std::size( lights ) < u16( -1 ) );
-	assert( std::size( proxyVtx ) < u16( -1 ) );
-	// NOTE: becaue there's only one type of light
-	u64 initialSize = std::size( proxyIdx );
-	proxyIdx.resize( initialSize * std::size( lights ) );
-	for( u64 li = 0; li < std::size( lights ); ++li )
 	{
-		u64 idxBuffOffset = initialSize * li;
-		for( u64 ii = 0; ii < initialSize; ++ii )
+		GenerateIcosphere( proxyVtx, proxyIdx, 1 );
+		// TODO: stupid templates
+		u64 uniqueVtxCount = MeshoptReindexMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
+		proxyVtx.resize( uniqueVtxCount );
+		MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
+		
+		assert( std::size( lights ) < u16( -1 ) );
+		assert( std::size( proxyVtx ) < u16( -1 ) );
+		// NOTE: becaue there's only one type of light
+		u64 initialSize = std::size( proxyIdx );
+		proxyIdx.resize( initialSize * std::size( lights ) );
+		for( u64 li = 0; li < std::size( lights ); ++li )
 		{
-			proxyIdx[ idxBuffOffset + ii ] = u32( proxyIdx[ ii ] & u16( -1 ) ) | ( u32( li ) << 16 );
+			u64 idxBuffOffset = initialSize * li;
+			for( u64 ii = 0; ii < initialSize; ++ii )
+			{
+				proxyIdx[ idxBuffOffset + ii ] = u32( proxyIdx[ ii ] & u16( -1 ) ) | ( u32( li ) << 16 );
+			}
 		}
 	}
+
 
 	// TODO: make easier to use 
 	std::vector<VkBufferMemoryBarrier2KHR> buffBarriers;
@@ -3081,7 +3085,11 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 	{
 		proxyGeomBuff = VkCreateAllocBindBuffer(
-			BYTE_COUNT( proxyVtx ), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+			BYTE_COUNT( proxyVtx ), 
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+			vkRscArena );
 		VkDbgNameObj( proxyGeomBuff.hndl, dc.device, "Buff_Proxy_Vtx" );
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( proxyVtx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
@@ -3117,7 +3125,9 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	}
 
 	tileBuff = VkCreateAllocBindBuffer( tileCount * wordsPerTile * sizeof( u32 ),
-										VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+										VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+										VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+										VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 										vkRscArena );
 	VkDbgNameObj( tileBuff.hndl, dc.device, "Buff_Tiles" );
 
@@ -3520,7 +3530,7 @@ void VkBackendInit()
 		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipelineLayoutInfo, 0, &layout ) );
 
 		vk_gfx_pipeline_state state = { .conservativeRasterEnable = true, .depthWrite = false, .blendCol = false };
-		VkPipeline pipeline = VkMakeGfxPipeline( dc.device, 0, depthReadRndPass, layout, vtx, 0, state );
+		VkPipeline pipeline = VkMakeGfxPipeline( dc.device, 0, depthReadRndPass, layout, vtx, frag, state );
 
 		vk_pipeline program = { pipeline, layout };
 
@@ -3536,6 +3546,13 @@ void VkBackendInit()
 	{
 		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( dc.device, dc.gfxQueueIdx, 1 * MB, vkHostComArena );
 	}
+	VkSemaphoreTypeCreateInfo timelineInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
+	timelineInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	timelineInfo.initialValue = rndCtx.vFrameIdx = 0;
+	VkSemaphoreCreateInfo timelineSemaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timelineInfo };
+	VK_CHECK( vkCreateSemaphore( dc.device, &timelineSemaInfo, 0, &rndCtx.timelineSema ) );
+
+
 
 	VkInitInternalBuffers();
 
@@ -3939,12 +3956,14 @@ CullRasterizeLightProxy(
 
 	u64 tileMaxLightsLog2 = std::log2( lightCount );
 
+	assert( proxyGeomBuff.devicePointer && lightsBuff.devicePointer && tileBuff.devicePointer );
+
 	struct { mat4 viewProj; u64 geomAddr; u64 lightAddr; } vertPush = {
 		viewProjMat, proxyGeomBuff.devicePointer, lightsBuff.devicePointer };
 	vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( vertPush ), &vertPush );
 
 	struct { u64 tileBuffAddr; u32 tileSize; u32 tileRowLen; u32 tileWordCount; u32 tileMaxLightsLog2; } fragPush = {
-		tileBuff.devicePointer, tileSize, tileRowSize, wordsPerTile,tileMaxLightsLog2 };
+		tileBuff.devicePointer, tileSize, tileRowSize, wordsPerTile, tileMaxLightsLog2 };
 	vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof( vertPush ), sizeof( fragPush ), &fragPush );
 
 
@@ -4055,7 +4074,7 @@ DrawIndirectPass(
 
 // TODO: adjust for more draws ?
 inline static void
-DrawIndirectIndexedMerged(
+DrawIndexedIndirectMerged(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
 	VkRenderPass			vkRndPass,
@@ -4446,20 +4465,23 @@ DebugDrawPass(
 	vkCmdEndRenderPass( cmdBuff );
 }
 
-
 // TODO: pass cam data via push const
 void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 {
 	using namespace DirectX;
 	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
 
-	u64 currentFrameIdx = rndCtx.vFrameIdx;
-	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ rndCtx.vFrameIdx ];
-	// TODO: don't modulo frameIndex ?
-	rndCtx.vFrameIdx = ( rndCtx.vFrameIdx + 1 ) % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
+	u64 currentFrameIdx = rndCtx.vFrameIdx++;
+	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 
-	VK_CHECK( VK_INTERNAL_ERROR( vkWaitForFences( dc.device, 1, &thisVFrame.hostSyncFence, true, UINT64_MAX ) > VK_TIMEOUT ) );
-	VK_CHECK( vkResetFences( dc.device, 1, &thisVFrame.hostSyncFence ) );
+	VkSemaphoreWaitInfo waitInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO };
+	waitInfo.semaphoreCount = 1;
+	waitInfo.pSemaphores = &rndCtx.timelineSema;
+	waitInfo.pValues = &currentFrameIdx;
+	VK_CHECK( VK_INTERNAL_ERROR( vkWaitSemaphores( dc.device, &waitInfo, UINT64_MAX ) > VK_TIMEOUT ) );
+
+	//VK_CHECK( VK_INTERNAL_ERROR( vkWaitForFences( dc.device, 1, &thisVFrame.hostSyncFence, true, UINT64_MAX ) > VK_TIMEOUT ) );
+	//VK_CHECK( vkResetFences( dc.device, 1, &thisVFrame.hostSyncFence ) );
 
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
 
@@ -4657,6 +4679,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
 		// TODO: rename 
 		vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
+		vkCmdFillBuffer( thisVFrame.cmdBuff, tileBuff.hndl, 0, tileBuff.size, 0u );
 
 		VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
 			VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
@@ -4673,7 +4696,12 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VkMakeBufferBarrier2( tileBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ),
 		};
 	
 		VkDependencyInfoKHR initBuffsDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -4721,7 +4749,7 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 		//						 zPrepassProgram,
 		//						 false );
 		
-		DrawIndirectIndexedMerged(
+		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
 			gfxZPrepass,
 			zRndPass,
@@ -4786,23 +4814,10 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 	//						 gfxOpaqueProgram,
 	//						 true );
 
-	//DrawIndexedIndirectPass(
-	//	thisVFrame.cmdBuff,
-	//	rndCtx.gfxMeshletPipeline,
-	//	rndCtx.renderPass,
-	//	rndCtx.offscreenFbo,
-	//	drawCmdDbgBuff,
-	//	drawCountDbgBuff.hndl,
-	//	meshletTrisBuff.hndl,
-	//	VK_INDEX_TYPE_UINT8_EXT,
-	//	meshletBuff.size / sizeof( meshlet ),
-	//	clearVals,
-	//	gfxMeshletProgram );
-
 	vkCmdBindDescriptorSets(
 		thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
 
-	DrawIndirectIndexedMerged(
+	DrawIndexedIndirectMerged(
 		thisVFrame.cmdBuff,
 		rndCtx.gfxMergedPipeline,
 		rndCtx.renderPass,
@@ -4822,9 +4837,6 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 				   vkDbgCtx.pipeProg,
 				   projView,
 				   { 0,boxTrisVertexCount } );
-
-
-	CullRasterizeLightProxy( thisVFrame.cmdBuff, lighCullProgam, depthReadRndPass, depthFbo, projView );
 
 
 	// NOTE: inv( A * B ) = inv B * inv A
@@ -4924,17 +4936,30 @@ void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 
 	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
 
+	VkSemaphore signalSemas[] = { thisVFrame.canPresentSema, rndCtx.timelineSema };
+	u64 signalValues[] = { 0, rndCtx.vFrameIdx };
+	
+	VkTimelineSemaphoreSubmitInfo timelineInfo = { VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
+	//timelineInfo.waitSemaphoreValueCount = 1;
+	//timelineInfo.pWaitSemaphoreValues = &waitValue;
+	timelineInfo.signalSemaphoreValueCount = std::size( signalValues );
+	timelineInfo.pSignalSemaphoreValues = signalValues;
+
 	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	submitInfo.pNext = &timelineInfo;
 	submitInfo.waitSemaphoreCount = 1;
 	submitInfo.pWaitSemaphores = &thisVFrame.canGetImgSema;
 	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	submitInfo.pWaitDstStageMask = &waitDstStageMsk;
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &thisVFrame.cmdBuff;
-	submitInfo.signalSemaphoreCount = 1;
-	submitInfo.pSignalSemaphores = &thisVFrame.canPresentSema;
+	//submitInfo.signalSemaphoreCount = 1;
+	//submitInfo.pSignalSemaphores = &thisVFrame.canPresentSema;
+	submitInfo.signalSemaphoreCount = std::size( signalSemas );
+	submitInfo.pSignalSemaphores = signalSemas;
 	// NOTE: queue submit has implicit host sync for trivial stuff
-	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, thisVFrame.hostSyncFence ) );
+	//VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, thisVFrame.hostSyncFence ) );
+	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, 0 ) );
 
 	VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	presentInfo.waitSemaphoreCount = 1;
