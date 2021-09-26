@@ -617,7 +617,7 @@ inline u64 MeshoptMakeMeshLods(
 
 	assert( meshLods[ 0 ].size );
 
-	u64 totalIndexCount = 0;
+	u64 totalIndexCount = meshLods[ 0 ].size;
 	u64 meshLodsCount = 1;
 	for( ; meshLodsCount < std::size( meshLods ); ++meshLodsCount )
 	{
@@ -758,9 +758,7 @@ void CompileGlbAssetToBinary(
 			u32 normalAttrCount = m.normalStreamRange.size / 3;
 			u32 tanAttrCount = m.tanStreamRange.size / 3;
 			u32 uvsAttrCount = m.uvsStreamRange.size / 2;
-			assert( ( posAttrCount == normalAttrCount ) &&
-					( posAttrCount == tanAttrCount ) &&
-					( posAttrCount == uvsAttrCount ) );
+			assert( ( posAttrCount == normalAttrCount ) && ( posAttrCount == tanAttrCount ) && ( posAttrCount == uvsAttrCount ) );
 
 			assert( sizeof( rawIndices[ 0 ] ) == sizeof( indices[ 0 ] ) );
 		}
@@ -812,67 +810,48 @@ void CompileGlbAssetToBinary(
 		//meshOut.materialIndex = rawMesh.mtlIdx;
 	}
 
+	// TODO: assert that none of these overflow 2gbs
+	u64 totalDataSize = 
+		BYTE_COUNT( meshDescs ) + BYTE_COUNT( mtrlDescs ) + BYTE_COUNT( imgDescs ) + 
+		BYTE_COUNT( vertices ) + BYTE_COUNT( indices ) + BYTE_COUNT( texBin ) +
+		BYTE_COUNT( mlets ) + BYTE_COUNT( mletsVtx ) + BYTE_COUNT( mletsTris );
 
-	u64 descOffset = sizeof( drak_file_header ) + sizeof( drak_file_desc );
-	u64 totalFileDescSize = BYTE_COUNT( meshDescs ) + BYTE_COUNT( mtrlDescs ) + BYTE_COUNT( imgDescs );
-	u64 totalContentSize = BYTE_COUNT( vertices ) + BYTE_COUNT( indices ) + BYTE_COUNT( texBin );
-	totalContentSize += BYTE_COUNT( mlets ) + BYTE_COUNT( mletsVtx ) + BYTE_COUNT( mletsTris );
-	std::vector<u8> outData( descOffset + totalFileDescSize + totalContentSize );
+	drak_file_footer fileFooter = {};
+	fileFooter.compressedSize = totalDataSize;
+	fileFooter.originalSize = totalDataSize;
+	
+	std::vector<u8> outData( fileFooter.originalSize + +sizeof( fileFooter ) );
+	u8* pOutData = std::data( outData );
+	const u8* pDataBegin = std::data( outData );
 
-	u8* pOutData = std::data( outData ) + descOffset;
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( meshDescs ), BYTE_COUNT( meshDescs ) ) + BYTE_COUNT( meshDescs );
+	fileFooter.meshesByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( meshDescs ) };
 
-	std::memcpy( pOutData, std::data( meshDescs ), BYTE_COUNT( meshDescs ) );
-	pOutData += BYTE_COUNT( meshDescs );
-	std::memcpy( pOutData, std::data( mtrlDescs ), BYTE_COUNT( mtrlDescs ) );
-	pOutData += BYTE_COUNT( mtrlDescs );
-	std::memcpy( pOutData, std::data( imgDescs ), BYTE_COUNT( imgDescs ) );
-	pOutData += BYTE_COUNT( imgDescs );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mtrlDescs ), BYTE_COUNT( mtrlDescs ) ) + BYTE_COUNT( mtrlDescs );
+	fileFooter.mtrlsByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mtrlDescs ) };
 
-	u64 vtxOffset = 0;
-	u64 idxOffset = 0;
-	u64 texOffset = 0;
-	u64 mletsOffset = 0;
-	u64 mletsVtxOffset = 0;
-	u64 mletsTrisOffset = 0;
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( imgDescs ), BYTE_COUNT( imgDescs ) ) + BYTE_COUNT( imgDescs );
+	fileFooter.imgsByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( imgDescs ) };
 
-	const u8* pDataBegin = pOutData;
-	vtxOffset = pOutData - pDataBegin;
-	std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) );
-	pOutData += BYTE_COUNT( vertices );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( vertices ), BYTE_COUNT( vertices ) ) + BYTE_COUNT( vertices );
+	fileFooter.vtxByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( vertices ) };
 
-	idxOffset = pOutData - pDataBegin;
-	std::memcpy( pOutData, std::data( indices ), BYTE_COUNT( indices ) );
-	pOutData += BYTE_COUNT( indices );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( indices ), BYTE_COUNT( indices ) ) + BYTE_COUNT( indices );
+	fileFooter.idxByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( vertices ) };
 
-	mletsOffset = pOutData - pDataBegin;
-	std::memcpy( pOutData, std::data( mlets ), BYTE_COUNT( mlets ) );
-	pOutData += BYTE_COUNT( mlets );
-	mletsVtxOffset = pOutData - pDataBegin;
-	std::memcpy( pOutData, std::data( mletsVtx ), BYTE_COUNT( mletsVtx ) );
-	pOutData += BYTE_COUNT( mletsVtx );
-	mletsTrisOffset = pOutData - pDataBegin;
-	std::memcpy( pOutData, std::data( mletsTris ), BYTE_COUNT( mletsTris ) );
-	pOutData += BYTE_COUNT( mletsTris );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mlets ), BYTE_COUNT( mlets ) ) + BYTE_COUNT( mlets );
+	fileFooter.mletsByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mlets ) };
 
-	texOffset = pOutData - pDataBegin;
-	std::memcpy( pOutData, std::data( texBin ), BYTE_COUNT( texBin ) );
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mletsVtx ), BYTE_COUNT( mletsVtx ) ) + BYTE_COUNT( mletsVtx );
+	fileFooter.mletsVtxByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mletsVtx ) };
 
-	*(drak_file_header*) std::data( outData ) = {};
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( mletsTris ), BYTE_COUNT( mletsTris ) ) + BYTE_COUNT( mletsTris );
+	fileFooter.mletsTrisByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( mletsTris ) };
 
-	drak_file_desc fileDesc = {};
-	fileDesc.compressedSize = totalContentSize;
-	fileDesc.originalSize = totalContentSize;
-	fileDesc.meshesCount = std::size( meshDescs );
-	fileDesc.mtrlsCount = std::size( mtrlDescs );
-	fileDesc.texCount = std::size( imgDescs );
-	fileDesc.dataOffset = descOffset + totalFileDescSize;
-	fileDesc.vtxRange = { vtxOffset, BYTE_COUNT( vertices ) };
-	fileDesc.idxRange = { idxOffset, BYTE_COUNT( indices ) };
-	fileDesc.texRange = { texOffset, BYTE_COUNT( texBin ) };
-	fileDesc.mletsRange = { mletsOffset, BYTE_COUNT( mlets ) };
-	fileDesc.mletsVtxRange = { mletsVtxOffset, BYTE_COUNT( mletsVtx ) };
-	fileDesc.mletsTrisRange = { mletsTrisOffset, BYTE_COUNT( mletsTris ) };
-	*(drak_file_desc*) ( std::data( outData ) + sizeof( drak_file_header ) ) = fileDesc;
+	pOutData = ( u8* ) std::memcpy( pOutData, std::data( texBin ), BYTE_COUNT( texBin ) ) + BYTE_COUNT( texBin );
+	fileFooter.texBinByteRange = { u32( pOutData - pDataBegin ),BYTE_COUNT( texBin ) };
+	
+	*( drak_file_footer*) ( std::data( outData ) + totalDataSize ) = fileFooter;
 
 	drakAsset = std::move( outData );
 }

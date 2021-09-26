@@ -2686,7 +2686,7 @@ static buffer_data indexBuff;
 static buffer_data meshBuff;
 
 static buffer_data meshletBuff;
-// TODO: store u8x4 vtx in here ?
+// TODO: pack these 2
 static buffer_data meshletVtxBuff;
 static buffer_data meshletTrisBuff;
 

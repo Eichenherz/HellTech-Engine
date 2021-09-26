@@ -64,6 +64,27 @@ struct image_metadata
 	u8				layerCount = 1;
 };
 
+// TODO: count bytes or elements
+struct drak_file_footer
+{
+	range meshesByteRange;
+	range mtrlsByteRange;
+	range imgsByteRange;
+	range vtxByteRange;
+	range idxByteRange;
+	range texBinByteRange;
+	range mletsByteRange;
+	range mletsVtxByteRange;
+	range mletsTrisByteRange;
+
+	u32	compressedSize;
+	u32	originalSize;
+
+	char magik[ 4 ] = "DRK";
+	u32 drakVer = 0;
+	u32 contentVer = 0;
+};
+
 struct drak_file_header
 {
 	char magik[ 4 ] = "DRK";
