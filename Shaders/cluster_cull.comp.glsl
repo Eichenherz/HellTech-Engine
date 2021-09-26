@@ -61,6 +61,10 @@ shared uint workgrAtomicCounterShared = {};
 
 const uint meshletsPerWorkgr = 32;
 
+// NOTE: meshlet occlusion culling bug
+// NOTE: hack fix: workgr == 32 ( and in id_expander dstWorkGrSize )
+// NOTE: idiot fix: disable occlusion
+// TODO: investigate further
 layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
