@@ -2835,7 +2835,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		*( drak_file_footer* ) ( std::data( binaryData ) + std::size( binaryData ) - sizeof( drak_file_footer ) );
 	{
 		using namespace std;
-		assert( "DRAK"sv == fileFooter.magik );
+		assert( "DRK"sv == fileFooter.magik  );
 	}
 	const std::span<mesh_desc> meshes = { 
 		(mesh_desc*) ( std::data( binaryData ) + fileFooter.meshesByteRange.offset ),
