@@ -722,9 +722,8 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 	return{ { vtxOffset, u32( std::size( vertices ) - vtxOffset ) }, { idxOffset, rawMesh.idxRange.size } };
 }
 
-// TODO: distinction between element range and byte range
-// TODO: fix offsetting 
-// TODO: better more efficient copy
+
+// TODO: more efficient copy
 // TODO: better binary file design ?
 void CompileGlbAssetToBinary( 
 	const std::vector<u8>&	glbData, 

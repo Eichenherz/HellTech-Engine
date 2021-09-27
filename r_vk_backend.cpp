@@ -2820,8 +2820,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	std::vector<u8> binaryData;
 	// TODO: add renderable_instances
 	// TODO: extra checks and stuff ?
-	// TODO: add data offset and use that
-	// TODO: ensure SoA layout of data
 	// TODO: ensure resources of the same type are contiguous ?
 	{
 		binaryData = SysReadFile( drakPath );
@@ -2952,10 +2950,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	}
 	{
 		meshBuff = VkCreateAllocBindBuffer( BYTE_COUNT( meshes ),
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												  vkRscArena );
+											VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+											VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											vkRscArena );
 		VkDbgNameObj( meshBuff.hndl, dc.device, "Buff_Mesh_Desc" );
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( meshes ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
@@ -2974,10 +2972,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	}
 	{
 		lightsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( lights ),
-											VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-											VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-											vkRscArena );
+											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+											  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											  vkRscArena );
 		VkDbgNameObj( lightsBuff.hndl, dc.device, "Buff_Lights" );
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( lights ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
@@ -2996,10 +2994,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	}
 	{
 		instDescBuff = VkCreateAllocBindBuffer( BYTE_COUNT( instDesc ),
-											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-											  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-											  vkRscArena );
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												vkRscArena );
 		VkDbgNameObj( instDescBuff.hndl, dc.device, "Buff_Inst_Descs" );
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( instDesc ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
@@ -3019,10 +3017,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	}
 	{
 		materialsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mtrls ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												vkRscArena );
+												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+												 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												 vkRscArena );
 		VkDbgNameObj( materialsBuff.hndl, dc.device, "Buff_Mtrls" );
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mtrls ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
@@ -3045,10 +3043,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		assert( fileFooter.mletsByteRange.size < u16( -1 ) * sizeof( meshlet ) );
 
 		meshletBuff = VkCreateAllocBindBuffer( std::size( mletView ),
-												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-												 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												 vkRscArena );
+											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+											   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											   vkRscArena );
 		VkDbgNameObj( meshletBuff.hndl, dc.device, "Buff_Meshlets" );
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
@@ -3071,10 +3069,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			fileFooter.mletsVtxByteRange.size };
 
 		meshletVtxBuff = VkCreateAllocBindBuffer( std::size( mletVtxView ),
-											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-											   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-											   vkRscArena );
+												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												  vkRscArena );
 		VkDbgNameObj( meshletVtxBuff.hndl, dc.device, "Buff_Meshlet_Vtx" );
 
 		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletVtxView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
