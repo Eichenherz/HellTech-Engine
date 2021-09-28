@@ -1,21 +1,21 @@
-#HellTech Engine
+# HellTech Engine
 An WIP exploration of the modern rendering landscape with Vulkan 1.2+ on Windows.
 
 
-##REQUIREMENTS:
+## REQUIREMENTS:
 -Win10+
 -Vulkan1.2+
 -dedicated GPU ( ?, prefferably NV )
 
 
-##DEPENDENCIES :
+## DEPENDENCIES :
 -meshoptimizer
 -spng
 -spirv_reflect
 -cgltf
 
 
-##POINTS OF INTEREST so far:
+## POINTS OF INTEREST ( WIP ):
 -custom binary file format + asset compiler
 -instance culling ( frustum + occlusion )
 -meshlet culling ( frustum + occlusion )
