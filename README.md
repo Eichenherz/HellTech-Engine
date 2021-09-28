@@ -1,5 +1,5 @@
 HellTech Engine
-An WIP exploration of modern rendering techniques with Vulkan 1.2+ on Windows.
+An WIP exploration of the modern rendering landscape with Vulkan 1.2+ on Windows.
 
 FEATURES so far:
 -instance culling ( frustum + occlusion )
