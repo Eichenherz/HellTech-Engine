@@ -522,7 +522,7 @@ template void MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3> vtxSpan, std::sp
 constexpr u64 MAX_VERTICES = 128;
 constexpr u64 MAX_TRIANGLES = 256;
 constexpr float CONE_WEIGHT = 0.8f;
-// TODO: fuck C++ constness thing
+// TODO: fix C++ constness thing
 // TODO: data offseting for more meshes
 static void MeshoptMakeMeshlets(
 	const std::span<vertex>	    vtxSpan,
