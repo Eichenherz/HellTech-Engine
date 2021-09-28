@@ -2545,15 +2545,14 @@ constexpr u64 boxLineVertexCount = 24u;
 constexpr u64 boxTrisVertexCount = 36u;
 /*
 // NOTE: corners are stored in this way:
-// NOTE: courtesy of Nabla
-//	   /3--------/7
-//	  / |       / |
-//	 /  |      /  |
-//	1---------5   |
-//	|  /2- - -|- -6
-//	| /       |  /
-//	|/        | /
-//	0---------4/
+//	   3---------7
+//	  /|        /|
+//	 / |       / |
+//	1---------5  |
+//	|  2- - - |- 6
+//	| /       | /
+//	|/        |/
+//	0---------4
 */
 constexpr u8 boxLineIndices[] = {
 	0,1,	0,2,	1,3,	2,3,
