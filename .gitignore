@@ -3,19 +3,19 @@ x64/
 
 *.spv
 
-*.glb
-
 desktop.ini
 
 vk_generator.py
 
-QiY.vcxproj
+spirv_reflect.c
 
-QiY.vcxproj.filters
+spirv_reflect.h
 
-QiY.vcxproj.user
+diy_pch.h
 
-VTune Profiler Results/
+lz4.c
+
+lz4.h
 
 miniz.c
 
@@ -25,8 +25,10 @@ spng.c
 
 spng.h
 
-Shaders/bc7toSpv.bat
-
-Shaders/bc7_encode.cs.hlsl
+cgltf.h
 
 Assets/
+
+.vscode/
+
+ImGui/
