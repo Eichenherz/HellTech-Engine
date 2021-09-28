@@ -9,11 +9,10 @@ An WIP exploration of the modern rendering landscape with Vulkan 1.2+ on Windows
 
 
 ### DEPENDENCIES :
-- meshoptimizer
-- spng
-- spirv_reflect
-- cgltf
-
+- [meshoptimizer](https://github.com/zeux/meshoptimizer)
+- [cgltf](https://github.com/jkuhlmann/cgltf)
+- [spng](https://github.com/randy408/libspng)
+- [spirv_reflect](https://github.com/KhronosGroup/SPIRV-Reflect)
 
 ### POINTS OF INTEREST ( WIP ):
 - custom binary file format + asset compiler
