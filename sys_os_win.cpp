@@ -292,6 +292,7 @@ struct keyboard
 	bool c;
 	bool space, lctrl;
 	bool f, o;
+	bool esc;
 };
 
 inline u64	SysDllLoad( const char* name )
@@ -356,6 +357,7 @@ static inline bool	SysPumpUserInput( mouse* m, keyboard* kbd, bool insideWnd )
 				if( ri.data.keyboard.VKey == VK_CONTROL && !isE0 ) kbd->lctrl = isPressed;
 				if( ( ri.data.keyboard.VKey == VK_F ) && isPressed ) kbd->f = !kbd->f;
 				if( ( ri.data.keyboard.VKey == VK_O ) && isPressed ) kbd->o = !kbd->o;
+				if( ( ri.data.keyboard.VKey == VK_ESCAPE ) && isPressed ) kbd->esc = !kbd->esc;
 
 			}
 			if( ( ri.header.dwType == RIM_TYPEMOUSE ) && insideWnd )
@@ -490,8 +492,12 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	u64					currentTicks = SysTicks();
 
 	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
 
-
+	u8* pixels = 0;
+	u32 width = 0, height = 0;
+	ImGui::GetIO().Fonts->GetTexDataAsRGBA32( &pixels, ( int* ) &width, ( int* ) &height );
 
 	// TODO: QUIT immediately ?
 	while( isRunning )
@@ -557,6 +563,16 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		frameData.elapsedSeconds = elapsedSecs;
 		frameData.freezeMainView = kbd.f;
 		frameData.dbgDraw = kbd.o;
+
+		ImGui::NewFrame();
+
+		if( kbd.esc )
+		{
+			ImGui::ShowDemoWindow();
+		}
+
+		ImGui::EndFrame();
+		ImGui::Render();
 
 		HostFrames( frameData );
 	}

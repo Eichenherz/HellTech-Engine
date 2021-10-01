@@ -2302,14 +2302,15 @@ struct entities_data
 
 #include "imgui/imgui.h"
 
+// TODO: better double buffer vert + idx
 // TODO: move spv shaders into exe folder
 // TODO: different mem pool ?
 struct imgui_vk_context
 {
+	buffer_data                 vtxBuffs[ 2 ];
+	buffer_data                 idxBuffs[ 2 ];
 	image                       uiTarget;
 	image                       fontsImg;
-	buffer_data                 vtxBuff;
-	buffer_data                 idxBuff;
 	VkRenderPass                renderPass;
 	VkDescriptorSetLayout       descSetLayout;
 	VkPipelineLayout            pipelineLayout;
@@ -2367,6 +2368,7 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	entries[ 1 ].descriptorType = descSetBindings[ 1 ].descriptorType;
 	entries[ 1 ].offset = sizeof( vk_descriptor_info );
 	entries[ 1 ].stride = sizeof( vk_descriptor_info );
+	entries[ 1 ].dstBinding = descSetBindings[ 1 ].binding;
 
 	VkDescriptorUpdateTemplateCreateInfo templateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
 	templateInfo.descriptorUpdateEntryCount = std::size( entries );
@@ -2393,9 +2395,7 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, 0, rndPass, pipelineLayout, vert.module, frag.module, guiState );
 
 
-	buffer_data vtx = VkCreateAllocBindBuffer( 128 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
-	buffer_data idx = VkCreateAllocBindBuffer( 128 * KB, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, vkHostComArena );
-
+	
 	imgui_vk_context ctx = {};
 	ctx.descSetLayout = descSetLayout;
 	ctx.pipelineLayout = pipelineLayout;
@@ -2403,8 +2403,10 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	ctx.descTemplate = descTemplate;
 	ctx.fontSampler = fontSampler;
 	ctx.renderPass = rndPass;
-	ctx.vtxBuff = vtx;
-	ctx.idxBuff = idx;
+	ctx.vtxBuffs[ 0 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
+	ctx.idxBuffs[ 0 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, vkHostComArena );
+	ctx.vtxBuffs[ 1 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
+	ctx.idxBuffs[ 1 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, vkHostComArena );
 	return ctx;
 }
 
@@ -2428,17 +2430,22 @@ static inline void ImguiDrawUiPass(
 	const imgui_vk_context& ctx,
 	const DirectX::XMFLOAT4& scaleTransl,
 	VkCommandBuffer cmdBuff,
-	VkFramebuffer uiFbo
+	VkFramebuffer uiFbo,
+	const buffer_data& vtx,
+	const buffer_data& idx
 ){
 	vk_label label = { cmdBuff,"Draw Imgui Pass",{} };
 
 	VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+	VkClearValue clear = {};
 
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
 	rndPassBegInfo.renderPass = ctx.renderPass;
 	rndPassBegInfo.framebuffer = uiFbo;
 	rndPassBegInfo.renderArea = scissor;
+	rndPassBegInfo.clearValueCount = 1;
+	rndPassBegInfo.pClearValues = &clear;
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
@@ -2448,14 +2455,16 @@ static inline void ImguiDrawUiPass(
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
 
 	vk_descriptor_info pushDescs[] = {
-		Descriptor( ctx.vtxBuff ),
+		Descriptor( vtx ),
 		{ctx.fontSampler,ctx.fontsImg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} };
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, ctx.descTemplate, ctx.pipelineLayout, 0, pushDescs );
 	vkCmdPushConstants( cmdBuff, ctx.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( scaleTransl ), &scaleTransl );
 
-	vkCmdBindIndexBuffer( cmdBuff, ctx.idxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
-	vkCmdDrawIndexed( cmdBuff, ctx.idxBuff.size / sizeof( u16 ), 1, 0, 0, 0 );
+	constexpr bool is16BitsIdx = sizeof( ImDrawIdx ) == 2;
+	constexpr VkIndexType idxType = ( is16BitsIdx ) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+	vkCmdBindIndexBuffer( cmdBuff, idx.hndl, 0, VK_INDEX_TYPE_UINT16 );
+	vkCmdDrawIndexed( cmdBuff, idx.size / sizeof( ImDrawIdx ), 1, 0, 0, 0 );
 
 	vkCmdEndRenderPass( cmdBuff );
 }
@@ -2520,6 +2529,43 @@ static inline debug_context VkMakeDebugContext(
 	return dbgCtx;
 }
 
+// TODO: color depth toggle stuff
+inline static void
+DebugDrawPass(
+	VkCommandBuffer		cmdBuff,
+	VkPipeline			vkPipeline,
+	VkRenderPass		vkRndPass,
+	VkFramebuffer	    offscreenFbo,
+	const buffer_data& drawBuff,
+	const vk_program& program,
+	const mat4& projView,
+	range		        drawRange
+){
+	vk_label label = { cmdBuff,"Dbg Draw Pass",{} };
+
+	VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	rndPassBegInfo.renderPass = vkRndPass;
+	rndPassBegInfo.framebuffer = offscreenFbo;
+	rndPassBegInfo.renderArea = scissor;
+
+	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
+
+	vk_descriptor_info pushDescs[] = { Descriptor( drawBuff ) };
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( mat4 ), &projView );
+
+	vkCmdDraw( cmdBuff, drawRange.size, 1, drawRange.offset, 0 );
+
+	vkCmdEndRenderPass( cmdBuff );
+}
 
 static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
 {
@@ -4629,48 +4675,11 @@ FinalCompositionPass(
 
 }
 
-// TODO: color depth toggle stuff
-inline static void
-DebugDrawPass(
-	VkCommandBuffer		cmdBuff,
-	VkPipeline			vkPipeline,
-	VkRenderPass		vkRndPass,
-	VkFramebuffer	    offscreenFbo,
-	const buffer_data&  drawBuff,
-	const vk_program&   program,
-	const mat4&         projView,
-	range		        drawRange
-){
-	vk_label label = { cmdBuff,"Dbg Draw Pass",{} };
 
-	VkViewport viewport = { 0, ( float )sc.height, ( float )sc.width, -( float )sc.height, 0, 1.0f };
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+// TODO: recycle framebuffers better
+static std::vector<VkFramebuffer> recycleFboList;
 
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = vkRndPass;
-	rndPassBegInfo.framebuffer = offscreenFbo;
-	rndPassBegInfo.renderArea = scissor;
-
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
-
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
-	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-
-	vk_descriptor_info pushDescs[] = { Descriptor( drawBuff ) };
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( mat4 ), &projView );
-
-	vkCmdDraw( cmdBuff, drawRange.size, 1, drawRange.offset, 0 );
-
-	vkCmdEndRenderPass( cmdBuff );
-}
-
-
-// TODO: recycle framebuffers 
 // TODO: pass cam data via push const
-//void HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt )
 void HostFrames( const frame_data& frameData )
 {
 	using namespace DirectX;
@@ -4706,6 +4715,24 @@ void HostFrames( const frame_data& frameData )
 	globalDataUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
 	globalDataUpdate.pBufferInfo = &uboInfo;
 	vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
+
+
+	const ImDrawData* guiDrawData = ImGui::GetDrawData();
+
+	assert( guiDrawData->TotalVtxCount < u16( -1 ) );
+	assert( sizeof( ImDrawIdx ) == 2 );
+	assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
+
+	ImDrawVert* vtxDst = ( ImDrawVert* ) imguiVkCtx.vtxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ].hostVisible;
+	ImDrawIdx* idxDst = ( ImDrawIdx* ) imguiVkCtx.idxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ].hostVisible;
+	for( u64 ci = 0; ci < guiDrawData->CmdListsCount; ++ci )
+	{
+		const ImDrawList* cmdList = guiDrawData->CmdLists[ ci ];
+		std::memcpy( vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof( ImDrawVert ) );
+		std::memcpy( idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof( ImDrawIdx ) );
+		vtxDst += cmdList->VtxBuffer.Size;
+		idxDst += cmdList->IdxBuffer.Size;
+	}
 
 
 	VkCommandBufferBeginInfo cmdBufBegInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -4825,9 +4852,22 @@ void HostFrames( const frame_data& frameData )
 	assert( rndCtx.depthTarget.width == rndCtx.colorTarget.width );
 	assert( rndCtx.depthTarget.height == rndCtx.colorTarget.height );
 
+	if( std::size( recycleFboList ) )
+	{
+		for( VkFramebuffer& fbo : recycleFboList )
+		{
+			vkDestroyFramebuffer( dc.device, fbo, 0 );
+		}
+		recycleFboList.resize( 0 );
+	}
+
 	VkFramebuffer depthFbo = VkMakeFramebuffer( dc.device, zRndPass, attachments, 1, fboWidth, fboHeight );
 	VkFramebuffer depthColFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, attachments, 2, fboWidth, fboHeight );
 	VkFramebuffer uiFbo = VkMakeFramebuffer( dc.device, imguiVkCtx.renderPass, &imguiVkCtx.uiTarget.view, 1, fboWidth, fboHeight );
+
+	recycleFboList.push_back( depthFbo );
+	recycleFboList.push_back( depthColFbo );
+	recycleFboList.push_back( uiFbo );
 
 	// TODO: async, multi-threaded, etc
 	// TODO: distinction between streamed and persistent resources
@@ -4881,6 +4921,9 @@ void HostFrames( const frame_data& frameData )
 				dependency.pImageMemoryBarriers = &fontsBarrier;
 				vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
 			}
+
+			VkDbgNameObj( fonts.hndl, dc.device, "Img_Fonts" );
+			imguiVkCtx.fontsImg = fonts;
 		}
 		
 		VkUploadResources( thisVFrame.cmdBuff, entities, currentFrameIdx );
@@ -5000,7 +5043,7 @@ void HostFrames( const frame_data& frameData )
 		initBuffers = 1;
 	}
 	
-	// TODO: bestroy buffers
+	// TODO: destroy buffers
 	// TODO: reclaim memory
 	if( std::size( stagingManager.pendingUploads ) )
 	{
@@ -5172,7 +5215,21 @@ void HostFrames( const frame_data& frameData )
 		rndCtx.depthPyramid,
 		depthPyramidMultiProgram );
 
-	//ImguiDrawUiPass( imguiVkCtx, {}, thisVFrame.cmdBuff, uiFbo );
+
+	float scale[ 2 ] = {};
+	scale[ 0 ] = 2.0f / guiDrawData->DisplaySize.x;
+	scale[ 1 ] = 2.0f / guiDrawData->DisplaySize.y;
+	float translate[ 2 ] = {};
+	translate[ 0 ] = -1.0f - guiDrawData->DisplayPos.x * scale[ 0 ];
+	translate[ 1 ] = -1.0f - guiDrawData->DisplayPos.y * scale[ 1 ];
+
+	ImguiDrawUiPass(
+		imguiVkCtx,
+		{ scale[ 0 ], scale[ 1 ], translate[ 0 ], translate[ 1 ] },
+		thisVFrame.cmdBuff, 
+		uiFbo,
+		imguiVkCtx.vtxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ],
+		imguiVkCtx.idxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ] );
 
 	u32 imgIdx;
 	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
