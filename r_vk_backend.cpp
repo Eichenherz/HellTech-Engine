@@ -1899,7 +1899,6 @@ VkPipeline VkMakeGfxPipeline(
 		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
 	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-	colorBlendStateInfo.logicOpEnable = 0;
 	colorBlendStateInfo.attachmentCount = 1;
 	colorBlendStateInfo.pAttachments = &blendConfig;
 
@@ -1913,7 +1912,6 @@ VkPipeline VkMakeGfxPipeline(
 	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
 	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
 	pipelineInfo.pInputAssemblyState = &inAsmStateInfo;
-	pipelineInfo.pTessellationState = 0;
 	pipelineInfo.pViewportState = &viewportInfo;
 	pipelineInfo.pRasterizationState = &rasterInfo;
 	pipelineInfo.pMultisampleState = &multisamplingInfo;
@@ -1922,8 +1920,6 @@ VkPipeline VkMakeGfxPipeline(
 	pipelineInfo.pDynamicState = &dynamicStateInfo;
 	pipelineInfo.layout = vkPipelineLayout;
 	pipelineInfo.renderPass = vkRndPass;
-	pipelineInfo.subpass = 0;
-	pipelineInfo.basePipelineHandle = 0;
 	pipelineInfo.basePipelineIndex = -1;
 
 	VkPipeline vkGfxPipeline;
@@ -2434,47 +2430,92 @@ __forceinline auto ImguiGetFontImage()
 	return retval{ pixels,width,height };
 }
 
-// TODO: pass the buffers differently
-static inline void ImguiDrawUiPass( 
+// TODO: no imgui dependency
+static inline void ImguiDrawUiPass(
 	const imgui_vk_context& ctx,
-	const DirectX::XMFLOAT4& scaleTransl,
 	VkCommandBuffer cmdBuff,
 	VkFramebuffer uiFbo,
-	const buffer_data& vtx,
-	const buffer_data& idx
+	u64 frameIdx
 ){
+	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
+	static_assert( sizeof( ImDrawIdx ) == 2 );
+
+	using namespace DirectX;
+
+	const ImDrawData* guiDrawData = ImGui::GetDrawData();
+	assert( guiDrawData->TotalVtxCount < u16( -1 ) );
+
+	const buffer_data& vtxBuff = imguiVkCtx.vtxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	const buffer_data& idxBuff = imguiVkCtx.idxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+
+	ImDrawVert* vtxDst = ( ImDrawVert* ) vtxBuff.hostVisible;
+	ImDrawIdx* idxDst = ( ImDrawIdx* ) idxBuff.hostVisible;
+	for( u64 ci = 0; ci < guiDrawData->CmdListsCount; ++ci )
+	{
+		const ImDrawList* cmdList = guiDrawData->CmdLists[ ci ];
+		std::memcpy( vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof( ImDrawVert ) );
+		std::memcpy( idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof( ImDrawIdx ) );
+		vtxDst += cmdList->VtxBuffer.Size;
+		idxDst += cmdList->IdxBuffer.Size;
+	}
+
+
 	vk_label label = { cmdBuff,"Draw Imgui Pass",{} };
 
-	VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 	VkClearValue clear = {};
-
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
 	rndPassBegInfo.renderPass = ctx.renderPass;
 	rndPassBegInfo.framebuffer = uiFbo;
-	rndPassBegInfo.renderArea = scissor;
+	rndPassBegInfo.renderArea = { 0,0,sc.width,sc.height };
 	rndPassBegInfo.clearValueCount = 1;
 	rndPassBegInfo.pClearValues = &clear;
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
-
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
-	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
 
 	vk_descriptor_info pushDescs[] = {
-		Descriptor( vtx ),
-		{ctx.fontSampler,ctx.fontsImg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} };
+		Descriptor( vtxBuff ), {ctx.fontSampler,ctx.fontsImg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} };
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, ctx.descTemplate, ctx.pipelineLayout, 0, pushDescs );
-	vkCmdPushConstants( cmdBuff, ctx.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( scaleTransl ), &scaleTransl );
 
-	constexpr bool is16BitsIdx = sizeof( ImDrawIdx ) == 2;
-	constexpr VkIndexType idxType = ( is16BitsIdx ) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
-	vkCmdBindIndexBuffer( cmdBuff, idx.hndl, 0, VK_INDEX_TYPE_UINT16 );
-	vkCmdDrawIndexed( cmdBuff, idx.size / sizeof( ImDrawIdx ), 1, 0, 0, 0 );
+	float scale[ 2 ] = { 2.0f / guiDrawData->DisplaySize.x, 2.0f / guiDrawData->DisplaySize.y };
+	float move[ 2 ] = { -1.0f - guiDrawData->DisplayPos.x * scale[ 0 ], -1.0f - guiDrawData->DisplayPos.y * scale[ 1 ] };
+	XMFLOAT4 pushConst = { scale[ 0 ],scale[ 1 ],move[ 0 ],move[ 1 ] };
+	vkCmdPushConstants( cmdBuff, ctx.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( pushConst ), &pushConst );
+	vkCmdBindIndexBuffer( cmdBuff, idxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
 
+
+	// (0,0) unless using multi-viewports
+	XMFLOAT2 clipOff = { guiDrawData->DisplayPos.x, guiDrawData->DisplayPos.y };
+	// (1,1) unless using retina display which are often (2,2)
+	XMFLOAT2 clipScale = { guiDrawData->FramebufferScale.x, guiDrawData->FramebufferScale.y };
+
+	u32 vtxOffset = 0;
+	u32 idxOffset = 0;
+	for( u64 li = 0; li < guiDrawData->CmdListsCount; ++li )
+	{
+		const ImDrawList* cmdList = guiDrawData->CmdLists[ li ];
+		for( u64 ci = 0; ci < cmdList->CmdBuffer.Size; ++ci )
+		{
+			const ImDrawCmd* pCmd = &cmdList->CmdBuffer[ ci ];
+			// Project scissor/clipping rectangles into framebuffer space
+			XMFLOAT2 clipMin = { ( pCmd->ClipRect.x - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.y - clipOff.y ) * clipScale.y };
+			XMFLOAT2 clipMax = { ( pCmd->ClipRect.z - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.w - clipOff.y ) * clipScale.y };
+
+			// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
+			clipMin = { std::max( clipMin.x, 0.0f ), std::max( clipMin.y, 0.0f ) };
+			clipMax = { std::min( clipMax.x, ( float ) sc.width ), std::min( clipMax.y, ( float ) sc.height ) };
+			
+			if( clipMax.x < clipMin.x || clipMax.y < clipMin.y ) continue;
+
+			VkRect2D scissor = { i32( clipMin.x ), i32( clipMin.y ), u32( clipMax.x - clipMin.x ), u32( clipMax.y - clipMin.y ) };
+			vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+			vkCmdDrawIndexed( cmdBuff, pCmd->ElemCount, 1, pCmd->IdxOffset + idxOffset, pCmd->VtxOffset + vtxOffset, 0 );
+		}
+		idxOffset += cmdList->IdxBuffer.Size;
+		vtxOffset += cmdList->VtxBuffer.Size;
+	}
 	vkCmdEndRenderPass( cmdBuff );
 }
 
@@ -2552,7 +2593,6 @@ DebugDrawPass(
 ){
 	vk_label label = { cmdBuff,"Dbg Draw Pass",{} };
 
-	VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
@@ -2562,7 +2602,6 @@ DebugDrawPass(
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
@@ -4190,7 +4229,6 @@ CullRasterizeLightProxy(
 ){
 	vk_label label = { cmdBuff,"Gfx_Cull_Rast_Lights",{} };
 
-	VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
@@ -4200,7 +4238,6 @@ CullRasterizeLightProxy(
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 
@@ -4245,7 +4282,6 @@ DrawIndexedIndirectPass(
 ){
 	vk_label label = { cmdBuff,"Draw Indexed Indirect Pass",{} };
 
-	VkViewport viewport = { 0, (float) sc.height, (float) sc.width, -(float) sc.height, 0, 1.0f };
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
@@ -4257,7 +4293,6 @@ DrawIndexedIndirectPass(
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
@@ -4294,7 +4329,6 @@ DrawIndirectPass(
 ){
 	vk_label label = { cmdBuff,"Draw Indirect Pass",{} };
 
-	VkViewport viewport = { 0, ( float )sc.height, ( float )sc.width, -( float )sc.height, 0, 1.0f };
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
@@ -4304,7 +4338,6 @@ DrawIndirectPass(
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
@@ -4343,7 +4376,6 @@ DrawIndexedIndirectMerged(
 
 	constexpr u32 maxDrawCount = 1;
 
-	VkViewport viewport = { 0, ( float )sc.height, ( float )sc.width, -( float )sc.height, 0, 1.0f };
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
 	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
@@ -4355,7 +4387,6 @@ DrawIndexedIndirectMerged(
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
-	vkCmdSetViewport( cmdBuff, 0, 1, &viewport );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
@@ -4726,27 +4757,12 @@ void HostFrames( const frame_data& frameData )
 	vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
 
 
-	const ImDrawData* guiDrawData = ImGui::GetDrawData();
-
-	assert( guiDrawData->TotalVtxCount < u16( -1 ) );
-	assert( sizeof( ImDrawIdx ) == 2 );
-	assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
-
-	ImDrawVert* vtxDst = ( ImDrawVert* ) imguiVkCtx.vtxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ].hostVisible;
-	ImDrawIdx* idxDst = ( ImDrawIdx* ) imguiVkCtx.idxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ].hostVisible;
-	for( u64 ci = 0; ci < guiDrawData->CmdListsCount; ++ci )
-	{
-		const ImDrawList* cmdList = guiDrawData->CmdLists[ ci ];
-		std::memcpy( vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof( ImDrawVert ) );
-		std::memcpy( idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof( ImDrawIdx ) );
-		vtxDst += cmdList->VtxBuffer.Size;
-		idxDst += cmdList->IdxBuffer.Size;
-	}
-
-
 	VkCommandBufferBeginInfo cmdBufBegInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
+
+	VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
+	vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &viewport );
 
 	// TODO: swapchain resize ?
 	if( !rndCtx.depthTarget.hndl )
@@ -5225,20 +5241,7 @@ void HostFrames( const frame_data& frameData )
 		depthPyramidMultiProgram );
 
 
-	float scale[ 2 ] = {};
-	scale[ 0 ] = 2.0f / guiDrawData->DisplaySize.x;
-	scale[ 1 ] = 2.0f / guiDrawData->DisplaySize.y;
-	float translate[ 2 ] = {};
-	translate[ 0 ] = -1.0f - guiDrawData->DisplayPos.x * scale[ 0 ];
-	translate[ 1 ] = -1.0f - guiDrawData->DisplayPos.y * scale[ 1 ];
-
-	ImguiDrawUiPass(
-		imguiVkCtx,
-		{ scale[ 0 ], scale[ 1 ], translate[ 0 ], translate[ 1 ] },
-		thisVFrame.cmdBuff, 
-		uiFbo,
-		imguiVkCtx.vtxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ],
-		imguiVkCtx.idxBuffs[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ] );
+	ImguiDrawUiPass( imguiVkCtx, thisVFrame.cmdBuff, uiFbo, currentFrameIdx );
 
 	u32 imgIdx;
 	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
@@ -5279,7 +5282,6 @@ void HostFrames( const frame_data& frameData )
 	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependencyPresent );
 
 	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
-
 
 
 	VkSemaphore signalSemas[] = { thisVFrame.canPresentSema, rndCtx.timelineSema };
