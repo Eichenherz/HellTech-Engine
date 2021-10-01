@@ -2309,7 +2309,6 @@ struct imgui_vk_context
 {
 	buffer_data                 vtxBuffs[ 2 ];
 	buffer_data                 idxBuffs[ 2 ];
-	image                       uiTarget;
 	image                       fontsImg;
 	VkRenderPass                renderPass;
 	VkDescriptorSetLayout       descSetLayout;
@@ -2326,9 +2325,10 @@ static imgui_vk_context imguiVkCtx;
 // TODO: better paradigm ?
 static inline imgui_vk_context ImguiMakeVkContext(
 	VkDevice vkDevice,
-	const VkPhysicalDeviceProperties& gpuProps
+	const VkPhysicalDeviceProperties& gpuProps,
+	VkFormat colDstFormat
 ){
-	VkRenderPass rndPass = VkMakeRenderPass( vkDevice, -1, 0, -1, 1, VkFormat( 0 ), VK_FORMAT_R8G8B8A8_UNORM );
+	VkRenderPass rndPass = VkMakeRenderPass( vkDevice, -1, 0, -1, 0, VkFormat( 0 ), colDstFormat );
 
 	VkSampler fontSampler = VkMakeSampler( vkDevice, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 	
@@ -2467,8 +2467,8 @@ static inline void ImguiDrawUiPass(
 	rndPassBegInfo.renderPass = ctx.renderPass;
 	rndPassBegInfo.framebuffer = uiFbo;
 	rndPassBegInfo.renderArea = { 0,0,sc.width,sc.height };
-	rndPassBegInfo.clearValueCount = 1;
-	rndPassBegInfo.pClearValues = &clear;
+	//rndPassBegInfo.clearValueCount = 1;
+	//rndPassBegInfo.pClearValues = &clear;
 
 	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
@@ -3847,7 +3847,7 @@ void VkBackendInit()
 
 	vkDbgCtx = VkMakeDebugContext( dc.device, rndCtx.renderPass, dc.gpuProps );
 
-	imguiVkCtx = ImguiMakeVkContext( dc.device, dc.gpuProps );
+	imguiVkCtx = ImguiMakeVkContext( dc.device, dc.gpuProps, VK_FORMAT_B8G8R8A8_UNORM );
 
 	rndCtx.quadMinSampler =
 		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
@@ -3858,8 +3858,6 @@ inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
 	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
 
-// NOTE: dx math ? includes these ?
-//#include <intrin.h>
 // TODO: math_uitl file
 inline u64 FloorPowOf2( u64 size )
 {
@@ -4847,26 +4845,6 @@ void HostFrames( const frame_data& frameData )
 		dependency.pImageMemoryBarriers = &initBarrier;
 		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
 	}
-	if( !imguiVkCtx.uiTarget.hndl )
-	{
-		constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
-		constexpr VkImageUsageFlags usgFlags =
-			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-		imguiVkCtx.uiTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
-		VkDbgNameObj( imguiVkCtx.uiTarget.hndl, dc.device, "Img_Render_Target_UI" );
-
-		VkImageMemoryBarrier2KHR initBarrier = VkMakeImageBarrier2(
-			imguiVkCtx.uiTarget.hndl,
-			0, 0,
-			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-			VK_IMAGE_ASPECT_COLOR_BIT );
-		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-		dependency.imageMemoryBarrierCount = 1;
-		dependency.pImageMemoryBarriers = &initBarrier;
-		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
-	}
 
 	// TODO: creating too many fboss per frame recording might have some perf impact
     // TODO: if perf impact then store inside a hashmap/cache map
@@ -4876,7 +4854,7 @@ void HostFrames( const frame_data& frameData )
 	u32 fboHeight = rndCtx.depthTarget.height;
 	assert( rndCtx.depthTarget.width == rndCtx.colorTarget.width );
 	assert( rndCtx.depthTarget.height == rndCtx.colorTarget.height );
-
+	// TODO: re design
 	if( std::size( recycleFboList ) )
 	{
 		for( VkFramebuffer& fbo : recycleFboList )
@@ -4888,11 +4866,8 @@ void HostFrames( const frame_data& frameData )
 
 	VkFramebuffer depthFbo = VkMakeFramebuffer( dc.device, zRndPass, attachments, 1, fboWidth, fboHeight );
 	VkFramebuffer depthColFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, attachments, 2, fboWidth, fboHeight );
-	VkFramebuffer uiFbo = VkMakeFramebuffer( dc.device, imguiVkCtx.renderPass, &imguiVkCtx.uiTarget.view, 1, fboWidth, fboHeight );
-
 	recycleFboList.push_back( depthFbo );
 	recycleFboList.push_back( depthColFbo );
-	recycleFboList.push_back( uiFbo );
 
 	// TODO: async, multi-threaded, etc
 	// TODO: distinction between streamed and persistent resources
@@ -5241,8 +5216,6 @@ void HostFrames( const frame_data& frameData )
 		depthPyramidMultiProgram );
 
 
-	ImguiDrawUiPass( imguiVkCtx, thisVFrame.cmdBuff, uiFbo, currentFrameIdx );
-
 	u32 imgIdx;
 	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 
@@ -5253,26 +5226,39 @@ void HostFrames( const frame_data& frameData )
 						 sc.imgs[ imgIdx ],
 						 sc.imgViews[ imgIdx ] );
 	
-	VkImageMemoryBarrier2KHR hrdColTargetAcquire = VkMakeImageBarrier2(
-		rndCtx.colorTarget.hndl,
-		VK_ACCESS_2_SHADER_READ_BIT_KHR,
-		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-		0, 0,
-		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-		VK_IMAGE_ASPECT_COLOR_BIT );
+	VkImageMemoryBarrier2KHR compositionEndBarriers[] = {
+		VkMakeImageBarrier2( rndCtx.colorTarget.hndl,
+							 VK_ACCESS_2_SHADER_READ_BIT_KHR,
+							 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+							 0, 0,
+							 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+							 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+							 VK_IMAGE_ASPECT_COLOR_BIT ),
+		VkMakeImageBarrier2( sc.imgs[ imgIdx ],
+		                     VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+							 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+							 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT_KHR | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR,
+							 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR ,
+							 VK_IMAGE_LAYOUT_GENERAL,
+							 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+							 VK_IMAGE_ASPECT_COLOR_BIT ) };
 
-	VkDependencyInfoKHR dependencyAcquire = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	dependencyAcquire.imageMemoryBarrierCount = 1;
-	dependencyAcquire.pImageMemoryBarriers = &hrdColTargetAcquire;
-	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependencyAcquire );
+	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	dependency.imageMemoryBarrierCount = std::size( compositionEndBarriers );
+	dependency.pImageMemoryBarriers = compositionEndBarriers;
+	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+
+	VkFramebuffer uiFbo = VkMakeFramebuffer( dc.device, imguiVkCtx.renderPass, &sc.imgViews[ imgIdx ], 1, sc.width, sc.height );
+	recycleFboList.push_back( uiFbo );
+	ImguiDrawUiPass( imguiVkCtx, thisVFrame.cmdBuff, uiFbo, currentFrameIdx );
+
 
 	VkImageMemoryBarrier2KHR presentWaitBarrier = VkMakeImageBarrier2(
 		sc.imgs[ imgIdx ],
-		VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+		VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR,
+		VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
 		0, 0,
-		VK_IMAGE_LAYOUT_GENERAL,
+		VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
 		VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 		VK_IMAGE_ASPECT_COLOR_BIT );
 
@@ -5295,7 +5281,7 @@ void HostFrames( const frame_data& frameData )
 	submitInfo.pNext = &timelineInfo;
 	submitInfo.waitSemaphoreCount = 1;
 	submitInfo.pWaitSemaphores = &thisVFrame.canGetImgSema;
-	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;// VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	submitInfo.pWaitDstStageMask = &waitDstStageMsk;
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &thisVFrame.cmdBuff;
