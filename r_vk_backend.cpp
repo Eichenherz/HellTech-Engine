@@ -1809,13 +1809,17 @@ VkMakeSpecializationInfo(
 	return specInfo;
 }
 
-
+// TODO: store more stuff ?
 struct vk_gfx_pipeline_state
 {
 	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL;
 	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT;
 	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	VkBlendFactor       srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+	VkBlendFactor       dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+	VkBlendFactor       srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+	VkBlendFactor       dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
 	float               extraPrimitiveOverestimationSize = 0.0f;
 	bool                conservativeRasterEnable = false;
 	bool				depthWrite = true;
@@ -1885,11 +1889,11 @@ VkPipeline VkMakeGfxPipeline(
 
 	VkPipelineColorBlendAttachmentState blendConfig = {};
 	blendConfig.blendEnable = pipelineState.blendCol;
-	blendConfig.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-	blendConfig.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+	blendConfig.srcColorBlendFactor = pipelineState.srcColorBlendFactor;
+	blendConfig.dstColorBlendFactor = pipelineState.dstColorBlendFactor;
 	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	blendConfig.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+	blendConfig.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor;
+	blendConfig.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor;
 	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
 	blendConfig.colorWriteMask =
 		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -2385,7 +2389,11 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	vk_shader frag = VkLoadShader( "Shaders/shader_imgui.frag.spv", vkDevice );
 
 	vk_gfx_pipeline_state guiState = {};
-	guiState.blendCol = false; // TODO ?
+	guiState.blendCol = true; 
+	guiState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+	guiState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+	guiState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+	guiState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 	guiState.depthWrite = false;
 	guiState.depthTestEnable = false;
 	guiState.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -2426,6 +2434,7 @@ __forceinline auto ImguiGetFontImage()
 	return retval{ pixels,width,height };
 }
 
+// TODO: pass the buffers differently
 static inline void ImguiDrawUiPass( 
 	const imgui_vk_context& ctx,
 	const DirectX::XMFLOAT4& scaleTransl,
