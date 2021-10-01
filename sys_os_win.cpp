@@ -492,12 +492,12 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	u64					currentTicks = SysTicks();
 
 	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
 	ImGuiIO& io = ImGui::GetIO();
 	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
-
-	u8* pixels = 0;
-	u32 width = 0, height = 0;
-	ImGui::GetIO().Fonts->GetTexDataAsRGBA32( &pixels, ( int* ) &width, ( int* ) &height );
+	io.Fonts->AddFontDefault();
+	io.Fonts->Build();
+	
 
 	// TODO: QUIT immediately ?
 	while( isRunning )
@@ -566,13 +566,13 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 		ImGui::NewFrame();
 
-		if( kbd.esc )
+		//if( kbd.esc )
 		{
 			ImGui::ShowDemoWindow();
 		}
 
-		ImGui::EndFrame();
 		ImGui::Render();
+		ImGui::EndFrame();
 
 		HostFrames( frameData );
 	}
