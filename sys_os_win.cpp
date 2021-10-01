@@ -402,6 +402,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }						 
 
+#include "imgui/imgui.h"
 
 INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
@@ -475,8 +476,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
 	XMFLOAT3 camWorldPos = { 0,0,0 };
 	
-	global_data globs = {};
-
+	frame_data frameData = {};
 	VkBackendInit();
 
 	// NOTE: time is a double of seconds
@@ -489,6 +489,10 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	//double				accumulator = 0;
 	u64					currentTicks = SysTicks();
 
+	ImGui::CreateContext();
+
+
+
 	// TODO: QUIT immediately ?
 	while( isRunning )
 	{
@@ -497,15 +501,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		currentTicks = newTicks;
 		//accumulator += elapsedSecs;
 
-
 		isRunning = SysPumpUserInput( &m, &kbd, 1 );
-
-		// SIMULATION( state, t, dt );
-		//while( accumulator >= dt )
-		//{
-		//	accumulator -= dt;
-		//	t += dt;
-		//}
 
 		// TODO: smooth camera some more ?
 		// TODO: wtf Newton ?
@@ -519,47 +515,51 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		if( kbd.space ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
 		if( kbd.c ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
 
-		camMove = XMVector3Transform( XMVector3Normalize( camMove ),
-									  XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) *
-									  XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed ) );
-
-		XMVECTOR camPos = XMLoadFloat3( &camWorldPos );
-		XMVECTOR smoothNewCamPos = XMVectorLerp( camPos, XMVectorAdd( camPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
-
-		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
+		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed );
+		camMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
+									  
+		XMVECTOR xmCamPos = XMLoadFloat3( &camWorldPos );
+		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
 		
+		// TODO: thresholds
+		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
+		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
+
 		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
 		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
 
-		
-		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
 		// TRANSF CAM VIEW
 		XMVECTOR camLookAt = XMVector3Transform( camFwdBasis, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = XMMatrixLookAtLH( 
-			XMLoadFloat3( &camWorldPos ), XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ), camUpBasis );
+		XMMATRIX view = XMMatrixLookAtLH( smoothNewCamPos, XMVectorAdd( smoothNewCamPos, camLookAt ), camUpBasis );
 
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
 
-		XMStoreFloat4x4A( &globs.proj, proj );
-		XMStoreFloat4x4A( &globs.activeView, view );
+		XMStoreFloat4x4A( &frameData.proj, proj );
+		XMStoreFloat4x4A( &frameData.activeView, view );
 		if( !kbd.f )
 		{
-			XMStoreFloat4x4A( &globs.mainView, view );
+			XMStoreFloat4x4A( &frameData.mainView, view );
 		}
-		globs.worldPos = camWorldPos;
-		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
+		frameData.worldPos = camWorldPos;
+		XMStoreFloat3( &frameData.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
 
-		
-		//static b32 readAssetFile = false;
-		//if( !readAssetFile )
-		//{
-		//	readAssetFile = true;
-		//}
+		// NOTE: inv( A * B ) = inv B * inv A
+		XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj );
+		XMVECTOR det = XMMatrixDeterminant( invFrustMat );
+		assert( XMVectorGetX( det ) );
+		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
+		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
 
-		HostFrames( &globs, kbd.o, kbd.f, elapsedSecs );
+		XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj );
+		XMStoreFloat4x4A( &frameData.projView, xmProjView );
+
+		frameData.elapsedSeconds = elapsedSecs;
+		frameData.freezeMainView = kbd.f;
+		frameData.dbgDraw = kbd.o;
+
+		HostFrames( frameData );
 	}
-
 
 	VkBackendKill();
 	VirtualFree( sysMem, 0, MEM_RELEASE );

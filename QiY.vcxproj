@@ -262,6 +262,11 @@
   <ItemGroup>
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
+    <ClCompile Include="imgui\imgui.cpp" />
+    <ClCompile Include="imgui\imgui_demo.cpp" />
+    <ClCompile Include="imgui\imgui_draw.cpp" />
+    <ClCompile Include="imgui\imgui_tables.cpp" />
+    <ClCompile Include="imgui\imgui_widgets.cpp" />
     <ClCompile Include="lz4.c" />
     <ClCompile Include="miniz.c" />
     <ClCompile Include="r_vk_backend.cpp" />
@@ -280,7 +285,12 @@
     <ClInclude Include="cgltf.h" />
     <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
-    <ClInclude Include="diy_pch.h" />
+    <ClInclude Include="imgui\imconfig.h" />
+    <ClInclude Include="imgui\imgui.h" />
+    <ClInclude Include="imgui\imgui_internal.h" />
+    <ClInclude Include="imgui\imstb_rectpack.h" />
+    <ClInclude Include="imgui\imstb_textedit.h" />
+    <ClInclude Include="imgui\imstb_truetype.h" />
     <ClInclude Include="lz4.h" />
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
@@ -381,6 +391,16 @@
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\f_light_cull.frag.glsl">
+      <FileType>Document</FileType>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="imgui\shader_imgui.vert.glsl">
+      <FileType>Document</FileType>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="imgui\shader_imgui.frag.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>

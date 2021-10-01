@@ -30,6 +30,7 @@
 #endif // WIN32
 
 struct global_data;
+struct frame_data;
 namespace std
 {
 	template<class, class> class vector;
@@ -49,7 +50,7 @@ constexpr u64 SYS_MEM_BYTES = 1 * GB;
 void			CoreLoop();
 
 extern void		VkBackendInit();
-extern void		HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt );
+extern void		HostFrames( const frame_data& frameData );
 extern void		VkBackendKill();
 
 //////////////////////////////////////
