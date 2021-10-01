@@ -4513,18 +4513,14 @@ DepthPyramidMultiPass(
 
 // TODO: optimize
 inline static void
-ToneMappingWithSrgb(
+AverageLuminancePass(
 	VkCommandBuffer		cmdBuff,
 	VkPipeline			avgPipe,
-	VkPipeline			tonePipe,
-	const vk_program&	avgProg,
-	const image&		fboHdrColTrg,
-	const vk_program&	tonemapProg,
-	VkImage				scImg,
-	VkImageView			scView,
-	float				dt 
+	const vk_program&   avgProg,
+	const image&        fboHdrColTrg,
+	float				dt
 ){
-	vk_label label = { cmdBuff,"AvgLum && Tonemap Pass",{} };
+	vk_label label = { cmdBuff,"Averge Lum Pass",{} };
 	// NOTE: inspired by http://www.alextardif.com/HistogramLuminance.html
 	avg_luminance_info avgLumInfo = {};
 	avgLumInfo.minLogLum = -10.0f;
@@ -4562,26 +4558,36 @@ ToneMappingWithSrgb(
 	dependencyAcquire.pBufferMemoryBarriers = zeroInitGlobals;
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependencyAcquire );
 
-	// AVERAGE LUM
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, avgPipe );
 
-	VkDescriptorImageInfo hdrColTrgInfo = { 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-	vk_descriptor_info avgLumDescs[] = { 
-		hdrColTrgInfo, 
-		Descriptor( avgLumBuff ), 
+	vk_descriptor_info avgLumDescs[] = {
+		{ 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+		Descriptor( avgLumBuff ),
 		Descriptor( shaderGlobalsBuff ),
-		Descriptor( shaderGlobalSyncCounterBuff ) 
+		Descriptor( shaderGlobalSyncCounterBuff )
 	};
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, avgProg.descUpdateTemplate, avgProg.pipeLayout, 0, &avgLumDescs[ 0 ] );
 
 	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
-	vkCmdDispatch( cmdBuff, 
-				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.x ), 
+	vkCmdDispatch( cmdBuff,
+				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.x ),
 				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
+}
 
-	// TONEMAPPING w/ GAMMA sRGB
+// TODO: optimize
+inline static void
+FinalCompositionPass(
+	VkCommandBuffer		cmdBuff,
+	VkPipeline			tonePipe,
+	const image&		fboHdrColTrg,
+	const vk_program&	tonemapProg,
+	VkImage				scImg,
+	VkImageView			scView
+){
+	vk_label label = { cmdBuff,"Final Composition Pass",{} };
+	
 	VkImageMemoryBarrier2KHR scWriteBarrier =
 		VkMakeImageBarrier2( scImg,
 							 0, 0,
@@ -4607,10 +4613,9 @@ ToneMappingWithSrgb(
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, tonePipe );
 
-	VkDescriptorImageInfo sdrColScInfo = { 0, scView, VK_IMAGE_LAYOUT_GENERAL };
 	vk_descriptor_info tonemapDescs[] = {
-		hdrColTrgInfo,
-		sdrColScInfo,
+		{ 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+		{ 0, scView, VK_IMAGE_LAYOUT_GENERAL },
 		Descriptor( avgLumBuff )
 	};
 
@@ -4619,8 +4624,8 @@ ToneMappingWithSrgb(
 
 	assert( ( fboHdrColTrg.width == sc.width ) && ( fboHdrColTrg.height == sc.height ) );
 	vkCmdDispatch( cmdBuff,
-				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.x ),
-				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
+				   VkGetGroupCount( fboHdrColTrg.width, tonemapProg.groupSize.x ),
+				   VkGetGroupCount( fboHdrColTrg.height, tonemapProg.groupSize.y ), 1 );
 
 }
 
@@ -5152,6 +5157,12 @@ void HostFrames( const frame_data& frameData )
 		
 	}
 
+	AverageLuminancePass( thisVFrame.cmdBuff,
+						  rndCtx.compAvgLumPipe,
+						  avgLumCompProgram,
+						  rndCtx.colorTarget,
+						  frameData.elapsedSeconds );
+
 	DepthPyramidMultiPass(
 		thisVFrame.cmdBuff,
 		rndCtx.compHiZPipeline,
@@ -5166,15 +5177,12 @@ void HostFrames( const frame_data& frameData )
 	u32 imgIdx;
 	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 
-	ToneMappingWithSrgb( thisVFrame.cmdBuff,
-						 rndCtx.compAvgLumPipe, 
+	FinalCompositionPass( thisVFrame.cmdBuff,
 						 rndCtx.compTonemapPipe,
-						 avgLumCompProgram, 
 						 rndCtx.colorTarget,
 						 tonemapCompProgram,
 						 sc.imgs[ imgIdx ],
-						 sc.imgViews[ imgIdx ],
-						 frameData.elapsedSeconds );
+						 sc.imgViews[ imgIdx ] );
 	
 	VkImageMemoryBarrier2KHR hrdColTargetAcquire = VkMakeImageBarrier2(
 		rndCtx.colorTarget.hndl,
