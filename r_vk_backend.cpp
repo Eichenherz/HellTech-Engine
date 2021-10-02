@@ -1461,7 +1461,8 @@ struct vk_gpu_timer
 {
 	buffer_data resultBuff;
 	VkQueryPool queryPool;
-	u32 queryCount;
+	u32         queryCount;
+	float       timestampPeriod;
 };
 
 static vk_gpu_timer vkGpuTimer[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
@@ -1486,7 +1487,7 @@ struct vk_time_section
 	}
 };
 
-static inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCount )
+static inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCount, float tsPeriod )
 {
 	u32 queryCount = 2 * timerRegionsCount;
 	buffer_data resultBuff = VkCreateAllocBindBuffer( queryCount * sizeof( u64 ), VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkHostComArena );
@@ -1501,10 +1502,10 @@ static inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCo
 	VK_CHECK( vkCreateQueryPool( vkDevice, &queryPoolInfo, 0, &queryPool ) );
 	VkDbgNameObj( queryPool, vkDevice, "VkQueryPool_GPU_timer" );
 
-	return { resultBuff, queryPool, queryCount };
+	return { resultBuff, queryPool, queryCount, tsPeriod };
 }
 
-static inline u64 VkCmdReadGpuTime( VkCommandBuffer cmdBuff, const vk_gpu_timer& vkTimer )
+static inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& vkTimer )
 {
 	vkCmdCopyQueryPoolResults( 
 		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ),
@@ -1525,7 +1526,8 @@ static inline u64 VkCmdReadGpuTime( VkCommandBuffer cmdBuff, const vk_gpu_timer&
 	u64 timestampBeg = pTimestamps[ 0 ];
 	u64 timestampEnd = pTimestamps[ 1 ];
 
-	return timestampEnd - timestampBeg;
+	constexpr float nsToMs = 1e-6;
+	return ( timestampEnd - timestampBeg ) / vkTimer.timestampPeriod * nsToMs;
 }
 
 // TODO: tewak ? make own ?
@@ -3932,8 +3934,8 @@ void VkBackendInit()
 	rndCtx.quadMinSampler =
 		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
 
-	vkGpuTimer[ 0 ] = VkMakeGpuTimer( dc.device, 1 );
-	vkGpuTimer[ 1 ] = VkMakeGpuTimer( dc.device, 1 );
+	vkGpuTimer[ 0 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
+	vkGpuTimer[ 1 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
 }
 
 inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
@@ -4847,7 +4849,7 @@ void HostFrames( const frame_data& frameData )
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
 	
 	u64 poolIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
-	std::cout << ( VkCmdReadGpuTime( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ^ 1 ] ) / dc.timestampPeriod ) * 0.01f << " ms" << "\n";
+	std::cout << VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] ) << " ms" << "\n";
 	vkCmdResetQueryPool( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0, vkGpuTimer[ poolIdx ].queryCount );
 	{
 		vk_time_section timePipeline = { thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0 };
