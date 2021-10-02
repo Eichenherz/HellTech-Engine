@@ -275,7 +275,7 @@ struct imgui_vertex
 {
 	float x, y;
 	float u, v;
-	uint8_t r, g, b, a;
+	uint  rgba8Unorm;
 };
 
 #ifndef __cplusplus
