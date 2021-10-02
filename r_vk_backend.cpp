@@ -2430,6 +2430,7 @@ __forceinline auto ImguiGetFontImage()
 	return retval{ pixels,width,height };
 }
 
+// TODO: overdraw more efficiently 
 // TODO: no imgui dependency
 static inline void ImguiDrawUiPass(
 	const imgui_vk_context& ctx,
@@ -2443,10 +2444,12 @@ static inline void ImguiDrawUiPass(
 	using namespace DirectX;
 
 	const ImDrawData* guiDrawData = ImGui::GetDrawData();
-	assert( guiDrawData->TotalVtxCount < u16( -1 ) );
-
+	
 	const buffer_data& vtxBuff = imguiVkCtx.vtxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 	const buffer_data& idxBuff = imguiVkCtx.idxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+
+	assert( guiDrawData->TotalVtxCount < u16( -1 ) );
+	assert( guiDrawData->TotalVtxCount * sizeof( ImDrawVert ) < vtxBuff.size );
 
 	ImDrawVert* vtxDst = ( ImDrawVert* ) vtxBuff.hostVisible;
 	ImDrawIdx* idxDst = ( ImDrawIdx* ) idxBuff.hostVisible;
@@ -2474,7 +2477,7 @@ static inline void ImguiDrawUiPass(
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
 
 	vk_descriptor_info pushDescs[] = {
-		Descriptor( vtxBuff ), {ctx.fontSampler,ctx.fontsImg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} };
+		Descriptor( vtxBuff ), {ctx.fontSampler, ctx.fontsImg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} };
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, ctx.descTemplate, ctx.pipelineLayout, 0, pushDescs );
 
@@ -2510,7 +2513,7 @@ static inline void ImguiDrawUiPass(
 
 			VkRect2D scissor = { i32( clipMin.x ), i32( clipMin.y ), u32( clipMax.x - clipMin.x ), u32( clipMax.y - clipMin.y ) };
 			vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-
+			
 			vkCmdDrawIndexed( cmdBuff, pCmd->ElemCount, 1, pCmd->IdxOffset + idxOffset, pCmd->VtxOffset + vtxOffset, 0 );
 		}
 		idxOffset += cmdList->IdxBuffer.Size;
@@ -5247,6 +5250,9 @@ void HostFrames( const frame_data& frameData )
 	dependency.imageMemoryBarrierCount = std::size( compositionEndBarriers );
 	dependency.pImageMemoryBarriers = compositionEndBarriers;
 	vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+
+	VkViewport uiViewport = { 0, 0, ( float ) sc.width, ( float ) sc.height, 0, 1.0f };
+	vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &uiViewport );
 
 	VkFramebuffer uiFbo = VkMakeFramebuffer( dc.device, imguiVkCtx.renderPass, &sc.imgViews[ imgIdx ], 1, sc.width, sc.height );
 	recycleFboList.push_back( uiFbo );

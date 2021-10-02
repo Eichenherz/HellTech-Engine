@@ -566,7 +566,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 		ImGui::NewFrame();
 
-		//if( kbd.esc )
+		if( kbd.esc )
 		{
 			ImGui::ShowDemoWindow();
 		}
