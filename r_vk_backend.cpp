@@ -487,6 +487,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		vkGetPhysicalDeviceProperties2( availableDevices[ i ], &gpuProps2 );
 		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_2 ) continue;
 		if( gpuProps2.properties.deviceType != PREFFERED_PHYSICAL_DEVICE_TYPE ) continue;
+		if( !gpuProps2.properties.limits.timestampComputeAndGraphics ) continue;
 
 		vkGetPhysicalDeviceFeatures2( availableDevices[ i ], &gpuFeatures );
 

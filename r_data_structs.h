@@ -101,6 +101,7 @@ struct vertex
 	float tu;
 	float tv;
 	//uint mi;
+	// TODO: use builtins to unpack
 	uint8_t snorm8octNx;
 	uint8_t snorm8octNy;
 	uint8_t snorm8tanAngle;
