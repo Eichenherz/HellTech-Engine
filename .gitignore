@@ -31,7 +31,14 @@ Assets/
 
 .vscode/
 
-ImGui/
-
 README.md
+
 bcn_compressor.cpp
+
+nuklear.h
+
+nuklear.cpp
+
+stb_truetype.h
+
+imgui/

@@ -12,7 +12,8 @@
 #include <io.h>
 #include <fcntl.h>
 #include <iostream>
-
+#include <charconv>
+#include <string>
 #include <algorithm>
 
 // TODO: fix build msbuild ? add more stuff ?
@@ -292,6 +293,7 @@ struct keyboard
 	bool c;
 	bool space, lctrl;
 	bool f, o;
+	bool esc;
 };
 
 inline u64	SysDllLoad( const char* name )
@@ -356,6 +358,7 @@ static inline bool	SysPumpUserInput( mouse* m, keyboard* kbd, bool insideWnd )
 				if( ri.data.keyboard.VKey == VK_CONTROL && !isE0 ) kbd->lctrl = isPressed;
 				if( ( ri.data.keyboard.VKey == VK_F ) && isPressed ) kbd->f = !kbd->f;
 				if( ( ri.data.keyboard.VKey == VK_O ) && isPressed ) kbd->o = !kbd->o;
+				if( ( ri.data.keyboard.VKey == VK_ESCAPE ) && isPressed ) kbd->esc = !kbd->esc;
 
 			}
 			if( ( ri.header.dwType == RIM_TYPEMOUSE ) && insideWnd )
@@ -402,6 +405,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }						 
 
+#include "imgui/imgui.h"
 
 INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
@@ -475,8 +479,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
 	XMFLOAT3 camWorldPos = { 0,0,0 };
 	
-	global_data globs = {};
-
+	gpu_data gpuData = {};
+	frame_data frameData = {};
 	VkBackendInit();
 
 	// NOTE: time is a double of seconds
@@ -489,6 +493,14 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	//double				accumulator = 0;
 	u64					currentTicks = SysTicks();
 
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGuiIO& io = ImGui::GetIO();
+	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
+	io.Fonts->AddFontDefault();
+	io.Fonts->Build();
+	
+
 	// TODO: QUIT immediately ?
 	while( isRunning )
 	{
@@ -497,15 +509,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		currentTicks = newTicks;
 		//accumulator += elapsedSecs;
 
-
 		isRunning = SysPumpUserInput( &m, &kbd, 1 );
-
-		// SIMULATION( state, t, dt );
-		//while( accumulator >= dt )
-		//{
-		//	accumulator -= dt;
-		//	t += dt;
-		//}
 
 		// TODO: smooth camera some more ?
 		// TODO: wtf Newton ?
@@ -519,47 +523,66 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		if( kbd.space ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
 		if( kbd.c ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
 
-		camMove = XMVector3Transform( XMVector3Normalize( camMove ),
-									  XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) *
-									  XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed ) );
-
-		XMVECTOR camPos = XMLoadFloat3( &camWorldPos );
-		XMVECTOR smoothNewCamPos = XMVectorLerp( camPos, XMVectorAdd( camPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
-
-		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
+		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed );
+		camMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
+									  
+		XMVECTOR xmCamPos = XMLoadFloat3( &camWorldPos );
+		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
 		
+		// TODO: thresholds
+		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
+		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
+
 		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
 		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
 
-		
-		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
 		// TRANSF CAM VIEW
 		XMVECTOR camLookAt = XMVector3Transform( camFwdBasis, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = XMMatrixLookAtLH( 
-			XMLoadFloat3( &camWorldPos ), XMVectorAdd( XMLoadFloat3( &camWorldPos ), camLookAt ), camUpBasis );
+		XMMATRIX view = XMMatrixLookAtLH( smoothNewCamPos, XMVectorAdd( smoothNewCamPos, camLookAt ), camUpBasis );
 
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
 
-		XMStoreFloat4x4A( &globs.proj, proj );
-		XMStoreFloat4x4A( &globs.activeView, view );
+		XMStoreFloat4x4A( &frameData.proj, proj );
+		XMStoreFloat4x4A( &frameData.activeView, view );
 		if( !kbd.f )
 		{
-			XMStoreFloat4x4A( &globs.mainView, view );
+			XMStoreFloat4x4A( &frameData.mainView, view );
 		}
-		globs.worldPos = camWorldPos;
-		XMStoreFloat3( &globs.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
+		frameData.worldPos = camWorldPos;
+		XMStoreFloat3( &frameData.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
 
+		// NOTE: inv( A * B ) = inv B * inv A
+		XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj );
+		XMVECTOR det = XMMatrixDeterminant( invFrustMat );
+		assert( XMVectorGetX( det ) );
+		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
+		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
+
+		XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj );
+		XMStoreFloat4x4A( &frameData.projView, xmProjView );
+
+		frameData.elapsedSeconds = elapsedSecs;
+		frameData.freezeMainView = kbd.f;
+		frameData.dbgDraw = kbd.o;
+
+		ImGui::NewFrame();
 		
-		//static b32 readAssetFile = false;
-		//if( !readAssetFile )
-		//{
-		//	readAssetFile = true;
-		//}
+		std::string wndMsg( std::to_string( gpuData.timeMs ) );
+		
+		ImGui::SetNextWindowPos( {} );
+		ImGui::SetNextWindowSize( { std::size( wndMsg ) * ImGui::GetFontSize(),50 } );
+		constexpr ImGuiWindowFlags wndFlag = 
+			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+		ImGui::Begin( "GPU ms:", 0, wndFlag );
+		ImGui::Text( wndMsg.c_str() );
+		ImGui::End();
 
-		HostFrames( &globs, kbd.o, kbd.f, elapsedSecs );
+		ImGui::Render();
+		ImGui::EndFrame();
+
+		HostFrames( frameData, gpuData );
 	}
-
 
 	VkBackendKill();
 	VirtualFree( sysMem, 0, MEM_RELEASE );

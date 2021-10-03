@@ -4,9 +4,7 @@
 
 #include "core_types.h"
 
-// TODO: remove
-// TODO: write own lib
-// TODO: switch to MSVC ?
+// TODO: no clang ?
 #ifdef __clang__
 // NOTE: clang-cl on VS issue
 #undef __clang__
@@ -18,6 +16,22 @@
 
 #define _XM_NO_XMVECTOR_OVERLOADS_
 #include <DirectXMath.h>
+
+
+struct frame_data
+{
+	DirectX::XMFLOAT4X4A	proj;
+	DirectX::XMFLOAT4X4A	mainView;
+	DirectX::XMFLOAT4X4A	activeView;
+	DirectX::XMFLOAT4X4A    frustTransf;
+	DirectX::XMFLOAT4X4A    projView;
+	DirectX::XMFLOAT3	worldPos;
+	DirectX::XMFLOAT3	camViewDir;
+	float   elapsedSeconds;
+	bool    freezeMainView;
+	bool    dbgDraw;
+};
+
 
 #endif
 
@@ -87,6 +101,7 @@ struct vertex
 	float tu;
 	float tv;
 	//uint mi;
+	// TODO: use builtins to unpack
 	uint8_t snorm8octNx;
 	uint8_t snorm8octNy;
 	uint8_t snorm8tanAngle;
@@ -255,6 +270,13 @@ ALIGNAS( 16 ) struct dbg_vertex
 {
 	vec4 pos;
 	vec4 col;
+};
+
+struct imgui_vertex
+{
+	float x, y;
+	float u, v;
+	uint  rgba8Unorm;
 };
 
 #ifndef __cplusplus

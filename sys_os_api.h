@@ -29,7 +29,14 @@
 
 #endif // WIN32
 
-struct global_data;
+// TODO: move
+struct gpu_data
+{
+	float timeMs;
+};
+
+
+struct frame_data;
 namespace std
 {
 	template<class, class> class vector;
@@ -49,7 +56,7 @@ constexpr u64 SYS_MEM_BYTES = 1 * GB;
 void			CoreLoop();
 
 extern void		VkBackendInit();
-extern void		HostFrames( const global_data* globs, bool bvDraw, bool freeCam, float dt );
+extern void		HostFrames( const frame_data& frameData, gpu_data& gpuData );
 extern void		VkBackendKill();
 
 //////////////////////////////////////
