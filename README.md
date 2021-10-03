@@ -12,7 +12,7 @@ An WIP exploration of the modern rendering landscape with Vulkan 1.2+ on Windows
 - [meshoptimizer](https://github.com/zeux/meshoptimizer)
 - [cgltf](https://github.com/jkuhlmann/cgltf)
 - [spng](https://github.com/randy408/libspng)
-- [spirv_reflect](https://github.com/KhronosGroup/SPIRV-Reflect)
+- [SPIRV-Reflect](https://github.com/KhronosGroup/SPIRV-Reflect)
 - [Dear ImGui](https://github.com/ocornut/imgui)
 
 ### POINTS OF INTEREST ( WIP ):
