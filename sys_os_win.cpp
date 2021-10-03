@@ -568,16 +568,13 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 		ImGui::NewFrame();
 		
-		// TODO: own efficient small string
-		constexpr char gpuMsStr[] = "GPU ms:";
-
-		std::string wndMsg;
-		wndMsg.append( gpuMsStr );
-		wndMsg.append( std::to_string( gpuData.timeMs ) );
+		std::string wndMsg( std::to_string( gpuData.timeMs ) );
 		
-		ImGui::SetNextWindowSizeConstraints( {}, { std::size( wndMsg ) * ImGui::GetFontSize(),0 } );
 		ImGui::SetNextWindowPos( {} );
-		ImGui::Begin( wndMsg.c_str(), 0, ImGuiWindowFlags_NoDecoration );
+		ImGui::SetNextWindowSize( { std::size( wndMsg ) * ImGui::GetFontSize(),50 } );
+		constexpr ImGuiWindowFlags wndFlag = 
+			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+		ImGui::Begin( "GPU ms:", 0, wndFlag );
 		ImGui::Text( wndMsg.c_str() );
 		ImGui::End();
 

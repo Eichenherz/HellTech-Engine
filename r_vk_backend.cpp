@@ -4851,7 +4851,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	u64 poolIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 
 	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] );
-	//std::cout << 1.0f / ( VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] ) * 0.01f ) << " FPS" << "\n";
 	vkCmdResetQueryPool( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0, vkGpuTimer[ poolIdx ].queryCount );
 	{
 		vk_time_section timePipeline = { thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0 };
