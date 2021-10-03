@@ -12,7 +12,8 @@
 #include <io.h>
 #include <fcntl.h>
 #include <iostream>
-
+#include <charconv>
+#include <string>
 #include <algorithm>
 
 // TODO: fix build msbuild ? add more stuff ?
@@ -478,6 +479,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
 	XMFLOAT3 camWorldPos = { 0,0,0 };
 	
+	gpu_data gpuData = {};
 	frame_data frameData = {};
 	VkBackendInit();
 
@@ -565,16 +567,24 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		frameData.dbgDraw = kbd.o;
 
 		ImGui::NewFrame();
+		
+		// TODO: own efficient small string
+		constexpr char gpuMsStr[] = "GPU ms:";
 
-		if( kbd.esc )
-		{
-			ImGui::ShowDemoWindow();
-		}
+		std::string wndMsg;
+		wndMsg.append( gpuMsStr );
+		wndMsg.append( std::to_string( gpuData.timeMs ) );
+		
+		ImGui::SetNextWindowSizeConstraints( {}, { std::size( wndMsg ) * ImGui::GetFontSize(),0 } );
+		ImGui::SetNextWindowPos( {} );
+		ImGui::Begin( wndMsg.c_str(), 0, ImGuiWindowFlags_NoDecoration );
+		ImGui::Text( wndMsg.c_str() );
+		ImGui::End();
 
 		ImGui::Render();
 		ImGui::EndFrame();
 
-		HostFrames( frameData );
+		HostFrames( frameData, gpuData );
 	}
 
 	VkBackendKill();

@@ -4803,7 +4803,7 @@ FinalCompositionPass(
 static std::vector<VkFramebuffer> recycleFboList;
 
 // TODO: pass cam data via push const
-void HostFrames( const frame_data& frameData )
+void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	using namespace DirectX;
 	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
@@ -4849,7 +4849,9 @@ void HostFrames( const frame_data& frameData )
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
 	
 	u64 poolIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
-	std::cout << VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] ) << " ms" << "\n";
+
+	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] );
+	//std::cout << 1.0f / ( VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] ) * 0.01f ) << " FPS" << "\n";
 	vkCmdResetQueryPool( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0, vkGpuTimer[ poolIdx ].queryCount );
 	{
 		vk_time_section timePipeline = { thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0 };
@@ -5140,14 +5142,9 @@ void HostFrames( const frame_data& frameData )
 
 		// TODO: destroy buffers
 		// TODO: reclaim memory
-		if( std::size( stagingManager.pendingUploads ) )
-		{
-		}
-
+		if( std::size( stagingManager.pendingUploads ) ){}
 
 		VkClearValue clearVals[ 2 ] = {};
-
-
 
 		if( !frameData.freezeMainView )
 		{
