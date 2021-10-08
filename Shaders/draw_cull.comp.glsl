@@ -7,7 +7,7 @@
 
 #extension GL_GOOGLE_include_directive: require
 
-#define GLOBAL_RESOURCES
+//#define GLOBAL_RESOURCES
 
 #include "..\r_data_structs.h"
 
@@ -16,7 +16,9 @@
 
 
 layout( push_constant, scalar ) uniform block{
-	cull_info cullInfo;
+	uint64_t	instDescAddr;
+	uint64_t	meshDescAddr;
+	uint		instCount;
 };
 
 
@@ -27,9 +29,8 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 	instance_desc instDescs[];
 };
 
-
-layout( binding = 0 ) buffer draw_visibility_buffer{
-	uint drawVisibility[];
+layout( binding = 0 ) readonly uniform cam_data{
+	global_data cam;
 };
 
 // TODO: strike down
@@ -69,10 +70,10 @@ void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	if( globalIdx < cullInfo.drawCallsCount )
+	if( globalIdx < instCount )
 	{
-		instance_desc currentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ globalIdx ];
-		mesh_desc currentMesh = mesh_desc_ref( bdas.meshDescAddr ).meshes[ currentInst.meshIdx ];
+		instance_desc currentInst = inst_desc_ref( instDescAddr ).instDescs[ globalIdx ];
+		mesh_desc currentMesh = mesh_desc_ref( meshDescAddr ).meshes[ currentInst.meshIdx ];
 		
 		vec3 center = currentMesh.center;
 		vec3 extent = currentMesh.extent;

@@ -8,9 +8,12 @@
 
 #extension GL_GOOGLE_include_directive: require
 
-#define GLOBAL_RESOURCES
-
 #include "..\r_data_structs.h"
+
+layout( push_constant ) uniform block{
+	uint64_t	instDescAddr;
+	uint64_t	meshletsAddr;
+};
 
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer meshlet_desc_ref{ 
@@ -20,14 +23,18 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 	instance_desc instDescs[];
 };
 
+layout( binding = 0 ) readonly uniform cam_data{
+	global_data cam;
+};
 
-layout( binding = 0 ) readonly buffer meshlet_list{
+
+layout( binding = 1 ) readonly buffer meshlet_list{
 	uint64_t meshletIdBuff[];
 };
-layout( binding = 1 ) readonly buffer meshlet_list_cnt{
+layout( binding = 2 ) readonly buffer meshlet_list_cnt{
 	uint totalMeshletCount;
 };
-layout( binding = 2 ) buffer draw_cmd_count{
+layout( binding = 3 ) buffer draw_cmd_count{
 	uint drawCallCount;
 };
 
@@ -38,19 +45,19 @@ struct meshlet_info
 	uint8_t vtxCount;
 	uint8_t triCount;
 };
-layout( binding = 3 ) writeonly buffer triangle_ids{
+layout( binding = 4 ) writeonly buffer triangle_ids{
 	meshlet_info visibleMeshlets[];
 };
 
-layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
-layout( binding = 5 ) coherent buffer atomic_cnt{
+layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
+layout( binding = 6 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
-layout( binding = 6 ) buffer disptach_indirect{
+layout( binding = 7 ) buffer disptach_indirect{
 	dispatch_command dispatchCmd;
 };
 
-layout( binding = 7, scalar ) writeonly buffer draw_indir{
+layout( binding = 8, scalar ) writeonly buffer draw_indir{
 	draw_indirect dbgBBoxDrawCmd[];
 };
 
@@ -73,8 +80,8 @@ void main()
 		uint parentInstId = uint( mid & uint( -1 ) );
 		uint meshletIdx = uint( mid >> 32 );
 
-		instance_desc parentInst = inst_desc_ref( bdas.instDescAddr ).instDescs[ parentInstId ];
-		meshlet thisMeshlet = meshlet_desc_ref( bdas.meshletsAddr ).meshlets[ meshletIdx ];
+		instance_desc parentInst = inst_desc_ref( instDescAddr ).instDescs[ parentInstId ];
+		meshlet thisMeshlet = meshlet_desc_ref( meshletsAddr ).meshlets[ meshletIdx ];
 
 		vec3 center = thisMeshlet.center;
 		vec3 extent = thisMeshlet.extent;

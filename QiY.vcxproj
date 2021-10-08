@@ -355,7 +355,7 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\cluster_cull.comp.glsl">
+    <CustomBuild Include="Shaders\c_meshlet_cull.comp.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>

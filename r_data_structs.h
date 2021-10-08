@@ -218,11 +218,6 @@ struct draw_indirect
 #endif
 };
 
-struct cull_info
-{	
-	uint	drawCallsCount;
-};
-
 struct occlusion_debug
 {
 	mat4 mvp;

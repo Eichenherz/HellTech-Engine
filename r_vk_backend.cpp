@@ -3767,7 +3767,7 @@ void VkBackendInit()
 		rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, expanderCompProgram.pipeLayout, expansionComp.module, {} );
 		VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
 
-		vk_shader clusterCull = VkLoadShader( "Shaders/cluster_cull.comp.spv", dc.device );
+		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", dc.device );
 		clusterCullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &clusterCull } );
 		rndCtx.compClusterCullPipe = VkMakeComputePipeline( dc.device, 0, clusterCullCompProgram.pipeLayout, clusterCull.module, {} );
 		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_ClusterCull" );
@@ -3875,7 +3875,8 @@ void VkBackendInit()
 
 	for( u64 vfi = 0; vfi < rndCtx.framesInFlight; ++vfi )
 	{
-		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( dc.device, dc.gfxQueueIdx, 1 * MB, vkHostComArena );
+		// NOTE: push desc doesn't like bigger sizes ?
+		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( dc.device, dc.gfxQueueIdx, u16( -1 ), vkHostComArena );
 	}
 	VkSemaphoreTypeCreateInfo timelineInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
 	timelineInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
@@ -3943,26 +3944,26 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 }
 
+// TODO: visibility buffer ( not the VBuffer ) check Aaltonen
+// TODO: revisit triangle culling ?
+// TODO: optimize expansion shader
 // TODO: "supply line" descriptor instead of push
 // TODO: meshlet cone culling 
 // TODO: must pass vertexOffset around somehow
-// TODO: revisit triangle culling ?
 inline static void 
 CullPass( 
 	VkCommandBuffer			cmdBuff, 
 	VkPipeline				vkPipeline, 
 	const vk_program&		program,
 	const image&			depthPyramid,
-	const VkSampler&		minQuadSampler
+	const VkSampler&		minQuadSampler,
+	const buffer_data&      frameData
 ){
 	// NOTE: wtf Vulkan ?
 	constexpr u64 VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR;
 
-
 	vk_label label = { cmdBuff,"Cull Pass",{} };
 
-	cull_info cullInfo = {};
-	cullInfo.drawCallsCount = instDescBuff.size / sizeof( instance_desc );
 	
 	vkCmdFillBuffer( cmdBuff, drawCountBuff.hndl, 0, drawCountBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, drawCountDbgBuff.hndl, 0, drawCountDbgBuff.size, 0u );
@@ -4059,22 +4060,26 @@ CullPass(
 
 	VkDescriptorImageInfo depthPyramidInfo = { minQuadSampler, depthPyramid.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	
-	vk_descriptor_info pushDescs[] = {   
-		Descriptor( drawVisibilityBuff ),
-		Descriptor( visibleInstsBuff ),
-		depthPyramidInfo,
-		Descriptor( atomicCounterBuff ),
-		Descriptor( dispatchCmdBuff ),
-		Descriptor( drawCountBuff ),
-		Descriptor( drawCmdBuff )
-	};
+	{
+		vk_descriptor_info pushDescs[] = {
+			Descriptor( frameData ),
+			Descriptor( visibleInstsBuff ),
+			depthPyramidInfo,
+			Descriptor( atomicCounterBuff ),
+			Descriptor( dispatchCmdBuff ),
+			Descriptor( drawCountBuff ),
+			Descriptor( drawCmdBuff )
+		};
 
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
-	vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( cullInfo ), &cullInfo );
-	vkCmdDispatch( cmdBuff, VkGetGroupCount( cullInfo.drawCallsCount, program.groupSize.x ), 1, 1 );
+		u32 instCount = instDescBuff.size / sizeof( instance_desc );
+		struct { u64 instDescAddr; u64 meshDescAddr; u32 instCount; } pushConst = {
+			instDescBuff.devicePointer, meshBuff.devicePointer, instCount };
 
+		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
+		vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
+		vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
+		vkCmdDispatch( cmdBuff, VkGetGroupCount( instCount, program.groupSize.x ), 1, 1 );
+	}
 	
 #if 1
 	{
@@ -4139,6 +4144,7 @@ CullPass(
 
 
 		vk_descriptor_info ccd[] = {
+			Descriptor( frameData ),
 			Descriptor( meshletIdBuff ),
 			Descriptor( meshletCountBuff ),
 			Descriptor( drawCountDbgBuff ),
@@ -4149,12 +4155,12 @@ CullPass(
 			Descriptor( drawCmdAabbsBuff )
 		};
 
-		// TODO: wtf binds ?
+		struct { u64 instDescAddr; u64 meshletDescAddr; } pushConst = { instDescBuff.devicePointer, meshletBuff.devicePointer };
+
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
 		vkCmdPushDescriptorSetWithTemplateKHR(
 			cmdBuff, clusterCullCompProgram.descUpdateTemplate, clusterCullCompProgram.pipeLayout, 0, ccd );
-		vkCmdBindDescriptorSets(
-			cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, clusterCullCompProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+		vkCmdPushConstants( cmdBuff, clusterCullCompProgram.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff2.hndl, 0 );
 	}
 	
@@ -5102,6 +5108,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		VkClearValue clearVals[ 2 ] = {};
 
+		// TODO: don't if, use different cams in shaders
 		if( !frameData.freezeMainView )
 		{
 			//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
@@ -5164,7 +5171,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 			// TODO: Aaltonen double draw ? ( not double culling )
 			// TODO: merge up to 256 meshes 
-			CullPass( thisVFrame.cmdBuff, rndCtx.compPipeline, cullCompProgram, rndCtx.depthPyramid, rndCtx.quadMinSampler );
+			CullPass( 
+				thisVFrame.cmdBuff, 
+				rndCtx.compPipeline, 
+				cullCompProgram, 
+				rndCtx.depthPyramid, 
+				rndCtx.quadMinSampler, 
+				thisVFrame.frameData );
 		}
 
 		// Emit depth + HzB
