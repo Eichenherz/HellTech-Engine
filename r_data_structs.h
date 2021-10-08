@@ -279,14 +279,20 @@ struct imgui_vertex
 	uint  rgba8Unorm;
 };
 
+const uint VK_GLOBAL_SLOT_STORAGE_BUFFER = 0;
+const uint VK_GLOBAL_SLOT_UNIFORM_BUFFER = 1;
+const uint VK_GLOBAL_SLOT_SAMPLED_IMAGE = 2;
+const uint VK_GLOBAL_SLOT_SAMPLER = 3;
+const uint GLOBAL_DESC_SET = 1;
+
 #ifndef __cplusplus
 
 #ifdef GLOBAL_RESOURCES
 
-layout( set = 1, binding = 1, std430 ) uniform global{ global_data g; } globalsCam[];
-layout( set = 1, binding = 1, std430 ) uniform glob_bdas{ global_bdas bdas; } globalsBdas[];
-layout( set = 1, binding = 2 ) uniform texture2D sampledImages[];
-layout( set = 1, binding = 3 ) uniform sampler samplers[];
+layout( set = GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER, std430 ) uniform global{ global_data g; } globalsCam[];
+layout( set = GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER, std430 ) uniform glob_bdas{ global_bdas bdas; } globalsBdas[];
+layout( set = GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
+layout( set = GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
 
 global_data cam = globalsCam[ 0 ].g;
 global_bdas bdas = globalsBdas[ 1 ].bdas;

@@ -809,12 +809,12 @@ inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
 // TODO: add buffer stride ?
 struct buffer_data
 {
-	VkBuffer		hndl = 0;
-	VkDeviceMemory	mem = 0;
-	u64				size = 0;
+	VkBuffer		hndl;
+	VkDeviceMemory	mem;
+	u64				size;
 	//u64				offset = 0;
-	u8*				hostVisible = 0;
-	u64				devicePointer = 0;
+	u8*             hostVisible;
+	u64				devicePointer;
 };
 
 inline VkDescriptorBufferInfo Descriptor( const buffer_data& b )
@@ -1530,6 +1530,10 @@ static inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_
 	return ( timestampEnd - timestampBeg ) / vkTimer.timestampPeriod * nsToMs;
 }
 
+
+#include "r_data_structs.h"
+
+
 // TODO: tewak ? make own ?
 // TODO: provide with own allocators
 #define WIN32
@@ -1584,29 +1588,20 @@ struct vk_descriptor_info
 	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo }{}
 };
 
-enum vk_global_descriptor_slot : u8
-{
-	VK_GLOBAL_SLOT_STORAGE_BUFFER = 0,
-	VK_GLOBAL_SLOT_UNIFORM_BUFFER = 1,
-	VK_GLOBAL_SLOT_SAMPLED_IMAGE = 2,
-	VK_GLOBAL_SLOT_SAMPLER = 3,
-	VK_GLOBAL_SLOT_COUNT = 4
-};
-constexpr VkDescriptorType globalDescTable[ VK_GLOBAL_SLOT_COUNT ] = {
+
+constexpr VkDescriptorType globalDescTable[] = {
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 	VK_DESCRIPTOR_TYPE_SAMPLER
 };
-constexpr u64 GLOBAL_DESC_SET = 1;
 
-// TODO: add more ?
 struct vk_descriptor_count
 {
-	u32 storageBuff = 512 * 1024;
-	u32 uniformBuff = 90;
-	u32 sampledImg = 512 * 1024;
-	u32 samplers = 4 * 1024;
+	u32 storageBuff = 128;
+	u32 uniformBuff = 8;
+	u32 sampledImg = 128;
+	u32 samplers = 4;
 };
 
 struct vk_global_descriptor
@@ -1618,22 +1613,17 @@ struct vk_global_descriptor
 
 static vk_global_descriptor globBindlessDesc;
 
-// TODO: provide with desc array sizes
+// TODO: don't use all the availabe descs ?
 static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 	VkDevice							vkDevice,
 	const VkPhysicalDeviceProperties&	deviceProps, 
-	const vk_descriptor_count&			poolSizes = {} 
+	const vk_descriptor_count&			descCount = {} 
 ){
-	VK_CHECK( VK_INTERNAL_ERROR( poolSizes.storageBuff > deviceProps.limits.maxDescriptorSetStorageBuffers ) );
-	VK_CHECK( VK_INTERNAL_ERROR( poolSizes.uniformBuff > deviceProps.limits.maxDescriptorSetUniformBuffers ) );
-	VK_CHECK( VK_INTERNAL_ERROR( poolSizes.sampledImg > deviceProps.limits.maxDescriptorSetSampledImages ) );
-	VK_CHECK( VK_INTERNAL_ERROR( poolSizes.samplers > deviceProps.limits.maxDescriptorSetSamplers ) );
-	
 	VkDescriptorPoolSize sizes[] = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, poolSizes.storageBuff },
-		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, poolSizes.uniformBuff },
-		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, poolSizes.sampledImg },
-		{ VK_DESCRIPTOR_TYPE_SAMPLER, poolSizes.samplers }
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, deviceProps.limits.maxDescriptorSetStorageBuffers },
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, deviceProps.limits.maxDescriptorSetUniformBuffers },
+		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, deviceProps.limits.maxDescriptorSetSampledImages },
+		{ VK_DESCRIPTOR_TYPE_SAMPLER, deviceProps.limits.maxDescriptorSetSamplers }
 	};
 
 	vk_global_descriptor desc = {};
@@ -1649,22 +1639,22 @@ static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 	VkDescriptorSetLayoutBinding bindlessLayout[ std::size( sizes ) ] = {};
 	bindlessLayout[ 0 ].binding = VK_GLOBAL_SLOT_STORAGE_BUFFER;
 	bindlessLayout[ 0 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_STORAGE_BUFFER ];
-	bindlessLayout[ 0 ].descriptorCount = 128;
+	bindlessLayout[ 0 ].descriptorCount = descCount.storageBuff;
 	bindlessLayout[ 0 ].stageFlags = VK_SHADER_STAGE_ALL;
 
 	bindlessLayout[ 1 ].binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
 	bindlessLayout[ 1 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
-	bindlessLayout[ 1 ].descriptorCount = 8;
+	bindlessLayout[ 1 ].descriptorCount = descCount.uniformBuff;
 	bindlessLayout[ 1 ].stageFlags = VK_SHADER_STAGE_ALL;
 
 	bindlessLayout[ 2 ].binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE;
 	bindlessLayout[ 2 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
-	bindlessLayout[ 2 ].descriptorCount = 128;
+	bindlessLayout[ 2 ].descriptorCount = descCount.sampledImg;
 	bindlessLayout[ 2 ].stageFlags = VK_SHADER_STAGE_ALL;
 
 	bindlessLayout[ 3 ].binding = VK_GLOBAL_SLOT_SAMPLER;
 	bindlessLayout[ 3 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLER ];
-	bindlessLayout[ 3 ].descriptorCount = 4;
+	bindlessLayout[ 3 ].descriptorCount = descCount.samplers;
 	bindlessLayout[ 3 ].stageFlags = VK_SHADER_STAGE_ALL;
 
 	VkDescriptorBindingFlags flags[ std::size( bindlessLayout ) ] = {};
@@ -2120,8 +2110,6 @@ struct vk_pipeline
 	VkPipelineLayout layout;
 	// TODO: store push consts data ?
 };
-
-#include "r_data_structs.h"
 
 #include "asset_compiler.h"
 
@@ -4848,6 +4836,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
 	
+	// TODO: nicer indexing
 	u64 poolIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 
 	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] );
