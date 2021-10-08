@@ -1620,10 +1620,10 @@ static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 	const vk_descriptor_count&			descCount = {} 
 ){
 	VkDescriptorPoolSize sizes[] = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, deviceProps.limits.maxDescriptorSetStorageBuffers },
+		//{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, deviceProps.limits.maxDescriptorSetStorageBuffers / 16 },
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, deviceProps.limits.maxDescriptorSetUniformBuffers },
-		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, deviceProps.limits.maxDescriptorSetSampledImages },
-		{ VK_DESCRIPTOR_TYPE_SAMPLER, deviceProps.limits.maxDescriptorSetSamplers }
+		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, deviceProps.limits.maxDescriptorSetSampledImages / 16 },
+		{ VK_DESCRIPTOR_TYPE_SAMPLER, 4 }//deviceProps.limits.maxDescriptorSetSamplers }
 	};
 
 	vk_global_descriptor desc = {};
@@ -1637,25 +1637,25 @@ static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 
 
 	VkDescriptorSetLayoutBinding bindlessLayout[ std::size( sizes ) ] = {};
-	bindlessLayout[ 0 ].binding = VK_GLOBAL_SLOT_STORAGE_BUFFER;
-	bindlessLayout[ 0 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_STORAGE_BUFFER ];
-	bindlessLayout[ 0 ].descriptorCount = descCount.storageBuff;
+	//bindlessLayout[ 0 ].binding = VK_GLOBAL_SLOT_STORAGE_BUFFER;
+	//bindlessLayout[ 0 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_STORAGE_BUFFER ];
+	//bindlessLayout[ 0 ].descriptorCount = descCount.storageBuff;
+	//bindlessLayout[ 0 ].stageFlags = VK_SHADER_STAGE_ALL;
+
+	bindlessLayout[ 0 ].binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
+	bindlessLayout[ 0 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
+	bindlessLayout[ 0 ].descriptorCount = descCount.uniformBuff;
 	bindlessLayout[ 0 ].stageFlags = VK_SHADER_STAGE_ALL;
 
-	bindlessLayout[ 1 ].binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
-	bindlessLayout[ 1 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
-	bindlessLayout[ 1 ].descriptorCount = descCount.uniformBuff;
+	bindlessLayout[ 1 ].binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE;
+	bindlessLayout[ 1 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
+	bindlessLayout[ 1 ].descriptorCount = descCount.sampledImg;
 	bindlessLayout[ 1 ].stageFlags = VK_SHADER_STAGE_ALL;
 
-	bindlessLayout[ 2 ].binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE;
-	bindlessLayout[ 2 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
-	bindlessLayout[ 2 ].descriptorCount = descCount.sampledImg;
+	bindlessLayout[ 2 ].binding = VK_GLOBAL_SLOT_SAMPLER;
+	bindlessLayout[ 2 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLER ];
+	bindlessLayout[ 2 ].descriptorCount = descCount.samplers;
 	bindlessLayout[ 2 ].stageFlags = VK_SHADER_STAGE_ALL;
-
-	bindlessLayout[ 3 ].binding = VK_GLOBAL_SLOT_SAMPLER;
-	bindlessLayout[ 3 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLER ];
-	bindlessLayout[ 3 ].descriptorCount = descCount.samplers;
-	bindlessLayout[ 3 ].stageFlags = VK_SHADER_STAGE_ALL;
 
 	VkDescriptorBindingFlags flags[ std::size( bindlessLayout ) ] = {};
 	for( VkDescriptorBindingFlags& f : flags )
