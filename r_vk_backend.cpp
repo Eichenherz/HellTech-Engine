@@ -3009,9 +3009,7 @@ static buffer_data indexBuff;
 static buffer_data meshBuff;
 
 static buffer_data meshletBuff;
-// TODO: pack these 2
-static buffer_data meshletVtxBuff;
-static buffer_data meshletTrisBuff;
+static buffer_data meshletDataBuff;
 
 // TODO:
 static buffer_data transformsBuff;
@@ -3150,6 +3148,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		{
 			std::vector<u8> fileData = SysReadFile( glbPath );
 			CompileGlbAssetToBinary( fileData, binaryData );
+			// TODO: does this override ?
 			SysWriteToFile( drakPath, std::data( binaryData ), std::size( binaryData ) );
 		}
 	}
@@ -3387,57 +3386,30 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ) );
 	}
 	{
-		const std::span<u8> mletVtxView = { 
-			std::data( binaryData ) + fileFooter.mletsVtxByteRange.offset,
-			fileFooter.mletsVtxByteRange.size };
+		const std::span<u8> mletDataView = { 
+			std::data( binaryData ) + fileFooter.mletsDataByteRange.offset,
+			fileFooter.mletsDataByteRange.size };
 
-		meshletVtxBuff = VkCreateAllocBindBuffer( std::size( mletVtxView ),
+		meshletDataBuff = VkCreateAllocBindBuffer( std::size( mletDataView ),
 												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 												  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
 												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 												  vkRscArena );
-		VkDbgNameObj( meshletVtxBuff.hndl, dc.device, "Buff_Meshlet_Vtx" );
+		VkDbgNameObj( meshletDataBuff.hndl, dc.device, "Buff_Meshlet_Data" );
 
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletVtxView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-		std::memcpy( stagingBuf.hostVisible, std::data( mletVtxView ), stagingBuf.size );
+		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletDataView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+		std::memcpy( stagingBuf.hostVisible, std::data( mletDataView ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
-		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletVtxBuff.hndl, 1, &copyRegion );
+		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletDataBuff.hndl, 1, &copyRegion );
 
 		buffBarriers.push_back( VkMakeBufferBarrier2(
-			meshletVtxBuff.hndl,
+			meshletDataBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ) );
-	}
-	{
-		const std::span<u8> mletTriView = {
-			std::data( binaryData ) + fileFooter.mletsTrisByteRange.offset,
-			fileFooter.mletsTrisByteRange.size };
-
-		meshletTrisBuff = VkCreateAllocBindBuffer( std::size( mletTriView ),
-												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												   VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-												   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-												   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												   vkRscArena );
-		VkDbgNameObj( meshletTrisBuff.hndl, dc.device, "Buff_Meshlet_Tris" );
-
-		buffer_data stagingBuf = VkCreateAllocBindBuffer( std::size( mletTriView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-		std::memcpy( stagingBuf.hostVisible, std::data( mletTriView ), stagingBuf.size );
-		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
-
-		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
-		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletTrisBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeBufferBarrier2(
-			meshletTrisBuff.hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_INDEX_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
 	}
 
 
@@ -4169,7 +4141,6 @@ CullPass(
 		vk_descriptor_info ccd[] = {
 			Descriptor( meshletIdBuff ),
 			Descriptor( meshletCountBuff ),
-			Descriptor( drawCmdDbgBuff ),
 			Descriptor( drawCountDbgBuff ),
 			Descriptor( visibleMeshletsBuff ),
 			depthPyramidInfo,
@@ -4220,8 +4191,7 @@ CullPass(
 			Descriptor( atomicCounterBuff )
 		};
 
-		assert( meshletTrisBuff.devicePointer && meshletVtxBuff.devicePointer );
-		struct { u64 meshletTriAddr; u64 meshletVtxAddr; } pushConst = { meshletTrisBuff.devicePointer, meshletVtxBuff.devicePointer };
+		struct { u64 meshletDataAddr; } pushConst = { meshletDataBuff.devicePointer };
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpMergePipe );
 		vkCmdPushDescriptorSetWithTemplateKHR( 
@@ -5020,8 +4990,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			bdas.meshDescAddr = meshBuff.devicePointer;
 			bdas.lightsDescAddr = lightsBuff.devicePointer;
 			bdas.meshletsAddr = meshletBuff.devicePointer;
-			bdas.meshletsVtxAddr = meshletVtxBuff.devicePointer;
-			bdas.meshletsTriAddr = meshletTrisBuff.devicePointer;
 			bdas.mtrlsAddr = materialsBuff.devicePointer;
 			bdas.instDescAddr = instDescBuff.devicePointer;
 

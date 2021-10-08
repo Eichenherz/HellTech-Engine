@@ -10,23 +10,19 @@
 #include "..\r_data_structs.h"
 
 layout( push_constant ) uniform block{
-	uint64_t meshletTriAddr;
-	uint64_t meshletVtxAddr;
+	uint64_t meshletDataAddr;
 };
 
-layout( buffer_reference, scalar, buffer_reference_align = 1 ) readonly buffer mlet_tri_ref{ 
-	uint8_t meshletTriangles[]; 
-};
-layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mlet_vert_ref{ 
-	uint meshletVertexIds[]; 
+layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mlet_data_ref{ 
+	uint meshletData[]; 
 };
 
 struct meshlet_info
 {
-	uint triOffset;
-	uint vtxOffset;
+	uint dataOffset;
 	uint16_t instId;
-	uint16_t idxCount;
+	uint8_t vtxCount;
+	uint8_t triCount;
 };
 layout( binding = 0 ) readonly buffer visible_meshlets{
 	meshlet_info visibleMeshlets[];
@@ -72,7 +68,7 @@ void main()
 
 			if( meshletIdx >= visibleMeshletsCount ) break;
 
-			perWorkgrCount += uint( visibleMeshlets[ meshletIdx ].idxCount );
+			perWorkgrCount += uint( visibleMeshlets[ meshletIdx ].triCount * 3 );
 		}
 
 		idxBuffOffsetLDS = atomicAdd( mergedIdxCount, perWorkgrCount );
@@ -94,10 +90,12 @@ void main()
 		if( meshletIdx >= visibleMeshletsCount ) break;
 
 		uint16_t parentInstId = visibleMeshlets[ meshletIdx ].instId;
-		uint tirangleOffset = visibleMeshlets[ meshletIdx ].triOffset;
-		uint vertexOffset = visibleMeshlets[ meshletIdx ].vtxOffset;
-		uint thisIdxCount = uint( visibleMeshlets[ meshletIdx ].idxCount );
-		
+		uint dataOffset = visibleMeshlets[ meshletIdx ].dataOffset;
+		uint vtxOffset = dataOffset;
+		uint idxOffset = vtxOffset + uint( visibleMeshlets[ meshletIdx ].vtxCount );
+		// NOTE: want all the indices
+		uint thisIdxCount = uint( visibleMeshlets[ meshletIdx ].triCount * 3 );
+		 
 		for( uint i = 0; i < thisIdxCount; i += gl_WorkGroupSize.x )
 		{
 			uint slotIdx = i + gl_LocalInvocationID.x; 
@@ -107,8 +105,12 @@ void main()
 
 			if( slotIdx < thisIdxCount )
 			{
-				uint8_t tri = mlet_tri_ref( meshletTriAddr ).meshletTriangles[ tirangleOffset + slotIdx ];
-				uint vertexId = mlet_vert_ref( meshletVtxAddr ).meshletVertexIds[ uint( tri ) + vertexOffset ];
+				uint idxGroupBin = slotIdx / 4;
+				uint meshletIdxGroup = mlet_data_ref( meshletDataAddr ).meshletData[ idxOffset + idxGroupBin ];
+
+				uint idx = ( meshletIdxGroup >> ( ( slotIdx % 4 ) * 8 ) ) & 0xff;
+
+				uint vertexId = mlet_data_ref( meshletDataAddr ).meshletData[ vtxOffset + idx ];
 				mergedIdxBuff[ slotIdx + idxBuffOffsetLDS ] = uint( parentInstId ) | ( uint( vertexId ) << 16 );
 			}
 		}

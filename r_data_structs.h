@@ -87,8 +87,6 @@ struct global_bdas
 	uint64_t meshDescAddr;
 	uint64_t lightsDescAddr;
 	uint64_t meshletsAddr;
-	uint64_t meshletsVtxAddr;
-	uint64_t meshletsTriAddr;
 	uint64_t mtrlsAddr;
 	uint64_t instDescAddr;
 };
@@ -155,8 +153,7 @@ struct meshlet
 
 	int8_t	coneX, coneY, coneZ, coneCutoff;
 
-	uint	vtxBufOffset;
-	uint	triBufOffset;
+	uint    dataOffset;
 	uint8_t vertexCount;
 	uint8_t triangleCount;
 };

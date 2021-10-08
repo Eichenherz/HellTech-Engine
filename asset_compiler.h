@@ -74,8 +74,7 @@ struct drak_file_footer
 	range idxByteRange;
 	range texBinByteRange;
 	range mletsByteRange;
-	range mletsVtxByteRange;
-	range mletsTrisByteRange;
+	range mletsDataByteRange;
 
 	u32	compressedSize;
 	u32	originalSize;

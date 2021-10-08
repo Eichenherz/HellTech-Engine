@@ -27,33 +27,30 @@ layout( binding = 0 ) readonly buffer meshlet_list{
 layout( binding = 1 ) readonly buffer meshlet_list_cnt{
 	uint totalMeshletCount;
 };
-layout( binding = 2, scalar ) writeonly buffer draw_cmd{
-	draw_command drawCmd[];
-};
-layout( binding = 3 ) buffer draw_cmd_count{
+layout( binding = 2 ) buffer draw_cmd_count{
 	uint drawCallCount;
 };
 
 struct meshlet_info
 {
-	uint triOffset;
-	uint vtxOffset;
+	uint dataOffset;
 	uint16_t instId;
-	uint16_t idxCount;
+	uint8_t vtxCount;
+	uint8_t triCount;
 };
-layout( binding = 4 ) writeonly buffer triangle_ids{
+layout( binding = 3 ) writeonly buffer triangle_ids{
 	meshlet_info visibleMeshlets[];
 };
 
-layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
-layout( binding = 6 ) coherent buffer atomic_cnt{
+layout( binding = 4 ) uniform sampler2D minQuadDepthPyramid;
+layout( binding = 5 ) coherent buffer atomic_cnt{
 	uint workgrAtomicCounter;
 };
-layout( binding = 7 ) buffer disptach_indirect{
+layout( binding = 6 ) buffer disptach_indirect{
 	dispatch_command dispatchCmd;
 };
 
-layout( binding = 8, scalar ) writeonly buffer draw_indir{
+layout( binding = 7, scalar ) writeonly buffer draw_indir{
 	draw_indirect dbgBBoxDrawCmd[];
 };
 
@@ -166,18 +163,11 @@ void main()
 			{
 				//uint slotIdx = atomicAdd( drawCallCount, 1 );
 
-				visibleMeshlets[ slotIdx ].triOffset = thisMeshlet.triBufOffset;
-				visibleMeshlets[ slotIdx ].vtxOffset = thisMeshlet.vtxBufOffset;
+				visibleMeshlets[ slotIdx ].dataOffset = thisMeshlet.dataOffset;
 				visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
 				// NOTE: want all the indices
-				visibleMeshlets[ slotIdx ].idxCount = uint16_t( uint( thisMeshlet.triangleCount ) * 3 );
-
-				drawCmd[ slotIdx ].drawIdx = parentInstId;
-				drawCmd[ slotIdx ].indexCount = uint( thisMeshlet.triangleCount ) * 3;
-				drawCmd[ slotIdx ].instanceCount = 1;
-				drawCmd[ slotIdx ].firstIndex = thisMeshlet.triBufOffset;
-				drawCmd[ slotIdx ].vertexOffset = thisMeshlet.vtxBufOffset;
-				drawCmd[ slotIdx ].firstInstance = 0;
+				visibleMeshlets[ slotIdx ].vtxCount = thisMeshlet.vertexCount;
+				visibleMeshlets[ slotIdx ].triCount = thisMeshlet.triangleCount;
 
 				dbgBBoxDrawCmd[ slotIdx ].drawIdx = mid;
 				dbgBBoxDrawCmd[ slotIdx ].firstVertex = 0;

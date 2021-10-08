@@ -360,17 +360,7 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\meshlet.vert.glsl">
-      <FileType>Document</FileType>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
     <CustomBuild Include="Shaders\box_meshlet_draw.vert.glsl">
-      <FileType>Document</FileType>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\triangle_cull.comp.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>

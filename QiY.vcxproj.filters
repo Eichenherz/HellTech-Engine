@@ -129,9 +129,7 @@
     <CustomBuild Include="Shaders\shdr.vert.glsl" />
     <CustomBuild Include="Shaders\id_expander.comp.glsl" />
     <CustomBuild Include="Shaders\cluster_cull.comp.glsl" />
-    <CustomBuild Include="Shaders\meshlet.vert.glsl" />
     <CustomBuild Include="Shaders\box_meshlet_draw.vert.glsl" />
-    <CustomBuild Include="Shaders\triangle_cull.comp.glsl" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <Filter>Source Files</Filter>
     </CustomBuild>
