@@ -1596,88 +1596,51 @@ constexpr VkDescriptorType globalDescTable[] = {
 	VK_DESCRIPTOR_TYPE_SAMPLER
 };
 
-struct vk_descriptor_count
-{
-	u32 storageBuff = 128;
-	u32 uniformBuff = 8;
-	u32 sampledImg = 128;
-	u32 samplers = 4;
-};
-
 struct vk_global_descriptor
 {
-	VkDescriptorPool		pool;
 	VkDescriptorSetLayout	setLayout;
 	VkDescriptorSet			set;
 };
 
 static vk_global_descriptor globBindlessDesc;
 
-// TODO: don't use all the availabe descs ?
+using vk_binding_list = std::initializer_list<std::pair<u32, u32>>;
+// TODO: write own c++ vector + stack_vector
 static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
-	VkDevice							vkDevice,
-	const VkPhysicalDeviceProperties&	deviceProps, 
-	const vk_descriptor_count&			descCount = {} 
+	VkDevice         vkDevice,
+	VkDescriptorPool vkDescPool, 
+	vk_binding_list	 bindingList
 ){
-	VkDescriptorPoolSize sizes[] = {
-		//{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, deviceProps.limits.maxDescriptorSetStorageBuffers / 16 },
-		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, deviceProps.limits.maxDescriptorSetUniformBuffers },
-		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, deviceProps.limits.maxDescriptorSetSampledImages / 16 },
-		{ VK_DESCRIPTOR_TYPE_SAMPLER, 4 }//deviceProps.limits.maxDescriptorSetSamplers }
-	};
-
-	vk_global_descriptor desc = {};
-
-	VkDescriptorPoolCreateInfo descPoolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-	descPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-	descPoolInfo.maxSets = 1;
-	descPoolInfo.poolSizeCount = std::size( sizes );
-	descPoolInfo.pPoolSizes = sizes;
-	VK_CHECK( vkCreateDescriptorPool( vkDevice, &descPoolInfo, 0, &desc.pool ) );
-
-
-	VkDescriptorSetLayoutBinding bindlessLayout[ std::size( sizes ) ] = {};
-	//bindlessLayout[ 0 ].binding = VK_GLOBAL_SLOT_STORAGE_BUFFER;
-	//bindlessLayout[ 0 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_STORAGE_BUFFER ];
-	//bindlessLayout[ 0 ].descriptorCount = descCount.storageBuff;
-	//bindlessLayout[ 0 ].stageFlags = VK_SHADER_STAGE_ALL;
-
-	bindlessLayout[ 0 ].binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
-	bindlessLayout[ 0 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
-	bindlessLayout[ 0 ].descriptorCount = descCount.uniformBuff;
-	bindlessLayout[ 0 ].stageFlags = VK_SHADER_STAGE_ALL;
-
-	bindlessLayout[ 1 ].binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE;
-	bindlessLayout[ 1 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
-	bindlessLayout[ 1 ].descriptorCount = descCount.sampledImg;
-	bindlessLayout[ 1 ].stageFlags = VK_SHADER_STAGE_ALL;
-
-	bindlessLayout[ 2 ].binding = VK_GLOBAL_SLOT_SAMPLER;
-	bindlessLayout[ 2 ].descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLER ];
-	bindlessLayout[ 2 ].descriptorCount = descCount.samplers;
-	bindlessLayout[ 2 ].stageFlags = VK_SHADER_STAGE_ALL;
-
-	VkDescriptorBindingFlags flags[ std::size( bindlessLayout ) ] = {};
-	for( VkDescriptorBindingFlags& f : flags )
-		f = VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+	std::vector<VkDescriptorSetLayoutBinding> bindingEntries;
+	for( auto& e : bindingList )
+	{
+		bindingEntries.push_back( { e.first, globalDescTable[ e.first ], e.second, VK_SHADER_STAGE_ALL } );
+	}
+	constexpr VkDescriptorBindingFlags flag = 
+		VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+	std::vector<VkDescriptorBindingFlags> flags( std::size( bindingEntries ), flag );
 
 	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFalgs = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
 	descSetFalgs.bindingCount = std::size( flags );
-	descSetFalgs.pBindingFlags = flags;
+	descSetFalgs.pBindingFlags = std::data( flags );
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
 	descSetLayoutInfo.pNext = &descSetFalgs;
-	descSetLayoutInfo.bindingCount = std::size( bindlessLayout );
-	descSetLayoutInfo.pBindings = bindlessLayout;
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &desc.setLayout ) );
+	descSetLayoutInfo.bindingCount = std::size( bindingEntries );
+	descSetLayoutInfo.pBindings = std::data( bindingEntries );
+
+	VkDescriptorSetLayout layout = {};
+	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &layout ) );
 
 
 	VkDescriptorSetAllocateInfo descSetInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-	descSetInfo.descriptorPool = desc.pool;
+	descSetInfo.descriptorPool = vkDescPool;
 	descSetInfo.descriptorSetCount = 1;
-	descSetInfo.pSetLayouts = &desc.setLayout;
-	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &desc.set ) );
+	descSetInfo.pSetLayouts = &layout;
 
-	return desc;
+	VkDescriptorSet set = {};
+	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &set ) );
+
+	return { layout, set };
 }
 
 inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
@@ -1781,7 +1744,7 @@ using vk_specializations = std::initializer_list<u32>;
 using vk_dynamic_states = std::initializer_list<VkDynamicState>;
 
 // TODO: bindlessLayout only for the shaders that use it ?
-vk_program VkMakePipelineProgram(
+inline static vk_program VkMakePipelineProgram(
 	VkDevice							vkDevice,
 	const VkPhysicalDeviceProperties&	gpuProps,
 	VkPipelineBindPoint					bindPoint,
@@ -3704,6 +3667,9 @@ static VkRenderPass depthReadRndPass = {};
 
 
 static vk_pipeline  lighCullProgam = {};
+
+
+static VkDescriptorPool descPool = {};
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3723,7 +3689,26 @@ void VkBackendInit()
 	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
 
 
-	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, dc.gpuProps );
+	VkDescriptorPoolSize sizes[] = {
+		//{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, deviceProps.limits.maxDescriptorSetStorageBuffers / 16 },
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dc.gpuProps.limits.maxDescriptorSetUniformBuffers },
+		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, dc.gpuProps.limits.maxDescriptorSetSampledImages / 16 },
+		{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) }
+	};
+
+	VkDescriptorPoolCreateInfo descPoolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+	descPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+	descPoolInfo.maxSets = 1;
+	descPoolInfo.poolSizeCount = std::size( sizes );
+	descPoolInfo.pPoolSizes = sizes;
+	VK_CHECK( vkCreateDescriptorPool( dc.device, &descPoolInfo, 0, &descPool ) );
+
+	vk_binding_list bindingList = {
+		{VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8},
+		{VK_GLOBAL_SLOT_SAMPLED_IMAGE, 1024},
+		{VK_GLOBAL_SLOT_SAMPLER, 2}
+	};
+	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, descPool, bindingList );
 
 	// TODO: remove .type. from shader use type prefix instead
 	{
