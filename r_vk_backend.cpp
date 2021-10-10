@@ -416,8 +416,6 @@ struct device
 
 inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
 {
-	constexpr VkPhysicalDeviceType PREFFERED_PHYSICAL_DEVICE_TYPE = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
-
 	constexpr const char* ENABLED_DEVICE_EXTS[] = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 
@@ -435,7 +433,8 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 
 		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
-		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME
+		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
+		VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME
 	};
 
 	u32 numDevices = 0;
@@ -443,15 +442,20 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
+
+	VkPhysicalDeviceInlineUniformBlockPropertiesEXT inlineBlockProps =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT };
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &inlineBlockProps };
 	VkPhysicalDeviceSubgroupProperties waveProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
 	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
 
 	
+	VkPhysicalDeviceInlineUniformBlockFeaturesEXT inlineBlockFeatures =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT };
 	VkPhysicalDeviceIndexTypeUint8FeaturesEXT uint8IdxFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT, &inlineBlockFeatures };
 	VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR zeroInitWorkgrMemFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ZERO_INITIALIZE_WORKGROUP_MEMORY_FEATURES_KHR, &uint8IdxFeatures };
 	VkPhysicalDeviceSynchronization2FeaturesKHR sync2Features = 
@@ -488,7 +492,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 
 		vkGetPhysicalDeviceProperties2( availableDevices[ i ], &gpuProps2 );
 		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_2 ) continue;
-		if( gpuProps2.properties.deviceType != PREFFERED_PHYSICAL_DEVICE_TYPE ) continue;
+		if( gpuProps2.properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) continue;
 		if( !gpuProps2.properties.limits.timestampComputeAndGraphics ) continue;
 
 		vkGetPhysicalDeviceFeatures2( availableDevices[ i ], &gpuFeatures );
@@ -1606,7 +1610,7 @@ static vk_global_descriptor globBindlessDesc;
 
 using vk_binding_list = std::initializer_list<std::pair<u32, u32>>;
 // TODO: write own c++ vector + stack_vector
-static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
+inline static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 	VkDevice         vkDevice,
 	VkDescriptorPool vkDescPool, 
 	vk_binding_list	 bindingList
