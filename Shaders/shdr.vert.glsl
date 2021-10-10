@@ -82,7 +82,9 @@ void main()
 {
 	vertex vtx = vtx_ref( vtxAddr ).vertices[ gl_VertexIndex ];
 	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
-	vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
+	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
+	vec3 norm = DecodeOctaNormal( encodedTanFame.xy );
+	//vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
 	uint di = draw_cmd_ref( drawCmdAddr ).drawCmd[ gl_DrawIDARB ].drawIdx;
@@ -94,7 +96,8 @@ void main()
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 
 	vec3 n = normalize( norm );
-	vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
+	vec3 t = DecodeTanFromAngle( norm, encodedTanFame.z );
+	//vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
 	t = normalize( RotateQuat( t, inst.rot ) );
 	n = normalize( RotateQuat( n, inst.rot ) );
 

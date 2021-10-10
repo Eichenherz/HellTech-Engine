@@ -98,6 +98,8 @@ struct vertex
 	float pz;
 	float tu;
 	float tv;
+	// TODO: name better
+	uint snorm8octTanFrame;
 	//uint mi;
 	// TODO: use builtins to unpack
 	uint8_t snorm8octNx;

@@ -702,13 +702,20 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 		DirectX::XMFLOAT2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
 		float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
 
-		//firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
-		//firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
-		//firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
+		firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
+		firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
+		firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
 
-		firstVertex[ i ].snorm8octNx = meshopt_quantizeSnorm( octaNormal.x, 8 );
-		firstVertex[ i ].snorm8octNy = meshopt_quantizeSnorm( octaNormal.y, 8 );
-		firstVertex[ i ].snorm8tanAngle = meshopt_quantizeSnorm( tanAngle, 8 );
+		//firstVertex[ i ].snorm8octNx = meshopt_quantizeSnorm( octaNormal.x, 8 );
+		//firstVertex[ i ].snorm8octNy = meshopt_quantizeSnorm( octaNormal.y, 8 );
+		//firstVertex[ i ].snorm8tanAngle = meshopt_quantizeSnorm( tanAngle, 8 );
+
+		u32 encodedTanFrame = 
+			meshopt_quantizeSnorm( octaNormal.x, 8 ) | 
+			meshopt_quantizeSnorm( octaNormal.y, 8 ) << 8 | 
+			meshopt_quantizeSnorm( tanAngle, 8 ) << 16;
+		//firstVertex[ i ].snorm8octTanFrame = encodedTanFrame;
+		
 	}
 	for( u64 i = 0; i < vtxAttrCount; ++i )
 	{
