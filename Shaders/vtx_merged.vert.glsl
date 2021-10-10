@@ -31,7 +31,7 @@ layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data
 
 vec2 SignNonZero( vec2 e )
 {
-	return vec2( ( ( e.x >= 0.0 ) ? 1.0 : -1.0 ), ( ( e.y >= 0.0 ) ? 1.0 : -1.0 ) );
+	return mix( vec2( 1.0f ), vec2( -1.0f ), lessThan( e, vec2( 0.0f ) ) );
 }
 float Snorm8ToFloat( uint8_t x )
 {
@@ -40,8 +40,8 @@ float Snorm8ToFloat( uint8_t x )
 vec3 DecodeOctaNormal( vec2 octa )
 {
 	vec3 n = vec3( octa, 1.0 - abs( octa.x ) - abs( octa.y ) );
-	
-	n.xy = ( n.z < 0 ) ? ( SignNonZero( n.xy ) - SignNonZero( n.xy ) * abs( n.yx ) ) : n.xy;
+	vec2 signVector = SignNonZero( n.xy );
+	n.xy = ( n.z < 0 ) ? ( signVector - signVector * abs( n.yx ) ) : n.xy;
 	// NOTE: Rune Stubbe's version
 	//float t = max( -n.z, 0.0 );                     
 	//n.x += ( n.x > 0.0 ) ? -t : t;                     
