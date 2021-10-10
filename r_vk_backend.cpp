@@ -4773,7 +4773,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
 
 	u64 currentFrameIdx = rndCtx.vFrameIdx++;
-	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	u64 frameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
+	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ frameBufferedIdx ];
 
 	VkSemaphoreWaitInfo waitInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO };
 	waitInfo.semaphoreCount = 1;
@@ -4812,303 +4813,302 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
 	
-	// TODO: nicer indexing
-	u64 poolIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
-
-	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ] );
-	vkCmdResetQueryPool( thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0, vkGpuTimer[ poolIdx ].queryCount );
+	// TODO: swapchain resize ?
+	if( !rndCtx.depthTarget.hndl )
 	{
-		vk_time_section timePipeline = { thisVFrame.cmdBuff, vkGpuTimer[ poolIdx ].queryPool, 0 };
+		constexpr VkFormat format = VK_FORMAT_D32_SFLOAT;
+		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		rndCtx.depthTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
+
+		u32 hiZWidth = 0;
+		u32 hiZHeight = 0;
+		u32 hiZMipCount = 0;
+		// TODO: place depth pyr elsewhere 
+		if constexpr( !multiPassDepthPyramid )
+		{
+			// TODO: make conservative ?
+			hiZWidth = ( sc.width ) / 2;
+			hiZHeight = ( sc.height ) / 2;
+			hiZMipCount = GetImgMipCount( hiZWidth, hiZHeight );
+		}
+		else
+		{
+			hiZWidth = FloorPowOf2( sc.width );
+			hiZHeight = FloorPowOf2( sc.height );
+			u32 squareDim = std::min( hiZWidth, hiZHeight );
+			hiZWidth = hiZHeight = squareDim;
+			hiZMipCount = GetImgMipCountForPow2( hiZWidth, hiZHeight );
+		}
+		VK_CHECK( VK_INTERNAL_ERROR( !( hiZMipCount < MAX_MIP_LEVELS ) ) );
+		constexpr VkImageUsageFlags hiZUsg =
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+		constexpr VkFormat depthFormat = VK_FORMAT_R32_SFLOAT;
+		rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { hiZWidth, hiZHeight, 1 }, hiZMipCount, vkAlbumArena );
+		VkDbgNameObj( rndCtx.depthPyramid.hndl, dc.device, "Img_Depth_Pyramid" );
+
+		for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
+		{
+			rndCtx.depthPyramidChain[ i ] =
+				VkMakeImgView( dc.device, rndCtx.depthPyramid.hndl, rndCtx.depthPyramid.nativeFormat, i, 1 );
+		}
+
+
+		VkImageMemoryBarrier2KHR initBarriers[] = {
+		VkMakeImageBarrier2(
+			rndCtx.depthTarget.hndl,
+			0, 0,
+			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			VK_IMAGE_ASPECT_DEPTH_BIT ),
+		VkMakeImageBarrier2(
+			rndCtx.depthPyramid.hndl,
+			0, 0,
+			0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_ASPECT_COLOR_BIT )
+		};
+		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		dependency.imageMemoryBarrierCount = std::size( initBarriers );
+		dependency.pImageMemoryBarriers = initBarriers;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+	}
+	if( !rndCtx.colorTarget.hndl )
+	{
+		constexpr VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
+		constexpr VkImageUsageFlags usgFlags =
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		rndCtx.colorTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		VkDbgNameObj( rndCtx.colorTarget.hndl, dc.device, "Img_Render_Target_Color" );
+
+		VkImageMemoryBarrier2KHR initBarrier = VkMakeImageBarrier2(
+			rndCtx.colorTarget.hndl,
+			0, 0,
+			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			VK_IMAGE_ASPECT_COLOR_BIT );
+		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		dependency.imageMemoryBarrierCount = 1;
+		dependency.pImageMemoryBarriers = &initBarrier;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+	}
+
+	// TODO: creating too many fboss per frame recording might have some perf impact
+	// TODO: if perf impact then store inside a hashmap/cache map
+	// TODO: deffer delete these
+	VkImageView attachments[] = { rndCtx.depthTarget.view,rndCtx.colorTarget.view };
+	u32 fboWidth = rndCtx.depthTarget.width;
+	u32 fboHeight = rndCtx.depthTarget.height;
+	assert( rndCtx.depthTarget.width == rndCtx.colorTarget.width );
+	assert( rndCtx.depthTarget.height == rndCtx.colorTarget.height );
+	// TODO: re design
+	if( std::size( recycleFboList ) )
+	{
+		for( VkFramebuffer& fbo : recycleFboList )
+		{
+			vkDestroyFramebuffer( dc.device, fbo, 0 );
+		}
+		recycleFboList.resize( 0 );
+	}
+
+	VkFramebuffer depthFbo = VkMakeFramebuffer( dc.device, zRndPass, attachments, 1, fboWidth, fboHeight );
+	VkFramebuffer depthColFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, attachments, 2, fboWidth, fboHeight );
+	recycleFboList.push_back( depthFbo );
+	recycleFboList.push_back( depthColFbo );
+
+	// TODO: async, multi-threaded, etc
+	// TODO: distinction between streamed and persistent resources
+	static bool rescUploaded = 0;
+	if( !rescUploaded )
+	{
+		if( !imguiVkCtx.fontsImg.hndl )
+		{
+			auto [pixels, width, height] = ImguiGetFontImage();
+			u64 uploadSize = width * height * sizeof( u32 );
+
+			constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+			constexpr VkImageUsageFlags flags = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			image fonts = VkCreateAllocBindImage( format, flags, { width,height,1 }, 1, vkAlbumArena );
+
+			{
+				auto fontsBarrier = VkMakeImageBarrier2( fonts.hndl, 0, 0,
+														 VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+														 VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+														 VK_IMAGE_LAYOUT_UNDEFINED,
+														 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+														 VK_IMAGE_ASPECT_COLOR_BIT );
+				VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+				dependency.imageMemoryBarrierCount = 1;
+				dependency.pImageMemoryBarriers = &fontsBarrier;
+				vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+			}
+
+			buffer_data upload = VkCreateAllocBindBuffer( uploadSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
+			std::memcpy( upload.hostVisible, pixels, uploadSize );
+			StagingManagerPushForRecycle( upload.hndl, stagingManager, currentFrameIdx );
+
+			VkBufferImageCopy imgCopyRegion = {};
+			imgCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			imgCopyRegion.imageSubresource.layerCount = 1;
+			imgCopyRegion.imageExtent = { width,height,1 };
+			vkCmdCopyBufferToImage(
+				thisVFrame.cmdBuff, upload.hndl, fonts.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
+
+			{
+				auto fontsBarrier = VkMakeImageBarrier2( fonts.hndl,
+														 VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+														 VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+														 VK_ACCESS_2_SHADER_READ_BIT_KHR,
+														 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR,
+														 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+														 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+														 VK_IMAGE_ASPECT_COLOR_BIT );
+				VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+				dependency.imageMemoryBarrierCount = 1;
+				dependency.pImageMemoryBarriers = &fontsBarrier;
+				vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+			}
+
+			VkDbgNameObj( fonts.hndl, dc.device, "Img_Fonts" );
+			imguiVkCtx.fontsImg = fonts;
+		}
+
+		VkUploadResources( thisVFrame.cmdBuff, entities, currentFrameIdx );
+		rescUploaded = 1;
+
+		global_bdas bdas = {};
+		bdas.vtxAddr = globVertexBuff.devicePointer;
+		bdas.idxAddr = indexBuff.devicePointer;
+		bdas.meshDescAddr = meshBuff.devicePointer;
+		bdas.lightsDescAddr = lightsBuff.devicePointer;
+		bdas.meshletsAddr = meshletBuff.devicePointer;
+		bdas.mtrlsAddr = materialsBuff.devicePointer;
+		bdas.instDescAddr = instDescBuff.devicePointer;
+
+		assert( bdasUboBuff.hostVisible );
+		std::memcpy( bdasUboBuff.hostVisible, &bdas, sizeof( bdas ) );
+
+
+		// NOTE: UpdateDescriptors
+		std::vector<VkWriteDescriptorSet> descUpdates;
+
+		VkDescriptorBufferInfo bdaDesc = Descriptor( bdasUboBuff );
+		VkWriteDescriptorSet bdaUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		bdaUpdate.dstSet = globBindlessDesc.set;
+		bdaUpdate.dstBinding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
+		bdaUpdate.dstArrayElement = 1;
+		bdaUpdate.descriptorCount = 1;
+		bdaUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
+		bdaUpdate.pBufferInfo = &bdaDesc;
+
+		descUpdates.push_back( bdaUpdate );
+
+
+		rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+		VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
+		VkWriteDescriptorSet samplerUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		samplerUpdate.dstSet = globBindlessDesc.set;
+		samplerUpdate.dstBinding = VK_GLOBAL_SLOT_SAMPLER;
+		samplerUpdate.dstArrayElement = 0;
+		samplerUpdate.descriptorCount = 1;
+		samplerUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLER ];
+		samplerUpdate.pImageInfo = &samplerDesc;
+
+		descUpdates.push_back( samplerUpdate );
+
+		std::vector<VkDescriptorImageInfo> texDescs;
+		texDescs.reserve( std::size( textures.rsc ) );
+		for( const auto& i : textures.rsc )
+		{
+			texDescs.push_back( { 0, i.data.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } );
+		}
+
+		VkWriteDescriptorSet texUpdates = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		texUpdates.dstSet = globBindlessDesc.set;
+		texUpdates.dstBinding = VK_GLOBAL_SLOT_SAMPLED_IMAGE;
+		texUpdates.dstArrayElement = 0;
+		texUpdates.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
+		texUpdates.descriptorCount = std::size( texDescs );
+		texUpdates.pImageInfo = std::data( texDescs );
+
+		descUpdates.push_back( texUpdates );
+
+		vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
+
+
+		// TODO: remove from here
+		XMMATRIX t = XMMatrixMultiply( XMMatrixScaling( 100.0f, 60.0f, 20.0f ), XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
+		XMFLOAT4 boxVertices[ 8 ] = {};
+		TrnasformBoxVertices( t, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
+		std::span<dbg_vertex> occlusionBoxSpan = { ( dbg_vertex* ) vkDbgCtx.dbgTrisBuff.hostVisible,boxTrisVertexCount };
+		assert( std::size( occlusionBoxSpan ) == std::size( boxTrisIndices ) );
+		for( u64 i = 0; i < std::size( occlusionBoxSpan ); ++i )
+		{
+			occlusionBoxSpan[ i ] = { boxVertices[ boxTrisIndices[ i ] ],{0.000004f,0.000250f,0.000123f,1.0f} };
+		}
+	}
+
+	static bool initBuffers = 0;
+	if( !initBuffers )
+	{
+		vkCmdFillBuffer( thisVFrame.cmdBuff, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
+		vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
+		// TODO: rename 
+		vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
+		vkCmdFillBuffer( thisVFrame.cmdBuff, tileBuff.hndl, 0, tileBuff.size, 0u );
+
+		VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
+			VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VkMakeBufferBarrier2( depthAtomicCounterBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VkMakeBufferBarrier2( atomicCounterBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VkMakeBufferBarrier2( tileBuff.hndl,
+									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+									VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ),
+		};
+
+		VkDependencyInfoKHR initBuffsDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		initBuffsDependency.bufferMemoryBarrierCount = std::size( initBuffersBarriers );
+		initBuffsDependency.pBufferMemoryBarriers = initBuffersBarriers;
+		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &initBuffsDependency );
+
+		initBuffers = 1;
+	}
+
+	// TODO: destroy buffers
+	// TODO: reclaim memory
+	if( std::size( stagingManager.pendingUploads ) ) {}
+
+
+
+	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ frameBufferedIdx ] );
+	vkCmdResetQueryPool( thisVFrame.cmdBuff, vkGpuTimer[ frameBufferedIdx ].queryPool, 0, vkGpuTimer[ frameBufferedIdx ].queryCount );
+	{
+		vk_time_section timePipeline = { thisVFrame.cmdBuff, vkGpuTimer[ frameBufferedIdx ].queryPool, 0 };
 
 		VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
 		vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &viewport );
 
-		// TODO: swapchain resize ?
-		if( !rndCtx.depthTarget.hndl )
-		{
-			constexpr VkFormat format = VK_FORMAT_D32_SFLOAT;
-			constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-			rndCtx.depthTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
-			VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
-
-			u32 hiZWidth = 0;
-			u32 hiZHeight = 0;
-			u32 hiZMipCount = 0;
-			// TODO: place depth pyr elsewhere 
-			if constexpr( !multiPassDepthPyramid )
-			{
-				// TODO: make conservative ?
-				hiZWidth = ( sc.width ) / 2;
-				hiZHeight = ( sc.height ) / 2;
-				hiZMipCount = GetImgMipCount( hiZWidth, hiZHeight );
-			}
-			else
-			{
-				hiZWidth = FloorPowOf2( sc.width );
-				hiZHeight = FloorPowOf2( sc.height );
-				u32 squareDim = std::min( hiZWidth, hiZHeight );
-				hiZWidth = hiZHeight = squareDim;
-				hiZMipCount = GetImgMipCountForPow2( hiZWidth, hiZHeight );
-			}
-			VK_CHECK( VK_INTERNAL_ERROR( !( hiZMipCount < MAX_MIP_LEVELS ) ) );
-			constexpr VkImageUsageFlags hiZUsg =
-				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-				VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-			constexpr VkFormat depthFormat = VK_FORMAT_R32_SFLOAT;
-			rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { hiZWidth, hiZHeight, 1 }, hiZMipCount, vkAlbumArena );
-			VkDbgNameObj( rndCtx.depthPyramid.hndl, dc.device, "Img_Depth_Pyramid" );
-
-			for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
-			{
-				rndCtx.depthPyramidChain[ i ] =
-					VkMakeImgView( dc.device, rndCtx.depthPyramid.hndl, rndCtx.depthPyramid.nativeFormat, i, 1 );
-			}
-
-
-			VkImageMemoryBarrier2KHR initBarriers[] = {
-			VkMakeImageBarrier2(
-				rndCtx.depthTarget.hndl,
-				0, 0,
-				0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-				VK_IMAGE_ASPECT_DEPTH_BIT ),
-			VkMakeImageBarrier2(
-				rndCtx.depthPyramid.hndl,
-				0, 0,
-				0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-				VK_IMAGE_ASPECT_COLOR_BIT )
-			};
-			VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-			dependency.imageMemoryBarrierCount = std::size( initBarriers );
-			dependency.pImageMemoryBarriers = initBarriers;
-			vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
-		}
-		if( !rndCtx.colorTarget.hndl )
-		{
-			constexpr VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
-			constexpr VkImageUsageFlags usgFlags =
-				VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-			rndCtx.colorTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
-			VkDbgNameObj( rndCtx.colorTarget.hndl, dc.device, "Img_Render_Target_Color" );
-
-			VkImageMemoryBarrier2KHR initBarrier = VkMakeImageBarrier2(
-				rndCtx.colorTarget.hndl,
-				0, 0,
-				0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-				VK_IMAGE_ASPECT_COLOR_BIT );
-			VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-			dependency.imageMemoryBarrierCount = 1;
-			dependency.pImageMemoryBarriers = &initBarrier;
-			vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
-		}
-
-		// TODO: creating too many fboss per frame recording might have some perf impact
-		// TODO: if perf impact then store inside a hashmap/cache map
-		// TODO: deffer delete these
-		VkImageView attachments[] = { rndCtx.depthTarget.view,rndCtx.colorTarget.view };
-		u32 fboWidth = rndCtx.depthTarget.width;
-		u32 fboHeight = rndCtx.depthTarget.height;
-		assert( rndCtx.depthTarget.width == rndCtx.colorTarget.width );
-		assert( rndCtx.depthTarget.height == rndCtx.colorTarget.height );
-		// TODO: re design
-		if( std::size( recycleFboList ) )
-		{
-			for( VkFramebuffer& fbo : recycleFboList )
-			{
-				vkDestroyFramebuffer( dc.device, fbo, 0 );
-			}
-			recycleFboList.resize( 0 );
-		}
-
-		VkFramebuffer depthFbo = VkMakeFramebuffer( dc.device, zRndPass, attachments, 1, fboWidth, fboHeight );
-		VkFramebuffer depthColFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, attachments, 2, fboWidth, fboHeight );
-		recycleFboList.push_back( depthFbo );
-		recycleFboList.push_back( depthColFbo );
-
-		// TODO: async, multi-threaded, etc
-		// TODO: distinction between streamed and persistent resources
-		static bool rescUploaded = 0;
-		if( !rescUploaded )
-		{
-			if( !imguiVkCtx.fontsImg.hndl )
-			{
-				auto [pixels, width, height] = ImguiGetFontImage();
-				u64 uploadSize = width * height * sizeof( u32 );
-
-				constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
-				constexpr VkImageUsageFlags flags = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-				image fonts = VkCreateAllocBindImage( format, flags, { width,height,1 }, 1, vkAlbumArena );
-
-				{
-					auto fontsBarrier = VkMakeImageBarrier2( fonts.hndl, 0, 0,
-															 VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-															 VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-															 VK_IMAGE_LAYOUT_UNDEFINED,
-															 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-															 VK_IMAGE_ASPECT_COLOR_BIT );
-					VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-					dependency.imageMemoryBarrierCount = 1;
-					dependency.pImageMemoryBarriers = &fontsBarrier;
-					vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
-				}
-
-				buffer_data upload = VkCreateAllocBindBuffer( uploadSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena );
-				std::memcpy( upload.hostVisible, pixels, uploadSize );
-				StagingManagerPushForRecycle( upload.hndl, stagingManager, currentFrameIdx );
-
-				VkBufferImageCopy imgCopyRegion = {};
-				imgCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-				imgCopyRegion.imageSubresource.layerCount = 1;
-				imgCopyRegion.imageExtent = { width,height,1 };
-				vkCmdCopyBufferToImage(
-					thisVFrame.cmdBuff, upload.hndl, fonts.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
-
-				{
-					auto fontsBarrier = VkMakeImageBarrier2( fonts.hndl,
-															 VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-															 VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-															 VK_ACCESS_2_SHADER_READ_BIT_KHR,
-															 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR,
-															 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-															 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-															 VK_IMAGE_ASPECT_COLOR_BIT );
-					VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-					dependency.imageMemoryBarrierCount = 1;
-					dependency.pImageMemoryBarriers = &fontsBarrier;
-					vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
-				}
-
-				VkDbgNameObj( fonts.hndl, dc.device, "Img_Fonts" );
-				imguiVkCtx.fontsImg = fonts;
-			}
-
-			VkUploadResources( thisVFrame.cmdBuff, entities, currentFrameIdx );
-			rescUploaded = 1;
-
-			global_bdas bdas = {};
-			bdas.vtxAddr = globVertexBuff.devicePointer;
-			bdas.idxAddr = indexBuff.devicePointer;
-			bdas.meshDescAddr = meshBuff.devicePointer;
-			bdas.lightsDescAddr = lightsBuff.devicePointer;
-			bdas.meshletsAddr = meshletBuff.devicePointer;
-			bdas.mtrlsAddr = materialsBuff.devicePointer;
-			bdas.instDescAddr = instDescBuff.devicePointer;
-
-			assert( bdasUboBuff.hostVisible );
-			std::memcpy( bdasUboBuff.hostVisible, &bdas, sizeof( bdas ) );
-
-
-			// NOTE: UpdateDescriptors
-			std::vector<VkWriteDescriptorSet> descUpdates;
-
-			VkDescriptorBufferInfo bdaDesc = Descriptor( bdasUboBuff );
-			VkWriteDescriptorSet bdaUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-			bdaUpdate.dstSet = globBindlessDesc.set;
-			bdaUpdate.dstBinding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
-			bdaUpdate.dstArrayElement = 1;
-			bdaUpdate.descriptorCount = 1;
-			bdaUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
-			bdaUpdate.pBufferInfo = &bdaDesc;
-
-			descUpdates.push_back( bdaUpdate );
-
-
-			rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
-			VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
-			VkWriteDescriptorSet samplerUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-			samplerUpdate.dstSet = globBindlessDesc.set;
-			samplerUpdate.dstBinding = VK_GLOBAL_SLOT_SAMPLER;
-			samplerUpdate.dstArrayElement = 0;
-			samplerUpdate.descriptorCount = 1;
-			samplerUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLER ];
-			samplerUpdate.pImageInfo = &samplerDesc;
-
-			descUpdates.push_back( samplerUpdate );
-
-			std::vector<VkDescriptorImageInfo> texDescs;
-			texDescs.reserve( std::size( textures.rsc ) );
-			for( const auto& i : textures.rsc )
-			{
-				texDescs.push_back( { 0, i.data.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } );
-			}
-
-			VkWriteDescriptorSet texUpdates = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-			texUpdates.dstSet = globBindlessDesc.set;
-			texUpdates.dstBinding = VK_GLOBAL_SLOT_SAMPLED_IMAGE;
-			texUpdates.dstArrayElement = 0;
-			texUpdates.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
-			texUpdates.descriptorCount = std::size( texDescs );
-			texUpdates.pImageInfo = std::data( texDescs );
-
-			descUpdates.push_back( texUpdates );
-
-			vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
-
-
-			// TODO: remove from here
-			XMMATRIX t = XMMatrixMultiply( XMMatrixScaling( 100.0f, 60.0f, 20.0f ), XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
-			XMFLOAT4 boxVertices[ 8 ] = {};
-			TrnasformBoxVertices( t, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
-			std::span<dbg_vertex> occlusionBoxSpan = { ( dbg_vertex* ) vkDbgCtx.dbgTrisBuff.hostVisible,boxTrisVertexCount };
-			assert( std::size( occlusionBoxSpan ) == std::size( boxTrisIndices ) );
-			for( u64 i = 0; i < std::size( occlusionBoxSpan ); ++i )
-			{
-				occlusionBoxSpan[ i ] = { boxVertices[ boxTrisIndices[ i ] ],{0.000004f,0.000250f,0.000123f,1.0f} };
-			}
-		}
-
-		static bool initBuffers = 0;
-		if( !initBuffers )
-		{
-			vkCmdFillBuffer( thisVFrame.cmdBuff, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
-			vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
-			// TODO: rename 
-			vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
-			vkCmdFillBuffer( thisVFrame.cmdBuff, tileBuff.hndl, 0, tileBuff.size, 0u );
-
-			VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
-				VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
-										VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-										VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-				VkMakeBufferBarrier2( depthAtomicCounterBuff.hndl,
-										VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-										VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-				VkMakeBufferBarrier2( atomicCounterBuff.hndl,
-										VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-										VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-				VkMakeBufferBarrier2( tileBuff.hndl,
-										VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-										VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-										VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ),
-			};
-
-			VkDependencyInfoKHR initBuffsDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-			initBuffsDependency.bufferMemoryBarrierCount = std::size( initBuffersBarriers );
-			initBuffsDependency.pBufferMemoryBarriers = initBuffersBarriers;
-			vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &initBuffsDependency );
-
-			initBuffers = 1;
-		}
-
-		// TODO: destroy buffers
-		// TODO: reclaim memory
-		if( std::size( stagingManager.pendingUploads ) ){}
-
 		VkClearValue clearVals[ 2 ] = {};
 
-		// TODO: don't if, use different cams in shaders
+		// TODO: don't if, use different cams in shaders ?
 		if( !frameData.freezeMainView )
 		{
 			//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
