@@ -1608,7 +1608,43 @@ struct vk_global_descriptor
 
 static vk_global_descriptor globBindlessDesc;
 
+
+struct vk_slot_info
+{
+	VkDescriptorType type;
+	u32 slot;  
+	u32 count;
+};
+using vk_slot_list = std::initializer_list<vk_slot_info>;
+inline static VkDescriptorSetLayout VkMakeDescriptorSetLayout(
+	VkDevice         vkDevice,
+	vk_slot_list	 bindingList
+){
+	std::vector<VkDescriptorSetLayoutBinding> bindingEntries;
+	for( auto& e : bindingList )
+	{
+		bindingEntries.push_back( { e.slot, e.type, e.count, VK_SHADER_STAGE_ALL } );
+	}
+	constexpr VkDescriptorBindingFlags flag =
+		VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+	std::vector<VkDescriptorBindingFlags> flags( std::size( bindingEntries ), flag );
+
+	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFalgs = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
+	descSetFalgs.bindingCount = std::size( flags );
+	descSetFalgs.pBindingFlags = std::data( flags );
+	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+	descSetLayoutInfo.pNext = &descSetFalgs;
+	descSetLayoutInfo.bindingCount = std::size( bindingEntries );
+	descSetLayoutInfo.pBindings = std::data( bindingEntries );
+
+	VkDescriptorSetLayout layout = {};
+	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &layout ) );
+
+	return layout;
+}
+
 using vk_binding_list = std::initializer_list<std::pair<u32, u32>>;
+
 // TODO: write own c++ vector + stack_vector
 inline static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 	VkDevice         vkDevice,
@@ -3673,7 +3709,8 @@ static VkRenderPass depthReadRndPass = {};
 static vk_pipeline  lighCullProgam = {};
 
 
-static VkDescriptorPool descPool = {};
+static VkDescriptorPool vkDescPool = {};
+static VkDescriptorSet frameDesc[ 2 ] = {};
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3687,12 +3724,6 @@ void VkBackendInit()
 	sc = VkMakeSwapchain( dc.device, dc.gpu, vkSurf, dc.gfxQueueIdx, VK_FORMAT_B8G8R8A8_UNORM );
 
 
-	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
-	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
-	zRndPass = VkMakeRenderPass( dc.device, 0, -1, 1, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
-	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
-
-
 	VkDescriptorPoolSize sizes[] = {
 		//{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, deviceProps.limits.maxDescriptorSetStorageBuffers / 16 },
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dc.gpuProps.limits.maxDescriptorSetUniformBuffers },
@@ -3702,17 +3733,38 @@ void VkBackendInit()
 
 	VkDescriptorPoolCreateInfo descPoolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
 	descPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-	descPoolInfo.maxSets = 1;
+	descPoolInfo.maxSets = 4;
 	descPoolInfo.poolSizeCount = std::size( sizes );
 	descPoolInfo.pPoolSizes = sizes;
-	VK_CHECK( vkCreateDescriptorPool( dc.device, &descPoolInfo, 0, &descPool ) );
+	VK_CHECK( vkCreateDescriptorPool( dc.device, &descPoolInfo, 0, &vkDescPool ) );
 
 	vk_binding_list bindingList = {
 		{VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8},
 		{VK_GLOBAL_SLOT_SAMPLED_IMAGE, 1024},
 		{VK_GLOBAL_SLOT_SAMPLER, 2}
 	};
-	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, descPool, bindingList );
+	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, vkDescPool, bindingList );
+
+	// TODO: must keep for the lifetime of the prog
+	VkDescriptorSetLayout frameDescLayout = VkMakeDescriptorSetLayout( dc.device, { {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, 1} } );
+	VkDescriptorSetLayout allocDescLayouts[] = { frameDescLayout, frameDescLayout };
+
+	VkDescriptorSetAllocateInfo descSetInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+	descSetInfo.descriptorPool = vkDescPool;
+	descSetInfo.descriptorSetCount = std::size( allocDescLayouts );
+	descSetInfo.pSetLayouts = allocDescLayouts;
+
+	
+	VK_CHECK( vkAllocateDescriptorSets( dc.device, &descSetInfo, frameDesc ) );
+
+	//vkDestroyDescriptorSetLayout( dc.device, frameDescLayout, 0 );
+
+
+	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
+	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
+	zRndPass = VkMakeRenderPass( dc.device, 0, -1, 1, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
+	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
+
 
 	// TODO: remove .type. from shader use type prefix instead
 	{
@@ -4070,7 +4122,6 @@ CullPass(
 		vkCmdDispatch( cmdBuff, VkGetGroupCount( instCount, program.groupSize.x ), 1, 1 );
 	}
 	
-#if 1
 	{
 		VkBufferMemoryBarrier2KHR dispatchBarrier =
 			VkMakeBufferBarrier2( dispatchCmdBuff.hndl,
@@ -4195,7 +4246,6 @@ CullPass(
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff3.hndl, 0 );
 	}
 
-#endif // 0
 
 	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
 		VkMakeBufferBarrier2( 
@@ -4797,7 +4847,17 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	globalDataUpdate.pBufferInfo = &uboInfo;
 	vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
 
-
+	if( currentFrameIdx < 2 )
+	{
+		VkWriteDescriptorSet globalDataUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		globalDataUpdate.dstSet = frameDesc[ frameBufferedIdx ];
+		globalDataUpdate.dstBinding = 0;
+		globalDataUpdate.dstArrayElement = 0;
+		globalDataUpdate.descriptorCount = 1;
+		globalDataUpdate.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		globalDataUpdate.pBufferInfo = &uboInfo;
+		vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
+	}
 	VkCommandBufferBeginInfo cmdBufBegInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
