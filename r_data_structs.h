@@ -285,13 +285,14 @@ const uint VK_GLOBAL_DESC_SET = 1;
 
 #ifdef GLOBAL_RESOURCES
 
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER, std430 ) uniform global{ global_data g; } globalsCam[];
+layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data g; } globalsCam[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER, std430 ) uniform glob_bdas{ global_bdas bdas; } globalsBdas[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
 
 global_data cam = globalsCam[ 0 ].g;
-global_bdas bdas = globalsBdas[ 1 ].bdas;
+//global_bdas bdas = globalsBdas[ 1 ].bdas;
+global_bdas bdas = globalsBdas[ 0 ].bdas;
 
 #endif
 

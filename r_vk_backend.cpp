@@ -3839,7 +3839,20 @@ void VkBackendInit()
 		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", dc.device );
 		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", dc.device );
 		vk_gfx_pipeline_state opaqueState = {};
-		gfxMergedProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vtxMerged, &fragPBR } );
+		//gfxMergedProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vtxMerged, &fragPBR } );
+
+		VkDescriptorSetLayout setLayouts[] = { frameDescLayout, globBindlessDesc.setLayout };
+
+		VkPushConstantRange pushConstRanges[ 1 ] = { VK_SHADER_STAGE_VERTEX_BIT,0,3 * sizeof( u64 ) };
+
+		VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+		pipeLayoutInfo.setLayoutCount = std::size( setLayouts );
+		pipeLayoutInfo.pSetLayouts = setLayouts;
+		pipeLayoutInfo.pushConstantRangeCount = std::size( pushConstRanges );
+		pipeLayoutInfo.pPushConstantRanges = pushConstRanges;
+		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &gfxMergedProgram.pipeLayout ) );
+
+
 		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline(
 			dc.device, 0, rndCtx.renderPass, gfxMergedProgram.pipeLayout, vtxMerged.module, fragPBR.module, opaqueState );
 		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
@@ -4838,14 +4851,14 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	VkDescriptorBufferInfo uboInfo = { thisVFrame.frameData.hndl, 0, sizeof( globs ) };
 
-	VkWriteDescriptorSet globalDataUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-	globalDataUpdate.dstSet = globBindlessDesc.set;
-	globalDataUpdate.dstBinding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
-	globalDataUpdate.dstArrayElement = 0;
-	globalDataUpdate.descriptorCount = 1;
-	globalDataUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
-	globalDataUpdate.pBufferInfo = &uboInfo;
-	vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
+	//VkWriteDescriptorSet globalDataUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+	//globalDataUpdate.dstSet = globBindlessDesc.set;
+	//globalDataUpdate.dstBinding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
+	//globalDataUpdate.dstArrayElement = 0;
+	//globalDataUpdate.descriptorCount = 1;
+	//globalDataUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
+	//globalDataUpdate.pBufferInfo = &uboInfo;
+	//vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
 
 	if( currentFrameIdx < 2 )
 	{
@@ -5049,7 +5062,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkWriteDescriptorSet bdaUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		bdaUpdate.dstSet = globBindlessDesc.set;
 		bdaUpdate.dstBinding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
-		bdaUpdate.dstArrayElement = 1;
+		//bdaUpdate.dstArrayElement = 1;
+		bdaUpdate.dstArrayElement = 0;
 		bdaUpdate.descriptorCount = 1;
 		bdaUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
 		bdaUpdate.pBufferInfo = &bdaDesc;
@@ -5245,8 +5259,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		//						 gfxOpaqueProgram,
 		//						 true );
 
+		//vkCmdBindDescriptorSets(
+		//	thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+
+		VkDescriptorSet descSets[] = { frameDesc[ frameBufferedIdx ],globBindlessDesc.set };
+
 		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 0, std::size( descSets ), descSets, 0, 0 );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
