@@ -3708,7 +3708,6 @@ static VkRenderPass depthReadRndPass = {};
 
 static vk_pipeline  lighCullProgam = {};
 
-
 static VkDescriptorPool vkDescPool = {};
 static VkDescriptorSet frameDesc[ 2 ] = {};
 // TODO: no structured binding
@@ -3722,6 +3721,27 @@ void VkBackendInit()
 	VkStartGfxMemory( dc.gpu, dc.device );
 
 	sc = VkMakeSwapchain( dc.device, dc.gpu, vkSurf, dc.gfxQueueIdx, VK_FORMAT_B8G8R8A8_UNORM );
+
+	VkInitInternalBuffers();
+
+	for( u64 vfi = 0; vfi < rndCtx.framesInFlight; ++vfi )
+	{
+		// NOTE: push desc doesn't like bigger sizes ?
+		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( dc.device, dc.gfxQueueIdx, u16( -1 ), vkHostComArena );
+	}
+	VkSemaphoreTypeCreateInfo timelineInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
+	timelineInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	timelineInfo.initialValue = rndCtx.vFrameIdx = 0;
+	VkSemaphoreCreateInfo timelineSemaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timelineInfo };
+	VK_CHECK( vkCreateSemaphore( dc.device, &timelineSemaInfo, 0, &rndCtx.timelineSema ) );
+
+
+	rndCtx.quadMinSampler =
+		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
+
+	// TODO: add into virtual frame
+	vkGpuTimer[ 0 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
+	vkGpuTimer[ 1 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
 
 
 	VkDescriptorPoolSize sizes[] = {
@@ -3925,32 +3945,10 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, frag, 0 );
 	}
 
-
-
-	for( u64 vfi = 0; vfi < rndCtx.framesInFlight; ++vfi )
-	{
-		// NOTE: push desc doesn't like bigger sizes ?
-		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( dc.device, dc.gfxQueueIdx, u16( -1 ), vkHostComArena );
-	}
-	VkSemaphoreTypeCreateInfo timelineInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
-	timelineInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-	timelineInfo.initialValue = rndCtx.vFrameIdx = 0;
-	VkSemaphoreCreateInfo timelineSemaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timelineInfo };
-	VK_CHECK( vkCreateSemaphore( dc.device, &timelineSemaInfo, 0, &rndCtx.timelineSema ) );
-
-
-
-	VkInitInternalBuffers();
-
 	vkDbgCtx = VkMakeDebugContext( dc.device, rndCtx.renderPass, dc.gpuProps );
 
 	imguiVkCtx = ImguiMakeVkContext( dc.device, dc.gpuProps, VK_FORMAT_B8G8R8A8_UNORM );
 
-	rndCtx.quadMinSampler =
-		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-
-	vkGpuTimer[ 0 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
-	vkGpuTimer[ 1 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
 }
 
 inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
@@ -4849,19 +4847,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	globs.camViewDir = frameData.camViewDir;
 	std::memcpy( thisVFrame.frameData.hostVisible, &globs, sizeof( globs ) );
 
-	VkDescriptorBufferInfo uboInfo = { thisVFrame.frameData.hndl, 0, sizeof( globs ) };
-
-	//VkWriteDescriptorSet globalDataUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-	//globalDataUpdate.dstSet = globBindlessDesc.set;
-	//globalDataUpdate.dstBinding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
-	//globalDataUpdate.dstArrayElement = 0;
-	//globalDataUpdate.descriptorCount = 1;
-	//globalDataUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
-	//globalDataUpdate.pBufferInfo = &uboInfo;
-	//vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
-
 	if( currentFrameIdx < 2 )
 	{
+		VkDescriptorBufferInfo uboInfo = { thisVFrame.frameData.hndl, 0, sizeof( globs ) };
+
 		VkWriteDescriptorSet globalDataUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		globalDataUpdate.dstSet = frameDesc[ frameBufferedIdx ];
 		globalDataUpdate.dstBinding = 0;
@@ -4871,6 +4860,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		globalDataUpdate.pBufferInfo = &uboInfo;
 		vkUpdateDescriptorSets( dc.device, 1, &globalDataUpdate, 0, 0 );
 	}
+
 	VkCommandBufferBeginInfo cmdBufBegInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );

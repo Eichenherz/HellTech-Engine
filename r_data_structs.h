@@ -291,7 +291,6 @@ layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) unifo
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
 
 global_data cam = globalsCam[ 0 ].g;
-//global_bdas bdas = globalsBdas[ 1 ].bdas;
 global_bdas bdas = globalsBdas[ 0 ].bdas;
 
 #endif
