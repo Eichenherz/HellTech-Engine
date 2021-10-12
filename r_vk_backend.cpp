@@ -3709,7 +3709,7 @@ static VkRenderPass depthReadRndPass = {};
 static vk_pipeline  lighCullProgam = {};
 
 static VkDescriptorPool vkDescPool = {};
-static VkDescriptorSet frameDesc[ 2 ] = {};
+static VkDescriptorSet frameDesc[ 3 ] = {};
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3745,10 +3745,11 @@ void VkBackendInit()
 
 
 	VkDescriptorPoolSize sizes[] = {
-		//{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, deviceProps.limits.maxDescriptorSetStorageBuffers / 16 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, dc.gpuProps.limits.maxDescriptorSetStorageBuffers / 16 },
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dc.gpuProps.limits.maxDescriptorSetUniformBuffers },
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, dc.gpuProps.limits.maxDescriptorSetSampledImages / 16 },
-		{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) }
+		{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, dc.gpuProps.limits.maxDescriptorSetStorageImages / 16 }
 	};
 
 	VkDescriptorPoolCreateInfo descPoolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -3765,20 +3766,27 @@ void VkBackendInit()
 	};
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, vkDescPool, bindingList );
 
+	
+	// TODO: separate resources into slots ?
+	vk_slot_list bindlessSlots = {
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, 256 }, 
+		// TODO: place mtrls and lights into uniforms ?
+		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, 256 },
+		{ VK_DESCRIPTOR_TYPE_SAMPLER, 2, 4 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, 128 },
+	};
+
 	// TODO: must keep for the lifetime of the prog
 	VkDescriptorSetLayout frameDescLayout = VkMakeDescriptorSetLayout( dc.device, { {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, 1} } );
-	VkDescriptorSetLayout allocDescLayouts[] = { frameDescLayout, frameDescLayout };
+	VkDescriptorSetLayout bindlessLayout = VkMakeDescriptorSetLayout( dc.device, bindlessSlots );
+	VkDescriptorSetLayout allocDescLayouts[] = { frameDescLayout, frameDescLayout, bindlessLayout };
 
 	VkDescriptorSetAllocateInfo descSetInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 	descSetInfo.descriptorPool = vkDescPool;
 	descSetInfo.descriptorSetCount = std::size( allocDescLayouts );
 	descSetInfo.pSetLayouts = allocDescLayouts;
 
-	
 	VK_CHECK( vkAllocateDescriptorSets( dc.device, &descSetInfo, frameDesc ) );
-
-	//vkDestroyDescriptorSetLayout( dc.device, frameDescLayout, 0 );
-
 
 	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
 	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
