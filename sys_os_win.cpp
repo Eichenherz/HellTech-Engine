@@ -559,8 +559,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
 		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
 
-		XMMATRIX xmProjView = XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj );
-		XMStoreFloat4x4A( &frameData.projView, xmProjView );
+		XMStoreFloat4x4A( &frameData.activeProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj ) );
+		XMStoreFloat4x4A( &frameData.mainProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj ) );
 
 		frameData.elapsedSeconds = elapsedSecs;
 		frameData.freezeMainView = kbd.f;

@@ -3785,8 +3785,8 @@ void VkBackendInit()
 	descSetInfo.descriptorPool = vkDescPool;
 	descSetInfo.descriptorSetCount = std::size( allocDescLayouts );
 	descSetInfo.pSetLayouts = allocDescLayouts;
-
 	VK_CHECK( vkAllocateDescriptorSets( dc.device, &descSetInfo, frameDesc ) );
+
 
 	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
 	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
@@ -5170,7 +5170,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkClearValue clearVals[ 2 ] = {};
 
 		// TODO: don't if, use different cams in shaders ?
-		if( !frameData.freezeMainView )
+		//if( !frameData.freezeMainView )
 		{
 			//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
 			//						 gfxZPrepass,
@@ -5198,13 +5198,14 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				clearVals,
 				zPrepassProgram );
 
+			// TODO: pass active view
 			DebugDrawPass( thisVFrame.cmdBuff,
 						   vkDbgCtx.drawAsTriangles,
 						   rndCtx.render2ndPass,
 						   depthColFbo,
 						   vkDbgCtx.dbgTrisBuff,
 						   vkDbgCtx.pipeProg,
-						   frameData.projView,
+						   frameData.mainProjView,
 						   { 0,boxTrisVertexCount } );
 
 			DepthPyramidMultiPass(
@@ -5283,7 +5284,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 					   depthColFbo,
 					   vkDbgCtx.dbgTrisBuff,
 					   vkDbgCtx.pipeProg,
-					   frameData.projView,
+					   frameData.activeProjView,
 					   { 0,boxTrisVertexCount } );
 
 
@@ -5310,7 +5311,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 						   depthColFbo,
 						   vkDbgCtx.dbgLinesBuff,
 						   vkDbgCtx.pipeProg,
-						   frameData.projView,
+						   frameData.activeProjView,
 						   drawRange );
 
 			if( frameData.dbgDraw )
@@ -5322,7 +5323,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 								  drawCmdAabbsBuff,
 								  drawCountDbgBuff.hndl,
 								  dbgDrawProgram,
-								  frameData.projView );
+								  frameData.activeProjView );
 			}
 
 		}

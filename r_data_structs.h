@@ -24,7 +24,8 @@ struct frame_data
 	DirectX::XMFLOAT4X4A	mainView;
 	DirectX::XMFLOAT4X4A	activeView;
 	DirectX::XMFLOAT4X4A    frustTransf;
-	DirectX::XMFLOAT4X4A    projView;
+	DirectX::XMFLOAT4X4A    activeProjView;
+	DirectX::XMFLOAT4X4A    mainProjView;
 	DirectX::XMFLOAT3	worldPos;
 	DirectX::XMFLOAT3	camViewDir;
 	float   elapsedSeconds;
