@@ -714,7 +714,7 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 			meshopt_quantizeSnorm( octaNormal.x, 8 ) | 
 			meshopt_quantizeSnorm( octaNormal.y, 8 ) << 8 | 
 			meshopt_quantizeSnorm( tanAngle, 8 ) << 16;
-		//firstVertex[ i ].snorm8octTanFrame = encodedTanFrame;
+		firstVertex[ i ].snorm8octTanFrame = encodedTanFrame;
 		
 	}
 	for( u64 i = 0; i < vtxAttrCount; ++i )
