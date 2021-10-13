@@ -88,11 +88,9 @@ void main()
 	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
 	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
 
-	uint snormTanFrame = uint( vtx.snorm8octNx ) | ( uint( vtx.snorm8octNy ) << 8 ) | ( uint( vtx.snorm8tanAngle ) << 16 );
-	vec3 encodedTanFame = unpackSnorm4x8( snormTanFrame ).xyz;
-	//vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
-	//vec3 norm = DecodeOctaNormal( encodedTanFame.xy );
-	vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
+	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
+	vec3 norm = DecodeOctaNormal( encodedTanFame.xy );
+	//vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
 	//instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ instId ];
@@ -105,8 +103,8 @@ void main()
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 
 	vec3 n = normalize( norm );
-	//vec3 t = DecodeTanFromAngle( norm, encodedTanFame.z );
-	vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
+	vec3 t = DecodeTanFromAngle( norm, encodedTanFame.z );
+	//vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
 	t = normalize( RotateQuat( t, inst.rot ) );
 	n = normalize( RotateQuat( n, inst.rot ) );
 

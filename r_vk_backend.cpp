@@ -418,9 +418,8 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 {
 	constexpr const char* ENABLED_DEVICE_EXTS[] = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-
-		//VK_KHR_PRESENT_ID_EXTENSION_NAME,
-		//VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
+		VK_KHR_PRESENT_ID_EXTENSION_NAME,
+		VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
 		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
 
@@ -451,9 +450,11 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
 
-	
+	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR };
+	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = 
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
 	VkPhysicalDeviceInlineUniformBlockFeaturesEXT inlineBlockFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT, &presentIdFeatures };
 	VkPhysicalDeviceIndexTypeUint8FeaturesEXT uint8IdxFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT, &inlineBlockFeatures };
 	VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR zeroInitWorkgrMemFeatures =

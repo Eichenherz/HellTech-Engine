@@ -706,15 +706,12 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 		firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
 		firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
 
-		//firstVertex[ i ].snorm8octNx = meshopt_quantizeSnorm( octaNormal.x, 8 );
-		//firstVertex[ i ].snorm8octNy = meshopt_quantizeSnorm( octaNormal.y, 8 );
-		//firstVertex[ i ].snorm8tanAngle = meshopt_quantizeSnorm( tanAngle, 8 );
+		i8 packedData[ 4 ] = {};
+		packedData[ 0 ] = meshopt_quantizeSnorm( octaNormal.x, 8 );
+		packedData[ 1 ] = meshopt_quantizeSnorm( octaNormal.y, 8 );
+		packedData[ 2 ] = meshopt_quantizeSnorm( tanAngle, 8 );
 
-		u32 encodedTanFrame = 
-			meshopt_quantizeSnorm( octaNormal.x, 8 ) | 
-			meshopt_quantizeSnorm( octaNormal.y, 8 ) << 8 | 
-			meshopt_quantizeSnorm( tanAngle, 8 ) << 16;
-		firstVertex[ i ].snorm8octTanFrame = encodedTanFrame;
+		firstVertex[ i ].snorm8octTanFrame = *( u32* ) packedData;
 		
 	}
 	for( u64 i = 0; i < vtxAttrCount; ++i )

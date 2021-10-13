@@ -117,7 +117,6 @@ void main()
 	normalFromMap = normalFromMap * 2.0 - 1.0;
 	normalFromMap.b = sqrt( clamp( 1 - dot( normalFromMap.rg, normalFromMap.rg ), 0, 1 ) );
 
-	// TODO: when using baseCol.alpha sRGB->linear ?
 	baseCol = SrgbToLinear( baseCol );
 	baseCol *= vec4( mtl.baseColFactor, 1 );
 
