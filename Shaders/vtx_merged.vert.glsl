@@ -81,6 +81,7 @@ layout( location = 0 ) out vs_out vsOut;
 layout( location = 4 ) out flat uint oMtlIdx;
 void main() 
 {
+	// TODO: spec const variations 
 	uint instId = uint( gl_VertexIndex & uint16_t( -1 ) );
 	uint vertexId = uint( gl_VertexIndex >> 16 );
 
