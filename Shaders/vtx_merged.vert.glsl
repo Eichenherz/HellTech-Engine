@@ -40,13 +40,17 @@ float Snorm8ToFloat( uint8_t x )
 vec3 DecodeOctaNormal( vec2 octa )
 {
 	vec3 n = vec3( octa, 1.0 - abs( octa.x ) - abs( octa.y ) );
-	vec2 signVector = SignNonZero( n.xy );
-	n.xy = ( n.z < 0 ) ? ( signVector - signVector * abs( n.yx ) ) : n.xy;
-	// NOTE: Rune Stubbe's version
-	//float t = max( -n.z, 0.0 );                     
-	//n.x += ( n.x > 0.0 ) ? -t : t;                     
-	//n.y += ( n.y > 0.0 ) ? -t : t;                   
+	//vec2 signVector = SignNonZero( n.xy );
+	//n.xy = ( n.z < 0 ) ? ( signVector - signVector * abs( n.yx ) ) : n.xy;
+
+	// NOTE: Rune Stubbe's version : https://twitter.com/Stubbesaurus/status/937994790553227264
+	//float t = max( -n.z, 0.0f );                     
+	//n.x += ( n.x > 0.0f ) ? -t : t;                     
+	//n.y += ( n.y > 0.0f ) ? -t : t;                   
 	
+	vec2 t = vec2( max( -n.z, 0.0f ) );
+	n.xy += mix( -t, t, lessThan( n.xy, vec2( 0.0f ) ) );
+
 	return normalize( n );
 }
 vec2 EncodeOctaNormal( vec3 n )
@@ -84,10 +88,10 @@ void main()
 	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
 	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
 
-	//uint snormTanFrame = uint( vtx.snorm8octNx ) | ( uint( vtx.snorm8octNy ) << 8 ) | ( uint( vtx.snorm8tanAngle ) << 16 );
-	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
+	uint snormTanFrame = uint( vtx.snorm8octNx ) | ( uint( vtx.snorm8octNy ) << 8 ) | ( uint( vtx.snorm8tanAngle ) << 16 );
+	vec3 encodedTanFame = unpackSnorm4x8( snormTanFrame ).xyz;
+	//vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
 	//vec3 norm = DecodeOctaNormal( encodedTanFame.xy );
-	//vec3 tng = DecodeTanFromAngle( norm, encodedTanFame.z );
 	vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
@@ -101,7 +105,7 @@ void main()
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 
 	vec3 n = normalize( norm );
-	//vec3 t = tng;
+	//vec3 t = DecodeTanFromAngle( norm, encodedTanFame.z );
 	vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
 	t = normalize( RotateQuat( t, inst.rot ) );
 	n = normalize( RotateQuat( n, inst.rot ) );
