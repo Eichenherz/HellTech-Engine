@@ -19,9 +19,6 @@ layout( push_constant ) uniform block{
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
 	vertex vertices[];
 };
-//layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_ref{ 
-//	mesh_desc meshes[]; 
-//};
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
 };
@@ -33,17 +30,10 @@ vec2 SignNonZero( vec2 e )
 {
 	return mix( vec2( 1.0f ), vec2( -1.0f ), lessThan( e, vec2( 0.0f ) ) );
 }
+// NOTE: Rune Stubbe's version : https://twitter.com/Stubbesaurus/status/937994790553227264
 vec3 DecodeOctaNormal( vec2 octa )
 {
 	vec3 n = vec3( octa, 1.0 - abs( octa.x ) - abs( octa.y ) );
-	//vec2 signVector = SignNonZero( n.xy );
-	//n.xy = ( n.z < 0 ) ? ( signVector - signVector * abs( n.yx ) ) : n.xy;
-
-	// NOTE: Rune Stubbe's version : https://twitter.com/Stubbesaurus/status/937994790553227264
-	//float t = max( -n.z, 0.0f );                     
-	//n.x += ( n.x > 0.0f ) ? -t : t;                     
-	//n.y += ( n.y > 0.0f ) ? -t : t;                   
-	
 	vec2 t = vec2( max( -n.z, 0.0f ) );
 	n.xy += mix( -t, t, lessThan( n.xy, vec2( 0.0f ) ) );
 

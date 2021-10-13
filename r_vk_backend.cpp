@@ -3847,18 +3847,6 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, expMerge.module, 0 );
 	}
 	{
-		vk_shader vertPBR = VkLoadShader( "Shaders/shdr.vert.spv", dc.device );
-		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", dc.device );
-		vk_gfx_pipeline_state opaqueState = {};
-		gfxOpaqueProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertPBR, &fragPBR } );
-		rndCtx.gfxPipeline =
-			VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, gfxOpaqueProgram.pipeLayout, vertPBR.module, fragPBR.module, opaqueState );
-		VkDbgNameObj( rndCtx.gfxPipeline, dc.device, "Pipeline_Gfx_Opaque" );
-
-		vkDestroyShaderModule( dc.device, vertPBR.module, 0 );
-		vkDestroyShaderModule( dc.device, fragPBR.module, 0 );
-	}
-	{
 		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", dc.device );
 		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", dc.device );
 		vk_gfx_pipeline_state opaqueState = {};
