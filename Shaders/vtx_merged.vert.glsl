@@ -69,41 +69,38 @@ vec3 DecodeTanFromAngle( vec3 n, float tanAngle )
 }
 
 
-layout( location = 0 ) out vec3 oNormal;
-layout( location = 1 ) out vec3 oTan;
-layout( location = 2 ) out vec3 oFragWorldPos;
-layout( location = 3 ) out vec2 oUv;
+struct vs_out
+{
+	vec3 n;
+	vec3 t;
+	vec3 worldPos;
+	vec2 uv;
+};
+
+layout( location = 0 ) out vs_out vsOut;
 layout( location = 4 ) out flat uint oMtlIdx;
 void main() 
 {
 	uint instId = uint( gl_VertexIndex & uint16_t( -1 ) );
 	uint vertexId = uint( gl_VertexIndex >> 16 );
 
-	//vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ vertexId ];
-	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
-	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
-
-	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
-	vec3 norm = DecodeOctaNormal( encodedTanFame.xy );
-	vec2 texCoord = vec2( vtx.tu, vtx.tv );
-
 	//instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ instId ];
 	instance_desc inst = inst_desc_ref( transfAddr ).instDescs[ instId ];
 	global_data cam = cam_data_ref( camDataAddr ).camera;
-
-
-	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
+	//vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ vertexId ];
+	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
+	
+	vec3 worldPos = RotateQuat( vec3( vtx.px, vtx.py, vtx.pz ) * inst.scale, inst.rot ) + inst.pos;
 	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 
-	vec3 n = normalize( norm );
-	vec3 t = DecodeTanFromAngle( norm, encodedTanFame.z );
+	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
+	vec3 n = DecodeOctaNormal( encodedTanFame.xy );
+	vec3 t = DecodeTanFromAngle( n, encodedTanFame.z );
 	t = normalize( RotateQuat( t, inst.rot ) );
 	n = normalize( RotateQuat( n, inst.rot ) );
 
-	oNormal = n;
-	oTan = t;
-	oFragWorldPos = worldPos;
-	oUv = texCoord;
+
+	vsOut = vs_out( n, t, worldPos, vec2( vtx.tu, vtx.tv ) );
 	oMtlIdx = inst.mtrlIdx;
 }

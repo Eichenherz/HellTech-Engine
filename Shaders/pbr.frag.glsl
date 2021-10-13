@@ -97,10 +97,15 @@ vec3 ComputeBrdfReflectance(
 }
 
 
-layout( location = 0 ) in vec3 normal;
-layout( location = 1 ) in vec3 tangent;
-layout( location = 2 ) in vec3 worldPos;
-layout( location = 3 ) in vec2 uv;
+struct vs_out
+{
+	vec3 n;
+	vec3 t;
+	vec3 worldPos;
+	vec2 uv;
+};
+
+layout( location = 0 ) in vs_out vsOut;
 layout( location = 4 ) in flat uint mtlIdx;
 
 layout( location = 0 ) out vec4 oCol;
@@ -110,9 +115,9 @@ void main()
 {
 	material_data mtl = mtl_ref( bdas.mtrlsAddr ).materials[ mtlIdx ];
 
-	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ 0 ] ), uv );
-	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ 0 ] ), uv ).rgb;
-	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ 0 ] ), uv ).rgb;
+	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ 0 ] ), vsOut.uv );
+	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ 0 ] ), vsOut.uv ).rgb;
+	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ 0 ] ), vsOut.uv ).rgb;
 
 	normalFromMap = normalFromMap * 2.0 - 1.0;
 	normalFromMap.b = sqrt( clamp( 1 - dot( normalFromMap.rg, normalFromMap.rg ), 0, 1 ) );
@@ -120,8 +125,8 @@ void main()
 	baseCol = SrgbToLinear( baseCol );
 	baseCol *= vec4( mtl.baseColFactor, 1 );
 
-	vec3 t = normalize( tangent );
-	vec3 n = normalize( normal );
+	vec3 t = normalize( vsOut.t );
+	vec3 n = normalize( vsOut.n );
 	// NOTE: orthonormalize t wrt n
 	t = normalize( t - dot( t, n ) * n );
 	vec3 b = cross( n, t );
@@ -132,7 +137,7 @@ void main()
 	float surfRoughness = orm.r * mtl.roughnessFactor;
 	float surfMetalness = orm.g * mtl.metallicFactor;
 
-	vec3 viewDir = normalize( cam.worldPos - worldPos );
+	vec3 viewDir = normalize( cam.worldPos - vsOut.worldPos );
 
 	vec3 baseReflectivity = mix( vec3( 0.04 ), baseCol.rgb, surfMetalness );
 	vec3 diffCol = baseCol.rgb * ( 1.0 - surfMetalness );
@@ -145,7 +150,7 @@ void main()
 	[[unroll]] for( uint i = 0; i < 4; ++i )
 	{
 		light_data l = light_ref( bdas.lightsDescAddr ).lights[ i ];
-		vec3 posToLight = l.pos - worldPos;
+		vec3 posToLight = l.pos - vsOut.worldPos;
 		vec3 radiance = l.col * DistRadiusAtten( dot( posToLight, posToLight ), l.radius );
 
 		reflectance += ComputeBrdfReflectance( 
