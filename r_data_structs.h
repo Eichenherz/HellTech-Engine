@@ -101,12 +101,6 @@ struct vertex
 	float tv;
 	// TODO: name better
 	uint snorm8octTanFrame;
-	//uint mi;
-	// TODO: use builtins to unpack
-	uint8_t snorm8octNx;
-	uint8_t snorm8octNy;
-	uint8_t snorm8tanAngle;
-	uint8_t pad;
 };
 
 // TODO: compress data more ?
@@ -219,32 +213,6 @@ struct draw_indirect
 	uint    firstVertex;
 	uint    firstInstance;
 #endif
-};
-
-struct occlusion_debug
-{
-	mat4 mvp;
-
-	vec4 minZCorner;
-	vec4 minXCorner;
-	vec4 minYCorner;
-	vec4 maxXCorner;
-	vec4 maxYCorner;
-	
-	vec2	ndcMin;
-	vec2	ndcMax;
-
-	float	zNearBound;
-	float	xPosBound;
-	float	yPosBound;
-	float	xNegBound;
-	float	yNegBound;
-
-	float	mipLevel;
-
-	float	depth;
-
-	uint	instID;
 };
 
 struct downsample_info

@@ -85,10 +85,6 @@ inline float EncodeTanToAngle( vec3 n, vec3 t )
 		XMVector3AngleBetweenVectors( XMLoadFloat3( &t ), XMLoadFloat3( &tanRef ) ) );
 	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
 }
-inline u8 FloatToSnorm8( float e )
-{
-	return std::round( 127.5f + e * 127.5f );
-}
 
 // TODO: context per gltf ?
 struct png_decoder
@@ -701,10 +697,6 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 
 		DirectX::XMFLOAT2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
 		float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
-
-		firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
-		firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
-		firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
 
 		i8 packedData[ 4 ] = {};
 		packedData[ 0 ] = meshopt_quantizeSnorm( octaNormal.x, 8 );

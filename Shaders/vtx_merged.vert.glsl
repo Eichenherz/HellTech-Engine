@@ -33,10 +33,6 @@ vec2 SignNonZero( vec2 e )
 {
 	return mix( vec2( 1.0f ), vec2( -1.0f ), lessThan( e, vec2( 0.0f ) ) );
 }
-float Snorm8ToFloat( uint8_t x )
-{
-	return float( uint( x ) ) * ( 1.0 / 127.0 ) - 1.0;
-}
 vec3 DecodeOctaNormal( vec2 octa )
 {
 	vec3 n = vec3( octa, 1.0 - abs( octa.x ) - abs( octa.y ) );
@@ -80,7 +76,6 @@ layout( location = 3 ) out vec2 oUv;
 layout( location = 4 ) out flat uint oMtlIdx;
 void main() 
 {
-	// TODO: need nonuniformEXT ?
 	uint instId = uint( gl_VertexIndex & uint16_t( -1 ) );
 	uint vertexId = uint( gl_VertexIndex >> 16 );
 
@@ -90,7 +85,6 @@ void main()
 
 	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
 	vec3 norm = DecodeOctaNormal( encodedTanFame.xy );
-	//vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
 	vec2 texCoord = vec2( vtx.tu, vtx.tv );
 
 	//instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ instId ];
@@ -104,7 +98,6 @@ void main()
 
 	vec3 n = normalize( norm );
 	vec3 t = DecodeTanFromAngle( norm, encodedTanFame.z );
-	//vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
 	t = normalize( RotateQuat( t, inst.rot ) );
 	n = normalize( RotateQuat( n, inst.rot ) );
 
