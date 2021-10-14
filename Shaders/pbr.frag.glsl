@@ -6,6 +6,12 @@
 
 #include "..\r_data_structs.h"
 
+layout( push_constant ) uniform block{
+	layout( offset = 16 ) 
+	uint64_t mtrlsAddr;
+	uint64_t lightsAddr;
+};
+
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mtl_ref{
 	material_data materials[];
 };
@@ -113,7 +119,7 @@ layout( location = 0 ) out vec4 oCol;
 layout( early_fragment_tests ) in;
 void main()
 {
-	material_data mtl = mtl_ref( bdas.mtrlsAddr ).materials[ mtlIdx ];
+	material_data mtl = mtl_ref( mtrlsAddr ).materials[ mtlIdx ];
 
 	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ 0 ] ), vsOut.uv );
 	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ 0 ] ), vsOut.uv ).rgb;
@@ -149,7 +155,7 @@ void main()
 
 	[[unroll]] for( uint i = 0; i < 4; ++i )
 	{
-		light_data l = light_ref( bdas.lightsDescAddr ).lights[ i ];
+		light_data l = light_ref( lightsAddr ).lights[ i ];
 		vec3 posToLight = l.pos - vsOut.worldPos;
 		vec3 radiance = l.col * DistRadiusAtten( dot( posToLight, posToLight ), l.radius );
 

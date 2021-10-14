@@ -2104,13 +2104,14 @@ VkMakeFramebuffer(
 }
 
 // TODO: rename to program 
-// TODO: what about push descriptors ?
 // TODO: what about descriptors ?
 // TODO: what about spec consts
-struct vk_pipeline
+// TODO: where to store the fbo ?
+struct vk_graphics_program
 {
 	VkPipeline pipeline;
 	VkPipelineLayout layout;
+	//VkFramebuffer fbo;
 	// TODO: store push consts data ?
 };
 
@@ -3605,8 +3606,6 @@ static buffer_data depthAtomicCounterBuff;
 
 static buffer_data atomicCounterBuff;
 
-static buffer_data bdasUboBuff;
-
 static buffer_data dispatchCmdBuff0;
 static buffer_data dispatchCmdBuff1;
 
@@ -3661,8 +3660,6 @@ inline static void VkInitInternalBuffers()
 												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 												vkRscArena );
 	
-	bdasUboBuff = VkCreateAllocBindBuffer( sizeof( global_bdas ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, vkHostComArena );
-
 	meshletCountBuff = 
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 	VkDbgNameObj( meshletCountBuff.hndl, dc.device, "Buff_Mlet_Dispatch_Count" );
@@ -3700,7 +3697,7 @@ static VkRenderPass zRndPass = {};
 static VkRenderPass depthReadRndPass = {};
 
 
-static vk_pipeline  lighCullProgam = {};
+static vk_graphics_program  lighCullProgam = {};
 // TODO: consider using BDAs for every kind of buffer ?
 static VkDescriptorPool vkDescPool = {};
 static VkDescriptorSet frameDesc[ 3 ] = {};
@@ -3861,7 +3858,10 @@ void VkBackendInit()
 
 		VkDescriptorSetLayout setLayouts[] = { frameDescLayout, globBindlessDesc.setLayout };
 
-		VkPushConstantRange pushConstRanges[ 1 ] = { VK_SHADER_STAGE_VERTEX_BIT,0,3 * sizeof( u64 ) };
+		VkPushConstantRange pushConstRanges[] = {
+			{ VK_SHADER_STAGE_VERTEX_BIT,0,2 * sizeof( u64 ) },
+			{ VK_SHADER_STAGE_FRAGMENT_BIT,2 * sizeof( u64 ),2 * sizeof( u64 ) }
+		};
 
 		VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
 		pipeLayoutInfo.setLayoutCount = std::size( setLayouts );
@@ -3935,7 +3935,7 @@ void VkBackendInit()
 		vk_gfx_pipeline_state state = { .conservativeRasterEnable = true, .depthWrite = false, .blendCol = false };
 		VkPipeline pipeline = VkMakeGfxPipeline( dc.device, 0, depthReadRndPass, layout, vtx, frag, state );
 
-		vk_pipeline program = { pipeline, layout };
+		vk_graphics_program program = { pipeline, layout };
 
 		lighCullProgam = program;
 
@@ -4307,11 +4307,11 @@ CullPass(
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependencyEnd );
 }
 
-// TODO: pass more params
+// TODO: 
 inline static void
 CullRasterizeLightProxy(
 	VkCommandBuffer cmdBuff,
-	const vk_pipeline& program,
+	const vk_graphics_program& program,
 	VkRenderPass vkRndPass,
 	VkFramebuffer fbo,
 	const DirectX::XMFLOAT4X4A& viewProjMat
@@ -4611,6 +4611,7 @@ DepthPyramidMultiPass(
 	executionBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR;
 	executionBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
 
+	
 	for( u64 i = 0; i < depthPyramid.mipCount; ++i )
 	{
 		if( i != 0 ) sourceDepth = { pointMinSampler, depthMips[ i - 1 ], VK_IMAGE_LAYOUT_GENERAL };
@@ -4633,20 +4634,7 @@ DepthPyramidMultiPass(
 		u32 dispatchY = VkGetGroupCount( levelHeight, program.groupSize.y );
 		vkCmdDispatch( cmdBuff, dispatchX, dispatchY, 1 );
 
-		// TODO: use memory barriers ?
-		VkImageMemoryBarrier2KHR reduceBarrier =
-			VkMakeImageBarrier2( depthPyramid.hndl,
-								 VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-								 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-								 VK_ACCESS_2_SHADER_READ_BIT_KHR,
-								 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-								 VK_IMAGE_LAYOUT_GENERAL,
-								 VK_IMAGE_LAYOUT_GENERAL,
-								 VK_IMAGE_ASPECT_COLOR_BIT );
-
 		VkDependencyInfoKHR passDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-		//passDependency.imageMemoryBarrierCount = 1;
-		//passDependency.pImageMemoryBarriers = &reduceBarrier;
 		passDependency.memoryBarrierCount = 1;
 		passDependency.pMemoryBarriers = &executionBarrier;
 		vkCmdPipelineBarrier2KHR( cmdBuff, &passDependency );
@@ -5020,34 +5008,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkUploadResources( thisVFrame.cmdBuff, entities, currentFrameIdx );
 		rescUploaded = 1;
 
-		global_bdas bdas = {};
-		bdas.vtxAddr = globVertexBuff.devicePointer;
-		bdas.idxAddr = indexBuff.devicePointer;
-		bdas.meshDescAddr = meshBuff.devicePointer;
-		bdas.lightsDescAddr = lightsBuff.devicePointer;
-		bdas.meshletsAddr = meshletBuff.devicePointer;
-		bdas.mtrlsAddr = materialsBuff.devicePointer;
-		bdas.instDescAddr = instDescBuff.devicePointer;
-
-		assert( bdasUboBuff.hostVisible );
-		std::memcpy( bdasUboBuff.hostVisible, &bdas, sizeof( bdas ) );
-
-
 		// NOTE: UpdateDescriptors
 		std::vector<VkWriteDescriptorSet> descUpdates;
-
-		VkDescriptorBufferInfo bdaDesc = Descriptor( bdasUboBuff );
-		VkWriteDescriptorSet bdaUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		bdaUpdate.dstSet = globBindlessDesc.set;
-		bdaUpdate.dstBinding = VK_GLOBAL_SLOT_UNIFORM_BUFFER;
-		//bdaUpdate.dstArrayElement = 1;
-		bdaUpdate.dstArrayElement = 0;
-		bdaUpdate.descriptorCount = 1;
-		bdaUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_UNIFORM_BUFFER ];
-		bdaUpdate.pBufferInfo = &bdaDesc;
-
-		descUpdates.push_back( bdaUpdate );
-
 
 		rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 		VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
@@ -5149,20 +5111,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		VkClearValue clearVals[ 2 ] = {};
 
-		//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
-		//						 gfxZPrepass,
-		//						 rndCtx.renderPass,
-		//						 rndCtx.offscreenFbo,
-		//						 drawCmdBuff,
-		//						 thisVFrame.frameData,
-		//						 drawCountBuff.hndl,
-		//						 indexBuff.hndl,
-		//						 VK_INDEX_TYPE_UINT32,
-		//						 instDescBuff.size / sizeof( instance_desc ),
-		//						 clearVals,
-		//						 zPrepassProgram,
-		//						 false );
-
 		vkCmdBindDescriptorSets(
 			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, zPrepassProgram.pipeLayout, 0, 1, &frameDesc[ frameBufferedIdx ], 0, 0 );
 
@@ -5177,15 +5125,15 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			clearVals,
 			zPrepassProgram );
 
-		// TODO: pass active view
-		DebugDrawPass( thisVFrame.cmdBuff,
-					   vkDbgCtx.drawAsTriangles,
-					   rndCtx.render2ndPass,
-					   depthColFbo,
-					   vkDbgCtx.dbgTrisBuff,
-					   vkDbgCtx.pipeProg,
-					   frameData.mainProjView,
-					   { 0,boxTrisVertexCount } );
+		DebugDrawPass(
+			thisVFrame.cmdBuff,
+			vkDbgCtx.drawAsTriangles,
+			rndCtx.render2ndPass,
+			depthColFbo,
+			vkDbgCtx.dbgTrisBuff,
+			vkDbgCtx.pipeProg,
+			frameData.mainProjView,
+			{ 0,boxTrisVertexCount } );
 
 		DepthPyramidMultiPass(
 			thisVFrame.cmdBuff,
@@ -5220,29 +5168,16 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			rndCtx.quadMinSampler, 
 			thisVFrame.frameData );
 
-		// Emit depth + HzB
-
-		//DrawIndexedIndirectPass( thisVFrame.cmdBuff,
-		//						 rndCtx.gfxPipeline,
-		//						 rndCtx.renderPass,
-		//						 rndCtx.offscreenFbo,
-		//						 drawCmdBuff,
-		//						 thisVFrame.frameData,
-		//						 drawCountBuff.hndl,
-		//						 indexBuff.hndl,
-		//						 VK_INDEX_TYPE_UINT32,
-		//						 instDescBuff.size / sizeof( instance_desc ),
-		//						 clearVals,
-		//						 gfxOpaqueProgram,
-		//						 true );
-
-		//vkCmdBindDescriptorSets(
-		//	thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+		// TODO: Emit depth + HzB
 
 		VkDescriptorSet descSets[] = { frameDesc[ frameBufferedIdx ],globBindlessDesc.set };
 
 		vkCmdBindDescriptorSets(
 			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, gfxMergedProgram.pipeLayout, 0, std::size( descSets ), descSets, 0, 0 );
+
+		struct { u64 mtrlsAddr, lightsAddr; } push = { materialsBuff.devicePointer, lightsBuff.devicePointer };
+		vkCmdPushConstants( 
+			thisVFrame.cmdBuff, gfxMergedProgram.pipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof( push ), sizeof( push ), &push );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
@@ -5255,14 +5190,15 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			clearVals,
 			gfxMergedProgram );
 
-		DebugDrawPass( thisVFrame.cmdBuff,
-					   vkDbgCtx.drawAsTriangles,
-					   rndCtx.render2ndPass,
-					   depthColFbo,
-					   vkDbgCtx.dbgTrisBuff,
-					   vkDbgCtx.pipeProg,
-					   frameData.activeProjView,
-					   { 0,boxTrisVertexCount } );
+		DebugDrawPass(
+			thisVFrame.cmdBuff,
+			vkDbgCtx.drawAsTriangles,
+			rndCtx.render2ndPass,
+			depthColFbo,
+			vkDbgCtx.dbgTrisBuff,
+			vkDbgCtx.pipeProg,
+			frameData.activeProjView,
+			{ 0,boxTrisVertexCount } );
 
 
 
@@ -5305,20 +5241,12 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		}
 
-		AverageLuminancePass( thisVFrame.cmdBuff,
-							  rndCtx.compAvgLumPipe,
-							  avgLumCompProgram,
-							  rndCtx.colorTarget,
-							  frameData.elapsedSeconds );
-
-		DepthPyramidMultiPass(
+		AverageLuminancePass(
 			thisVFrame.cmdBuff,
-			rndCtx.compHiZPipeline,
-			rndCtx.quadMinSampler,
-			rndCtx.depthPyramidChain,
-			rndCtx.depthTarget,
-			rndCtx.depthPyramid,
-			depthPyramidMultiProgram );
+			rndCtx.compAvgLumPipe,
+			avgLumCompProgram,
+			rndCtx.colorTarget,
+			frameData.elapsedSeconds );
 
 		FinalCompositionPass( thisVFrame.cmdBuff,
 							  rndCtx.compTonemapPipe,

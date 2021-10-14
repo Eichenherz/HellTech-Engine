@@ -80,17 +80,6 @@ struct global_data
 	float   screenY;
 };
 
-// NOTE: bda == buffer device address
-struct global_bdas
-{
-	uint64_t vtxAddr;
-	uint64_t idxAddr;
-	uint64_t meshDescAddr;
-	uint64_t lightsDescAddr;
-	uint64_t meshletsAddr;
-	uint64_t mtrlsAddr;
-	uint64_t instDescAddr;
-};
 // TODO: compressed coords u8, u16
 struct vertex
 {
@@ -259,13 +248,12 @@ const uint VK_GLOBAL_DESC_SET = 1;
 
 layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data g; } globalsCam[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer device_addrs{ uint64_t deviceAddrs[]; };
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER, std430 ) uniform glob_bdas{ global_bdas bdas; } globalsBdas[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE ) writeonly uniform image2D storageImages[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, r32f ) writeonly uniform coherent image2D depthViews[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, rgba8 ) writeonly uniform coherent image2D swapchainViews[];
 
 global_data cam = globalsCam[ 0 ].g;
-global_bdas bdas = globalsBdas[ 0 ].bdas;
 
 #endif
 
