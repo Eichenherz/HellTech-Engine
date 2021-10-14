@@ -242,11 +242,13 @@ struct imgui_vertex
 	uint  rgba8Unorm;
 };
 
+// TODO: re-order these
 const uint VK_GLOBAL_SLOT_STORAGE_BUFFER = 0;
 const uint VK_GLOBAL_SLOT_UNIFORM_BUFFER = 1;
 const uint VK_GLOBAL_SLOT_SAMPLED_IMAGE = 2;
 const uint VK_GLOBAL_SLOT_SAMPLER = 3;
 const uint VK_GLOBAL_SLOT_STORAGE_IMAGE = 4;
+const uint VK_GLOBAL_SLOT_INLINE_UNIFORM = 5;
 
 const uint VK_FRAME_DESC_SET = 0;
 const uint VK_GLOBAL_DESC_SET = 1;

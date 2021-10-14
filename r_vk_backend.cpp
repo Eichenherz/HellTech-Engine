@@ -1255,8 +1255,7 @@ static inline virtual_frame VkCreateVirtualFrame(
 	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
 	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &vrtFrame.canPresentSema ) );
 
-	vrtFrame.frameData = VkCreateAllocBindBuffer( 
-		bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, arena );
+	vrtFrame.frameData = VkCreateAllocBindBuffer( bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, arena );
 
 	return vrtFrame;
 }
@@ -3702,7 +3701,7 @@ static VkRenderPass depthReadRndPass = {};
 
 
 static vk_pipeline  lighCullProgam = {};
-
+// TODO: consider using BDAs for every kind of buffer ?
 static VkDescriptorPool vkDescPool = {};
 static VkDescriptorSet frameDesc[ 3 ] = {};
 // TODO: no structured binding
@@ -3740,7 +3739,7 @@ void VkBackendInit()
 
 
 	VkDescriptorPoolSize sizes[] = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, dc.gpuProps.limits.maxDescriptorSetStorageBuffers / 16 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, std::min( 1u, dc.gpuProps.limits.maxDescriptorSetStorageBuffers ) },
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dc.gpuProps.limits.maxDescriptorSetUniformBuffers },
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, dc.gpuProps.limits.maxDescriptorSetSampledImages / 16 },
 		{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) },
@@ -3764,7 +3763,7 @@ void VkBackendInit()
 	
 	// TODO: separate resources into slots ?
 	vk_slot_list bindlessSlots = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, 256 }, 
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, 1u }, 
 		// TODO: place mtrls and lights into uniforms ?
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, 256 },
 		{ VK_DESCRIPTOR_TYPE_SAMPLER, 2, 4 },
@@ -3793,10 +3792,18 @@ void VkBackendInit()
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 
-		vk_gfx_pipeline_state zPrepass = {};
-		zPrepass.conservativeRasterEnable = true;
-		zPrepassProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertZPre } );
-		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, zRndPass, zPrepassProgram.pipeLayout, vertZPre.module, 0, zPrepass );
+		VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_VERTEX_BIT, 0, 2 * sizeof( u64 ) };
+		VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+		pipeLayoutInfo.setLayoutCount = 1;
+		pipeLayoutInfo.pSetLayouts = &frameDescLayout;
+		pipeLayoutInfo.pushConstantRangeCount = 1;
+		pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
+
+		VkPipelineLayout pipelineLayout = {};
+		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
+
+		zPrepassProgram.pipeLayout = pipelineLayout;
+		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, zRndPass, pipelineLayout, vertZPre.module, 0, {} );
 
 		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
 	}
@@ -4449,7 +4456,6 @@ DrawIndexedIndirectMerged(
 	const buffer_data&      indexBuff,
 	const buffer_data&      drawCmds,
 	const buffer_data&      drawCount,
-	const buffer_data&      camData,
 	const VkClearValue*     clearVals,
 	const vk_program&       program
 ){
@@ -4472,8 +4478,7 @@ DrawIndexedIndirectMerged(
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
 	
-	struct { u64 vtxAddr, transfAddr, camAddr; } push = {
-		globVertexBuff.devicePointer, instDescBuff.devicePointer, camData.devicePointer };
+	struct { u64 vtxAddr, transfAddr; } push = { globVertexBuff.devicePointer, instDescBuff.devicePointer };
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( push ), &push );
 
 	vkCmdBindIndexBuffer( cmdBuff, indexBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
@@ -5158,6 +5163,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		//						 zPrepassProgram,
 		//						 false );
 
+		vkCmdBindDescriptorSets(
+			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, zPrepassProgram.pipeLayout, 0, 1, &frameDesc[ frameBufferedIdx ], 0, 0 );
+
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
 			gfxZPrepass,
@@ -5166,7 +5174,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
-			thisVFrame.frameData,
 			clearVals,
 			zPrepassProgram );
 
@@ -5245,7 +5252,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
-			thisVFrame.frameData,
 			clearVals,
 			gfxMergedProgram );
 

@@ -13,7 +13,7 @@ layout( push_constant ) uniform block{
 	uint64_t vtxAddr;
 	uint64_t transfAddr;
 	//uint64_t drawCmdAddr;
-	uint64_t camDataAddr;
+	//uint64_t camDataAddr;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
@@ -22,9 +22,13 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer v
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
 };
-layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
-	global_data camera;
-};
+//layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
+//	global_data camera;
+//};
+
+
+layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data cam; };
+
 
 vec2 SignNonZero( vec2 e )
 {
@@ -77,7 +81,7 @@ void main()
 
 	//instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ instId ];
 	instance_desc inst = inst_desc_ref( transfAddr ).instDescs[ instId ];
-	global_data cam = cam_data_ref( camDataAddr ).camera;
+	//global_data cam = cam_data_ref( camDataAddr ).camera;
 	//vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ vertexId ];
 	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
 	
