@@ -698,12 +698,17 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 		DirectX::XMFLOAT2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
 		float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
 
-		i8 packedData[ 4 ] = {};
-		packedData[ 0 ] = meshopt_quantizeSnorm( octaNormal.x, 8 );
-		packedData[ 1 ] = meshopt_quantizeSnorm( octaNormal.y, 8 );
-		packedData[ 2 ] = meshopt_quantizeSnorm( tanAngle, 8 );
+		i8 snormNx = meshopt_quantizeSnorm( octaNormal.x, 8 );
+		i8 snormNy = meshopt_quantizeSnorm( octaNormal.y, 8 );
+		i8 snormTanAngle = meshopt_quantizeSnorm( tanAngle, 8 );
 
-		firstVertex[ i ].snorm8octTanFrame = *( u32* ) packedData;
+		u32 bitsSnormNx = *( u8* ) &snormNx;
+		u32 bitsSnormNy = *( u8* ) &snormNy;
+		u32 bitsSnormTanAngle = *( u8* ) &snormTanAngle;
+
+		u32 packedTanFrame = bitsSnormNx | ( bitsSnormNy << 8 ) | ( bitsSnormTanAngle << 16 );
+
+		firstVertex[ i ].snorm8octTanFrame = packedTanFrame;
 		
 	}
 	for( u64 i = 0; i < vtxAttrCount; ++i )
