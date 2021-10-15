@@ -1597,7 +1597,9 @@ constexpr VkDescriptorType globalDescTable[] = {
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-	VK_DESCRIPTOR_TYPE_SAMPLER
+	VK_DESCRIPTOR_TYPE_SAMPLER,
+	VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+	VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT
 };
 
 struct vk_global_descriptor
@@ -3753,7 +3755,8 @@ void VkBackendInit()
 	vk_binding_list bindingList = {
 		{VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8},
 		{VK_GLOBAL_SLOT_SAMPLED_IMAGE, 1024},
-		{VK_GLOBAL_SLOT_SAMPLER, 2}
+		{VK_GLOBAL_SLOT_SAMPLER, 2},
+		{VK_GLOBAL_SLOT_STORAGE_IMAGE, 128}
 	};
 	globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, vkDescPool, bindingList );
 
@@ -4842,6 +4845,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
 	
 	// TODO: swapchain resize ?
+	// TODO: desc updates elsewhere ?
 	if( !rndCtx.depthTarget.hndl )
 	{
 		constexpr VkFormat format = VK_FORMAT_D32_SFLOAT;
@@ -4849,38 +4853,38 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rndCtx.depthTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
 		VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
 
-		u32 hiZWidth = 0;
-		u32 hiZHeight = 0;
-		u32 hiZMipCount = 0;
-		// TODO: place depth pyr elsewhere 
-		if constexpr( !multiPassDepthPyramid )
-		{
-			// TODO: make conservative ?
-			hiZWidth = ( sc.width ) / 2;
-			hiZHeight = ( sc.height ) / 2;
-			hiZMipCount = GetImgMipCount( hiZWidth, hiZHeight );
-		}
-		else
-		{
-			hiZWidth = FloorPowOf2( sc.width );
-			hiZHeight = FloorPowOf2( sc.height );
-			u32 squareDim = std::min( hiZWidth, hiZHeight );
-			hiZWidth = hiZHeight = squareDim;
-			hiZMipCount = GetImgMipCountForPow2( hiZWidth, hiZHeight );
-		}
-		VK_CHECK( VK_INTERNAL_ERROR( !( hiZMipCount < MAX_MIP_LEVELS ) ) );
+		// NOTE: conservative
+		// TODO: always make 512x512 ? or 512x256 ?
+		u32 squareDim = std::min( FloorPowOf2( sc.width ), FloorPowOf2( sc.height ) );
+		u32 hiZMipCount = GetImgMipCountForPow2( squareDim, squareDim );
+		assert( hiZMipCount <= MAX_MIP_LEVELS );
+
 		constexpr VkImageUsageFlags hiZUsg =
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 		constexpr VkFormat depthFormat = VK_FORMAT_R32_SFLOAT;
-		rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { hiZWidth, hiZHeight, 1 }, hiZMipCount, vkAlbumArena );
+		rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { squareDim, squareDim, 1 }, hiZMipCount, vkAlbumArena );
 		VkDbgNameObj( rndCtx.depthPyramid.hndl, dc.device, "Img_Depth_Pyramid" );
+
+
+		std::vector<VkDescriptorImageInfo> mipLevelDesc;
+		mipLevelDesc.resize( rndCtx.depthPyramid.mipCount );
 
 		for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
 		{
 			rndCtx.depthPyramidChain[ i ] =
 				VkMakeImgView( dc.device, rndCtx.depthPyramid.hndl, rndCtx.depthPyramid.nativeFormat, i, 1 );
+			mipLevelDesc[ i ] = { 0,rndCtx.depthPyramidChain[ i ], VK_IMAGE_LAYOUT_GENERAL };
 		}
+
+		VkWriteDescriptorSet storageImgViews = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		storageImgViews.dstSet = globBindlessDesc.set;
+		storageImgViews.dstBinding = VK_GLOBAL_SLOT_STORAGE_IMAGE;
+		storageImgViews.dstArrayElement = 0;
+		storageImgViews.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_STORAGE_IMAGE ];
+		storageImgViews.descriptorCount = std::size( mipLevelDesc );
+		storageImgViews.pImageInfo = std::data( mipLevelDesc );
+		vkUpdateDescriptorSets( dc.device, 1, &storageImgViews, 0, 0 );
+
 
 
 		VkImageMemoryBarrier2KHR initBarriers[] = {
@@ -5041,8 +5045,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		descUpdates.push_back( texUpdates );
 
 		vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
-		sizeof( material_data );
-
+		
 		// TODO: remove from here
 		XMMATRIX t = XMMatrixMultiply( XMMatrixScaling( 100.0f, 60.0f, 20.0f ), XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
 		XMFLOAT4 boxVertices[ 8 ] = {};
@@ -5098,7 +5101,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	// TODO: destroy buffers
 	// TODO: reclaim memory
 	if( std::size( stagingManager.pendingUploads ) ) {}
-
 
 
 	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, vkGpuTimer[ frameBufferedIdx ] );
