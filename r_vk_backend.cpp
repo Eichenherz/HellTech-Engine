@@ -1592,7 +1592,7 @@ struct vk_descriptor_info
 	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo }{}
 };
 
-
+// TODO: no indexable samplers ?
 constexpr VkDescriptorType globalDescTable[] = {
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -1726,7 +1726,7 @@ VkWriteDescriptorSetUpdate(
 	{
 		descSlotUpdate.pBufferInfo = ( const VkDescriptorBufferInfo* ) srvInfos;
 	}
-	else if( std::is_same<T, VkDescriptorImageInfo>::value )
+	else if constexpr( std::is_same<T, VkDescriptorImageInfo>::value )
 	{
 		descSlotUpdate.pImageInfo = ( const VkDescriptorImageInfo* ) srvInfos;
 	}
@@ -3750,11 +3750,14 @@ static VkPipeline   gfxZPrepass = {};
 static VkRenderPass zRndPass = {};
 static VkRenderPass depthReadRndPass = {};
 
-
 static vk_graphics_program  lighCullProgam = {};
-// TODO: consider using BDAs for every kind of buffer ?
+
+
 static VkDescriptorPool vkDescPool = {};
 static VkDescriptorSet frameDesc[ 3 ] = {};
+static vk_srv_manager srvManager = {};
+
+// TODO: group resource creation ?
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3783,7 +3786,7 @@ void VkBackendInit()
 
 	rndCtx.quadMinSampler =
 		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-
+	rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 	// TODO: add into virtual frame
 	vkGpuTimer[ 0 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
 	vkGpuTimer[ 1 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
@@ -3794,7 +3797,8 @@ void VkBackendInit()
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dc.gpuProps.limits.maxDescriptorSetUniformBuffers },
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, dc.gpuProps.limits.maxDescriptorSetSampledImages / 16 },
 		{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, dc.gpuProps.limits.maxDescriptorSetStorageImages / 16 }
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, dc.gpuProps.limits.maxDescriptorSetStorageImages / 16 },
+		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, dc.gpuProps.limits.maxDescriptorSetSampledImages / 32 }
 	};
 
 	VkDescriptorPoolCreateInfo descPoolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -3815,11 +3819,12 @@ void VkBackendInit()
 	
 	// TODO: separate resources into slots ?
 	vk_slot_list bindlessSlots = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, 1u }, 
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_GLOBAL_SLOT_STORAGE_BUFFER, 1u }, 
+		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8u },
 		// TODO: place mtrls and lights into uniforms ?
-		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, 256 },
-		{ VK_DESCRIPTOR_TYPE_SAMPLER, 2, 4 },
-		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, 128 },
+		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_GLOBAL_SLOT_SAMPLED_IMAGE, 256 },
+		{ VK_DESCRIPTOR_TYPE_SAMPLER, VK_GLOBAL_SLOT_SAMPLER, 4 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_GLOBAL_SLOT_STORAGE_IMAGE, 128 }
 	};
 
 	// TODO: must keep for the lifetime of the prog
@@ -3832,6 +3837,18 @@ void VkBackendInit()
 	descSetInfo.descriptorSetCount = std::size( allocDescLayouts );
 	descSetInfo.pSetLayouts = allocDescLayouts;
 	VK_CHECK( vkAllocateDescriptorSets( dc.device, &descSetInfo, frameDesc ) );
+	// TODO: proper remake
+	{
+		assert( std::size( bindlessSlots ) <= std::size( srvManager.slotSizeTable ) );
+
+		for( u64 i = 0; i < std::size( bindlessSlots ); ++i )
+		{
+			srvManager.slotSizeTable[ i ] = ( std::begin( bindlessSlots ) + i )->count;
+			srvManager.slotsNext[ i ] = 0;
+		}
+		srvManager.set = frameDesc[ 2 ];
+	}
+
 
 
 	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
@@ -4878,6 +4895,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	globs.camViewDir = frameData.camViewDir;
 	std::memcpy( thisVFrame.frameData.hostVisible, &globs, sizeof( globs ) );
 
+	// TODO: abstract ?
 	if( currentFrameIdx < 2 )
 	{
 		VkDescriptorBufferInfo uboInfo = { thisVFrame.frameData.hndl, 0, sizeof( globs ) };
@@ -4905,6 +4923,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rndCtx.depthTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
 		VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
 
+		
 		// NOTE: conservative
 		// TODO: always make 512x512 ? or 512x256 ?
 		u32 squareDim = std::min( FloorPowOf2( sc.width ), FloorPowOf2( sc.height ) );
@@ -4917,25 +4936,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { squareDim, squareDim, 1 }, hiZMipCount, vkAlbumArena );
 		VkDbgNameObj( rndCtx.depthPyramid.hndl, dc.device, "Img_Depth_Pyramid" );
 
-
-		std::vector<VkDescriptorImageInfo> mipLevelDesc;
-		mipLevelDesc.resize( rndCtx.depthPyramid.mipCount );
-
 		for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
 		{
-			rndCtx.depthPyramidChain[ i ] =
-				VkMakeImgView( dc.device, rndCtx.depthPyramid.hndl, rndCtx.depthPyramid.nativeFormat, i, 1 );
-			mipLevelDesc[ i ] = { 0,rndCtx.depthPyramidChain[ i ], VK_IMAGE_LAYOUT_GENERAL };
+			rndCtx.depthPyramidChain[ i ] = VkMakeImgView( dc.device, rndCtx.depthPyramid.hndl, rndCtx.depthPyramid.nativeFormat, i, 1 );
 		}
-
-		VkWriteDescriptorSet storageImgViews = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		storageImgViews.dstSet = globBindlessDesc.set;
-		storageImgViews.dstBinding = VK_GLOBAL_SLOT_STORAGE_IMAGE;
-		storageImgViews.dstArrayElement = 0;
-		storageImgViews.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_STORAGE_IMAGE ];
-		storageImgViews.descriptorCount = std::size( mipLevelDesc );
-		storageImgViews.pImageInfo = std::data( mipLevelDesc );
-		vkUpdateDescriptorSets( dc.device, 1, &storageImgViews, 0, 0 );
 
 
 
@@ -4959,6 +4963,24 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		dependency.imageMemoryBarrierCount = std::size( initBarriers );
 		dependency.pImageMemoryBarriers = initBarriers;
 		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+
+
+		std::vector<VkWriteDescriptorSet> descUpdates;
+
+		VkDescriptorImageInfo depthSrv = { 0,rndCtx.depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
+		descUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLED_IMAGE, &depthSrv, 1, srvManager ) );
+		VkDescriptorImageInfo hizSrv = { 0,rndCtx.depthPyramid.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
+		descUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLED_IMAGE, &hizSrv, 1, srvManager ) );
+
+		std::vector<VkDescriptorImageInfo> mipLevelDesc( rndCtx.depthPyramid.mipCount );
+		for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
+		{
+			mipLevelDesc[ i ] = { 0,rndCtx.depthPyramidChain[ i ], VK_IMAGE_LAYOUT_GENERAL };
+		}
+		descUpdates.push_back( VkWriteDescriptorSetUpdate(
+			dc.device, VK_GLOBAL_SLOT_STORAGE_IMAGE, std::data( mipLevelDesc ), std::size( mipLevelDesc ), srvManager ) );
+
+		vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
 	}
 	if( !rndCtx.colorTarget.hndl )
 	{
@@ -4979,6 +5001,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		dependency.imageMemoryBarrierCount = 1;
 		dependency.pImageMemoryBarriers = &initBarrier;
 		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependency );
+
+		VkDescriptorImageInfo srvColTarget = { 0,rndCtx.colorTarget.view,VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
+		auto descUpdate = VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLED_IMAGE, &srvColTarget, 1, srvManager );
+		vkUpdateDescriptorSets( dc.device, 1, &descUpdate, 0, 0 );
 	}
 
 	// TODO: creating too many fboss per frame recording might have some perf impact
@@ -5067,7 +5093,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		// NOTE: UpdateDescriptors
 		std::vector<VkWriteDescriptorSet> descUpdates;
 
-		rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+		
 		VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
 		VkWriteDescriptorSet samplerUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		samplerUpdate.dstSet = globBindlessDesc.set;
