@@ -3560,7 +3560,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 												   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 												   vkRscArena );
 
-	meshletIdBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
+	meshletIdBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( u64 ), 
+											 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+											 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
+											 vkRscArena );
 	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
 
 
@@ -3726,8 +3729,11 @@ inline static void VkInitInternalBuffers()
 												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 												vkRscArena );
 	
-	meshletCountBuff = 
-		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+	meshletCountBuff = VkCreateAllocBindBuffer( 4, 
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
+												vkRscArena );
 	VkDbgNameObj( meshletCountBuff.hndl, dc.device, "Buff_Mlet_Dispatch_Count" );
 
 	atomicCounterBuff = VkCreateAllocBindBuffer( 4, 
@@ -3919,28 +3925,40 @@ void VkBackendInit()
 
 		VkDescriptorSetLayout bindableDescLayouts[] = { frameDescLayout, bindlessLayout };
 
+		{
 		//VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof( u64 ) + 3 * sizeof( u32 ) };
-		VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 64u };
-		VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-		pipeLayoutInfo.setLayoutCount = std::size( bindableDescLayouts );
-		pipeLayoutInfo.pSetLayouts = bindableDescLayouts;
-		pipeLayoutInfo.pushConstantRangeCount = 1;
-		pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
+			VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 64u };
+			VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+			pipeLayoutInfo.setLayoutCount = std::size( bindableDescLayouts );
+			pipeLayoutInfo.pSetLayouts = bindableDescLayouts;
+			pipeLayoutInfo.pushConstantRangeCount = 1;
+			pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
 
-		VkPipelineLayout pipelineLayout = {};
-		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
-		VkDbgNameObj( pipelineLayout, dc.device, "PipelineLayout_Comp_DrawCull" );
+			VkPipelineLayout pipelineLayout = {};
+			VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
 
-		cullCompProgram.pipeLayout = pipelineLayout;
-		cullCompProgram.groupSize = { 32,1,1 };
+			cullCompProgram.pipeLayout = pipelineLayout;
+			cullCompProgram.groupSize = { 32,1,1 };
 
-		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { 32u } );
-		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
+			rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { 32u } );
+			VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
+		}
 
-		vk_shader expansionComp = VkLoadShader( "Shaders/id_expander.comp.spv", dc.device );
-		expanderCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &expansionComp } );
-		rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, expanderCompProgram.pipeLayout, expansionComp.module, {} );
-		VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
+		vk_shader expansionComp = VkLoadShader( "Shaders/c_id_expander.comp.spv", dc.device );
+
+		{
+			VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof( u64 ) };
+			VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+			pipeLayoutInfo.pushConstantRangeCount = 1;
+			pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
+
+			VkPipelineLayout pipelineLayout = {};
+			VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
+
+			expanderCompProgram.pipeLayout = pipelineLayout;
+			rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, expanderCompProgram.pipeLayout, expansionComp.module, {} );
+			VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
+		}
 
 		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", dc.device );
 		clusterCullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &clusterCull } );
@@ -4252,19 +4270,18 @@ CullPass(
 		vkCmdPipelineBarrier2KHR( cmdBuff, &execDependency );
 
 
-
-		vk_descriptor_info pushDesc[] = {
-			Descriptor( visibleInstsBuff ),
-			Descriptor( drawCountBuff ),
-			Descriptor( meshletIdBuff ),
-			Descriptor( meshletCountBuff ),
-			Descriptor( atomicCounterBuff ),
-			Descriptor( dispatchCmdBuff1 )
-		};
+		struct
+		{
+			u64 visInstAddr = visibleInstsBuff.devicePointer;
+			u64 visInstCountAddr = drawCountBuff.devicePointer;
+			u64 expandeeAddr = meshletIdBuff.devicePointer;
+			u64 expandeeCountAddr = meshletCountBuff.devicePointer;
+			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
+			u64 dispatchCmdAddr = dispatchCmdBuff1.devicePointer;
+		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpanderPipe );
-		vkCmdPushDescriptorSetWithTemplateKHR( 
-			cmdBuff, expanderCompProgram.descUpdateTemplate, expanderCompProgram.pipeLayout, 0, pushDesc );
+		vkCmdPushConstants( cmdBuff, expanderCompProgram.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff0.hndl, 0 );
 	}
 	

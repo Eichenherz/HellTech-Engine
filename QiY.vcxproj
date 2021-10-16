@@ -350,7 +350,7 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\id_expander.comp.glsl">
+    <CustomBuild Include="Shaders\c_id_expander.comp.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>
