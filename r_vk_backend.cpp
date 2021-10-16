@@ -1693,7 +1693,7 @@ struct vk_srv_manager
 	u32 slotsNext[ std::size( globalDescTable ) ];
 	VkDescriptorSet			set;
 };
-
+static vk_srv_manager srvManager = {};
 // TODO: inline uniforms
 // TODO: no templates ?
 template<typename T>
@@ -3191,9 +3191,7 @@ constexpr u64 tileRowSize = ( SCREEN_WIDTH + tileSize - 1 ) / tileSize;
 constexpr u64 tileCount = tileRowSize * ( SCREEN_HEIGHT + tileSize - 1 ) / tileSize;
 constexpr u64 wordsPerTile = ( lightCount + 31 ) / 32;
 
-static buffer_data tileBuff;
-// TODO: staging clean up
-// TODO: re make offsets, ranges, etc
+
 static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& entities, u64 currentFrameId )
 {
 	std::vector<u8> binaryData;
@@ -3235,6 +3233,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	{
 		mtrls.push_back( m );
 		material_data& refM = mtrls[ std::size( mtrls ) - 1 ];
+		//refM.baseColIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
+		//refM.normalMapIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
+		//refM.occRoughMetalIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
+
 		refM.baseColIdx += std::size( textures.rsc );
 		refM.normalMapIdx += std::size( textures.rsc );
 		refM.occRoughMetalIdx += std::size( textures.rsc );
@@ -3512,13 +3514,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
 	}
 
-	tileBuff = VkCreateAllocBindBuffer( tileCount * wordsPerTile * sizeof( u32 ),
-										VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
-										VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-										VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-										vkRscArena );
-	VkDbgNameObj( tileBuff.hndl, dc.device, "Buff_Tiles" );
-
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
 										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 										   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
@@ -3755,7 +3750,7 @@ static vk_graphics_program  lighCullProgam = {};
 
 static VkDescriptorPool vkDescPool = {};
 static VkDescriptorSet frameDesc[ 3 ] = {};
-static vk_srv_manager srvManager = {};
+
 
 // TODO: group resource creation ?
 // TODO: no structured binding
@@ -3787,6 +3782,8 @@ void VkBackendInit()
 	rndCtx.quadMinSampler =
 		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
 	rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+
+
 	// TODO: add into virtual frame
 	vkGpuTimer[ 0 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
 	vkGpuTimer[ 1 ] = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
@@ -4388,6 +4385,7 @@ CullRasterizeLightProxy(
 	VkFramebuffer fbo,
 	const DirectX::XMFLOAT4X4A& viewProjMat
 ){
+	assert( 0 );
 	vk_label label = { cmdBuff,"Gfx_Cull_Rast_Lights",{} };
 
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
@@ -4406,15 +4404,15 @@ CullRasterizeLightProxy(
 
 	u64 tileMaxLightsLog2 = std::log2( lightCount );
 
-	assert( proxyGeomBuff.devicePointer && lightsBuff.devicePointer && tileBuff.devicePointer );
+	//assert( proxyGeomBuff.devicePointer && lightsBuff.devicePointer && tileBuff.devicePointer );
 
 	struct { mat4 viewProj; u64 geomAddr; u64 lightAddr; } vertPush = {
 		viewProjMat, proxyGeomBuff.devicePointer, lightsBuff.devicePointer };
 	vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( vertPush ), &vertPush );
 
-	struct { u64 tileBuffAddr; u32 tileSize; u32 tileRowLen; u32 tileWordCount; u32 tileMaxLightsLog2; } fragPush = {
-		tileBuff.devicePointer, tileSize, tileRowSize, wordsPerTile, tileMaxLightsLog2 };
-	vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof( vertPush ), sizeof( fragPush ), &fragPush );
+	//struct { u64 tileBuffAddr; u32 tileSize; u32 tileRowLen; u32 tileWordCount; u32 tileMaxLightsLog2; } fragPush = {
+	//	tileBuff.devicePointer, tileSize, tileRowSize, wordsPerTile, tileMaxLightsLog2 };
+	//vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof( vertPush ), sizeof( fragPush ), &fragPush );
 
 
 	vkCmdBindIndexBuffer( cmdBuff, proxyIdxBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
@@ -4861,6 +4859,7 @@ FinalCompositionPass(
 }
 
 
+
 // TODO: recycle framebuffers better
 static std::vector<VkFramebuffer> recycleFboList;
 
@@ -5092,9 +5091,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		// NOTE: UpdateDescriptors
 		std::vector<VkWriteDescriptorSet> descUpdates;
+		std::vector<VkWriteDescriptorSet> srvUpdates;
 
 		
 		VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
+		srvUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLER, &samplerDesc, 1, srvManager ) );
+
+
 		VkWriteDescriptorSet samplerUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		samplerUpdate.dstSet = globBindlessDesc.set;
 		samplerUpdate.dstBinding = VK_GLOBAL_SLOT_SAMPLER;
@@ -5123,6 +5126,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		descUpdates.push_back( texUpdates );
 
 		vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
+		vkUpdateDescriptorSets( dc.device, std::size( srvUpdates ), std::data( srvUpdates ), 0, 0 );
 		
 		// TODO: remove from here
 		XMMATRIX t = XMMatrixMultiply( XMMatrixScaling( 100.0f, 60.0f, 20.0f ), XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
@@ -5143,8 +5147,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
 		// TODO: rename 
 		vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
-		vkCmdFillBuffer( thisVFrame.cmdBuff, tileBuff.hndl, 0, tileBuff.size, 0u );
-
+		
 		VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
 			VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
 									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -5161,11 +5164,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
-			VkMakeBufferBarrier2( tileBuff.hndl,
-									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR ),
 		};
 
 		VkDependencyInfoKHR initBuffsDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
