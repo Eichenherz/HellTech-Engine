@@ -2169,6 +2169,15 @@ struct vk_graphics_program
 	// TODO: store push consts data ?
 };
 
+struct vk_compute_program
+{
+	VkPipeline pipeline;
+	VkPipelineLayout layout;
+	u16 workgrX;
+	u16 workgrY;
+	u16 workgrZ;
+};
+
 #include "asset_compiler.h"
 
 
@@ -3540,10 +3549,12 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	VkDbgNameObj( screenspaceBoxBuff.hndl, dc.device, "Buff_Screenspace_Boxes" );
 
 	visibleInstsBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * 3 * sizeof( u32 ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 												vkRscArena );
 	visibleMeshletsBuff = VkCreateAllocBindBuffer( 10 * MB,//std::size( mletView ) * 3 * sizeof( u32 ),
-												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+												   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 												   vkRscArena );
 
 	meshletIdBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( u64 ), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkRscArena );
@@ -3684,7 +3695,8 @@ inline static void VkInitInternalBuffers()
 	drawCountBuff = VkCreateAllocBindBuffer( 4,
 											 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 											 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-											 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+											 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 											 vkRscArena );
 	VkDbgNameObj( drawCountBuff.hndl, dc.device, "Buff_Draw_Count" );
 
@@ -3701,19 +3713,25 @@ inline static void VkInitInternalBuffers()
 	dispatchCmdBuff0 = VkCreateAllocBindBuffer( sizeof( dispatch_command ), 
 											   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 											   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-											   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+											   VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 											   vkRscArena );
 	dispatchCmdBuff1 = VkCreateAllocBindBuffer( sizeof( dispatch_command ),
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 												vkRscArena );
 	
 	meshletCountBuff = 
 		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
 	VkDbgNameObj( meshletCountBuff.hndl, dc.device, "Buff_Mlet_Dispatch_Count" );
 
-	atomicCounterBuff = VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+	atomicCounterBuff = VkCreateAllocBindBuffer( 4, 
+												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+												 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+												 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+												 vkRscArena );
 	VkDbgNameObj( atomicCounterBuff.hndl, dc.device, "Buff_Atomic_Counter" );
 
 	mergedIndexCountBuff = 
@@ -4185,8 +4203,15 @@ CullPass(
 		};
 
 		u32 instCount = instDescBuff.size / sizeof( instance_desc );
-		struct { u64 instDescAddr; u64 meshDescAddr; u32 instCount; } pushConst = {
-			instDescBuff.devicePointer, meshBuff.devicePointer, instCount };
+		struct { 
+			u64 instDescAddr = instDescBuff.devicePointer;
+			u64 meshDescAddr = meshBuff.devicePointer;
+			u64 visInstsAddr = visibleInstsBuff.devicePointer;
+			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
+			u64 drawCounterAddr = drawCountBuff.devicePointer;
+			u64 dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
+			u32 instanceCount = instCount;
+		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 		vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
@@ -4628,7 +4653,7 @@ DepthPyramidPass(
 						  1, &depthWriteBarrier );
 }
 
-
+// TODO: bindless
 inline static void
 DepthPyramidMultiPass(
 	VkCommandBuffer			cmdBuff,
@@ -4645,7 +4670,6 @@ DepthPyramidMultiPass(
 		VkMakeImageBarrier2(
 			depthTarget.hndl,
 			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT_KHR,
-			// TODO: all gfx commands ?
 			VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT_KHR,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
@@ -4708,7 +4732,6 @@ DepthPyramidMultiPass(
 		passDependency.memoryBarrierCount = 1;
 		passDependency.pMemoryBarriers = &executionBarrier;
 		vkCmdPipelineBarrier2KHR( cmdBuff, &passDependency );
-
 	}
 
 	// TODO: do we need ?

@@ -18,6 +18,10 @@
 layout( push_constant, scalar ) uniform block{
 	uint64_t	instDescAddr;
 	uint64_t	meshDescAddr;
+	uint64_t    visInstAddr;
+	uint64_t    atomicWorkgrCounterAddr;
+	uint64_t    drawCounterAddr;
+	uint64_t    dispatchCmdAddr;
 	uint		instCount;
 };
 
@@ -29,10 +33,6 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 	instance_desc instDescs[];
 };
 
-layout( binding = 0 ) readonly uniform cam_data{
-	global_data cam;
-};
-
 // TODO: strike down
 struct expandee_info
 {
@@ -40,6 +40,27 @@ struct expandee_info
 	uint expOffset;
 	uint expCount;
 };
+
+layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer vis_inst_ref{
+	expandee_info visibleInsts[];
+};
+
+layout( buffer_reference, buffer_reference_align = 4 ) coherent buffer coherent_counter_ref{
+	uint coherentCounter;
+};
+
+layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer dispatch_indirect_ref{
+	dispatch_command dispatchCmd;
+};
+layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer draw_cmd_ref{
+	draw_command drawCmd[];
+};
+
+layout( binding = 0 ) readonly uniform cam_data{
+	global_data cam;
+};
+
+
 
 layout( binding = 1 ) writeonly buffer visible_insts{
 	expandee_info visibleInstsChunks[];
@@ -192,7 +213,9 @@ void main()
 		if( subgrActiveInvocationsCount > 0 ) 
 		{
 			// TODO: shared atomics + global atomics ?
-			uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+			//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+			uint subgrSlotOffset = subgroupElect() ? 
+				atomicAdd( coherent_counter_ref( drawCounterAddr ).coherentCounter, subgrActiveInvocationsCount ) : 0;
 			uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 			uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 		
@@ -200,30 +223,37 @@ void main()
 			{
 				//uint slotIdx = atomicAdd( drawCallCount, 1 );
 			
-				visibleInstsChunks[ slotIdx ].instId = globalIdx;
-				visibleInstsChunks[ slotIdx ].expOffset = lod.meshletOffset;
-				visibleInstsChunks[ slotIdx ].expCount = lod.meshletCount;
-			
-				drawCmd[ slotIdx ].drawIdx = globalIdx;
-				drawCmd[ slotIdx ].indexCount = lod.indexCount;
-				drawCmd[ slotIdx ].firstIndex = lod.indexOffset;
-				drawCmd[ slotIdx ].vertexOffset = currentMesh.vertexOffset;
-				drawCmd[ slotIdx ].instanceCount = 1;
-				drawCmd[ slotIdx ].firstInstance = 0;
+				//visibleInstsChunks[ slotIdx ].instId = globalIdx;
+				//visibleInstsChunks[ slotIdx ].expOffset = lod.meshletOffset;
+				//visibleInstsChunks[ slotIdx ].expCount = lod.meshletCount;
+				
+				vis_inst_ref( visInstAddr ).visibleInsts[ slotIdx ] = expandee_info( globalIdx, lod.meshletOffset, lod.meshletCount );
+				
+				//drawCmd[ slotIdx ].drawIdx = globalIdx;
+				//drawCmd[ slotIdx ].indexCount = lod.indexCount;
+				//drawCmd[ slotIdx ].firstIndex = lod.indexOffset;
+				//drawCmd[ slotIdx ].vertexOffset = currentMesh.vertexOffset;
+				//drawCmd[ slotIdx ].instanceCount = 1;
+				//drawCmd[ slotIdx ].firstInstance = 0;
 			}
 		}
 	}
 
-	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+	//if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+	if( gl_LocalInvocationID.x == 0 ) 
+		workgrAtomicCounterShared = atomicAdd( coherent_counter_ref( atomicWorkgrCounterAddr ).coherentCounter, 1 );
 
 	barrier();
 	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
-		uint mletsExpDispatch = ( drawCallCount + 3 ) / 4;
-		dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
+		//uint mletsExpDispatch = ( drawCallCount + 3 ) / 4;
+		uint mletsExpDispatch = ( coherent_counter_ref( drawCounterAddr ).coherentCounter + 3 ) / 4;
+		//dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
+		dispatch_indirect_ref( dispatchCmdAddr ).dispatchCmd = dispatch_command( mletsExpDispatch, 1, 1 );
 		// NOTE: reset atomicCounter
-		workgrAtomicCounter = 0;
+		//workgrAtomicCounter = 0;
+		coherent_counter_ref( atomicWorkgrCounterAddr ).coherentCounter = 0;
 	}
 }
