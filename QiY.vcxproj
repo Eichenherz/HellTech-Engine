@@ -302,7 +302,7 @@
     <ClInclude Include="vk_procs.h" />
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\draw_cull.comp.glsl">
+    <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>

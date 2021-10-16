@@ -264,11 +264,13 @@ VkDbgUtilsMsgCallback(
 
 #endif
 
+// NOTE: GPU validation broken
+// NOTE: Sync validation doesn't work with desc indexing ?
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
-		//VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
-		VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+		VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+		//VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
 
@@ -427,7 +429,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 
-		VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
+		//VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
 		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
 
 		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
@@ -1241,7 +1243,8 @@ static inline virtual_frame VkCreateVirtualFrame(
 	virtual_frame vrtFrame = {};
 
 	VkCommandPoolCreateInfo cmdPoolInfo = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-	cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+	//cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+	cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
 	cmdPoolInfo.queueFamilyIndex = exectutionQueueIdx;
 	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &vrtFrame.cmdPool ) );
 
@@ -2611,7 +2614,7 @@ static inline void ImguiDrawUiPass(
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
 
 	vk_descriptor_info pushDescs[] = {
-		Descriptor( vtxBuff ), {ctx.fontSampler, ctx.fontsImg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} };
+		Descriptor( vtxBuff ), {ctx.fontSampler, ctx.fontsImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR} };
 
 	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, ctx.descTemplate, ctx.pipelineLayout, 0, pushDescs );
 
@@ -3641,7 +3644,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 				VK_ACCESS_2_SHADER_READ_BIT_KHR,
 				VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR,
 				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 				VK_IMAGE_ASPECT_COLOR_BIT ) );
 		}
 	}
@@ -3912,9 +3915,26 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, normalCol.module, 0 );
 	}
 	{
-		vk_shader drawCull = VkLoadShader( "Shaders/draw_cull.comp.spv", dc.device );
-		cullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &drawCull } );
-		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { OBJ_CULL_WORKSIZE } );
+		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", dc.device );
+
+		VkDescriptorSetLayout bindableDescLayouts[] = { frameDescLayout, bindlessLayout };
+
+		//VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof( u64 ) + 3 * sizeof( u32 ) };
+		VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 64u };
+		VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+		pipeLayoutInfo.setLayoutCount = std::size( bindableDescLayouts );
+		pipeLayoutInfo.pSetLayouts = bindableDescLayouts;
+		pipeLayoutInfo.pushConstantRangeCount = 1;
+		pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
+
+		VkPipelineLayout pipelineLayout = {};
+		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
+		VkDbgNameObj( pipelineLayout, dc.device, "PipelineLayout_Comp_DrawCull" );
+
+		cullCompProgram.pipeLayout = pipelineLayout;
+		cullCompProgram.groupSize = { 32,1,1 };
+
+		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { 32u } );
 		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
 
 		vk_shader expansionComp = VkLoadShader( "Shaders/id_expander.comp.spv", dc.device );
@@ -4037,7 +4057,7 @@ void VkBackendInit()
 }
 
 
-inline u64 VkGetGroupCount( u64 invocationCount, u64 workGroupSize )
+inline u64 GroupCount( u64 invocationCount, u64 workGroupSize )
 {
 	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
@@ -4178,8 +4198,8 @@ CullPass(
 		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 		VK_ACCESS_2_SHADER_READ_BIT_KHR,
 		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
+		VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 		VK_IMAGE_ASPECT_COLOR_BIT );
 
 	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -4189,19 +4209,9 @@ CullPass(
 	dependency.pImageMemoryBarriers = &hiZReadBarrier;
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 
-	VkDescriptorImageInfo depthPyramidInfo = { minQuadSampler, depthPyramid.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+	VkDescriptorImageInfo depthPyramidInfo = { minQuadSampler, depthPyramid.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
 	
 	{
-		vk_descriptor_info pushDescs[] = {
-			Descriptor( frameData ),
-			Descriptor( visibleInstsBuff ),
-			depthPyramidInfo,
-			Descriptor( atomicCounterBuff ),
-			Descriptor( dispatchCmdBuff0 ),
-			Descriptor( drawCountBuff ),
-			Descriptor( drawCmdBuff )
-		};
-
 		u32 instCount = instDescBuff.size / sizeof( instance_desc );
 		struct { 
 			u64 instDescAddr = instDescBuff.devicePointer;
@@ -4210,13 +4220,14 @@ CullPass(
 			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64 drawCounterAddr = drawCountBuff.devicePointer;
 			u64 dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
+			u32	hizBuffIdx = 1;
+			u32	hizSamplerIdx = 1;
 			u32 instanceCount = instCount;
 		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
-		vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
 		vkCmdPushConstants( cmdBuff, program.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
-		vkCmdDispatch( cmdBuff, VkGetGroupCount( instCount, program.groupSize.x ), 1, 1 );
+		vkCmdDispatch( cmdBuff, GroupCount( instCount, program.groupSize.x ), 1, 1 );
 	}
 	
 	{
@@ -4227,7 +4238,7 @@ CullPass(
 								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
 								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH );
 
-		// TODO: write to read and write to write separately ?
+		
 		VkMemoryBarrier2KHR writeToReadWriteBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
 		writeToReadWriteBarrier.srcStageMask = writeToReadWriteBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR;
 		writeToReadWriteBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
@@ -4624,7 +4635,7 @@ DepthPyramidPass(
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 
 	std::vector<vk_descriptor_info> depthPyramidDescs( MAX_MIP_LEVELS + 3 );
-	depthPyramidDescs[ 0 ] = { 0, depthTarget.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };;
+	depthPyramidDescs[ 0 ] = { 0, depthTarget.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	depthPyramidDescs[ 1 ] = { quadMinSampler, 0, VK_IMAGE_LAYOUT_GENERAL };
 	depthPyramidDescs[ 2 ] = { depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size };
 	for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
@@ -4674,7 +4685,7 @@ DepthPyramidMultiPass(
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 			VK_IMAGE_ASPECT_DEPTH_BIT ),
 
 		VkMakeImageBarrier2( 
@@ -4683,7 +4694,7 @@ DepthPyramidMultiPass(
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 			VK_IMAGE_LAYOUT_GENERAL,
 			VK_IMAGE_ASPECT_COLOR_BIT )
 	};
@@ -4696,7 +4707,7 @@ DepthPyramidMultiPass(
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 
-	VkDescriptorImageInfo sourceDepth = { pointMinSampler, depthTarget.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+	VkDescriptorImageInfo sourceDepth = { pointMinSampler, depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
 
 
 
@@ -4724,8 +4735,8 @@ DepthPyramidMultiPass(
 
 		vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( reduceData ), &reduceData );
 
-		u32 dispatchX = VkGetGroupCount( levelWidth, program.groupSize.x );
-		u32 dispatchY = VkGetGroupCount( levelHeight, program.groupSize.y );
+		u32 dispatchX = GroupCount( levelWidth, program.groupSize.x );
+		u32 dispatchY = GroupCount( levelHeight, program.groupSize.y );
 		vkCmdDispatch( cmdBuff, dispatchX, dispatchY, 1 );
 
 		VkDependencyInfoKHR passDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -4742,7 +4753,7 @@ DepthPyramidMultiPass(
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT_KHR | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
 			VK_IMAGE_ASPECT_DEPTH_BIT ),
 
@@ -4753,7 +4764,7 @@ DepthPyramidMultiPass(
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 			VK_IMAGE_LAYOUT_GENERAL,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 			VK_IMAGE_ASPECT_COLOR_BIT )
 	};
 
@@ -4800,7 +4811,7 @@ AverageLuminancePass(
 																		VK_ACCESS_2_SHADER_READ_BIT_KHR,
 																		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 																		VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-																		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+																		VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 																		VK_IMAGE_ASPECT_COLOR_BIT );
 
 	VkDependencyInfoKHR dependencyAcquire = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -4813,7 +4824,7 @@ AverageLuminancePass(
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, avgPipe );
 
 	vk_descriptor_info avgLumDescs[] = {
-		{ 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+		{ 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR },
 		Descriptor( avgLumBuff ),
 		Descriptor( shaderGlobalsBuff ),
 		Descriptor( shaderGlobalSyncCounterBuff )
@@ -4824,8 +4835,8 @@ AverageLuminancePass(
 	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
 	vkCmdDispatch( cmdBuff,
-				   VkGetGroupCount( fboHdrColTrg.width, avgProg.groupSize.x ),
-				   VkGetGroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
+				   GroupCount( fboHdrColTrg.width, avgProg.groupSize.x ),
+				   GroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
 }
 
 // TODO: optimize
@@ -4866,7 +4877,7 @@ FinalCompositionPass(
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, tonePipe );
 
 	vk_descriptor_info tonemapDescs[] = {
-		{ 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+		{ 0, fboHdrColTrg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR },
 		{ 0, scView, VK_IMAGE_LAYOUT_GENERAL },
 		Descriptor( avgLumBuff )
 	};
@@ -4876,8 +4887,8 @@ FinalCompositionPass(
 
 	assert( ( fboHdrColTrg.width == sc.width ) && ( fboHdrColTrg.height == sc.height ) );
 	vkCmdDispatch( cmdBuff,
-				   VkGetGroupCount( fboHdrColTrg.width, tonemapProg.groupSize.x ),
-				   VkGetGroupCount( fboHdrColTrg.height, tonemapProg.groupSize.y ), 1 );
+				   GroupCount( fboHdrColTrg.width, tonemapProg.groupSize.x ),
+				   GroupCount( fboHdrColTrg.height, tonemapProg.groupSize.y ), 1 );
 
 }
 
@@ -4978,7 +4989,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			0, 0,
 			0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 			VK_IMAGE_ASPECT_COLOR_BIT )
 		};
 		VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -5097,7 +5108,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 														 VK_ACCESS_2_SHADER_READ_BIT_KHR,
 														 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR,
 														 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-														 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+														 VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 														 VK_IMAGE_ASPECT_COLOR_BIT );
 				VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
 				dependency.imageMemoryBarrierCount = 1;
@@ -5118,7 +5129,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		
 		VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
+		VkDescriptorImageInfo hizSamplerDesc = { rndCtx.quadMinSampler };
 		srvUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLER, &samplerDesc, 1, srvManager ) );
+		srvUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLER, &hizSamplerDesc, 1, srvManager ) );
 
 
 		VkWriteDescriptorSet samplerUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
@@ -5135,7 +5148,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		texDescs.reserve( std::size( textures.rsc ) );
 		for( const auto& i : textures.rsc )
 		{
-			texDescs.push_back( { 0, i.data.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } );
+			texDescs.push_back( { 0, i.data.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR } );
 		}
 
 		VkWriteDescriptorSet texUpdates = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
@@ -5259,6 +5272,15 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		dependencyClear.pBufferMemoryBarriers = &clearDrawCountBarrier;
 		vkCmdPipelineBarrier2KHR( thisVFrame.cmdBuff, &dependencyClear );
 
+		VkDescriptorSet cullDescSets[] = { frameDesc[ frameBufferedIdx ],srvManager.set };
+
+		vkCmdBindDescriptorSets(
+			thisVFrame.cmdBuff, 
+			VK_PIPELINE_BIND_POINT_COMPUTE, 
+			cullCompProgram.pipeLayout, 
+			0, std::size( cullDescSets ), 
+			cullDescSets, 0, 0 );
+
 		// TODO: Aaltonen double draw ? ( not double culling )
 		// TODO: merge up to 256 meshes 
 		CullPass( 
@@ -5361,7 +5383,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 								 VK_ACCESS_2_SHADER_READ_BIT_KHR,
 								 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
 								 0, 0,
-								 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+								 VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 								 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
 								 VK_IMAGE_ASPECT_COLOR_BIT ),
 			VkMakeImageBarrier2( sc.imgs[ imgIdx ],
