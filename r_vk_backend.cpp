@@ -1685,6 +1685,58 @@ inline static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 	return { layout, set };
 }
 
+
+// TODO: keep Vk Descriptor stuff in here ?
+struct vk_srv_manager
+{
+	u32 slotSizeTable[ std::size( globalDescTable ) ];
+	u32 slotsNext[ std::size( globalDescTable ) ];
+	VkDescriptorSet			set;
+};
+
+// TODO: inline uniforms
+// TODO: no templates ?
+template<typename T>
+inline static VkWriteDescriptorSet 
+VkWriteDescriptorSetUpdate( 
+	VkDevice vkDevice, 
+	u32 dstBinding, 
+	const T* srvInfos,
+	u32 srvInfosCount,
+	vk_srv_manager& srvManager
+){
+	assert( dstBinding >= 0 && dstBinding < std::size( globalDescTable ) );
+
+	u32 dstArrayIdx = srvManager.slotsNext[ dstBinding ];
+
+	assert( dstArrayIdx <= srvManager.slotSizeTable[ dstBinding ] );
+	assert( dstArrayIdx + srvInfosCount <= srvManager.slotSizeTable[ dstBinding ] );
+
+	srvManager.slotsNext[ dstBinding ] += srvInfosCount;
+
+
+	VkWriteDescriptorSet descSlotUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+	descSlotUpdate.dstSet = srvManager.set;
+	descSlotUpdate.dstBinding = dstBinding;
+	descSlotUpdate.dstArrayElement = dstArrayIdx;
+	descSlotUpdate.descriptorCount = srvInfosCount;
+	descSlotUpdate.descriptorType = globalDescTable[ dstBinding ];
+
+	if constexpr( std::is_same<T, VkDescriptorBufferInfo>::value )
+	{
+		descSlotUpdate.pBufferInfo = ( const VkDescriptorBufferInfo* ) srvInfos;
+	}
+	else if( std::is_same<T, VkDescriptorImageInfo>::value )
+	{
+		descSlotUpdate.pImageInfo = ( const VkDescriptorImageInfo* ) srvInfos;
+	}
+	else static_assert( 0 );
+
+
+	return descSlotUpdate;
+}
+
+
 inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
 {
 	VkShaderModuleCreateInfo shaderModuleInfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
