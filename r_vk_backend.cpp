@@ -2338,32 +2338,32 @@ inline VkSampler VkMakeSampler(
 
 
 template<typename T>
-struct hndl32
+struct hndl64
 {
-	u32 h = 0;
+	u64 h = 0;
 
-	hndl32() = default;
-	inline hndl32( u32 magkIdx ) : h{ magkIdx }{}
-	inline operator u32() const { return h; }
+	hndl64() = default;
+	inline hndl64( u64 magkIdx ) : h{ magkIdx }{}
+	inline operator u64() const { return h; }
 };
 
 template <typename T>
-inline u64 IdxFromHndl32( hndl32<T> h )
+inline u64 IdxFromHndl64( hndl64<T> h )
 {
-	constexpr u32 standardIndexMask = ( 1 << 16 ) - 1;
+	constexpr u64 standardIndexMask = ( 1ull << 32 ) - 1;
 	return h & standardIndexMask;
 }
 template <typename T>
-inline u64 MagicFromHndl32( hndl32<T> h )
+inline u64 MagicFromHndl64( hndl64<T> h )
 {
-	constexpr u32 standardIndexMask = ( 1 << 16 ) - 1;
-	constexpr u32 standardMagicNumberMask = ~standardIndexMask;
-	return ( h & standardMagicNumberMask ) >> 16;
+	constexpr u64 standardIndexMask = ( 1ull << 32 ) - 1;
+	constexpr u64 standardMagicNumberMask = ~standardIndexMask;
+	return ( h & standardMagicNumberMask ) >> 32;
 }
 template <typename T>
-inline hndl32<T> Hndl32FromMagicAndIdx( u64 m, u64 i )
+inline hndl64<T> Hndl64FromMagicAndIdx( u64 m, u64 i )
 {
-	return u32( ( m << 16 ) | i );
+	return u64( ( m << 32 ) | i );
 }
 
 // TODO: handled container
@@ -2371,29 +2371,29 @@ inline hndl32<T> Hndl32FromMagicAndIdx( u64 m, u64 i )
 template<typename T>
 struct resource_vector
 {
-	struct resource { T data; u32 magicId; };
+	struct resource { T data; u64 magicId; };
 	std::vector<resource> rsc;
-	u32 magicCounter;
+	u64 magicCounter;
 };
 
 template<typename T>
-inline const T& GetResourceFromHndl( hndl32<T> h, const resource_vector<T>& buf )
+inline const T& GetResourceFromHndl( hndl64<T> h, const resource_vector<T>& buf )
 {
 	assert( std::size( buf ) );
 	assert( h );
 
-	const T& entry = buf[ IdxFromHndl32( h ) ];
-	assert( entry.magicId == MagicFromHndl32( h ) );
+	const T& entry = buf[ IdxFromHndl64( h ) ];
+	assert( entry.magicId == MagicFromHndl64( h ) );
 
 	return entry.data;
 }
 template<typename T>
-inline hndl32<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
+inline hndl64<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 {
-	u32 magicCounter = buf.magicCounter++;
+	u64 magicCounter = buf.magicCounter++;
 	buf.rsc.push_back( { rsc, magicCounter } );
 
-	return Hndl32FromMagicAndIdx<T>( magicCounter, std::size( buf.rsc ) );
+	return Hndl64FromMagicAndIdx<T>( magicCounter, std::size( buf.rsc ) );
 }
 
 
@@ -3611,7 +3611,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 				VK_IMAGE_ASPECT_COLOR_BIT ) );
 
 
-			hndl32<image> hImg = PushResourceToContainer( img, textures );
+			hndl64<image> hImg = PushResourceToContainer( img, textures );
 		}
 
 		VkDependencyInfoKHR imitImagesDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
@@ -3956,25 +3956,20 @@ void VkBackendInit()
 		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_ClusterCull" );
 
 
+		VkPipelineLayoutCreateInfo pipeLayoutPushInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+		pipeLayoutPushInfo.pushConstantRangeCount = 1;
+		pipeLayoutPushInfo.pPushConstantRanges = &pushConstRange;
+
+		VkPipelineLayout pipelineLayoutPush = {};
+		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutPushInfo, 0, &pipelineLayoutPush ) );
+
 		vk_shader expansionComp = VkLoadShader( "Shaders/c_id_expander.comp.spv", dc.device );
-
-		{
-			VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof( u64 ) };
-			VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-			pipeLayoutInfo.pushConstantRangeCount = 1;
-			pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
-
-			VkPipelineLayout pipelineLayout = {};
-			VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
-
-			expanderCompProgram.pipeLayout = pipelineLayout;
-			rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, expanderCompProgram.pipeLayout, expansionComp.module, {} );
-			VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
-		}
-
-
+		expanderCompProgram.pipeLayout = pipelineLayoutPush;
+		rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, expanderCompProgram.pipeLayout, expansionComp.module, {} );
+		VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
+		
 		vk_shader expMerge = VkLoadShader( "Shaders/comp_expand_merge.comp.spv", dc.device );
-		expMergeCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &expMerge } );
+		expMergeCompProgram.pipeLayout = pipelineLayoutPush;
 		rndCtx.compExpMergePipe = VkMakeComputePipeline( dc.device, 0, expMergeCompProgram.pipeLayout, expMerge.module, {} );
 		VkDbgNameObj( rndCtx.compExpMergePipe, dc.device, "Pipeline_Comp_ExpMerge" );
 
@@ -4128,11 +4123,14 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 }
 
+
+static buffer_data itermediateIndexBuff;
+static buffer_data mergedIndexBuff;
+// TODO: alloc buffers here
+// TODO: reduce the ammount of buffers
 // TODO: visibility buffer ( not the VBuffer ) check Aaltonen
 // TODO: revisit triangle culling ?
 // TODO: optimize expansion shader
-// TODO: "supply line" descriptor instead of push
-// TODO: meshlet cone culling 
 // TODO: must pass vertexOffset around somehow
 inline static void 
 CullPass( 
@@ -4140,15 +4138,14 @@ CullPass(
 	VkPipeline				vkPipeline, 
 	const vk_program&		program,
 	const image&			depthPyramid,
-	const VkSampler&		minQuadSampler,
-	const buffer_data&      frameData
+	const VkSampler&		minQuadSampler
 ){
 	// NOTE: wtf Vulkan ?
 	constexpr u64 VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR;
 
+
 	vk_label label = { cmdBuff,"Cull Pass",{} };
 
-	
 	vkCmdFillBuffer( cmdBuff, drawCountBuff.hndl, 0, drawCountBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, drawCountDbgBuff.hndl, 0, drawCountDbgBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, meshletCountBuff.hndl, 0, meshletCountBuff.size, 0u );
@@ -5304,8 +5301,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			rndCtx.compPipeline, 
 			cullCompProgram, 
 			rndCtx.depthPyramid, 
-			rndCtx.quadMinSampler, 
-			thisVFrame.frameData );
+			rndCtx.quadMinSampler );
 
 		// TODO: Emit depth + HzB
 
