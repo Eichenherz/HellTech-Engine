@@ -8,7 +8,7 @@
 
 #extension GL_GOOGLE_include_directive: require
 
-//#define GLOBAL_RESOURCES
+#define GLOBAL_RESOURCES
 #include "..\r_data_structs.h"
 
 layout( push_constant, scalar ) uniform block{
@@ -21,8 +21,8 @@ layout( push_constant, scalar ) uniform block{
 	uint64_t	atomicWorkgrCounterAddr;
 	uint64_t	dispatchCmdAddr;
 	uint64_t	dbgDrawCmdsAddr;
-	//uint	    hizBuffIdx;
-	//uint	    hizSamplerIdx;
+	uint	    hizBuffIdx;
+	uint	    hizSamplerIdx;
 };
 
 
@@ -31,10 +31,6 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer m
 };
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
-};
-
-layout( binding = 0 ) readonly uniform cam_data{
-	global_data cam;
 };
 
 
@@ -67,33 +63,35 @@ layout( buffer_reference, buffer_reference_align = 4 ) coherent buffer coherent_
 	uint coherentCounter;
 };
 
-
-layout( binding = 1 ) readonly buffer meshlet_list{
-	uint64_t meshletIdBuff[];
-};
-layout( binding = 2 ) readonly buffer meshlet_list_cnt{
-	uint totalMeshletCount;
-};
-layout( binding = 3 ) buffer draw_cmd_count{
-	uint drawCallCount;
-};
-
-
-layout( binding = 4 ) writeonly buffer triangle_ids{
-	meshlet_info visibleMeshlets[];
-};
-
-layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
-layout( binding = 6 ) coherent buffer atomic_cnt{
-	uint workgrAtomicCounter;
-};
-layout( binding = 7 ) buffer disptach_indirect{
-	dispatch_command dispatchCmd;
-};
-
-layout( binding = 8, scalar ) writeonly buffer draw_indir{
-	draw_indirect dbgBBoxDrawCmd[];
-};
+//layout( binding = 0 ) readonly uniform cam_data{
+//	global_data cam;
+//};
+//layout( binding = 1 ) readonly buffer meshlet_list{
+//	uint64_t meshletIdBuff[];
+//};
+//layout( binding = 2 ) readonly buffer meshlet_list_cnt{
+//	uint totalMeshletCount;
+//};
+//layout( binding = 3 ) buffer draw_cmd_count{
+//	uint drawCallCount;
+//};
+//
+//
+//layout( binding = 4 ) writeonly buffer triangle_ids{
+//	meshlet_info visibleMeshlets[];
+//};
+//
+//layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
+//layout( binding = 6 ) coherent buffer atomic_cnt{
+//	uint workgrAtomicCounter;
+//};
+//layout( binding = 7 ) buffer disptach_indirect{
+//	dispatch_command dispatchCmd;
+//};
+//
+//layout( binding = 8, scalar ) writeonly buffer draw_indir{
+//	draw_indirect dbgBBoxDrawCmd[];
+//};
 
 shared uint workgrAtomicCounterShared = {};
 
@@ -177,11 +175,12 @@ void main()
 				maxZ = max( maxZ, clipPos.z );
 		    }
 			
-			vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-			float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
+			vec2 size = abs( maxXY - minXY ) * textureSize( sampler2D( sampledImages[ hizBuffIdx ], samplers[ hizSamplerIdx ] ), 0 ).xy;
+			float depthPyramidMaxMip = textureQueryLevels( sampler2D( sampledImages[ hizBuffIdx ], samplers[ hizSamplerIdx ] ) ) - 1.0f;
 			float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 			
-			float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+			float sampledDepth = 
+				textureLod( sampler2D( sampledImages[ hizBuffIdx ], samplers[ hizSamplerIdx ] ), ( maxXY + minXY ) * 0.5f, mipLevel ).x;
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
 		//visible = true;

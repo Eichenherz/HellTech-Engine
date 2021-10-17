@@ -3925,25 +3925,24 @@ void VkBackendInit()
 		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", dc.device );
 
 		VkDescriptorSetLayout bindableDescLayouts[] = { frameDescLayout, bindlessLayout };
+		VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 128u };
 
-		{
-		//VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof( u64 ) + 3 * sizeof( u32 ) };
-			VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 64u };
-			VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-			pipeLayoutInfo.setLayoutCount = std::size( bindableDescLayouts );
-			pipeLayoutInfo.pSetLayouts = bindableDescLayouts;
-			pipeLayoutInfo.pushConstantRangeCount = 1;
-			pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
+		VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+		pipeLayoutInfo.setLayoutCount = std::size( bindableDescLayouts );
+		pipeLayoutInfo.pSetLayouts = bindableDescLayouts;
+		pipeLayoutInfo.pushConstantRangeCount = 1;
+		pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
 
-			VkPipelineLayout pipelineLayout = {};
-			VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
+		VkPipelineLayout pipelineLayout = {};
+		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
 
-			cullCompProgram.pipeLayout = pipelineLayout;
-			cullCompProgram.groupSize = { 32,1,1 };
+		
+		cullCompProgram.pipeLayout = pipelineLayout;
+		cullCompProgram.groupSize = { 32,1,1 };
 
-			rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { 32u } );
-			VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
-		}
+		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { 32u } );
+		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
+		
 
 		vk_shader expansionComp = VkLoadShader( "Shaders/c_id_expander.comp.spv", dc.device );
 
@@ -3962,7 +3961,8 @@ void VkBackendInit()
 		}
 
 		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", dc.device );
-		clusterCullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &clusterCull } );
+		//clusterCullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &clusterCull } );
+		clusterCullCompProgram.pipeLayout = pipelineLayout;
 		rndCtx.compClusterCullPipe = VkMakeComputePipeline( dc.device, 0, clusterCullCompProgram.pipeLayout, clusterCull.module, {} );
 		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_ClusterCull" );
 
@@ -4331,11 +4331,13 @@ CullPass(
 			u64	atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64	dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
 			u64	dbgDrawCmdsAddr = drawCmdAabbsBuff.devicePointer;
+			u32 hizBuffIdx = 1;
+			u32	hizSamplerIdx = 1;
 		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
-		vkCmdPushDescriptorSetWithTemplateKHR(
-			cmdBuff, clusterCullCompProgram.descUpdateTemplate, clusterCullCompProgram.pipeLayout, 0, ccd );
+		//vkCmdPushDescriptorSetWithTemplateKHR(
+		//	cmdBuff, clusterCullCompProgram.descUpdateTemplate, clusterCullCompProgram.pipeLayout, 0, ccd );
 		vkCmdPushConstants( cmdBuff, clusterCullCompProgram.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff1.hndl, 0 );
 	}
