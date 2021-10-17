@@ -63,35 +63,6 @@ layout( buffer_reference, buffer_reference_align = 4 ) coherent buffer coherent_
 	uint coherentCounter;
 };
 
-//layout( binding = 0 ) readonly uniform cam_data{
-//	global_data cam;
-//};
-//layout( binding = 1 ) readonly buffer meshlet_list{
-//	uint64_t meshletIdBuff[];
-//};
-//layout( binding = 2 ) readonly buffer meshlet_list_cnt{
-//	uint totalMeshletCount;
-//};
-//layout( binding = 3 ) buffer draw_cmd_count{
-//	uint drawCallCount;
-//};
-//
-//
-//layout( binding = 4 ) writeonly buffer triangle_ids{
-//	meshlet_info visibleMeshlets[];
-//};
-//
-//layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
-//layout( binding = 6 ) coherent buffer atomic_cnt{
-//	uint workgrAtomicCounter;
-//};
-//layout( binding = 7 ) buffer disptach_indirect{
-//	dispatch_command dispatchCmd;
-//};
-//
-//layout( binding = 8, scalar ) writeonly buffer draw_indir{
-//	draw_indirect dbgBBoxDrawCmd[];
-//};
 
 shared uint workgrAtomicCounterShared = {};
 

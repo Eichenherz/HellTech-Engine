@@ -3570,7 +3570,9 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	indirectMergedIndexBuff = VkCreateAllocBindBuffer( 
 		10 * MB,
 		//std::size( instDesc ) * fileDesc.idxRange.size, 
-		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+		VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena );
 
 	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
@@ -3744,11 +3746,18 @@ inline static void VkInitInternalBuffers()
 												 vkRscArena );
 	VkDbgNameObj( atomicCounterBuff.hndl, dc.device, "Buff_Atomic_Counter" );
 
-	mergedIndexCountBuff = 
-		VkCreateAllocBindBuffer( 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+	mergedIndexCountBuff = VkCreateAllocBindBuffer( 4, 
+													VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+													VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+													VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+													vkRscArena );
 
-	drawMergedCountBuff = VkCreateAllocBindBuffer( 
-		4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena );
+	drawMergedCountBuff = VkCreateAllocBindBuffer( 4, 
+												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+												   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | 
+												   VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+												   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
+												   vkRscArena );
 	VkDbgNameObj( drawMergedCountBuff.hndl, dc.device, "Buff_Draw_Merged_Count" );
 }
 
@@ -3922,8 +3931,6 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, normalCol.module, 0 );
 	}
 	{
-		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", dc.device );
-
 		VkDescriptorSetLayout bindableDescLayouts[] = { frameDescLayout, bindlessLayout };
 		VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 128u };
 
@@ -3936,13 +3943,18 @@ void VkBackendInit()
 		VkPipelineLayout pipelineLayout = {};
 		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
 
-		
+
+		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", dc.device );
 		cullCompProgram.pipeLayout = pipelineLayout;
 		cullCompProgram.groupSize = { 32,1,1 };
-
 		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, cullCompProgram.pipeLayout, drawCull.module, { 32u } );
 		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
 		
+		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", dc.device );
+		clusterCullCompProgram.pipeLayout = pipelineLayout;
+		rndCtx.compClusterCullPipe = VkMakeComputePipeline( dc.device, 0, clusterCullCompProgram.pipeLayout, clusterCull.module, {} );
+		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_ClusterCull" );
+
 
 		vk_shader expansionComp = VkLoadShader( "Shaders/c_id_expander.comp.spv", dc.device );
 
@@ -3960,11 +3972,6 @@ void VkBackendInit()
 			VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
 		}
 
-		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", dc.device );
-		//clusterCullCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &clusterCull } );
-		clusterCullCompProgram.pipeLayout = pipelineLayout;
-		rndCtx.compClusterCullPipe = VkMakeComputePipeline( dc.device, 0, clusterCullCompProgram.pipeLayout, clusterCull.module, {} );
-		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_ClusterCull" );
 
 		vk_shader expMerge = VkLoadShader( "Shaders/comp_expand_merge.comp.spv", dc.device );
 		expMergeCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &expMerge } );
@@ -4307,20 +4314,6 @@ CullPass(
 		execCullDependency.pMemoryBarriers = &writeToReadWriteBarrier;
 		vkCmdPipelineBarrier2KHR( cmdBuff, &execCullDependency );
 
-
-
-		vk_descriptor_info ccd[] = {
-			Descriptor( frameData ),
-			Descriptor( meshletIdBuff ),
-			Descriptor( meshletCountBuff ),
-			Descriptor( drawCountDbgBuff ),
-			Descriptor( visibleMeshletsBuff ),
-			depthPyramidInfo,
-			Descriptor( atomicCounterBuff ),
-			Descriptor( dispatchCmdBuff0 ),
-			Descriptor( drawCmdAabbsBuff )
-		};
-
 		struct { 
 			u64 instDescAddr = instDescBuff.devicePointer;
 			u64 meshletDescAddr = meshletBuff.devicePointer;
@@ -4336,8 +4329,6 @@ CullPass(
 		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
-		//vkCmdPushDescriptorSetWithTemplateKHR(
-		//	cmdBuff, clusterCullCompProgram.descUpdateTemplate, clusterCullCompProgram.pipeLayout, 0, ccd );
 		vkCmdPushConstants( cmdBuff, clusterCullCompProgram.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff1.hndl, 0 );
 	}
@@ -4363,23 +4354,18 @@ CullPass(
 		execTriExpDependency.pMemoryBarriers = &writeToReadWriteBarrier;
 		vkCmdPipelineBarrier2KHR( cmdBuff, &execTriExpDependency );
 
-
-
-		vk_descriptor_info pushDesc[] = {
-			Descriptor( visibleMeshletsBuff ),
-			Descriptor( drawCountDbgBuff ),
-			Descriptor( indirectMergedIndexBuff ),
-			Descriptor( mergedIndexCountBuff ),
-			Descriptor( drawMergedCmd ),
-			Descriptor( drawMergedCountBuff ),
-			Descriptor( atomicCounterBuff )
-		};
-
-		struct { u64 meshletDataAddr; } pushConst = { meshletDataBuff.devicePointer };
+		struct { 
+			u64 meshletDataAddr = meshletDataBuff.devicePointer;
+			u64 visMeshletsAddr = visibleMeshletsBuff.devicePointer;
+			u64 visMeshletsCountAddr = drawCountDbgBuff.devicePointer;
+			u64 mergedIdxBuffAddr = indirectMergedIndexBuff.devicePointer;
+			u64 mergedIdxCountAddr = mergedIndexCountBuff.devicePointer;
+			u64 drawCmdsAddr = drawMergedCmd.devicePointer;
+			u64 drawCmdCountAddr = drawMergedCountBuff.devicePointer;
+			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
+		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpMergePipe );
-		vkCmdPushDescriptorSetWithTemplateKHR( 
-			cmdBuff, expMergeCompProgram.descUpdateTemplate, expMergeCompProgram.pipeLayout, 0, pushDesc );
 		vkCmdPushConstants( cmdBuff, expMergeCompProgram.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff0.hndl, 0 );
 	}
