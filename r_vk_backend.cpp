@@ -3709,7 +3709,8 @@ inline static void VkInitInternalBuffers()
 	drawCountDbgBuff = VkCreateAllocBindBuffer( 4, 
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-												VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+												VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 												vkRscArena );
 	VkDbgNameObj( drawCountDbgBuff.hndl, dc.device, "Buff_Dbg_Draw_Count" );
 	// TODO: no transfer bit ?
@@ -4320,7 +4321,17 @@ CullPass(
 			Descriptor( drawCmdAabbsBuff )
 		};
 
-		struct { u64 instDescAddr; u64 meshletDescAddr; } pushConst = { instDescBuff.devicePointer, meshletBuff.devicePointer };
+		struct { 
+			u64 instDescAddr = instDescBuff.devicePointer;
+			u64 meshletDescAddr = meshletBuff.devicePointer;
+			u64	inMeshletsIdAddr = meshletIdBuff.devicePointer;
+			u64	inMeshletsCountAddr = meshletCountBuff.devicePointer;
+			u64	outMeshletsIdAddr = visibleMeshletsBuff.devicePointer;
+			u64	outMeshletsCountAddr = drawCountDbgBuff.devicePointer;
+			u64	atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
+			u64	dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
+			u64	dbgDrawCmdsAddr = drawCmdAabbsBuff.devicePointer;
+		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
 		vkCmdPushDescriptorSetWithTemplateKHR(
