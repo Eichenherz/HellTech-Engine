@@ -1746,7 +1746,7 @@ VkWriteDescriptorSetUpdate(
 #include <dxcapi.h>
 
 template<typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
-
+// NOTE: massive help : https://simoncoenen.com/blog/programming/graphics/DxcCompiling + his github
 struct dxc_context
 {
 	ComPtr<IDxcCompiler3> pCompiler;
@@ -1776,7 +1776,7 @@ inline dxc_context DxcCreateContext()
 }
 
 using dxc_options = std::initializer_list<LPCWSTR>;
-inline void DxcCompileShader( 
+inline std::vector<u8> DxcCompileShader( 
 	//LPCWSTR fileName,
 	const std::vector<u8>& hlslFile,
 	const dxc_context& ctx,
@@ -1800,7 +1800,39 @@ inline void DxcCompileShader(
 	if( pErrors && pErrors->GetStringLength() > 0 )
 	{
 		std::cout<< "DXC Error: " << ( char* ) pErrors->GetBufferPointer() << '\n';
+		return {};
 	}
+
+	ComPtr<IDxcBlob> pShaderBlob;
+	pCompileResult->GetOutput( DXC_OUT_OBJECT, IID_PPV_ARGS( pShaderBlob.GetAddressOf() ), 0 );
+
+	// TODO: for spirv only
+	if constexpr( 0 )
+	{
+		ComPtr<IDxcOperationResult> pResult;
+		ctx.pValidator->Validate( ( IDxcBlob* ) pShaderBlob.Get(), DxcValidatorFlags_InPlaceEdit, pResult.GetAddressOf() );
+		HRESULT validationResult;
+		pResult->GetStatus( &validationResult );
+		if( validationResult != S_OK )
+		{
+			ComPtr<IDxcBlobEncoding> pPrintBlob;
+			ComPtr<IDxcBlobUtf8> pPrintBlobUtf8;
+			pResult->GetErrorBuffer( pPrintBlob.GetAddressOf() );
+			ctx.pUtils->GetBlobAsUtf8( pPrintBlob.Get(), pPrintBlobUtf8.GetAddressOf() );
+
+			std::cout << "DXC Validation Error: " << ( char* ) pPrintBlobUtf8->GetBufferPointer() << '\n';
+			return{};
+		}
+	}
+
+	std::vector<u8> shaderBytecode;
+	shaderBytecode.resize( pShaderBlob->GetBufferSize() );
+	memcpy_s( std::data( shaderBytecode ), 
+			  std::size( shaderBytecode ), 
+			  pShaderBlob->GetBufferPointer(), 
+			  pShaderBlob->GetBufferSize() );
+
+	return std::move( shaderBytecode );
 }
 
 
@@ -2019,6 +2051,95 @@ struct vk_gfx_pipeline_state
 	bool				depthTestEnable = true;
 	bool				blendCol = colorBlending;
 };
+
+
+using vk_shader_stage_list = std::initializer_list<VkPipelineShaderStageCreateInfo>;
+
+VkPipeline VkMakeGfxPipeline(
+	VkDevice			vkDevice,
+	VkPipelineCache		vkPipelineCache,
+	VkRenderPass		vkRndPass,
+	VkPipelineLayout	vkPipelineLayout,
+	vk_shader_stage_list stageList,
+	const vk_gfx_pipeline_state& pipelineState
+){
+	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+	inAsmStateInfo.topology = pipelineState.primTopology;
+
+	VkPipelineViewportStateCreateInfo viewportInfo = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+	viewportInfo.viewportCount = 1;
+	viewportInfo.scissorCount = 1;
+
+	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+	VkPipelineDynamicStateCreateInfo dynamicStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+	dynamicStateInfo.dynamicStateCount = std::size( dynamicStates );
+	dynamicStateInfo.pDynamicStates = dynamicStates;
+
+	// TODO: place inside if ?
+	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState =
+	{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT };
+	conservativeRasterState.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
+	conservativeRasterState.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize;
+
+	VkPipelineRasterizationStateCreateInfo rasterInfo = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+	rasterInfo.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0;
+	rasterInfo.depthClampEnable = 0;
+	rasterInfo.rasterizerDiscardEnable = 0;
+	rasterInfo.polygonMode = pipelineState.polyMode;
+	rasterInfo.cullMode = pipelineState.cullFlags;
+	rasterInfo.frontFace = pipelineState.frontFace;
+	rasterInfo.lineWidth = 1.0f;
+
+	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+	depthStencilState.depthTestEnable = pipelineState.depthTestEnable;
+	depthStencilState.depthWriteEnable = pipelineState.depthWrite;
+	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER;
+	depthStencilState.depthBoundsTestEnable = VK_TRUE;
+	depthStencilState.minDepthBounds = 0;
+	depthStencilState.maxDepthBounds = 1.0f;
+
+	VkPipelineColorBlendAttachmentState blendConfig = {};
+	blendConfig.blendEnable = pipelineState.blendCol;
+	blendConfig.srcColorBlendFactor = pipelineState.srcColorBlendFactor;
+	blendConfig.dstColorBlendFactor = pipelineState.dstColorBlendFactor;
+	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
+	blendConfig.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor;
+	blendConfig.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor;
+	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
+	blendConfig.colorWriteMask =
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+	colorBlendStateInfo.attachmentCount = 1;
+	colorBlendStateInfo.pAttachments = &blendConfig;
+
+	// TODO: only if we use frag
+	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+	pipelineInfo.stageCount = std::size( stageList );
+	pipelineInfo.pStages = std::data( stageList );
+	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
+	pipelineInfo.pInputAssemblyState = &inAsmStateInfo;
+	pipelineInfo.pViewportState = &viewportInfo;
+	pipelineInfo.pRasterizationState = &rasterInfo;
+	pipelineInfo.pMultisampleState = &multisamplingInfo;
+	pipelineInfo.pDepthStencilState = &depthStencilState;
+	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
+	pipelineInfo.pDynamicState = &dynamicStateInfo;
+	pipelineInfo.layout = vkPipelineLayout;
+	pipelineInfo.renderPass = vkRndPass;
+	pipelineInfo.basePipelineIndex = -1;
+
+	VkPipeline vkGfxPipeline;
+	VK_CHECK( vkCreateGraphicsPipelines( vkDevice, vkPipelineCache, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
+
+	return vkGfxPipeline;
+}
+
 // TODO: shader stages more general
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
@@ -3951,12 +4072,30 @@ void VkBackendInit()
 		L"-spirv",
 		L"-fspv-target-env=vulkan1.2",
 		L"-T",
-		L"vs_6_6",
+		L"lib_6_6",
 		//L"-E",
 		//L"vs_main"
 	};
 
-	DxcCompileShader( hlslBlob, dxcCtx, options );
+	std::vector<u8> spvBytecode = DxcCompileShader( hlslBlob, dxcCtx, options );
+
+	VkShaderModule testModule = VkMakeShaderModule( dc.device, ( const u32* ) std::data( spvBytecode ), std::size( spvBytecode ) );
+
+	VkPipelineLayoutCreateInfo testPipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+	VkPipelineLayout testPipelineLayout = {};
+	VK_CHECK( vkCreatePipelineLayout( dc.device, &testPipeLayoutInfo, 0, &testPipelineLayout ) );
+
+
+	vk_shader_stage_list stageList = {
+		{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		.stage = VK_SHADER_STAGE_VERTEX_BIT, .module = testModule, .pName = "vs_main"},
+		{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		.stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = testModule, .pName = "ps_main"} };
+
+
+	VkPipeline testPipeline = VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, testPipelineLayout, stageList, {} );
+
+
 
 	// TODO: remove .type. from shader use type prefix instead
 	{
