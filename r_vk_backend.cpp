@@ -4087,17 +4087,22 @@ void VkBackendInit()
 
 
 	vk_shader_stage_list stageList = {
-		{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-		.stage = VK_SHADER_STAGE_VERTEX_BIT, .module = testModule, .pName = "vs_main"},
-		{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-		.stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = testModule, .pName = "ps_main"} };
-
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = VK_SHADER_STAGE_VERTEX_BIT, 
+			.module = testModule, 
+			.pName = "vs_main"
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = VK_SHADER_STAGE_FRAGMENT_BIT, 
+			.module = testModule, 
+			.pName = "ps_main"
+		} 
+	};
 
 	VkPipeline testPipeline = VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, testPipelineLayout, stageList, {} );
 
-
-
-	// TODO: remove .type. from shader use type prefix instead
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 
