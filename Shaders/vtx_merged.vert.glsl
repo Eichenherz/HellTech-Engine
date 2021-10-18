@@ -13,40 +13,34 @@ layout( push_constant ) uniform block{
 	uint64_t vtxAddr;
 	uint64_t transfAddr;
 	//uint64_t drawCmdAddr;
-	uint64_t camDataAddr;
+	//uint64_t camDataAddr;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
 	vertex vertices[];
 };
-//layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_ref{ 
-//	mesh_desc meshes[]; 
-//};
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
 };
-layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
-	global_data camera;
-};
+//layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
+//	global_data camera;
+//};
+
+
+layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data cam; };
+
 
 vec2 SignNonZero( vec2 e )
 {
 	return mix( vec2( 1.0f ), vec2( -1.0f ), lessThan( e, vec2( 0.0f ) ) );
 }
-float Snorm8ToFloat( uint8_t x )
-{
-	return float( uint( x ) ) * ( 1.0 / 127.0 ) - 1.0;
-}
+// NOTE: Rune Stubbe's version : https://twitter.com/Stubbesaurus/status/937994790553227264
 vec3 DecodeOctaNormal( vec2 octa )
 {
 	vec3 n = vec3( octa, 1.0 - abs( octa.x ) - abs( octa.y ) );
-	vec2 signVector = SignNonZero( n.xy );
-	n.xy = ( n.z < 0 ) ? ( signVector - signVector * abs( n.yx ) ) : n.xy;
-	// NOTE: Rune Stubbe's version
-	//float t = max( -n.z, 0.0 );                     
-	//n.x += ( n.x > 0.0 ) ? -t : t;                     
-	//n.y += ( n.y > 0.0 ) ? -t : t;                   
-	
+	vec2 t = vec2( max( -n.z, 0.0f ) );
+	n.xy += mix( -t, t, lessThan( n.xy, vec2( 0.0f ) ) );
+
 	return normalize( n );
 }
 vec2 EncodeOctaNormal( vec3 n )
@@ -69,46 +63,39 @@ vec3 DecodeTanFromAngle( vec3 n, float tanAngle )
 }
 
 
-layout( location = 0 ) out vec3 oNormal;
-layout( location = 1 ) out vec3 oTan;
-layout( location = 2 ) out vec3 oFragWorldPos;
-layout( location = 3 ) out vec2 oUv;
+struct vs_out
+{
+	vec3 n;
+	vec3 t;
+	vec3 worldPos;
+	vec2 uv;
+};
+
+layout( location = 0 ) out vs_out vsOut;
 layout( location = 4 ) out flat uint oMtlIdx;
 void main() 
 {
-	// TODO: need nonuniformEXT ?
+	// TODO: spec const variations 
 	uint instId = uint( gl_VertexIndex & uint16_t( -1 ) );
 	uint vertexId = uint( gl_VertexIndex >> 16 );
 
-	//vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ vertexId ];
-	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
-	vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
-
-	//uint snormTanFrame = uint( vtx.snorm8octNx ) | ( uint( vtx.snorm8octNy ) << 8 ) | ( uint( vtx.snorm8tanAngle ) << 16 );
-	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
-	//vec3 norm = DecodeOctaNormal( encodedTanFame.xy );
-	//vec3 tng = DecodeTanFromAngle( norm, encodedTanFame.z );
-	vec3 norm = DecodeOctaNormal( vec2( Snorm8ToFloat( vtx.snorm8octNx ), Snorm8ToFloat( vtx.snorm8octNy ) ) );
-	vec2 texCoord = vec2( vtx.tu, vtx.tv );
-
 	//instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ instId ];
 	instance_desc inst = inst_desc_ref( transfAddr ).instDescs[ instId ];
-	global_data cam = cam_data_ref( camDataAddr ).camera;
-
-
-	vec3 worldPos = RotateQuat( pos * inst.scale, inst.rot ) + inst.pos;
+	//global_data cam = cam_data_ref( camDataAddr ).camera;
+	//vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ vertexId ];
+	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
+	
+	vec3 worldPos = RotateQuat( vec3( vtx.px, vtx.py, vtx.pz ) * inst.scale, inst.rot ) + inst.pos;
 	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 
-	vec3 n = normalize( norm );
-	//vec3 t = tng;
-	vec3 t = DecodeTanFromAngle( norm, Snorm8ToFloat( vtx.snorm8tanAngle ) );
+	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
+	vec3 n = DecodeOctaNormal( encodedTanFame.xy );
+	vec3 t = DecodeTanFromAngle( n, encodedTanFame.z );
 	t = normalize( RotateQuat( t, inst.rot ) );
 	n = normalize( RotateQuat( n, inst.rot ) );
 
-	oNormal = n;
-	oTan = t;
-	oFragWorldPos = worldPos;
-	oUv = texCoord;
+
+	vsOut = vs_out( n, t, worldPos, vec2( vtx.tu, vtx.tv ) );
 	oMtlIdx = inst.mtrlIdx;
 }

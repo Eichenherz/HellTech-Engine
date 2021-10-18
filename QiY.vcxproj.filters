@@ -119,7 +119,7 @@
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
-    <CustomBuild Include="Shaders\draw_cull.comp.glsl" />
+    <CustomBuild Include="Shaders\c_draw_cull.comp.glsl" />
     <CustomBuild Include="Shaders\pow2_downsampler.comp.glsl" />
     <CustomBuild Include="Shaders\tonemap_gamma.comp.glsl" />
     <CustomBuild Include="Shaders\f_pass_col.frag.glsl" />
@@ -127,7 +127,7 @@
     <CustomBuild Include="Shaders\v_cpu_dbg_draw.vert.glsl" />
     <CustomBuild Include="Shaders\pbr.frag.glsl" />
     <CustomBuild Include="Shaders\shdr.vert.glsl" />
-    <CustomBuild Include="Shaders\id_expander.comp.glsl" />
+    <CustomBuild Include="Shaders\c_id_expander.comp.glsl" />
     <CustomBuild Include="Shaders\c_meshlet_cull.comp.glsl" />
     <CustomBuild Include="Shaders\box_meshlet_draw.vert.glsl" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">

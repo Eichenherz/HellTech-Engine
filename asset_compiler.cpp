@@ -85,10 +85,6 @@ inline float EncodeTanToAngle( vec3 n, vec3 t )
 		XMVector3AngleBetweenVectors( XMLoadFloat3( &t ), XMLoadFloat3( &tanRef ) ) );
 	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
 }
-inline u8 FloatToSnorm8( float e )
-{
-	return std::round( 127.5f + e * 127.5f );
-}
 
 // TODO: context per gltf ?
 struct png_decoder
@@ -702,19 +698,17 @@ static std::pair<range, range> AssembleAndOptimizeMesh(
 		DirectX::XMFLOAT2 octaNormal = OctaNormalEncode( { nx,ny,nz } );
 		float tanAngle = EncodeTanToAngle( { nx,ny,nz }, { tx,ty,tz } );
 
-		firstVertex[ i ].snorm8octNx = FloatToSnorm8( octaNormal.x );
-		firstVertex[ i ].snorm8octNy = FloatToSnorm8( octaNormal.y );
-		firstVertex[ i ].snorm8tanAngle = FloatToSnorm8( tanAngle );
+		i8 snormNx = meshopt_quantizeSnorm( octaNormal.x, 8 );
+		i8 snormNy = meshopt_quantizeSnorm( octaNormal.y, 8 );
+		i8 snormTanAngle = meshopt_quantizeSnorm( tanAngle, 8 );
 
-		//firstVertex[ i ].snorm8octNx = meshopt_quantizeSnorm( octaNormal.x, 8 );
-		//firstVertex[ i ].snorm8octNy = meshopt_quantizeSnorm( octaNormal.y, 8 );
-		//firstVertex[ i ].snorm8tanAngle = meshopt_quantizeSnorm( tanAngle, 8 );
+		u32 bitsSnormNx = *( u8* ) &snormNx;
+		u32 bitsSnormNy = *( u8* ) &snormNy;
+		u32 bitsSnormTanAngle = *( u8* ) &snormTanAngle;
 
-		u32 encodedTanFrame = 
-			meshopt_quantizeSnorm( octaNormal.x, 8 ) | 
-			meshopt_quantizeSnorm( octaNormal.y, 8 ) << 8 | 
-			meshopt_quantizeSnorm( tanAngle, 8 ) << 16;
-		//firstVertex[ i ].snorm8octTanFrame = encodedTanFrame;
+		u32 packedTanFrame = bitsSnormNx | ( bitsSnormNy << 8 ) | ( bitsSnormTanAngle << 16 );
+
+		firstVertex[ i ].snorm8octTanFrame = packedTanFrame;
 		
 	}
 	for( u64 i = 0; i < vtxAttrCount; ++i )

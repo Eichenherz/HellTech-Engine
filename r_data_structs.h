@@ -24,7 +24,8 @@ struct frame_data
 	DirectX::XMFLOAT4X4A	mainView;
 	DirectX::XMFLOAT4X4A	activeView;
 	DirectX::XMFLOAT4X4A    frustTransf;
-	DirectX::XMFLOAT4X4A    projView;
+	DirectX::XMFLOAT4X4A    activeProjView;
+	DirectX::XMFLOAT4X4A    mainProjView;
 	DirectX::XMFLOAT3	worldPos;
 	DirectX::XMFLOAT3	camViewDir;
 	float   elapsedSeconds;
@@ -79,17 +80,6 @@ struct global_data
 	float   screenY;
 };
 
-// NOTE: bda == buffer device address
-struct global_bdas
-{
-	uint64_t vtxAddr;
-	uint64_t idxAddr;
-	uint64_t meshDescAddr;
-	uint64_t lightsDescAddr;
-	uint64_t meshletsAddr;
-	uint64_t mtrlsAddr;
-	uint64_t instDescAddr;
-};
 // TODO: compressed coords u8, u16
 struct vertex
 {
@@ -100,12 +90,6 @@ struct vertex
 	float tv;
 	// TODO: name better
 	uint snorm8octTanFrame;
-	//uint mi;
-	// TODO: use builtins to unpack
-	uint8_t snorm8octNx;
-	uint8_t snorm8octNy;
-	uint8_t snorm8tanAngle;
-	uint8_t pad;
 };
 
 // TODO: compress data more ?
@@ -220,32 +204,6 @@ struct draw_indirect
 #endif
 };
 
-struct occlusion_debug
-{
-	mat4 mvp;
-
-	vec4 minZCorner;
-	vec4 minXCorner;
-	vec4 minYCorner;
-	vec4 maxXCorner;
-	vec4 maxYCorner;
-	
-	vec2	ndcMin;
-	vec2	ndcMax;
-
-	float	zNearBound;
-	float	xPosBound;
-	float	yPosBound;
-	float	xNegBound;
-	float	yNegBound;
-
-	float	mipLevel;
-
-	float	depth;
-
-	uint	instID;
-};
-
 struct downsample_info
 {
 	uint mips;
@@ -273,10 +231,13 @@ struct imgui_vertex
 	uint  rgba8Unorm;
 };
 
+// TODO: re-order these
 const uint VK_GLOBAL_SLOT_STORAGE_BUFFER = 0;
 const uint VK_GLOBAL_SLOT_UNIFORM_BUFFER = 1;
 const uint VK_GLOBAL_SLOT_SAMPLED_IMAGE = 2;
 const uint VK_GLOBAL_SLOT_SAMPLER = 3;
+const uint VK_GLOBAL_SLOT_STORAGE_IMAGE = 4;
+const uint VK_GLOBAL_SLOT_INLINE_UNIFORM = 5;
 
 const uint VK_FRAME_DESC_SET = 0;
 const uint VK_GLOBAL_DESC_SET = 1;
@@ -286,12 +247,13 @@ const uint VK_GLOBAL_DESC_SET = 1;
 #ifdef GLOBAL_RESOURCES
 
 layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data g; } globalsCam[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_UNIFORM_BUFFER, std430 ) uniform glob_bdas{ global_bdas bdas; } globalsBdas[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer device_addrs{ uint64_t deviceAddrs[]; };
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, r32f ) writeonly uniform coherent image2D depthViews[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, rgba8 ) writeonly uniform coherent image2D swapchainViews[];
 
 global_data cam = globalsCam[ 0 ].g;
-global_bdas bdas = globalsBdas[ 0 ].bdas;
 
 #endif
 

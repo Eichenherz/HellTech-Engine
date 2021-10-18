@@ -10,7 +10,6 @@ layout( push_constant ) uniform block{
 	uint64_t vtxAddr;
 	uint64_t transfAddr;
 	//uint64_t drawCmdAddr;
-	uint64_t camDataAddr;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
@@ -22,9 +21,8 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 //layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer draw_cmd_ref{
 //	draw_command drawCmd[];
 //};
-layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
-	global_data camera;
-};
+
+layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data cam; };
 
 
 void main()
@@ -36,7 +34,7 @@ void main()
 	// TODO: trans only
 	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
 	instance_desc thisInst = inst_desc_ref( transfAddr ).instDescs[ instId ];
-	global_data cam = cam_data_ref( camDataAddr ).camera;
+	
 
 	gl_Position = cam.proj * cam.mainView * thisInst.localToWorld * vec4( vtx.px, vtx.py, vtx.pz, 1.0f );
 

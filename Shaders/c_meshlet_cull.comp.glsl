@@ -8,11 +8,21 @@
 
 #extension GL_GOOGLE_include_directive: require
 
+#define GLOBAL_RESOURCES
 #include "..\r_data_structs.h"
 
-layout( push_constant ) uniform block{
+layout( push_constant, scalar ) uniform block{
 	uint64_t	instDescAddr;
 	uint64_t	meshletsAddr;
+	uint64_t	inMeshletsIdAddr;
+	uint64_t	inMeshletsCountAddr;
+	uint64_t	outMeshletsIdAddr;
+	uint64_t	outMeshletsCountAddr;
+	uint64_t	atomicWorkgrCounterAddr;
+	uint64_t	dispatchCmdAddr;
+	uint64_t	dbgDrawCmdsAddr;
+	uint	    hizBuffIdx;
+	uint	    hizSamplerIdx;
 };
 
 
@@ -23,21 +33,22 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 	instance_desc instDescs[];
 };
 
-layout( binding = 0 ) readonly uniform cam_data{
-	global_data cam;
+
+layout( buffer_reference, buffer_reference_align = 8 ) readonly buffer u64_ref{ 
+	uint64_t meshletIdBuff[]; 
+};
+layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer u32_ref{ 
+	uint totalMeshletCount; 
 };
 
-
-layout( binding = 1 ) readonly buffer meshlet_list{
-	uint64_t meshletIdBuff[];
+layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer dispatch_indirect_ref{
+	dispatch_command dispatchCmd;
 };
-layout( binding = 2 ) readonly buffer meshlet_list_cnt{
-	uint totalMeshletCount;
-};
-layout( binding = 3 ) buffer draw_cmd_count{
-	uint drawCallCount;
+layout( buffer_reference, scalar, buffer_reference_align = 4 ) writeonly buffer draw_cmd_ref{
+	draw_indirect dbgBBoxDrawCmd[];
 };
 
+// TODO: pack into u64
 struct meshlet_info
 {
 	uint dataOffset;
@@ -45,21 +56,13 @@ struct meshlet_info
 	uint8_t vtxCount;
 	uint8_t triCount;
 };
-layout( binding = 4 ) writeonly buffer triangle_ids{
+layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer mlet_info_ref{ 
 	meshlet_info visibleMeshlets[];
 };
-
-layout( binding = 5 ) uniform sampler2D minQuadDepthPyramid;
-layout( binding = 6 ) coherent buffer atomic_cnt{
-	uint workgrAtomicCounter;
-};
-layout( binding = 7 ) buffer disptach_indirect{
-	dispatch_command dispatchCmd;
+layout( buffer_reference, buffer_reference_align = 4 ) coherent buffer coherent_counter_ref{
+	uint coherentCounter;
 };
 
-layout( binding = 8, scalar ) writeonly buffer draw_indir{
-	draw_indirect dbgBBoxDrawCmd[];
-};
 
 shared uint workgrAtomicCounterShared = {};
 
@@ -74,9 +77,9 @@ void main()
 {
 	uint globalIdx = gl_GlobalInvocationID.x;
 
-	if( globalIdx < totalMeshletCount )
+	if( globalIdx < u32_ref( inMeshletsCountAddr ).totalMeshletCount )
 	{
-		uint64_t mid = meshletIdBuff[ globalIdx ];
+		uint64_t mid = u64_ref( inMeshletsIdAddr ).meshletIdBuff[ globalIdx ];
 		uint parentInstId = uint( mid & uint( -1 ) );
 		uint meshletIdx = uint( mid >> 32 );
 
@@ -103,12 +106,6 @@ void main()
 		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlanePos.xyz, vec3( 0.0f ) ) ), yPlanePos.xyz ) > -yPlanePos.w );
 		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( xPlaneNeg.xyz, vec3( 0.0f ) ) ), xPlaneNeg.xyz ) > -xPlaneNeg.w );
 		visible = visible && ( dot( mix( boxMax, boxMin, lessThan( yPlaneNeg.xyz, vec3( 0.0f ) ) ), yPlaneNeg.xyz ) > -yPlaneNeg.w );
-
-		// TODO: cone culling
-		//vec4 coneApexWorld = parentInst.localToWorld * vec4( thisMeshlet.coneApex, 1.0f );
-		//vec4 coneAxisWorld = vec4( thisMeshlet.coneAxis, 0.0f );
-		//float coneCutoff = int( thisMeshlet.coneCutoff ) / 127.0f;
-		//visible = visible && !( dot( normalize( coneApexWorld.xyz - cam.worldPos ), normalize( coneAxisWorld.xyz ) ) >= coneCutoff );
 
 		float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
 		bool intersectsNearZ = minW <= 0.0f;
@@ -149,11 +146,12 @@ void main()
 				maxZ = max( maxZ, clipPos.z );
 		    }
 			
-			vec2 size = abs( maxXY - minXY ) * textureSize( minQuadDepthPyramid, 0 ).xy;
-			float depthPyramidMaxMip = textureQueryLevels( minQuadDepthPyramid ) - 1.0f;
+			vec2 size = abs( maxXY - minXY ) * textureSize( sampler2D( sampledImages[ hizBuffIdx ], samplers[ hizSamplerIdx ] ), 0 ).xy;
+			float depthPyramidMaxMip = textureQueryLevels( sampler2D( sampledImages[ hizBuffIdx ], samplers[ hizSamplerIdx ] ) ) - 1.0f;
 			float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), depthPyramidMaxMip );
 			
-			float sampledDepth = textureLod( minQuadDepthPyramid, ( maxXY + minXY ) * 0.5f, mipLevel ).x;
+			float sampledDepth = 
+				textureLod( sampler2D( sampledImages[ hizBuffIdx ], samplers[ hizSamplerIdx ] ), ( maxXY + minXY ) * 0.5f, mipLevel ).x;
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
 		//visible = true;
@@ -162,39 +160,47 @@ void main()
 		if( subgrActiveInvocationsCount > 0 ) 
 		{
 			// TODO: shared atomics + global atomics ?
-			uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+			//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
+			uint subgrSlotOffset = subgroupElect() ? 
+				atomicAdd( coherent_counter_ref( outMeshletsCountAddr ).coherentCounter, subgrActiveInvocationsCount ) : 0;
 			uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 			uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
 			if( visible )
 			{
 				//uint slotIdx = atomicAdd( drawCallCount, 1 );
-
-				visibleMeshlets[ slotIdx ].dataOffset = thisMeshlet.dataOffset;
-				visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
+				
+				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].dataOffset = thisMeshlet.dataOffset;
+				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
 				// NOTE: want all the indices
-				visibleMeshlets[ slotIdx ].vtxCount = thisMeshlet.vertexCount;
-				visibleMeshlets[ slotIdx ].triCount = thisMeshlet.triangleCount;
+				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].vtxCount = thisMeshlet.vertexCount;
+				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].triCount = thisMeshlet.triangleCount;
 
-				dbgBBoxDrawCmd[ slotIdx ].drawIdx = mid;
-				dbgBBoxDrawCmd[ slotIdx ].firstVertex = 0;
-				dbgBBoxDrawCmd[ slotIdx ].vertexCount = 24;
-				dbgBBoxDrawCmd[ slotIdx ].instanceCount = 1;
-				dbgBBoxDrawCmd[ slotIdx ].firstInstance = 0;
+				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].drawIdx = mid;
+				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].firstVertex = 0;
+				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].vertexCount = 24;
+				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].instanceCount = 1;
+				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].firstInstance = 0;
 			}
 		}
 	}
 
-	if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+	//if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
+	if( gl_LocalInvocationID.x == 0 ) 
+		workgrAtomicCounterShared = atomicAdd( coherent_counter_ref( atomicWorkgrCounterAddr ).coherentCounter, 1 );
 
 	barrier();
 	memoryBarrier();
 	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
 	{
 		// TODO: pass as spec consts or push consts ? 
-		uint trisExpDispatch = ( drawCallCount + meshletsPerWorkgr - 1 ) / meshletsPerWorkgr;
-		dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
-		// NOTE: reset atomicCounter
-		workgrAtomicCounter = 0;
+		//uint trisExpDispatch = ( drawCallCount + meshletsPerWorkgr - 1 ) / meshletsPerWorkgr;
+		uint trisExpDispatch = 
+			( coherent_counter_ref( outMeshletsCountAddr ).coherentCounter + meshletsPerWorkgr - 1 ) / meshletsPerWorkgr;
+
+		dispatch_indirect_ref( dispatchCmdAddr ).dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
+		
+		//workgrAtomicCounter = 0;
+		coherent_counter_ref( atomicWorkgrCounterAddr ).coherentCounter = 0;
 	}
 }
