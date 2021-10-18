@@ -192,7 +192,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine>MachineX64</TargetMachine>
       <AdditionalDependencies>meshoptimizer.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>D:\EichenRepos\meshoptimizer\bin\CMakeFiles\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(VULKAN_SDK)\Lib;D:\EichenRepos\meshoptimizer\bin\CMakeFiles\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <PreventDllBinding>false</PreventDllBinding>
     </Link>
     <CustomBuild>

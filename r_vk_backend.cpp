@@ -4,7 +4,6 @@
 #include "DEFS_WIN32_NO_BS.h"
 // TODO: autogen custom vulkan ?
 #include <vulkan.h>
-#include <vulkan_win32.h>
 // TODO: header + .cpp ?
 // TODO: revisit this
 #include "vk_procs.h"
@@ -1740,6 +1739,72 @@ VkWriteDescriptorSetUpdate(
 }
 
 
+// TODO: write into module
+#include <unknwn.h>
+#include <winerror.h>
+#include <wrl/client.h>
+#include <dxcapi.h>
+
+template<typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+struct dxc_context
+{
+	ComPtr<IDxcCompiler3> pCompiler;
+	ComPtr<IDxcUtils> pUtils;
+	ComPtr<IDxcValidator> pValidator;
+	ComPtr<IDxcIncludeHandler> includeHandler;
+};
+
+
+// TODO: check stuff
+inline dxc_context DxcCreateContext()
+{
+	HMODULE dll = LoadLibrary( "dxcompiler.dll" );
+	assert( dll );
+	DxcCreateInstanceProc DxcMakeInstance = ( DxcCreateInstanceProc ) GetProcAddress( dll, "DxcCreateInstance" );
+	assert( DxcMakeInstance );
+
+	dxc_context ctx = {};
+
+	SUCCEEDED( DxcMakeInstance( CLSID_DxcCompiler, IID_PPV_ARGS( ctx.pCompiler.GetAddressOf() ) ) );
+	SUCCEEDED( DxcMakeInstance( CLSID_DxcUtils, IID_PPV_ARGS( ctx.pUtils.GetAddressOf() ) ) );
+	SUCCEEDED( DxcMakeInstance( CLSID_DxcValidator, IID_PPV_ARGS( ctx.pValidator.GetAddressOf() ) ) );
+
+	SUCCEEDED( ctx.pUtils->CreateDefaultIncludeHandler( &ctx.includeHandler ) );
+
+	return ctx;
+}
+
+using dxc_options = std::initializer_list<LPCWSTR>;
+inline void DxcCompileShader( 
+	//LPCWSTR fileName,
+	const std::vector<u8>& hlslFile,
+	const dxc_context& ctx,
+	dxc_options compileOptions )
+{
+	DxcBuffer hlslFileDesc = {};
+	hlslFileDesc.Ptr = std::data( hlslFile );
+	hlslFileDesc.Size = std::size( hlslFile );
+	hlslFileDesc.Encoding = 0; // ?
+
+	ComPtr<IDxcResult> pCompileResult;
+	ctx.pCompiler->Compile(
+		&hlslFileDesc,
+		( LPCWSTR* ) std::data( compileOptions ),
+		std::size( compileOptions ),
+		0,//( IDxcIncludeHandler* ) ctx.includeHandler.GetAddressOf(),
+		IID_PPV_ARGS( pCompileResult.GetAddressOf() ) );
+
+	ComPtr<IDxcBlobUtf8> pErrors;
+	pCompileResult->GetOutput( DXC_OUT_ERRORS, IID_PPV_ARGS( pErrors.GetAddressOf() ), 0 );
+	if( pErrors && pErrors->GetStringLength() > 0 )
+	{
+		std::cout<< "DXC Error: " << ( char* ) pErrors->GetBufferPointer() << '\n';
+	}
+}
+
+
+
 inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
 {
 	VkShaderModuleCreateInfo shaderModuleInfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
@@ -2342,7 +2407,7 @@ struct hndl64
 {
 	u64 h = 0;
 
-	hndl64() = default;
+	inline hndl64() = default;
 	inline hndl64( u64 magkIdx ) : h{ magkIdx }{}
 	inline operator u64() const { return h; }
 };
@@ -2366,8 +2431,9 @@ inline hndl64<T> Hndl64FromMagicAndIdx( u64 m, u64 i )
 	return u64( ( m << 32 ) | i );
 }
 
+// TODO: handle removal of stuff
+// TODO: free list ?
 // TODO: handled container
-// TODO: extract magicId from resources ?
 template<typename T>
 struct resource_vector
 {
@@ -2398,7 +2464,7 @@ inline hndl64<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 
 
 static resource_vector<image> textures;
-
+static resource_vector<buffer_data> buffers;
 // TODO: recycle_queue for more objects
 // TODO: rethink
 // TODO: async 
@@ -3088,11 +3154,13 @@ static buffer_data materialsBuff;
 static buffer_data instDescBuff;
 static buffer_data lightsBuff;
 
+
+static buffer_data intermediateIndexBuff;
 static buffer_data indirectMergedIndexBuff;
 
-static buffer_data visibleInstsBuff;
-static buffer_data meshletIdBuff;
-static buffer_data visibleMeshletsBuff;
+//static buffer_data visibleInstsBuff;
+//static buffer_data meshletIdBuff;
+//static buffer_data visibleMeshletsBuff;
 
 static buffer_data drawCmdBuff;
 static buffer_data drawCmdAabbsBuff;
@@ -3539,41 +3607,25 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		vkRscArena );
 	VkDbgNameObj( drawCmdDbgBuff.hndl, dc.device, "Buff_Indirect_Dbg_Draw_Cmds" );
 
-	// TODO: use per wave stuff ?
-	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												  vkRscArena );
-	VkDbgNameObj( drawVisibilityBuff.hndl, dc.device, "Buff_Draw_Vis" );
+	// TODO: expose from asset compiler 
+	constexpr u64 MAX_TRIS = 256;
+	//u64 maxByteCountMergedIndexBuff = std::size( instDesc ) * ( meshletBuff.size / sizeof( meshlet ) ) * MAX_TRIS * 3ull;
+	u64 maxByteCountMergedIndexBuff = 10 * MB;
 
-
-	screenspaceBoxBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( dbg_vertex ) * 8,
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-												  vkRscArena );
-	VkDbgNameObj( screenspaceBoxBuff.hndl, dc.device, "Buff_Screenspace_Boxes" );
-
-	visibleInstsBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * 3 * sizeof( u32 ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-												vkRscArena );
-	visibleMeshletsBuff = VkCreateAllocBindBuffer( 10 * MB,//std::size( mletView ) * 3 * sizeof( u32 ),
-												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-												   vkRscArena );
-
-	meshletIdBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( u64 ), 
-											 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
-											 vkRscArena );
-	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
-
+	intermediateIndexBuff = VkCreateAllocBindBuffer(
+		maxByteCountMergedIndexBuff,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		vkRscArena );
+	VkDbgNameObj( intermediateIndexBuff.hndl, dc.device, "Buff_Intermediate_Idx" );
 
 	indirectMergedIndexBuff = VkCreateAllocBindBuffer( 
-		10 * MB,
-		//std::size( instDesc ) * fileDesc.idxRange.size, 
+		maxByteCountMergedIndexBuff,
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
 		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena );
+	VkDbgNameObj( indirectMergedIndexBuff.hndl, dc.device, "Buff_Merged_Idx" );
 
 	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
@@ -3891,6 +3943,21 @@ void VkBackendInit()
 	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
 
 
+	dxc_context dxcCtx = DxcCreateContext();
+
+	std::vector<u8> hlslBlob = SysReadFile( "Shader.hlsl" );
+
+	dxc_options options = {
+		L"-spirv",
+		L"-fspv-target-env=vulkan1.2",
+		L"-T",
+		L"vs_6_6",
+		//L"-E",
+		//L"vs_main"
+	};
+
+	DxcCompileShader( hlslBlob, dxcCtx, options );
+
 	// TODO: remove .type. from shader use type prefix instead
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
@@ -4124,10 +4191,8 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 }
 
 
-static buffer_data itermediateIndexBuff;
-static buffer_data mergedIndexBuff;
 // TODO: alloc buffers here
-// TODO: reduce the ammount of buffers
+// TODO: reduce the ammount of counter buffers
 // TODO: visibility buffer ( not the VBuffer ) check Aaltonen
 // TODO: revisit triangle culling ?
 // TODO: optimize expansion shader
@@ -4147,8 +4212,10 @@ CullPass(
 	vk_label label = { cmdBuff,"Cull Pass",{} };
 
 	vkCmdFillBuffer( cmdBuff, drawCountBuff.hndl, 0, drawCountBuff.size, 0u );
+
 	vkCmdFillBuffer( cmdBuff, drawCountDbgBuff.hndl, 0, drawCountDbgBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, meshletCountBuff.hndl, 0, meshletCountBuff.size, 0u );
+
 	vkCmdFillBuffer( cmdBuff, mergedIndexCountBuff.hndl, 0, mergedIndexCountBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, drawMergedCountBuff.hndl, 0, drawMergedCountBuff.size, 0u );
 
@@ -4232,14 +4299,14 @@ CullPass(
 	dependency.pImageMemoryBarriers = &hiZReadBarrier;
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 
-	VkDescriptorImageInfo depthPyramidInfo = { minQuadSampler, depthPyramid.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
-	
+	u32 instCount = instDescBuff.size / sizeof( instance_desc );
+
 	{
-		u32 instCount = instDescBuff.size / sizeof( instance_desc );
+		
 		struct { 
 			u64 instDescAddr = instDescBuff.devicePointer;
 			u64 meshDescAddr = meshBuff.devicePointer;
-			u64 visInstsAddr = visibleInstsBuff.devicePointer;
+			u64 visInstsAddr = intermediateIndexBuff.devicePointer;
 			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64 drawCounterAddr = drawCountBuff.devicePointer;
 			u64 dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
@@ -4277,9 +4344,9 @@ CullPass(
 
 		struct
 		{
-			u64 visInstAddr = visibleInstsBuff.devicePointer;
+			u64 visInstAddr = intermediateIndexBuff.devicePointer;
 			u64 visInstCountAddr = drawCountBuff.devicePointer;
-			u64 expandeeAddr = meshletIdBuff.devicePointer;
+			u64 expandeeAddr = indirectMergedIndexBuff.devicePointer;
 			u64 expandeeCountAddr = meshletCountBuff.devicePointer;
 			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64 dispatchCmdAddr = dispatchCmdBuff1.devicePointer;
@@ -4314,9 +4381,9 @@ CullPass(
 		struct { 
 			u64 instDescAddr = instDescBuff.devicePointer;
 			u64 meshletDescAddr = meshletBuff.devicePointer;
-			u64	inMeshletsIdAddr = meshletIdBuff.devicePointer;
+			u64	inMeshletsIdAddr = indirectMergedIndexBuff.devicePointer;
 			u64	inMeshletsCountAddr = meshletCountBuff.devicePointer;
-			u64	outMeshletsIdAddr = visibleMeshletsBuff.devicePointer;
+			u64	outMeshletsIdAddr = intermediateIndexBuff.devicePointer;
 			u64	outMeshletsCountAddr = drawCountDbgBuff.devicePointer;
 			u64	atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64	dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
@@ -4353,7 +4420,7 @@ CullPass(
 
 		struct { 
 			u64 meshletDataAddr = meshletDataBuff.devicePointer;
-			u64 visMeshletsAddr = visibleMeshletsBuff.devicePointer;
+			u64 visMeshletsAddr = intermediateIndexBuff.devicePointer;
 			u64 visMeshletsCountAddr = drawCountDbgBuff.devicePointer;
 			u64 mergedIdxBuffAddr = indirectMergedIndexBuff.devicePointer;
 			u64 mergedIdxCountAddr = mergedIndexCountBuff.devicePointer;
@@ -4847,9 +4914,8 @@ AverageLuminancePass(
 
 	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
-	vkCmdDispatch( cmdBuff,
-				   GroupCount( fboHdrColTrg.width, avgProg.groupSize.x ),
-				   GroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
+	vkCmdDispatch( 
+		cmdBuff, GroupCount( fboHdrColTrg.width, avgProg.groupSize.x ), GroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
 }
 
 // TODO: optimize
@@ -4910,11 +4976,12 @@ FinalCompositionPass(
 // TODO: recycle framebuffers better
 static std::vector<VkFramebuffer> recycleFboList;
 
-// TODO: pass cam data via push const
+
 void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
+	// TODO: don't expose math stuff here
 	using namespace DirectX;
-	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
+	
 
 	u64 currentFrameIdx = rndCtx.vFrameIdx++;
 	u64 frameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
@@ -5192,17 +5259,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	static bool initBuffers = 0;
 	if( !initBuffers )
 	{
-		vkCmdFillBuffer( thisVFrame.cmdBuff, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
 		vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
 		// TODO: rename 
 		vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
 		
 		VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
-			VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
-									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
 			VkMakeBufferBarrier2( depthAtomicCounterBuff.hndl,
 									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
@@ -5239,7 +5300,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkClearValue clearVals[ 2 ] = {};
 
 		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, zPrepassProgram.pipeLayout, 0, 1, &frameDesc[ frameBufferedIdx ], 0, 0 );
+			thisVFrame.cmdBuff, 
+			VK_PIPELINE_BIND_POINT_GRAPHICS, 
+			zPrepassProgram.pipeLayout,
+			0, 1, &frameDesc[ frameBufferedIdx ], 0, 0 );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
