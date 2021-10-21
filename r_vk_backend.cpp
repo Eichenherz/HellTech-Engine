@@ -4,7 +4,6 @@
 #include "DEFS_WIN32_NO_BS.h"
 // TODO: autogen custom vulkan ?
 #include <vulkan.h>
-#include <vulkan_win32.h>
 // TODO: header + .cpp ?
 // TODO: revisit this
 #include "vk_procs.h"
@@ -1740,6 +1739,187 @@ VkWriteDescriptorSetUpdate(
 }
 
 
+// TODO: write into module
+#include <unknwn.h>
+#include <winerror.h>
+#include <wrl/client.h>
+#include <dxcapi.h>
+
+template<typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
+// NOTE: massive help : https://simoncoenen.com/blog/programming/graphics/DxcCompiling + his github
+struct dxc_context
+{
+	ComPtr<IDxcCompiler3> pCompiler;
+	ComPtr<IDxcUtils> pUtils;
+	ComPtr<IDxcValidator> pValidator;
+	ComPtr<IDxcIncludeHandler> pIncludeHandler;
+};
+
+
+// TODO: check stuff
+inline dxc_context DxcCreateContext()
+{
+	HMODULE dll = LoadLibrary( "dxcompiler.dll" );
+	assert( dll );
+	DxcCreateInstanceProc DxcMakeInstance = ( DxcCreateInstanceProc ) GetProcAddress( dll, "DxcCreateInstance" );
+	assert( DxcMakeInstance );
+
+	dxc_context ctx = {};
+
+	SUCCEEDED( DxcMakeInstance( CLSID_DxcCompiler, IID_PPV_ARGS( ctx.pCompiler.GetAddressOf() ) ) );
+	SUCCEEDED( DxcMakeInstance( CLSID_DxcUtils, IID_PPV_ARGS( ctx.pUtils.GetAddressOf() ) ) );
+	SUCCEEDED( DxcMakeInstance( CLSID_DxcValidator, IID_PPV_ARGS( ctx.pValidator.GetAddressOf() ) ) );
+
+	SUCCEEDED( ctx.pUtils->CreateDefaultIncludeHandler( &ctx.pIncludeHandler ) );
+
+	return ctx;
+}
+
+// TODO: use DXC load funcs ?
+// TODO: better err handling
+using dxc_options = std::initializer_list<LPCWSTR>;
+inline std::vector<u8> DxcCompileShader( 
+	LPCSTR fileName,
+	dxc_context& ctx,
+	dxc_options compileOptions )
+{
+	using namespace std;
+
+	constexpr char dxcErr[] = { "DXC err in file : " };
+
+	std::vector<u8> hlslBlob = SysReadFile( fileName );
+	DxcBuffer hlslFileDesc = { std::data( hlslBlob ), std::size( hlslBlob ) };
+
+	// NOTE: stupid OOPs interface
+	class CustomIncludeHandler : public IDxcIncludeHandler
+	{
+	public:
+		std::vector<u64> hashedIncludeFileNames;
+
+		dxc_context& ctx;
+
+		inline CustomIncludeHandler( dxc_context& _ctx ) : ctx{ _ctx }{}
+
+		HRESULT STDMETHODCALLTYPE
+			LoadSource( _In_ LPCWSTR pFilename, _COM_Outptr_result_maybenull_ IDxcBlob** ppIncludeSource ) override
+		{
+			constexpr const wchar_t* pValidExtensions[] = { L"hlsli", L"h" };
+
+			std::wstring_view pathView = { pFilename };
+			std::wstring_view extView = { pFilename + pathView.find_last_of( L"." ) + 1 };
+
+			for( auto& extStr : pValidExtensions )
+			{
+				if( extView == extStr ) break;
+
+				else if( extView != extStr )
+				{
+					std::cout << "Include path does not have a valid extension" << '\n';
+					return E_FAIL;
+				}
+			}
+
+			ComPtr<IDxcBlobEncoding> pEncoding;
+
+			auto thisIncludeHash = std::hash<std::wstring_view>{}( pathView );
+			for( auto hash : hashedIncludeFileNames )
+			{
+				if( hash == thisIncludeHash )
+				{
+					static const char nullStr[] = " ";
+					ctx.pUtils->CreateBlob( nullStr, ARRAYSIZE( nullStr ), DXC_CP_UTF8, pEncoding.GetAddressOf() );
+					*ppIncludeSource = pEncoding.Detach();
+					return S_OK;
+				}
+			}
+
+
+			// TODO: find better way
+			char multibyteFilename[ 256 ] = {};
+			assert( std::wcslen( pFilename ) <= std::size( multibyteFilename ) );
+			std::wcstombs( multibyteFilename, pFilename, std::wcslen( pFilename ) );
+
+			std::vector<u8> hlslIncludeBlob = SysReadFile( multibyteFilename );
+
+			if( std::size( hlslIncludeBlob ) == 0 ) return E_FAIL;
+
+			*ppIncludeSource = 0;
+
+			HRESULT hr = ctx.pUtils->CreateBlob( 
+				std::data( hlslIncludeBlob ), std::size( hlslIncludeBlob ), DXC_CP_UTF8, pEncoding.GetAddressOf() );
+
+			if( SUCCEEDED( hr ) )
+			{
+				hashedIncludeFileNames.push_back( thisIncludeHash );
+				*ppIncludeSource = pEncoding.Detach();
+			}
+
+			return hr;
+		}
+
+		HRESULT STDMETHODCALLTYPE QueryInterface( REFIID riid, _COM_Outptr_ void __RPC_FAR* __RPC_FAR* ppvObject ) override
+		{
+			return ctx.pIncludeHandler->QueryInterface( riid, ppvObject );
+		}
+
+		ULONG STDMETHODCALLTYPE AddRef() override { return 0; }
+		ULONG STDMETHODCALLTYPE Release() override { return 0; }
+	};
+
+	CustomIncludeHandler includeHandler = { ctx };
+
+
+	ComPtr<IDxcResult> pCompileResult;
+	ctx.pCompiler->Compile(
+		&hlslFileDesc,
+		( LPCWSTR* ) std::data( compileOptions ),
+		std::size( compileOptions ),
+		&includeHandler,
+		IID_PPV_ARGS( pCompileResult.GetAddressOf() ) );
+
+	ComPtr<IDxcBlobUtf8> pErrors;
+	pCompileResult->GetOutput( DXC_OUT_ERRORS, IID_PPV_ARGS( pErrors.GetAddressOf() ), 0 );
+	if( pErrors && pErrors->GetStringLength() > 0 )
+	{
+		std::cout<< "DXC " << ( char* ) pErrors->GetBufferPointer() << '\n';
+		assert( 0 );
+		return {};
+	}
+
+	ComPtr<IDxcBlob> pShaderBlob;
+	pCompileResult->GetOutput( DXC_OUT_OBJECT, IID_PPV_ARGS( pShaderBlob.GetAddressOf() ), 0 );
+
+	// TODO: for spirv only
+	if constexpr( 0 )
+	{
+		ComPtr<IDxcOperationResult> pResult;
+		ctx.pValidator->Validate( ( IDxcBlob* ) pShaderBlob.Get(), DxcValidatorFlags_InPlaceEdit, pResult.GetAddressOf() );
+		HRESULT validationResult;
+		pResult->GetStatus( &validationResult );
+		if( validationResult != S_OK )
+		{
+			ComPtr<IDxcBlobEncoding> pPrintBlob;
+			ComPtr<IDxcBlobUtf8> pPrintBlobUtf8;
+			pResult->GetErrorBuffer( pPrintBlob.GetAddressOf() );
+			ctx.pUtils->GetBlobAsUtf8( pPrintBlob.Get(), pPrintBlobUtf8.GetAddressOf() );
+
+			std::cout << "DXC Validation Error: " << ( char* ) pPrintBlobUtf8->GetBufferPointer() << '\n';
+			return{};
+		}
+	}
+
+	std::vector<u8> shaderBytecode;
+	shaderBytecode.resize( pShaderBlob->GetBufferSize() );
+	memcpy_s( std::data( shaderBytecode ), 
+			  std::size( shaderBytecode ), 
+			  pShaderBlob->GetBufferPointer(), 
+			  pShaderBlob->GetBufferSize() );
+
+	return std::move( shaderBytecode );
+}
+
+
+
 inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
 {
 	VkShaderModuleCreateInfo shaderModuleInfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
@@ -1954,6 +2134,95 @@ struct vk_gfx_pipeline_state
 	bool				depthTestEnable = true;
 	bool				blendCol = colorBlending;
 };
+
+
+using vk_shader_stage_list = std::initializer_list<VkPipelineShaderStageCreateInfo>;
+
+VkPipeline VkMakeGfxPipeline(
+	VkDevice			vkDevice,
+	VkPipelineCache		vkPipelineCache,
+	VkRenderPass		vkRndPass,
+	VkPipelineLayout	vkPipelineLayout,
+	vk_shader_stage_list stageList,
+	const vk_gfx_pipeline_state& pipelineState
+){
+	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+	inAsmStateInfo.topology = pipelineState.primTopology;
+
+	VkPipelineViewportStateCreateInfo viewportInfo = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+	viewportInfo.viewportCount = 1;
+	viewportInfo.scissorCount = 1;
+
+	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+	VkPipelineDynamicStateCreateInfo dynamicStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+	dynamicStateInfo.dynamicStateCount = std::size( dynamicStates );
+	dynamicStateInfo.pDynamicStates = dynamicStates;
+
+	// TODO: place inside if ?
+	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState =
+	{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT };
+	conservativeRasterState.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
+	conservativeRasterState.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize;
+
+	VkPipelineRasterizationStateCreateInfo rasterInfo = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+	rasterInfo.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0;
+	rasterInfo.depthClampEnable = 0;
+	rasterInfo.rasterizerDiscardEnable = 0;
+	rasterInfo.polygonMode = pipelineState.polyMode;
+	rasterInfo.cullMode = pipelineState.cullFlags;
+	rasterInfo.frontFace = pipelineState.frontFace;
+	rasterInfo.lineWidth = 1.0f;
+
+	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+	depthStencilState.depthTestEnable = pipelineState.depthTestEnable;
+	depthStencilState.depthWriteEnable = pipelineState.depthWrite;
+	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER;
+	depthStencilState.depthBoundsTestEnable = VK_TRUE;
+	depthStencilState.minDepthBounds = 0;
+	depthStencilState.maxDepthBounds = 1.0f;
+
+	VkPipelineColorBlendAttachmentState blendConfig = {};
+	blendConfig.blendEnable = pipelineState.blendCol;
+	blendConfig.srcColorBlendFactor = pipelineState.srcColorBlendFactor;
+	blendConfig.dstColorBlendFactor = pipelineState.dstColorBlendFactor;
+	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
+	blendConfig.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor;
+	blendConfig.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor;
+	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
+	blendConfig.colorWriteMask =
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+	colorBlendStateInfo.attachmentCount = 1;
+	colorBlendStateInfo.pAttachments = &blendConfig;
+
+	// TODO: only if we use frag
+	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+	pipelineInfo.stageCount = std::size( stageList );
+	pipelineInfo.pStages = std::data( stageList );
+	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
+	pipelineInfo.pInputAssemblyState = &inAsmStateInfo;
+	pipelineInfo.pViewportState = &viewportInfo;
+	pipelineInfo.pRasterizationState = &rasterInfo;
+	pipelineInfo.pMultisampleState = &multisamplingInfo;
+	pipelineInfo.pDepthStencilState = &depthStencilState;
+	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
+	pipelineInfo.pDynamicState = &dynamicStateInfo;
+	pipelineInfo.layout = vkPipelineLayout;
+	pipelineInfo.renderPass = vkRndPass;
+	pipelineInfo.basePipelineIndex = -1;
+
+	VkPipeline vkGfxPipeline;
+	VK_CHECK( vkCreateGraphicsPipelines( vkDevice, vkPipelineCache, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
+
+	return vkGfxPipeline;
+}
+
 // TODO: shader stages more general
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
@@ -2342,7 +2611,7 @@ struct hndl64
 {
 	u64 h = 0;
 
-	hndl64() = default;
+	inline hndl64() = default;
 	inline hndl64( u64 magkIdx ) : h{ magkIdx }{}
 	inline operator u64() const { return h; }
 };
@@ -2366,8 +2635,9 @@ inline hndl64<T> Hndl64FromMagicAndIdx( u64 m, u64 i )
 	return u64( ( m << 32 ) | i );
 }
 
+// TODO: handle removal of stuff
+// TODO: free list ?
 // TODO: handled container
-// TODO: extract magicId from resources ?
 template<typename T>
 struct resource_vector
 {
@@ -2398,7 +2668,7 @@ inline hndl64<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 
 
 static resource_vector<image> textures;
-
+static resource_vector<buffer_data> buffers;
 // TODO: recycle_queue for more objects
 // TODO: rethink
 // TODO: async 
@@ -3088,11 +3358,13 @@ static buffer_data materialsBuff;
 static buffer_data instDescBuff;
 static buffer_data lightsBuff;
 
+
+static buffer_data intermediateIndexBuff;
 static buffer_data indirectMergedIndexBuff;
 
-static buffer_data visibleInstsBuff;
-static buffer_data meshletIdBuff;
-static buffer_data visibleMeshletsBuff;
+//static buffer_data visibleInstsBuff;
+//static buffer_data meshletIdBuff;
+//static buffer_data visibleMeshletsBuff;
 
 static buffer_data drawCmdBuff;
 static buffer_data drawCmdAabbsBuff;
@@ -3539,41 +3811,25 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		vkRscArena );
 	VkDbgNameObj( drawCmdDbgBuff.hndl, dc.device, "Buff_Indirect_Dbg_Draw_Cmds" );
 
-	// TODO: use per wave stuff ?
-	drawVisibilityBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( u32 ),
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												  vkRscArena );
-	VkDbgNameObj( drawVisibilityBuff.hndl, dc.device, "Buff_Draw_Vis" );
+	// TODO: expose from asset compiler 
+	constexpr u64 MAX_TRIS = 256;
+	//u64 maxByteCountMergedIndexBuff = std::size( instDesc ) * ( meshletBuff.size / sizeof( meshlet ) ) * MAX_TRIS * 3ull;
+	u64 maxByteCountMergedIndexBuff = 10 * MB;
 
-
-	screenspaceBoxBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( dbg_vertex ) * 8,
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-												  vkRscArena );
-	VkDbgNameObj( screenspaceBoxBuff.hndl, dc.device, "Buff_Screenspace_Boxes" );
-
-	visibleInstsBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * 3 * sizeof( u32 ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-												vkRscArena );
-	visibleMeshletsBuff = VkCreateAllocBindBuffer( 10 * MB,//std::size( mletView ) * 3 * sizeof( u32 ),
-												   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-												   vkRscArena );
-
-	meshletIdBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( u64 ), 
-											 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
-											 vkRscArena );
-	VkDbgNameObj( meshletIdBuff.hndl, dc.device, "Buff_Meshlet_Dispatch_IDs" );
-
+	intermediateIndexBuff = VkCreateAllocBindBuffer(
+		maxByteCountMergedIndexBuff,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		vkRscArena );
+	VkDbgNameObj( intermediateIndexBuff.hndl, dc.device, "Buff_Intermediate_Idx" );
 
 	indirectMergedIndexBuff = VkCreateAllocBindBuffer( 
-		10 * MB,
-		//std::size( instDesc ) * fileDesc.idxRange.size, 
+		maxByteCountMergedIndexBuff,
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
 		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena );
+	VkDbgNameObj( indirectMergedIndexBuff.hndl, dc.device, "Buff_Merged_Idx" );
 
 	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
 												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
@@ -3762,7 +4018,7 @@ inline static void VkInitInternalBuffers()
 }
 
 // TODO: move out of global/static
-static vk_program	gfxMergedProgram = {};
+static vk_program gfxMergedProgram = {};
 static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
 static vk_program	cullCompProgram = {};
@@ -3827,7 +4083,7 @@ void VkBackendInit()
 
 
 	VkDescriptorPoolSize sizes[] = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, std::min( 1u, dc.gpuProps.limits.maxDescriptorSetStorageBuffers ) },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, dc.gpuProps.limits.maxDescriptorSetStorageBuffers / 16 },
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dc.gpuProps.limits.maxDescriptorSetUniformBuffers },
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, dc.gpuProps.limits.maxDescriptorSetSampledImages / 16 },
 		{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) },
@@ -3853,7 +4109,7 @@ void VkBackendInit()
 	
 	// TODO: separate resources into slots ?
 	vk_slot_list bindlessSlots = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_GLOBAL_SLOT_STORAGE_BUFFER, 1u }, 
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_GLOBAL_SLOT_STORAGE_BUFFER, 1 }, 
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8u },
 		// TODO: place mtrls and lights into uniforms ?
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_GLOBAL_SLOT_SAMPLED_IMAGE, 256 },
@@ -3891,7 +4147,6 @@ void VkBackendInit()
 	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
 
 
-	// TODO: remove .type. from shader use type prefix instead
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 
@@ -4124,10 +4379,8 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 }
 
 
-static buffer_data itermediateIndexBuff;
-static buffer_data mergedIndexBuff;
 // TODO: alloc buffers here
-// TODO: reduce the ammount of buffers
+// TODO: reduce the ammount of counter buffers
 // TODO: visibility buffer ( not the VBuffer ) check Aaltonen
 // TODO: revisit triangle culling ?
 // TODO: optimize expansion shader
@@ -4147,8 +4400,10 @@ CullPass(
 	vk_label label = { cmdBuff,"Cull Pass",{} };
 
 	vkCmdFillBuffer( cmdBuff, drawCountBuff.hndl, 0, drawCountBuff.size, 0u );
+
 	vkCmdFillBuffer( cmdBuff, drawCountDbgBuff.hndl, 0, drawCountDbgBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, meshletCountBuff.hndl, 0, meshletCountBuff.size, 0u );
+
 	vkCmdFillBuffer( cmdBuff, mergedIndexCountBuff.hndl, 0, mergedIndexCountBuff.size, 0u );
 	vkCmdFillBuffer( cmdBuff, drawMergedCountBuff.hndl, 0, drawMergedCountBuff.size, 0u );
 
@@ -4232,14 +4487,14 @@ CullPass(
 	dependency.pImageMemoryBarriers = &hiZReadBarrier;
 	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
 
-	VkDescriptorImageInfo depthPyramidInfo = { minQuadSampler, depthPyramid.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
-	
+	u32 instCount = instDescBuff.size / sizeof( instance_desc );
+
 	{
-		u32 instCount = instDescBuff.size / sizeof( instance_desc );
+		
 		struct { 
 			u64 instDescAddr = instDescBuff.devicePointer;
 			u64 meshDescAddr = meshBuff.devicePointer;
-			u64 visInstsAddr = visibleInstsBuff.devicePointer;
+			u64 visInstsAddr = intermediateIndexBuff.devicePointer;
 			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64 drawCounterAddr = drawCountBuff.devicePointer;
 			u64 dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
@@ -4277,9 +4532,9 @@ CullPass(
 
 		struct
 		{
-			u64 visInstAddr = visibleInstsBuff.devicePointer;
+			u64 visInstAddr = intermediateIndexBuff.devicePointer;
 			u64 visInstCountAddr = drawCountBuff.devicePointer;
-			u64 expandeeAddr = meshletIdBuff.devicePointer;
+			u64 expandeeAddr = indirectMergedIndexBuff.devicePointer;
 			u64 expandeeCountAddr = meshletCountBuff.devicePointer;
 			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64 dispatchCmdAddr = dispatchCmdBuff1.devicePointer;
@@ -4314,9 +4569,9 @@ CullPass(
 		struct { 
 			u64 instDescAddr = instDescBuff.devicePointer;
 			u64 meshletDescAddr = meshletBuff.devicePointer;
-			u64	inMeshletsIdAddr = meshletIdBuff.devicePointer;
+			u64	inMeshletsIdAddr = indirectMergedIndexBuff.devicePointer;
 			u64	inMeshletsCountAddr = meshletCountBuff.devicePointer;
-			u64	outMeshletsIdAddr = visibleMeshletsBuff.devicePointer;
+			u64	outMeshletsIdAddr = intermediateIndexBuff.devicePointer;
 			u64	outMeshletsCountAddr = drawCountDbgBuff.devicePointer;
 			u64	atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 			u64	dispatchCmdAddr = dispatchCmdBuff0.devicePointer;
@@ -4353,7 +4608,7 @@ CullPass(
 
 		struct { 
 			u64 meshletDataAddr = meshletDataBuff.devicePointer;
-			u64 visMeshletsAddr = visibleMeshletsBuff.devicePointer;
+			u64 visMeshletsAddr = intermediateIndexBuff.devicePointer;
 			u64 visMeshletsCountAddr = drawCountDbgBuff.devicePointer;
 			u64 mergedIdxBuffAddr = indirectMergedIndexBuff.devicePointer;
 			u64 mergedIdxCountAddr = mergedIndexCountBuff.devicePointer;
@@ -4847,9 +5102,8 @@ AverageLuminancePass(
 
 	vkCmdPushConstants( cmdBuff, avgProg.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( avgLumInfo ), &avgLumInfo );
 
-	vkCmdDispatch( cmdBuff,
-				   GroupCount( fboHdrColTrg.width, avgProg.groupSize.x ),
-				   GroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
+	vkCmdDispatch( 
+		cmdBuff, GroupCount( fboHdrColTrg.width, avgProg.groupSize.x ), GroupCount( fboHdrColTrg.height, avgProg.groupSize.y ), 1 );
 }
 
 // TODO: optimize
@@ -4910,11 +5164,12 @@ FinalCompositionPass(
 // TODO: recycle framebuffers better
 static std::vector<VkFramebuffer> recycleFboList;
 
-// TODO: pass cam data via push const
+
 void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
+	// TODO: don't expose math stuff here
 	using namespace DirectX;
-	//u64 timestamp = SysGetFileTimestamp( "D:\\EichenRepos\\QiY\\QiY\\Shaders\\pbr.frag.glsl" );
+	
 
 	u64 currentFrameIdx = rndCtx.vFrameIdx++;
 	u64 frameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
@@ -5192,17 +5447,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	static bool initBuffers = 0;
 	if( !initBuffers )
 	{
-		vkCmdFillBuffer( thisVFrame.cmdBuff, drawVisibilityBuff.hndl, 0, drawVisibilityBuff.size, 1U );
 		vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
 		// TODO: rename 
 		vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
 		
 		VkBufferMemoryBarrier2KHR initBuffersBarriers[] = {
-			VkMakeBufferBarrier2( drawVisibilityBuff.hndl,
-									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-									VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-									VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
 			VkMakeBufferBarrier2( depthAtomicCounterBuff.hndl,
 									VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 									VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
@@ -5239,7 +5488,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkClearValue clearVals[ 2 ] = {};
 
 		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, zPrepassProgram.pipeLayout, 0, 1, &frameDesc[ frameBufferedIdx ], 0, 0 );
+			thisVFrame.cmdBuff, 
+			VK_PIPELINE_BIND_POINT_GRAPHICS, 
+			zPrepassProgram.pipeLayout,
+			0, 1, &frameDesc[ frameBufferedIdx ], 0, 0 );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,

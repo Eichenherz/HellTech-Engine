@@ -76,8 +76,6 @@ struct global_data
 	float	pad0;
 	vec3	camViewDir;
 	float	pad1;
-	float   screenX;
-	float   screenY;
 };
 
 // TODO: compressed coords u8, u16
@@ -250,8 +248,9 @@ layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_da
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer device_addrs{ uint64_t deviceAddrs[]; };
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, rgba8 ) writeonly uniform coherent image2D swapchainViews[3];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, r32f ) writeonly uniform coherent image2D depthViews[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, rgba8 ) writeonly uniform coherent image2D swapchainViews[];
+
 
 global_data cam = globalsCam[ 0 ].g;
 
