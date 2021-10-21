@@ -127,6 +127,7 @@ inline void SysErrMsgBox( const char* str )
 // TODO: async
 // TODO: streaming
 // TODO: better file api
+// TODO: char vs wchar
 static inline u32 SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize )
 {
 	static_assert( sizeof( DWORD ) == sizeof( u32 ) );

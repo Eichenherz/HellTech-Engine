@@ -1752,7 +1752,7 @@ struct dxc_context
 	ComPtr<IDxcCompiler3> pCompiler;
 	ComPtr<IDxcUtils> pUtils;
 	ComPtr<IDxcValidator> pValidator;
-	ComPtr<IDxcIncludeHandler> includeHandler;
+	ComPtr<IDxcIncludeHandler> pIncludeHandler;
 };
 
 
@@ -1770,36 +1770,119 @@ inline dxc_context DxcCreateContext()
 	SUCCEEDED( DxcMakeInstance( CLSID_DxcUtils, IID_PPV_ARGS( ctx.pUtils.GetAddressOf() ) ) );
 	SUCCEEDED( DxcMakeInstance( CLSID_DxcValidator, IID_PPV_ARGS( ctx.pValidator.GetAddressOf() ) ) );
 
-	SUCCEEDED( ctx.pUtils->CreateDefaultIncludeHandler( &ctx.includeHandler ) );
+	SUCCEEDED( ctx.pUtils->CreateDefaultIncludeHandler( &ctx.pIncludeHandler ) );
 
 	return ctx;
 }
 
+// TODO: use DXC load funcs ?
+// TODO: better err handling
 using dxc_options = std::initializer_list<LPCWSTR>;
 inline std::vector<u8> DxcCompileShader( 
-	//LPCWSTR fileName,
-	const std::vector<u8>& hlslFile,
-	const dxc_context& ctx,
+	LPCSTR fileName,
+	dxc_context& ctx,
 	dxc_options compileOptions )
 {
-	DxcBuffer hlslFileDesc = {};
-	hlslFileDesc.Ptr = std::data( hlslFile );
-	hlslFileDesc.Size = std::size( hlslFile );
-	hlslFileDesc.Encoding = 0; // ?
+	using namespace std;
+
+	constexpr char dxcErr[] = { "DXC err in file : " };
+
+	std::vector<u8> hlslBlob = SysReadFile( fileName );
+	DxcBuffer hlslFileDesc = { std::data( hlslBlob ), std::size( hlslBlob ) };
+
+	// NOTE: stupid OOPs interface
+	class CustomIncludeHandler : public IDxcIncludeHandler
+	{
+	public:
+		std::vector<u64> hashedIncludeFileNames;
+
+		dxc_context& ctx;
+
+		inline CustomIncludeHandler( dxc_context& _ctx ) : ctx{ _ctx }{}
+
+		HRESULT STDMETHODCALLTYPE
+			LoadSource( _In_ LPCWSTR pFilename, _COM_Outptr_result_maybenull_ IDxcBlob** ppIncludeSource ) override
+		{
+			constexpr const wchar_t* pValidExtensions[] = { L"hlsli", L"h" };
+
+			std::wstring_view pathView = { pFilename };
+			std::wstring_view extView = { pFilename + pathView.find_last_of( L"." ) + 1 };
+
+			for( auto& extStr : pValidExtensions )
+			{
+				if( extView == extStr ) break;
+
+				else if( extView != extStr )
+				{
+					std::cout << "Include path does not have a valid extension" << '\n';
+					return E_FAIL;
+				}
+			}
+
+			ComPtr<IDxcBlobEncoding> pEncoding;
+
+			auto thisIncludeHash = std::hash<std::wstring_view>{}( pathView );
+			for( auto hash : hashedIncludeFileNames )
+			{
+				if( hash == thisIncludeHash )
+				{
+					static const char nullStr[] = " ";
+					ctx.pUtils->CreateBlob( nullStr, ARRAYSIZE( nullStr ), DXC_CP_UTF8, pEncoding.GetAddressOf() );
+					*ppIncludeSource = pEncoding.Detach();
+					return S_OK;
+				}
+			}
+
+
+			// TODO: find better way
+			char multibyteFilename[ 256 ] = {};
+			assert( std::wcslen( pFilename ) <= std::size( multibyteFilename ) );
+			std::wcstombs( multibyteFilename, pFilename, std::wcslen( pFilename ) );
+
+			std::vector<u8> hlslIncludeBlob = SysReadFile( multibyteFilename );
+
+			if( std::size( hlslIncludeBlob ) == 0 ) return E_FAIL;
+
+			*ppIncludeSource = 0;
+
+			HRESULT hr = ctx.pUtils->CreateBlob( 
+				std::data( hlslIncludeBlob ), std::size( hlslIncludeBlob ), DXC_CP_UTF8, pEncoding.GetAddressOf() );
+
+			if( SUCCEEDED( hr ) )
+			{
+				hashedIncludeFileNames.push_back( thisIncludeHash );
+				*ppIncludeSource = pEncoding.Detach();
+			}
+
+			return hr;
+		}
+
+		HRESULT STDMETHODCALLTYPE QueryInterface( REFIID riid, _COM_Outptr_ void __RPC_FAR* __RPC_FAR* ppvObject ) override
+		{
+			return ctx.pIncludeHandler->QueryInterface( riid, ppvObject );
+		}
+
+		ULONG STDMETHODCALLTYPE AddRef() override { return 0; }
+		ULONG STDMETHODCALLTYPE Release() override { return 0; }
+	};
+
+	CustomIncludeHandler includeHandler = { ctx };
+
 
 	ComPtr<IDxcResult> pCompileResult;
 	ctx.pCompiler->Compile(
 		&hlslFileDesc,
 		( LPCWSTR* ) std::data( compileOptions ),
 		std::size( compileOptions ),
-		0,//( IDxcIncludeHandler* ) ctx.includeHandler.GetAddressOf(),
+		&includeHandler,
 		IID_PPV_ARGS( pCompileResult.GetAddressOf() ) );
 
 	ComPtr<IDxcBlobUtf8> pErrors;
 	pCompileResult->GetOutput( DXC_OUT_ERRORS, IID_PPV_ARGS( pErrors.GetAddressOf() ), 0 );
 	if( pErrors && pErrors->GetStringLength() > 0 )
 	{
-		std::cout<< "DXC Error: " << ( char* ) pErrors->GetBufferPointer() << '\n';
+		std::cout<< "DXC " << ( char* ) pErrors->GetBufferPointer() << '\n';
+		assert( 0 );
 		return {};
 	}
 
@@ -3935,7 +4018,7 @@ inline static void VkInitInternalBuffers()
 }
 
 // TODO: move out of global/static
-static vk_program	gfxMergedProgram = {};
+static vk_program gfxMergedProgram = {};
 static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
 static vk_program	cullCompProgram = {};
@@ -4000,7 +4083,7 @@ void VkBackendInit()
 
 
 	VkDescriptorPoolSize sizes[] = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, std::min( 1u, dc.gpuProps.limits.maxDescriptorSetStorageBuffers ) },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, dc.gpuProps.limits.maxDescriptorSetStorageBuffers / 16 },
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dc.gpuProps.limits.maxDescriptorSetUniformBuffers },
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, dc.gpuProps.limits.maxDescriptorSetSampledImages / 16 },
 		{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) },
@@ -4026,7 +4109,7 @@ void VkBackendInit()
 	
 	// TODO: separate resources into slots ?
 	vk_slot_list bindlessSlots = {
-		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_GLOBAL_SLOT_STORAGE_BUFFER, 1u }, 
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_GLOBAL_SLOT_STORAGE_BUFFER, 1 }, 
 		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8u },
 		// TODO: place mtrls and lights into uniforms ?
 		{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_GLOBAL_SLOT_SAMPLED_IMAGE, 256 },
@@ -4063,45 +4146,6 @@ void VkBackendInit()
 	zRndPass = VkMakeRenderPass( dc.device, 0, -1, 1, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
 	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
 
-
-	dxc_context dxcCtx = DxcCreateContext();
-
-	std::vector<u8> hlslBlob = SysReadFile( "Shader.hlsl" );
-
-	dxc_options options = {
-		L"-spirv",
-		L"-fspv-target-env=vulkan1.2",
-		L"-T",
-		L"lib_6_6",
-		//L"-E",
-		//L"vs_main"
-	};
-
-	std::vector<u8> spvBytecode = DxcCompileShader( hlslBlob, dxcCtx, options );
-
-	VkShaderModule testModule = VkMakeShaderModule( dc.device, ( const u32* ) std::data( spvBytecode ), std::size( spvBytecode ) );
-
-	VkPipelineLayoutCreateInfo testPipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-	VkPipelineLayout testPipelineLayout = {};
-	VK_CHECK( vkCreatePipelineLayout( dc.device, &testPipeLayoutInfo, 0, &testPipelineLayout ) );
-
-
-	vk_shader_stage_list stageList = {
-		{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.stage = VK_SHADER_STAGE_VERTEX_BIT, 
-			.module = testModule, 
-			.pName = "vs_main"
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.stage = VK_SHADER_STAGE_FRAGMENT_BIT, 
-			.module = testModule, 
-			.pName = "ps_main"
-		} 
-	};
-
-	VkPipeline testPipeline = VkMakeGfxPipeline( dc.device, 0, rndCtx.renderPass, testPipelineLayout, stageList, {} );
 
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );

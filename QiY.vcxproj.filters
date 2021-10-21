@@ -140,4 +140,7 @@
     <CustomBuild Include="imgui\shader_imgui.vert.glsl" />
     <CustomBuild Include="imgui\shader_imgui.frag.glsl" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\imgui_gfx_lib.hlsl" />
+  </ItemGroup>
 </Project>

@@ -3,7 +3,6 @@
 #extension GL_ARB_shader_draw_parameters : require
 #extension GL_GOOGLE_include_directive : require
 
-// TODO: pass cam data diffrently
 #include "..\r_data_structs.h"
 
 layout( push_constant ) uniform block{
