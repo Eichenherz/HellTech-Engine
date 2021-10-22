@@ -235,7 +235,6 @@ const uint VK_GLOBAL_SLOT_UNIFORM_BUFFER = 1;
 const uint VK_GLOBAL_SLOT_SAMPLED_IMAGE = 2;
 const uint VK_GLOBAL_SLOT_SAMPLER = 3;
 const uint VK_GLOBAL_SLOT_STORAGE_IMAGE = 4;
-const uint VK_GLOBAL_SLOT_INLINE_UNIFORM = 5;
 
 const uint VK_FRAME_DESC_SET = 0;
 const uint VK_GLOBAL_DESC_SET = 1;
@@ -245,7 +244,11 @@ const uint VK_GLOBAL_DESC_SET = 1;
 #ifdef GLOBAL_RESOURCES
 
 layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data g; } globalsCam[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer device_addrs{ uint64_t deviceAddrs[]; };
+
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer vtx_buff{ vertex data[]; } buff0[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer inst_buff{ instance_desc data[]; } buff1[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer mlet_buff{ meshlet data[]; } buff2[];
+
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, rgba8 ) writeonly uniform coherent image2D swapchainViews[3];
