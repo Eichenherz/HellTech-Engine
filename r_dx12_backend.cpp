@@ -128,8 +128,8 @@ static dx12_device dx12Device;
 struct dx12_allocation
 {
 	ID3D12Heap1* mem;
-	UINT size;
-	UINT allocated;
+	UINT64 size;
+	UINT64 allocated;
 };
 
 struct dx12_mem_arena
@@ -143,9 +143,83 @@ struct dx12_mem_arena
 
 
 // NOTE: RTs will be alloc-ed separately
+// TODO: host visible textures ?
 static dx12_mem_arena dx12BufferArena;
 static dx12_mem_arena dx12TextureArena;
 static dx12_mem_arena dx12HostComArena;
+
+// TODO: check sizes and stuff
+// TODO: allow other uses
+// TODO: no asserts
+inline static D3D12_RESOURCE_DESC Dx12WriteBufferDesc( UINT size, D3D12_RESOURCE_FLAGS usg = D3D12_RESOURCE_FLAG_NONE )
+{
+	assert( usg == D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS || usg == D3D12_RESOURCE_FLAG_NONE );
+
+	D3D12_RESOURCE_DESC rscDesc = {};
+	rscDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	rscDesc.Alignment = 0;
+	rscDesc.Width = size;
+	rscDesc.Height = rscDesc.DepthOrArraySize = rscDesc.MipLevels = 1;
+	rscDesc.Format = DXGI_FORMAT_UNKNOWN;
+	rscDesc.SampleDesc = { 1,0 };
+	rscDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	rscDesc.Flags = ( usg == D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS ) ? usg : D3D12_RESOURCE_FLAG_NONE;
+
+	return rscDesc;
+}
+
+inline bool IsPowOf2( u64 addr )
+{
+	return !( addr & ( addr - 1 ) );
+}
+inline u64 FwdAlign( u64 addr, u64 alignment )
+{
+	assert( IsPowOf2( alignment ) );
+	u64 mod = addr & ( alignment - 1 );
+	return mod ? addr + ( alignment - mod ) : addr;
+}
+
+// TODO: no assert
+// TODO: heap alloc into it's own func ?
+// TODO: clear val ?
+inline static void Dx12MakeResourceAndPushWithHandle( 
+	ID3D12Device* pDevice, 
+	const D3D12_RESOURCE_DESC* rscDesc, 
+
+	dx12_mem_arena& rscArena 
+){
+	D3D12_RESOURCE_ALLOCATION_INFO allocInfo = pDevice->GetResourceAllocationInfo( 0, 1, rscDesc );
+	assert( allocInfo.SizeInBytes != UINT64_MAX );
+
+	dx12_allocation lastAlloc = ( !std::size( rscArena.allocs ) ) ? 
+		dx12_allocation{} : rscArena.allocs[ std::size( rscArena.allocs ) - 1 ];
+	UINT64 alignedAllocated = FwdAlign( lastAlloc.allocated, allocInfo.Alignment );
+	if( alignedAllocated + allocInfo.SizeInBytes > lastAlloc.size )
+	{
+		D3D12_HEAP_DESC heapDesc = {};
+		heapDesc.SizeInBytes = allocInfo.SizeInBytes;
+		heapDesc.Properties = rscArena.props;
+		heapDesc.Alignment = allocInfo.Alignment;
+		heapDesc.Flags = rscArena.usgFlags;
+
+		ID3D12Heap1* pHeap = 0;
+		HR_CHECK( pDevice->CreateHeap( &heapDesc, IID_PPV_ARGS( &pHeap ) ) );
+
+		rscArena.allocs.push_back( { pHeap, heapDesc.SizeInBytes, 0 } );
+	}
+
+	ID3D12Heap* pMem = rscArena.allocs[ std::size( rscArena.allocs ) - 1 ].mem;
+	UINT64 offset = rscArena.allocs[ std::size( rscArena.allocs ) - 1 ].allocated ;
+	rscArena.allocs[ std::size( rscArena.allocs ) - 1 ].allocated = alignedAllocated + allocInfo.SizeInBytes;
+
+
+	D3D12_RESOURCE_STATES rscInitialState = ( rscArena.props.Type == D3D12_HEAP_TYPE_UPLOAD ) ? 
+		D3D12_RESOURCE_STATE_GENERIC_READ : D3D12_RESOURCE_STATE_COMMON;
+
+	ID3D12Resource2* pRsc = 0;
+	HR_CHECK( pDevice->CreatePlacedResource( pMem, offset,rscDesc, rscInitialState, 0, IID_PPV_ARGS( &pRsc ) ) );
+	
+}
 
 inline void Dx12BackendInit()
 {
@@ -157,6 +231,7 @@ inline void Dx12BackendInit()
 	HR_CHECK( CreateDXGIFactoryProc( IID_PPV_ARGS( &pDxgiFactory ) ) );
 
 	dx12Device = Dx12CreateDeviceContext( pDxgiFactory );
+
 	dx12BufferArena = {
 		.props = {D3D12_HEAP_TYPE_DEFAULT,D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,D3D12_MEMORY_POOL_L1},
 		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS | D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS,
@@ -169,6 +244,9 @@ inline void Dx12BackendInit()
 	};
 	dx12HostComArena = {
 		.props = {D3D12_HEAP_TYPE_UPLOAD,D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE,D3D12_MEMORY_POOL_L0},
+		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS,
 		.defaultBlockSize = 256 * MB
 	};
+
+
 }
