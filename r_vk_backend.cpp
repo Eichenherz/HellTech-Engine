@@ -717,6 +717,7 @@ VkMakeMemoryArena(
 	return vkArena;
 }
 
+// TODO: offset the global, persistently mapped hostVisible pointer when sub-allocating
 // TODO: assert vs VK_CHECK vs default + warning
 // TODO: must alloc in block with BUFFER_ADDR
 inline vk_allocation
@@ -3512,7 +3513,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		( image_metadata* ) ( std::data( binaryData ) + fileFooter.imgsByteRange.offset ),
 		fileFooter.imgsByteRange.size / sizeof( image_metadata ) };
 
-	//assert( std::size( textures.rsc ) == 0 );
+
 	std::vector<material_data> mtrls = {};
 	for( const material_data& m : mtrlDesc )
 	{
