@@ -482,6 +482,9 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	
 	gpu_data gpuData = {};
 	frame_data frameData = {};
+
+	Dx12BackendInit();
+
 	VkBackendInit();
 
 	// NOTE: time is a double of seconds

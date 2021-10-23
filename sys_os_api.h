@@ -58,7 +58,7 @@ void			CoreLoop();
 extern void		VkBackendInit();
 extern void		HostFrames( const frame_data& frameData, gpu_data& gpuData );
 extern void		VkBackendKill();
-
+extern void     Dx12BackendInit();
 //////////////////////////////////////
 // PLATFORM -> ENGINE
 //////////////////////////////////////
