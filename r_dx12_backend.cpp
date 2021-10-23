@@ -43,18 +43,15 @@ struct dx12_device
 	ID3D12CommandQueue* pCmdQueue = 0;
 	ID3D12Fence1* pFence = 0;
 };
-// TODO: 
-inline static dx12_device Dx12CreateDeviceContext()
-{
-	typedef HRESULT( __stdcall* PFN_CreateDXGIFactory )( _In_ REFIID, _Out_ LPVOID* );
 
+
+inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
+{
 	HMODULE dx12AgilityDll = LoadLibraryA( "D3D12.dll" );
 	assert( dx12AgilityDll );
 	PFN_D3D12_CREATE_DEVICE D3D12CreateDeviceProc = ( PFN_D3D12_CREATE_DEVICE )GetProcAddress( dx12AgilityDll, "D3D12CreateDevice" );
 	PFN_D3D12_GET_DEBUG_INTERFACE D3D12GetDebugInterfaceProc =
 		( PFN_D3D12_GET_DEBUG_INTERFACE )GetProcAddress( dx12AgilityDll, "D3D12GetDebugInterface" );
-	PFN_CreateDXGIFactory CreateDXGIFactoryProc =
-		( PFN_CreateDXGIFactory ) GetProcAddress( LoadLibraryA( "dxgi.dll" ), "CreateDXGIFactory" );
 	
 #ifdef DX12_DEBUG
 	ID3D12Debug5* pDebug = 0;
@@ -62,9 +59,6 @@ inline static dx12_device Dx12CreateDeviceContext()
 	pDebug->EnableDebugLayer();
 	pDebug->Release();
 #endif
-
-	IDXGIFactory7* pDxgiFactory = 0;
-	HR_CHECK( CreateDXGIFactoryProc( IID_PPV_ARGS( &pDxgiFactory ) ) );
 
 	ID3D12Device9* pDevice = 0;
 	IDXGIAdapter4* pGpu = 0;
@@ -78,7 +72,9 @@ inline static dx12_device Dx12CreateDeviceContext()
 		HR_CHECK( D3D12CreateDeviceProc( pGpu, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS( &pDevice ) ) );
 		D3D12_FEATURE_DATA_SHADER_MODEL smLevel = { D3D_SHADER_MODEL_6_7 };
 		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_SHADER_MODEL, &smLevel, sizeof( smLevel ) ) );
-		D3D12_FEATURE_DATA_D3D12_OPTIONS d12Options = { .ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_3 };
+		D3D12_FEATURE_DATA_D3D12_OPTIONS d12Options = { 
+			.ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_3, 
+			.ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2 };
 		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_D3D12_OPTIONS, &d12Options, sizeof( d12Options ) ) );
 		// TODO: handle more stuff
 		break;
@@ -127,7 +123,52 @@ inline static dx12_device Dx12CreateDeviceContext()
 
 static dx12_device dx12Device;
 
+
+// TODO: add memory checks ?
+struct dx12_allocation
+{
+	ID3D12Heap1* mem;
+	UINT size;
+	UINT allocated;
+};
+
+struct dx12_mem_arena
+{
+	std::vector<dx12_allocation> allocs;
+	D3D12_HEAP_PROPERTIES props;
+	D3D12_HEAP_FLAGS usgFlags;
+	UINT defaultBlockSize;
+};
+
+
+
+// NOTE: RTs will be alloc-ed separately
+static dx12_mem_arena dx12BufferArena;
+static dx12_mem_arena dx12TextureArena;
+static dx12_mem_arena dx12HostComArena;
+
 inline void Dx12BackendInit()
 {
-	dx12Device = Dx12CreateDeviceContext();
+	typedef HRESULT( __stdcall* PFN_CreateDXGIFactory )( _In_ REFIID, _Out_ LPVOID* );
+	PFN_CreateDXGIFactory CreateDXGIFactoryProc =
+		( PFN_CreateDXGIFactory ) GetProcAddress( LoadLibraryA( "dxgi.dll" ), "CreateDXGIFactory" );
+
+	IDXGIFactory7* pDxgiFactory = 0;
+	HR_CHECK( CreateDXGIFactoryProc( IID_PPV_ARGS( &pDxgiFactory ) ) );
+
+	dx12Device = Dx12CreateDeviceContext( pDxgiFactory );
+	dx12BufferArena = {
+		.props = {D3D12_HEAP_TYPE_DEFAULT,D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,D3D12_MEMORY_POOL_L1},
+		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS | D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS,
+		.defaultBlockSize = 256 * MB
+	};
+	dx12TextureArena = {
+		.props = {D3D12_HEAP_TYPE_DEFAULT,D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,D3D12_MEMORY_POOL_L1},
+		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES | D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS,
+		.defaultBlockSize = 256 * MB
+	};
+	dx12HostComArena = {
+		.props = {D3D12_HEAP_TYPE_UPLOAD,D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE,D3D12_MEMORY_POOL_L0},
+		.defaultBlockSize = 256 * MB
+	};
 }
