@@ -32,6 +32,20 @@ do{																		\
 	}																	\
 }while( 0 )	
 
+#ifdef DX12_DEBUG
+
+#include <iostream>
+
+void Dx12ErrorCallback(
+	D3D12_MESSAGE_CATEGORY Category,
+	D3D12_MESSAGE_SEVERITY Severity,
+	D3D12_MESSAGE_ID ID,
+	LPCSTR pDescription,
+	void* pContext
+){
+	std::cout << ">>>DX12_ERROR<<<\n" << Category << '\n' << Severity << '\n' << pDescription << '\n';
+}
+#endif
 
 // NOTE: Dx12 Agility SDK
 extern "C" { __declspec( dllexport ) extern const UINT D3D12SDKVersion = 4; }
@@ -115,6 +129,10 @@ inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
 	filter.DenyList.NumIDs = std::size( msgFilter );
 	filter.DenyList.pIDList = msgFilter;
 	HR_CHECK( pInfoQueue->PushStorageFilter( &filter ) );
+
+	//DWORD callbackId = 0;
+	//HR_CHECK( pInfoQueue->RegisterMessageCallback( Dx12ErrorCallback, D3D12_MESSAGE_CALLBACK_FLAG_NONE, 0, &callbackId ) );
+	//assert( callbackId );
 	pInfoQueue->Release();
 #endif // DX12_DEBUG
 
@@ -127,15 +145,16 @@ static dx12_device dx12Device;
 // TODO: add memory checks ?
 struct dx12_allocation
 {
-	ID3D12Heap1* mem;
+	ID3D12Heap* mem;
 	UINT64 size;
 	UINT64 allocated;
 };
-
+// TODO: handle heap, uasge, rsc desc better
+// TODO: how to handle CUSTOM HEAPS when time comes ?
 struct dx12_mem_arena
 {
 	std::vector<dx12_allocation> allocs;
-	D3D12_HEAP_PROPERTIES props;
+	D3D12_HEAP_TYPE heapType;
 	D3D12_HEAP_FLAGS usgFlags;
 	UINT defaultBlockSize;
 };
@@ -149,7 +168,7 @@ static dx12_mem_arena dx12TextureArena;
 static dx12_mem_arena dx12HostComArena;
 
 // TODO: check sizes and stuff
-// TODO: allow other uses
+// TODO: allow other uses ?
 // TODO: no asserts
 inline static D3D12_RESOURCE_DESC Dx12WriteBufferDesc( UINT size, D3D12_RESOURCE_FLAGS usg = D3D12_RESOURCE_FLAG_NONE )
 {
@@ -179,16 +198,44 @@ inline u64 FwdAlign( u64 addr, u64 alignment )
 	return mod ? addr + ( alignment - mod ) : addr;
 }
 
+// TODO: handle GPU write back
+inline D3D12_HEAP_PROPERTIES Dx12MakeHeapPropsFromType( 
+	D3D12_HEAP_TYPE heapTypeFlags
+){
+	assert( heapTypeFlags != D3D12_HEAP_TYPE_CUSTOM );
+	D3D12_HEAP_PROPERTIES props = {};
+	props.Type = heapTypeFlags;
+	props.CPUPageProperty = ( heapTypeFlags == D3D12_HEAP_TYPE_UPLOAD ) ? 
+		D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE: D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+	return props;
+}
+
+inline static ID3D12Resource* Dx12CreateCommittedResource(
+	ID3D12Device9* pDevice,
+	const D3D12_RESOURCE_DESC& rscDesc,
+	D3D12_HEAP_TYPE heapType
+){
+	D3D12_HEAP_PROPERTIES heapProps = Dx12MakeHeapPropsFromType( heapType );
+	D3D12_RESOURCE_STATES rscInitialState = ( heapType == D3D12_HEAP_TYPE_UPLOAD ) ?
+		D3D12_RESOURCE_STATE_GENERIC_READ : D3D12_RESOURCE_STATE_COMMON;
+
+	ID3D12Resource* pRsc = 0;
+	HR_CHECK( pDevice->CreateCommittedResource( 
+		&heapProps, D3D12_HEAP_FLAG_NONE, &rscDesc, D3D12_RESOURCE_STATE_COMMON, 0, IID_PPV_ARGS( &pRsc ) ) );
+
+	return pRsc;
+}
 // TODO: no assert
 // TODO: heap alloc into it's own func ?
 // TODO: clear val ?
-inline static void Dx12MakeResourceAndPushWithHandle( 
-	ID3D12Device* pDevice, 
-	const D3D12_RESOURCE_DESC* rscDesc, 
-
+inline static ID3D12Resource* Dx12CreatePlacedResource(
+	ID3D12Device9* pDevice,
+	const D3D12_RESOURCE_DESC& rscDesc, 
 	dx12_mem_arena& rscArena 
 ){
-	D3D12_RESOURCE_ALLOCATION_INFO allocInfo = pDevice->GetResourceAllocationInfo( 0, 1, rscDesc );
+	D3D12_RESOURCE_ALLOCATION_INFO allocInfo = pDevice->GetResourceAllocationInfo( 0, 1, &rscDesc );
 	assert( allocInfo.SizeInBytes != UINT64_MAX );
 
 	dx12_allocation lastAlloc = ( !std::size( rscArena.allocs ) ) ? 
@@ -198,11 +245,11 @@ inline static void Dx12MakeResourceAndPushWithHandle(
 	{
 		D3D12_HEAP_DESC heapDesc = {};
 		heapDesc.SizeInBytes = allocInfo.SizeInBytes;
-		heapDesc.Properties = rscArena.props;
+		heapDesc.Properties = Dx12MakeHeapPropsFromType( rscArena.heapType );
 		heapDesc.Alignment = allocInfo.Alignment;
 		heapDesc.Flags = rscArena.usgFlags;
 
-		ID3D12Heap1* pHeap = 0;
+		ID3D12Heap* pHeap = 0;
 		HR_CHECK( pDevice->CreateHeap( &heapDesc, IID_PPV_ARGS( &pHeap ) ) );
 
 		rscArena.allocs.push_back( { pHeap, heapDesc.SizeInBytes, 0 } );
@@ -213,12 +260,13 @@ inline static void Dx12MakeResourceAndPushWithHandle(
 	rscArena.allocs[ std::size( rscArena.allocs ) - 1 ].allocated = alignedAllocated + allocInfo.SizeInBytes;
 
 
-	D3D12_RESOURCE_STATES rscInitialState = ( rscArena.props.Type == D3D12_HEAP_TYPE_UPLOAD ) ? 
+	D3D12_RESOURCE_STATES rscInitialState = ( rscArena.heapType == D3D12_HEAP_TYPE_UPLOAD ) ? 
 		D3D12_RESOURCE_STATE_GENERIC_READ : D3D12_RESOURCE_STATE_COMMON;
 
-	ID3D12Resource2* pRsc = 0;
-	HR_CHECK( pDevice->CreatePlacedResource( pMem, offset,rscDesc, rscInitialState, 0, IID_PPV_ARGS( &pRsc ) ) );
+	ID3D12Resource* pRsc = 0;
+	HR_CHECK( pDevice->CreatePlacedResource( pMem, offset, &rscDesc, D3D12_RESOURCE_STATE_COMMON, 0, IID_PPV_ARGS( &pRsc ) ) );
 	
+	return pRsc;
 }
 
 inline void Dx12BackendInit()
@@ -233,20 +281,23 @@ inline void Dx12BackendInit()
 	dx12Device = Dx12CreateDeviceContext( pDxgiFactory );
 
 	dx12BufferArena = {
-		.props = {D3D12_HEAP_TYPE_DEFAULT,D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,D3D12_MEMORY_POOL_L1},
+		.heapType = D3D12_HEAP_TYPE_DEFAULT,
 		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS | D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS,
 		.defaultBlockSize = 256 * MB
 	};
 	dx12TextureArena = {
-		.props = {D3D12_HEAP_TYPE_DEFAULT,D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,D3D12_MEMORY_POOL_L1},
+		.heapType = D3D12_HEAP_TYPE_DEFAULT,
 		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES | D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS,
 		.defaultBlockSize = 256 * MB
 	};
 	dx12HostComArena = {
-		.props = {D3D12_HEAP_TYPE_UPLOAD,D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE,D3D12_MEMORY_POOL_L0},
+		.heapType = D3D12_HEAP_TYPE_UPLOAD,
 		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS,
 		.defaultBlockSize = 256 * MB
 	};
 
+	auto schlong = Dx12CreateCommittedResource( dx12Device.pDevice, Dx12WriteBufferDesc( 1 * MB ), D3D12_HEAP_TYPE_DEFAULT );
+	auto dick = Dx12CreatePlacedResource( dx12Device.pDevice, Dx12WriteBufferDesc( 1 * MB ), dx12BufferArena );
 
+	UINT moreDick = 10000;
 }
