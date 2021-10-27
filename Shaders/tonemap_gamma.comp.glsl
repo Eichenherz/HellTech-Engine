@@ -14,7 +14,7 @@
 #include "..\r_data_structs.h"
 
 layout( binding = 0 ) uniform texture2D hdrColSrc;
-layout( binding = 1, rgba8 ) writeonly uniform coherent image2D sdrColDst;
+layout( binding = 1 ) writeonly uniform coherent image2D sdrColDst;
 layout( binding = 2 ) buffer avg_luminance
 {
 	float avgLum;
