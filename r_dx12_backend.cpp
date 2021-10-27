@@ -296,8 +296,13 @@ inline void Dx12BackendInit()
 		.defaultBlockSize = 256 * MB
 	};
 
-	auto schlong = Dx12CreateCommittedResource( dx12Device.pDevice, Dx12WriteBufferDesc( 1 * MB ), D3D12_HEAP_TYPE_DEFAULT );
-	auto dick = Dx12CreatePlacedResource( dx12Device.pDevice, Dx12WriteBufferDesc( 1 * MB ), dx12BufferArena );
+	ID3D12Device9* pDevice = dx12Device.pDevice;
+	constexpr UINT maxDescHeapSize = UINT16_MAX;
+	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+	heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	heapDesc.NumDescriptors = maxDescHeapSize;
+	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-	UINT moreDick = 10000;
+	ID3D12DescriptorHeap* pDescMem = 0;
+	HR_CHECK( pDevice->CreateDescriptorHeap( &heapDesc, IID_PPV_ARGS( &pDescMem ) ) );
 }
