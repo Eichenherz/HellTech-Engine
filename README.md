@@ -1,10 +1,11 @@
 # HellTech Engine
-An WIP exploration of the modern rendering landscape with Vulkan 1.2+ on Windows.
+An WIP exploration of the modern rendering landscape with Vulkan 1.2+ and DX12 on Windows.
 
 
 ### REQUIREMENTS:
 - Win10+
 - Vulkan1.2+
+- DX12 ( with sm6.6 support )
 - dedicated GPU ( ?, prefferably NV )
 
 
@@ -14,6 +15,7 @@ An WIP exploration of the modern rendering landscape with Vulkan 1.2+ on Windows
 - [spng](https://github.com/randy408/libspng)
 - [SPIRV-Reflect](https://github.com/KhronosGroup/SPIRV-Reflect)
 - [Dear ImGui](https://github.com/ocornut/imgui)
+- DirectXShaderCompiler ( comes with Win10SDK )
 
 ### POINTS OF INTEREST ( WIP ):
 - custom binary file format + asset compiler
