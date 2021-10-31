@@ -296,6 +296,7 @@
     <ClInclude Include="lz4.h" />
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
+    <ClInclude Include="r_dxc_compiler.cpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="spirv_reflect.h" />
     <ClInclude Include="spng.h" />
