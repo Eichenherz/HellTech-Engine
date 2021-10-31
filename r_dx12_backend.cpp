@@ -76,12 +76,17 @@ inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
 	{
 		pGpu->GetDesc3( &pGpuInfo );
 		HR_CHECK( D3D12CreateDeviceProc( pGpu, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS( &pDevice ) ) );
+
 		D3D12_FEATURE_DATA_SHADER_MODEL smLevel = { D3D_SHADER_MODEL_6_7 };
 		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_SHADER_MODEL, &smLevel, sizeof( smLevel ) ) );
+
 		D3D12_FEATURE_DATA_D3D12_OPTIONS d12Options = { 
 			.ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_3, 
 			.ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2 };
 		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_D3D12_OPTIONS, &d12Options, sizeof( d12Options ) ) );
+
+		D3D12_FEATURE_DATA_ROOT_SIGNATURE rootSignatureVer = { D3D_ROOT_SIGNATURE_VERSION_1_1 };
+		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_ROOT_SIGNATURE, &rootSignatureVer, sizeof( rootSignatureVer ) ) );
 		// TODO: handle more stuff
 		break;
 	}
@@ -706,4 +711,36 @@ inline void Dx12BackendInit()
 
 	IDXGISwapChain1* scOut = 0;
 	HR_CHECK( pDxgiFactory->CreateSwapChainForHwnd( dx12Device.pCmdQueue, hWnd, &scInfo, 0, 0, &scOut ) );
+
+
+	D3D12_ROOT_PARAMETER rootParameter = {};
+	rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+	rootParameter.Constants.Num32BitValues = 10;
+	rootParameter.Constants.RegisterSpace = 0;
+	rootParameter.Constants.ShaderRegister = 0;
+	D3D12_ROOT_SIGNATURE_DESC rootSignatureInfo = {};
+	rootSignatureInfo.Flags =
+		D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+	rootSignatureInfo.NumParameters = 1;
+	rootSignatureInfo.pParameters = &rootParameter;
+
+	ID3DBlob* pSignatureBlob;
+	ID3DBlob* pErrBlob;
+	// TODO: error blob ?
+	PFN_D3D12_SERIALIZE_ROOT_SIGNATURE  D3D12SerializeRootSignatureProc =
+		( PFN_D3D12_SERIALIZE_ROOT_SIGNATURE ) GetProcAddress( dx12AgilityDll, "D3D12SerializeRootSignature" );
+
+	if( FAILED( D3D12SerializeRootSignatureProc( 
+		&rootSignatureInfo, D3D_ROOT_SIGNATURE_VERSION_1_1, &pSignatureBlob, &pErrBlob ) ) )
+	{
+		assert( pErrBlob->GetBufferSize() );
+		std::cout << "DX12 ROOT SIGNATURE ERR: " << ( char* ) pErrBlob->GetBufferPointer() << '\n';
+		abort();
+	}
+
+	ID3D12RootSignature* globalRootSignature;
+	HR_CHECK( pDevice->CreateRootSignature(
+		0, pSignatureBlob->GetBufferPointer(), pSignatureBlob->GetBufferSize(), IID_PPV_ARGS( &globalRootSignature ) ) );
+
 }
