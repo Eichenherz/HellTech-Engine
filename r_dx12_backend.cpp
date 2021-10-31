@@ -727,12 +727,11 @@ inline void Dx12BackendInit()
 
 	ID3DBlob* pSignatureBlob;
 	ID3DBlob* pErrBlob;
-	// TODO: error blob ?
-	PFN_D3D12_SERIALIZE_ROOT_SIGNATURE  D3D12SerializeRootSignatureProc =
+	PFN_D3D12_SERIALIZE_ROOT_SIGNATURE D3D12SerializeRootSignatureProc =
 		( PFN_D3D12_SERIALIZE_ROOT_SIGNATURE ) GetProcAddress( dx12AgilityDll, "D3D12SerializeRootSignature" );
 
 	if( FAILED( D3D12SerializeRootSignatureProc( 
-		&rootSignatureInfo, D3D_ROOT_SIGNATURE_VERSION_1_1, &pSignatureBlob, &pErrBlob ) ) )
+		&rootSignatureInfo, D3D_ROOT_SIGNATURE_VERSION_1_0, &pSignatureBlob, &pErrBlob ) ) )
 	{
 		assert( pErrBlob->GetBufferSize() );
 		std::cout << "DX12 ROOT SIGNATURE ERR: " << ( char* ) pErrBlob->GetBufferPointer() << '\n';
