@@ -430,7 +430,9 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 
 		//VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
 		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+		//VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME,
 
+		//VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME,
 		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
@@ -585,7 +587,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 
 static device dc;
 
-
+// TODO: make this part of the device ?
 // TODO: move to memory section
 // TODO: pass VkPhysicalDevice differently
 // TODO: multi gpu ?
@@ -716,6 +718,7 @@ VkMakeMemoryArena(
 	return vkArena;
 }
 
+// TODO: offset the global, persistently mapped hostVisible pointer when sub-allocating
 // TODO: assert vs VK_CHECK vs default + warning
 // TODO: must alloc in block with BUFFER_ADDR
 inline vk_allocation
@@ -3511,7 +3514,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		( image_metadata* ) ( std::data( binaryData ) + fileFooter.imgsByteRange.offset ),
 		fileFooter.imgsByteRange.size / sizeof( image_metadata ) };
 
-	assert( std::size( textures.rsc ) == 0 );
+
 	std::vector<material_data> mtrls = {};
 	for( const material_data& m : mtrlDesc )
 	{
@@ -5220,7 +5223,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	{
 		constexpr VkFormat format = VK_FORMAT_D32_SFLOAT;
 		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-		rndCtx.depthTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		vk_image depthTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		rndCtx.depthTarget = depthTarget;
+		hndl64<vk_image> hDepthTrg = PushResourceToContainer( depthTarget, textures );
 		VkDbgNameObj( rndCtx.depthTarget.hndl, dc.device, "Img_Render_Target_Depth" );
 
 		
@@ -5233,7 +5238,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		constexpr VkImageUsageFlags hiZUsg =
 			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 		constexpr VkFormat depthFormat = VK_FORMAT_R32_SFLOAT;
-		rndCtx.depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { squareDim, squareDim, 1 }, hiZMipCount, vkAlbumArena );
+		vk_image depthPyramid = VkCreateAllocBindImage( depthFormat, hiZUsg, { squareDim, squareDim, 1 }, hiZMipCount, vkAlbumArena );
+		rndCtx.depthPyramid = depthPyramid;
+		hndl64<vk_image> hHiZ = PushResourceToContainer( depthTarget, textures );
 		VkDbgNameObj( rndCtx.depthPyramid.hndl, dc.device, "Img_Depth_Pyramid" );
 
 		for( u64 i = 0; i < rndCtx.depthPyramid.mipCount; ++i )
@@ -5287,7 +5294,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		constexpr VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
 		constexpr VkImageUsageFlags usgFlags =
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-		rndCtx.colorTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		vk_image colorTarget = VkCreateAllocBindImage( format, usgFlags, { sc.width,sc.height,1 }, 1, vkAlbumArena );
+		rndCtx.colorTarget = colorTarget;
+		hndl64<vk_image> colTrg = PushResourceToContainer( colorTarget, textures );
 		VkDbgNameObj( rndCtx.colorTarget.hndl, dc.device, "Img_Render_Target_Color" );
 
 		VkImageMemoryBarrier2KHR initBarrier = VkMakeImageBarrier2(
