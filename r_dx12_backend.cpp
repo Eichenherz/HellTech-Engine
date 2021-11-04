@@ -87,6 +87,9 @@ inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
 
 		D3D12_FEATURE_DATA_ROOT_SIGNATURE rootSignatureVer = { D3D_ROOT_SIGNATURE_VERSION_1_1 };
 		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_ROOT_SIGNATURE, &rootSignatureVer, sizeof( rootSignatureVer ) ) );
+
+		D3D12_FEATURE_DATA_D3D12_OPTIONS3 options3 = {};
+		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_D3D12_OPTIONS3, &options3, sizeof( options3 ) ) );
 		// TODO: handle more stuff
 		break;
 	}
@@ -418,6 +421,8 @@ struct shader_file_keyval
 	UINT64 timestamp;  
 	IDxcBlobEncoding* pEncoding; 
 };
+// NOTE: must set additional dll path for dxil.dll
+// TODO: add path programatically ?
 struct dxc_context
 {
 	IDxcCompiler3* pCompiler;
@@ -433,6 +438,7 @@ struct dxc_context
 // TODO: no assert
 inline dxc_context DxcCreateContext()
 {
+	assert( SetDllDirectoryA("C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.22000.0\\x64"));
 	HMODULE dll = LoadLibraryA( "dxcompiler.dll" );
 	assert( dll );
 	DxcCreateInstanceProc DxcMakeInstanceProc = ( DxcCreateInstanceProc ) GetProcAddress( dll, "DxcCreateInstance" );
@@ -446,6 +452,41 @@ inline dxc_context DxcCreateContext()
 	HR_CHECK( ctx.pUtils->CreateDefaultIncludeHandler( &ctx.pIncludeHandler ) );
 
 	return ctx;
+}
+
+
+// TODO: own string stuff
+// NOTE: from http://0x80.pl/articles/simd-strfind.html
+#include <immintrin.h>
+UINT64 FindSubstringAvx( const char* str, UINT64 strSize, const char* needle, UINT64 needleSize )
+{
+	const __m256i first = _mm256_set1_epi8( needle[ 0 ] );
+	const __m256i last = _mm256_set1_epi8( needle[ needleSize - 1 ] );
+
+	for( UINT64 i = 0; i < strSize; i += 32 )
+	{
+		const __m256i blockFirst = _mm256_loadu_si256( ( const __m256i* )( str + i ) );
+		const __m256i blockLast = _mm256_loadu_si256( ( const __m256i* )( str + i + needleSize - 1 ) );
+
+		const __m256i eqFirst = _mm256_cmpeq_epi8( first, blockFirst );
+		const __m256i eqLast = _mm256_cmpeq_epi8( last, blockLast );
+
+		UINT mask = _mm256_movemask_epi8( _mm256_and_si256( eqFirst, eqLast ) );
+
+		while( mask != 0 )
+		{
+			UINT32 bitPos = _tzcnt_u32( mask );
+
+			if( std::memcmp( str + i + bitPos + 1, needle + 1, needleSize - 2 ) == 0 )
+			{
+				return i + bitPos;
+			}
+
+			mask = mask & ( mask - 1 );
+		}
+	}
+
+	return -1;
 }
 
 // TODO: revisit
@@ -511,7 +552,7 @@ inline IDxcBlob* DxcCompileShader(
 	bool compileToSpirv,
 	dxc_context& ctx
 ){
-	// NOTE: stupid OOPs interface
+	// NOTE: OOPs interface
 	struct CustomIncludeHandler : public IDxcIncludeHandler
 	{
 		dxc_context& ctx;
@@ -548,9 +589,17 @@ inline IDxcBlob* DxcCompileShader(
 	HR_CHECK( pCompileResult->GetOutput( DXC_OUT_ERRORS, IID_PPV_ARGS( &pErrors ), 0 ) );
 	if( pErrors && pErrors->GetStringLength() > 0 )
 	{
-		std::cout << "DXC Compile Error: " << ( char* ) pErrors->GetBufferPointer() << '\n';
-		assert( 0 );
-		return {};
+		const char* errStr = ( char* ) pErrors->GetBufferPointer();
+		UINT64 errStrSize = pErrors->GetBufferSize();
+		constexpr char needle[] = { "error:" };
+
+		std::cout << "DXC Compile Error: \n" << ( char* ) pErrors->GetBufferPointer() << '\n';
+
+		if( FindSubstringAvx( errStr, errStrSize, needle, std::size( needle ) - 1 ) != UINT64( -1 ) )
+		{
+			assert( 0 );
+			return {};
+		}
 	}
 
 	IDxcBlob* pShaderBlob;
@@ -578,6 +627,74 @@ inline IDxcBlob* DxcCompileShader(
 	return pShaderBlob;
 }
 
+// NOTE: don't care about alignment
+struct dx12_pso_config
+{
+	BOOL blend;
+	D3D12_BLEND    srcBlend;
+	D3D12_BLEND    dstBlend;
+	D3D12_BLEND    srcAlphaBlend;
+	D3D12_BLEND    dstAlphaBlend;
+
+	D3D12_FILL_MODE fillMode;
+	D3D12_CULL_MODE cullMode;
+	BOOL counterClockwiseFrontface;
+	D3D12_CONSERVATIVE_RASTERIZATION_MODE conservativeRaster;
+
+	BOOL depthEnable;
+
+	D3D12_PRIMITIVE_TOPOLOGY_TYPE topology;
+};
+
+// TODO: handle more render targets ?
+ID3D12PipelineState* Dx12MakeGraphicsPso( 
+	ID3D12Device9* pDevice, 
+	ID3D12RootSignature* pRootSignature,
+	IDxcBlob* vsBytecode,
+	IDxcBlob* psBytecode,
+	DXGI_FORMAT renderTargetFormat,
+	DXGI_FORMAT depthStencilFormat,
+	const dx12_pso_config& psoConfig
+){
+	D3D12_RENDER_TARGET_BLEND_DESC renderTargetBlendInfo = {};
+	renderTargetBlendInfo.BlendEnable = psoConfig.blend;
+	renderTargetBlendInfo.SrcBlend = psoConfig.srcBlend;
+	renderTargetBlendInfo.DestBlend = psoConfig.dstBlend;
+	renderTargetBlendInfo.BlendOp = D3D12_BLEND_OP_ADD;
+	renderTargetBlendInfo.SrcBlendAlpha = psoConfig.srcAlphaBlend;
+	renderTargetBlendInfo.DestBlendAlpha = psoConfig.dstAlphaBlend;
+	renderTargetBlendInfo.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+
+	D3D12_RASTERIZER_DESC rasterizerInfo = {};
+	rasterizerInfo.FillMode = psoConfig.fillMode;
+	rasterizerInfo.CullMode = psoConfig.cullMode;
+	rasterizerInfo.FrontCounterClockwise = psoConfig.counterClockwiseFrontface;
+	rasterizerInfo.ConservativeRaster = psoConfig.conservativeRaster;
+	
+	D3D12_DEPTH_STENCIL_DESC depthStencilInfo = {};
+	depthStencilInfo.DepthEnable = psoConfig.depthEnable;
+	depthStencilInfo.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoInfo = {};
+	psoInfo.pRootSignature = pRootSignature;
+	psoInfo.VS = { vsBytecode->GetBufferPointer(),vsBytecode->GetBufferSize() };
+	psoInfo.PS = { psBytecode->GetBufferPointer(),psBytecode->GetBufferSize() };
+	D3D12_BLEND_DESC blendInfo = {};
+	blendInfo.RenderTarget[ 0 ] = renderTargetBlendInfo;
+	psoInfo.BlendState = blendInfo;
+	psoInfo.RasterizerState = rasterizerInfo;
+	psoInfo.DepthStencilState = depthStencilInfo;
+	psoInfo.PrimitiveTopologyType = psoConfig.topology;
+	psoInfo.NumRenderTargets = 1;
+	psoInfo.RTVFormats[ 0 ] = renderTargetFormat;
+	psoInfo.DSVFormat = depthStencilFormat;
+	psoInfo.SampleDesc = { 1,0 };
+	
+	ID3D12PipelineState* pso;
+	HR_CHECK( pDevice->CreateGraphicsPipelineState( &psoInfo, IID_PPV_ARGS( &pso ) ) );
+}
+
+
 inline void Dx12BackendInit()
 {
 	HMODULE dx12AgilityDll = LoadLibraryA( "D3D12.dll" );
@@ -587,7 +704,7 @@ inline void Dx12BackendInit()
 	assert( dxgiDll );
 
 
-	using PFN_CreateDXGIFactory2 = HRESULT( __stdcall* )( _In_ UINT,_In_ REFIID, _Out_ LPVOID* );
+	using PFN_CreateDXGIFactory2 = HRESULT( __stdcall* )( _In_ UINT, _In_ REFIID, _Out_ LPVOID* );
 
 	PFN_CreateDXGIFactory2 CreateDXGIFactoryProc2 = ( PFN_CreateDXGIFactory2 ) GetProcAddress( dxgiDll, "CreateDXGIFactory2" );
 
@@ -602,7 +719,7 @@ inline void Dx12BackendInit()
 
 	using PFN_DXGIGetDebugInterface1 = HRESULT( WINAPI* )( UINT, REFIID, _COM_Outptr_ void** );
 
-	PFN_DXGIGetDebugInterface1 DXGIGetDebugInterface1Proc = 
+	PFN_DXGIGetDebugInterface1 DXGIGetDebugInterface1Proc =
 		( PFN_DXGIGetDebugInterface1 ) GetProcAddress( dxgiDll, "DXGIGetDebugInterface1" );
 
 	PFN_D3D12_GET_DEBUG_INTERFACE D3D12GetDebugInterfaceProc =
@@ -653,11 +770,11 @@ inline void Dx12BackendInit()
 		.maxSize = UINT16_MAX,
 		.count = 0
 	};
-	
-	D3D12_DESCRIPTOR_HEAP_DESC descHeapInfo = { 
-		.Type = dx12RscDescHeap.descType, 
-		.NumDescriptors = dx12RscDescHeap.maxSize, 
-		.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE 
+
+	D3D12_DESCRIPTOR_HEAP_DESC descHeapInfo = {
+		.Type = dx12RscDescHeap.descType,
+		.NumDescriptors = dx12RscDescHeap.maxSize,
+		.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 	};
 	HR_CHECK( dx12Device.pDevice->CreateDescriptorHeap( &descHeapInfo, IID_PPV_ARGS( &dx12RscDescHeap.heap ) ) );
 
@@ -676,7 +793,7 @@ inline void Dx12BackendInit()
 	auto viewDescPair = Dx12MakeResourceViewPairFromBufferDesc( buffDesc, 0 );
 	pDevice->CreateShaderResourceView(
 		pRsc, &viewDescPair.first, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.srv ) ) );
-	pDevice->CreateUnorderedAccessView( 
+	pDevice->CreateUnorderedAccessView(
 		pRsc, 0, &viewDescPair.second, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.uav ) ) );
 
 
@@ -730,7 +847,7 @@ inline void Dx12BackendInit()
 	PFN_D3D12_SERIALIZE_ROOT_SIGNATURE D3D12SerializeRootSignatureProc =
 		( PFN_D3D12_SERIALIZE_ROOT_SIGNATURE ) GetProcAddress( dx12AgilityDll, "D3D12SerializeRootSignature" );
 
-	if( FAILED( D3D12SerializeRootSignatureProc( 
+	if( FAILED( D3D12SerializeRootSignatureProc(
 		&rootSignatureInfo, D3D_ROOT_SIGNATURE_VERSION_1_0, &pSignatureBlob, &pErrBlob ) ) )
 	{
 		assert( pErrBlob->GetBufferSize() );
@@ -742,4 +859,39 @@ inline void Dx12BackendInit()
 	HR_CHECK( pDevice->CreateRootSignature(
 		0, pSignatureBlob->GetBufferPointer(), pSignatureBlob->GetBufferSize(), IID_PPV_ARGS( &globalRootSignature ) ) );
 
+
+	dxc_context dxc = DxcCreateContext();
+
+	std::vector<u8> hlslBlob = SysReadFile( "Shaders/imgui.hlsl" );
+	constexpr LPCWSTR vsDxcOptions[] = {
+		L"-T", L"vs_6_6",
+		L"-E", L"VsMain",
+		L"-Zi" };
+	
+	IDxcBlob* vsDxilBlob = DxcCompileShader( hlslBlob, ( LPCWSTR* ) vsDxcOptions, std::size( vsDxcOptions ), false, dxc );
+
+	constexpr LPCWSTR psDxcOptions[] = {
+		L"-T", L"ps_6_6",
+		L"-E", L"PsMain",
+		L"-Zi" };
+
+	IDxcBlob* psDxilBlob = DxcCompileShader( hlslBlob, ( LPCWSTR* ) psDxcOptions, std::size( psDxcOptions ), false, dxc );
+
+	constexpr dx12_pso_config imguiPsoConfig = {
+		.blend = TRUE,
+		.srcBlend = D3D12_BLEND_SRC_ALPHA,
+		.dstBlend = D3D12_BLEND_INV_SRC_ALPHA,
+		.srcAlphaBlend = D3D12_BLEND_ONE,
+		.dstAlphaBlend = D3D12_BLEND_INV_SRC_ALPHA,
+		.fillMode = D3D12_FILL_MODE_SOLID,
+		.cullMode = D3D12_CULL_MODE_NONE,
+		.counterClockwiseFrontface = TRUE,
+		.conservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF,
+		.depthEnable = FALSE,
+		.topology = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE
+	};
+
+	ID3D12PipelineState* imguiPso = Dx12MakeGraphicsPso(
+		dx12Device.pDevice, globalRootSignature, vsDxilBlob, psDxilBlob,
+		DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_D32_FLOAT, imguiPsoConfig );
 }

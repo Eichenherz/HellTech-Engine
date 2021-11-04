@@ -117,6 +117,7 @@
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
     <CustomBuildAfterTargets>ClCompile</CustomBuildAfterTargets>
+    <ReferencePath>$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll;$(ReferencePath)</ReferencePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
@@ -412,6 +413,11 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">4.0</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">Compute</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">4.0</ShaderModel>
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\imgui.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
