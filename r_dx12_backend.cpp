@@ -55,13 +55,20 @@ extern "C" { __declspec( dllexport ) extern LPCSTR D3D12SDKPath = ".\\D3D12\\"; 
 // TODO: not global ?
 PFN_D3D12_CREATE_DEVICE D3D12CreateDeviceProc;
 
-
+// TODO: better queue + fence abstraction
+enum dx12_queue_id : UINT8
+{
+	DX12_QUEUE_ID_DIRECT,
+	DX12_QUEUE_ID_COMPUTE,
+	DX12_QUEUE_ID_COUNT
+};
 
 struct dx12_device
 {
-	ID3D12Device9* pDevice = 0;
-	ID3D12CommandQueue* pCmdQueue = 0;
-	ID3D12Fence1* pFence = 0;
+	ID3D12Device9* pDevice;
+	ID3D12CommandQueue* pCmdQueues[ DX12_QUEUE_ID_COUNT ];
+	ID3D12Fence1* pFences[ DX12_QUEUE_ID_COUNT ];
+	UINT64 fenceCounters[ DX12_QUEUE_ID_COUNT ];
 };
 
 inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
@@ -95,18 +102,21 @@ inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
 	}
 	pGpu->Release();
 
-	ID3D12CommandQueue* pCmdQueue = 0;
-	D3D12_COMMAND_QUEUE_DESC queueDesc = { .Type = D3D12_COMMAND_LIST_TYPE_DIRECT };
-	HR_CHECK( pDevice->CreateCommandQueue( &queueDesc, IID_PPV_ARGS( &pCmdQueue ) ) );
+	ID3D12CommandQueue* pCmdQueues[ DX12_QUEUE_ID_COUNT ];
+	D3D12_COMMAND_QUEUE_DESC directDueueDesc = { .Type = D3D12_COMMAND_LIST_TYPE_DIRECT };
+	HR_CHECK( pDevice->CreateCommandQueue( &directDueueDesc, IID_PPV_ARGS( &pCmdQueues[ 0 ] ) ) );
 
-	ID3D12Fence1* pFence = 0;
-	// TODO: shared fences ?
-	HR_CHECK( pDevice->CreateFence( 0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS( &pFence ) ) );
+	D3D12_COMMAND_QUEUE_DESC computeQueueDesc = { .Type = D3D12_COMMAND_LIST_TYPE_COMPUTE };
+	HR_CHECK( pDevice->CreateCommandQueue( &computeQueueDesc, IID_PPV_ARGS( &pCmdQueues[ 1 ] ) ) );
+
+	ID3D12Fence1* pFences[ DX12_QUEUE_ID_COUNT ];
+	HR_CHECK( pDevice->CreateFence( 0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS( &pFences[ 0 ] ) ) );
+	HR_CHECK( pDevice->CreateFence( 0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS( &pFences[ 1 ] ) ) );
 
 
 
 #ifdef DX12_DEBUG
-	ID3D12InfoQueue* pInfoQueue = 0;
+	ID3D12InfoQueue* pInfoQueue;
 	HR_CHECK( pDevice->QueryInterface( &pInfoQueue ) );
 	HR_CHECK( pInfoQueue->SetBreakOnSeverity( D3D12_MESSAGE_SEVERITY_CORRUPTION, true ) );
 	HR_CHECK( pInfoQueue->SetBreakOnSeverity( D3D12_MESSAGE_SEVERITY_ERROR, true ) );
@@ -136,7 +146,14 @@ inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
 	pInfoQueue->Release();
 #endif // DX12_DEBUG
 
-	return{ pDevice,pCmdQueue,pFence };
+	dx12_device dc = {};
+	dc.pDevice = pDevice;
+	dc.pCmdQueues[ 0 ] = pCmdQueues[ 0 ];
+	dc.pCmdQueues[ 1 ] = pCmdQueues[ 1 ];
+	dc.pFences[ 0 ] = pFences[ 0 ];
+	dc.pFences[ 1 ] = pFences[ 1 ];
+
+	return dc;
 }
 
 static dx12_device dx12Device;
@@ -695,6 +712,79 @@ ID3D12PipelineState* Dx12MakeGraphicsPso(
 }
 
 
+struct virtual_frame
+{
+	ID3D12CommandAllocator* pCmdAllocators[ DX12_QUEUE_ID_COUNT ];
+	ID3D12GraphicsCommandList1* pCmdLists[ DX12_QUEUE_ID_COUNT ];
+};
+constexpr UINT64 maxDx12FramesInFlight = 2;
+static virtual_frame virtualFrames[ maxDx12FramesInFlight ];
+
+inline static virtual_frame Dx12MakeVirtualFrame( ID3D12Device9* pDevice )
+{
+	ID3D12CommandAllocator* pCmdAllocators[ DX12_QUEUE_ID_COUNT ];
+	HR_CHECK( pDevice->CreateCommandAllocator( D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS( &pCmdAllocators[ 0 ] ) ) );
+	HR_CHECK( pDevice->CreateCommandAllocator( D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS( &pCmdAllocators[ 1 ] ) ) );
+
+	ID3D12GraphicsCommandList1* pCmdLists[ DX12_QUEUE_ID_COUNT ];
+	HR_CHECK( pDevice->CreateCommandList( 
+		0, D3D12_COMMAND_LIST_TYPE_DIRECT, pCmdAllocators[ 0 ], 0, IID_PPV_ARGS( &pCmdLists[ 0 ] ) ) );
+	HR_CHECK( pDevice->CreateCommandList( 
+		0, D3D12_COMMAND_LIST_TYPE_COMPUTE, pCmdAllocators[ 1 ], 0, IID_PPV_ARGS( &pCmdLists[ 1 ] ) ) );
+
+
+	virtual_frame vf = {};
+	vf.pCmdAllocators[ 0 ] = pCmdAllocators[ 0 ];
+	vf.pCmdAllocators[ 1 ] = pCmdAllocators[ 1 ];
+	vf.pCmdLists[ 0 ] = pCmdLists[ 0 ];
+	vf.pCmdLists[ 1 ] = pCmdLists[ 1 ];
+	return vf;
+}
+
+// TODO: revisit when compute writable swapchain is supported
+struct dx12_swapchain
+{
+	IDXGISwapChain1* sc;
+	DXGI_FORMAT format;
+	UINT16 width;
+	UINT16 height;
+	UINT8 bufferCount;
+};
+
+inline static dx12_swapchain Dx12MakeSwapchain( 
+	IDXGIFactory7* pDxgiFactory, 
+	ID3D12CommandQueue* pGfxCmdQueue, 
+	HWND hwnd,
+	DXGI_FORMAT scFormat,
+	UINT32 scWidth,
+	UINT32 scHeight,
+	UINT32 scBufferCount
+){
+	DXGI_SWAP_CHAIN_DESC1 scInfo = {};
+	scInfo.Width = scWidth;
+	scInfo.Height = scHeight;
+	scInfo.Format = scFormat;
+	scInfo.Stereo = false;
+	scInfo.SampleDesc = { 1,0 };
+	scInfo.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	scInfo.BufferCount = scBufferCount;
+	scInfo.Scaling = DXGI_SCALING_NONE;
+	scInfo.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	scInfo.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+
+	IDXGISwapChain1* sc;
+	HR_CHECK( pDxgiFactory->CreateSwapChainForHwnd( pGfxCmdQueue, hwnd, &scInfo, 0, 0, &sc ) );
+
+	return { 
+		.sc = sc, 
+		.format = scInfo.Format, 
+		.width = (UINT16)scInfo.Width, 
+		.height = (UINT16) scInfo.Height, 
+		.bufferCount = (UINT8) scInfo.BufferCount };
+}
+
+static dx12_swapchain dx12Swapchain;
+
 inline void Dx12BackendInit()
 {
 	HMODULE dx12AgilityDll = LoadLibraryA( "D3D12.dll" );
@@ -796,38 +886,10 @@ inline void Dx12BackendInit()
 	pDevice->CreateUnorderedAccessView(
 		pRsc, 0, &viewDescPair.second, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.uav ) ) );
 
-
-	struct dx12_swapchain
-	{
-		IDXGISwapChain1* sc;
-		DXGI_FORMAT format;
-		DXGI_USAGE usg;
-		UINT16 width;
-		UINT16 height;
-		UINT8 bufferCount;
-	};
-
-	//DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM;
-	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	// TODO: can't comptue write to sc, this sucks
-	DXGI_USAGE usg = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-
-	dx12_swapchain sc = {};
-
-	DXGI_SWAP_CHAIN_DESC1 scInfo = {};
-	scInfo.Width = sc.width = SCREEN_WIDTH;
-	scInfo.Height = sc.height = SCREEN_HEIGHT;
-	scInfo.Format = sc.format = format;
-	scInfo.Stereo = false;
-	scInfo.SampleDesc = { 1,0 };
-	scInfo.BufferUsage = sc.usg = usg;
-	scInfo.BufferCount = sc.bufferCount = 3;
-	scInfo.Scaling = DXGI_SCALING_NONE;
-	scInfo.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	scInfo.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-
-	IDXGISwapChain1* scOut = 0;
-	HR_CHECK( pDxgiFactory->CreateSwapChainForHwnd( dx12Device.pCmdQueue, hWnd, &scInfo, 0, 0, &scOut ) );
+	// TODO: do it in the render loop as it can be dynamic
+	DXGI_FORMAT scFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+	dx12Swapchain = Dx12MakeSwapchain(
+		pDxgiFactory, dx12Device.pCmdQueues[ DX12_QUEUE_ID_DIRECT ], hWnd, scFormat, SCREEN_WIDTH, SCREEN_HEIGHT, 3 );
 
 
 	D3D12_ROOT_PARAMETER rootParameter = {};
@@ -894,4 +956,14 @@ inline void Dx12BackendInit()
 	ID3D12PipelineState* imguiPso = Dx12MakeGraphicsPso(
 		dx12Device.pDevice, globalRootSignature, vsDxilBlob, psDxilBlob,
 		DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_D32_FLOAT, imguiPsoConfig );
+
+	for( virtual_frame& vf : virtualFrames ) vf = Dx12MakeVirtualFrame( dx12Device.pDevice );
+
+
+}
+
+
+void Dx12HostFrames()
+{
+
 }
