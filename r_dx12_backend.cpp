@@ -1,9 +1,5 @@
 #define DX12_DEBUG
 
-// TODO: don't really need this
-#include <vector>
-#include "sys_os_api.h"
-
 // TODO: use C interface ?
 //#define CINTERFACE
 #include <include\d3d12.h>
@@ -16,6 +12,11 @@
 #include <dxgi1_6.h>
 #include <dxgidebug.h>
 #include <dxcapi.h>
+
+// TODO: don't really need this
+#include <vector>
+#include "sys_os_api.h"
+
 
 #define HR_CHECK( func )												\
 do{																		\
@@ -51,6 +52,15 @@ void Dx12ErrorCallback(
 // NOTE: Dx12 Agility SDK
 extern "C" { __declspec( dllexport ) extern const UINT32 D3D12SDKVersion = 4; }
 extern "C" { __declspec( dllexport ) extern LPCSTR D3D12SDKPath = ".\\D3D12\\"; }
+
+
+
+
+constexpr UINT64 maxDx12FramesInFlight = 2;
+constexpr BOOL asyncComputeQueue = TRUE;
+
+
+
 
 // TODO: not global ?
 PFN_D3D12_CREATE_DEVICE D3D12CreateDeviceProc;
@@ -156,8 +166,6 @@ inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
 	return dc;
 }
 
-static dx12_device dx12Device;
-
 // TODO: iterate on this  
 // TODO: tag and name so we can track
 // TODO: add memory checks ?
@@ -241,12 +249,6 @@ inline static dx12_allocation Dx12ArenaAlignAlloc(
 
 	return { pMem,offset };
 }
-
-// NOTE: RTs will be alloc-ed separately
-// TODO: host visible textures ?
-static dx12_mem_arena dx12BufferArena;
-static dx12_mem_arena dx12TextureArena;
-static dx12_mem_arena dx12HostComArena;
 
 
 struct dx12_buffer_desc
@@ -382,12 +384,6 @@ inline static D3D12_CPU_DESCRIPTOR_HANDLE Dx12GetDescHeapPtrFromIdx( const dx12_
 	return { desc.heap->GetCPUDescriptorHandleForHeapStart().ptr + idx * desc.stride };
 }
 
-static dx12_descriptor dx12RscDescHeap;
-static dx12_descriptor dx12SamplerDescHeap;
-// TODO: revisit these
-static dx12_descriptor dx12DescHeapRenderTargets;
-static dx12_descriptor dx12DescHeapDepthSetncil;
-
 // NOTE: ver will wrap around, doesn't matter
 struct render_hndl
 {
@@ -424,9 +420,6 @@ inline static resource_hndl_pair Dx12AllocateViewPairHandle( dx12_descriptor& de
 	desc.count += 2;
 	return { RenderHndlFromVerTagIdx( 0,0,thisPairStart ), RenderHndlFromVerTagIdx( 0,0,thisPairStart + 1 ) };
 }
-
-// TODO: not global
-extern HWND hWnd;
 
 
 #include <dxcapi.h>
@@ -717,8 +710,6 @@ struct virtual_frame
 	ID3D12CommandAllocator* pCmdAllocators[ DX12_QUEUE_ID_COUNT ];
 	ID3D12GraphicsCommandList1* pCmdLists[ DX12_QUEUE_ID_COUNT ];
 };
-constexpr UINT64 maxDx12FramesInFlight = 2;
-static virtual_frame virtualFrames[ maxDx12FramesInFlight ];
 
 inline static virtual_frame Dx12MakeVirtualFrame( ID3D12Device9* pDevice )
 {
@@ -783,9 +774,26 @@ inline static dx12_swapchain Dx12MakeSwapchain(
 		.bufferCount = (UINT8) scInfo.BufferCount };
 }
 
-static dx12_swapchain dx12Swapchain;
 
-inline void Dx12BackendInit()
+// TODO: revisit
+static struct {
+	dx12_device device;
+	dx12_swapchain swapchain;
+	virtual_frame virtualFrames[ maxDx12FramesInFlight ];
+	dx12_mem_arena memArenaBuffers;
+	dx12_mem_arena memArenaTextures;
+	dx12_mem_arena memArenaHostCom;
+	dx12_descriptor descHeapResources;
+	dx12_descriptor descHeapSamplers;
+	// TODO: revisit these
+	dx12_descriptor descHeapRenderTargets;
+	dx12_descriptor descHeapDepthSetncil;
+
+} dx12Backend;
+
+
+extern HWND hWnd;
+inline void Dx12BackendInit(  )
 {
 	HMODULE dx12AgilityDll = LoadLibraryA( "D3D12.dll" );
 	assert( dx12AgilityDll );
@@ -835,61 +843,74 @@ inline void Dx12BackendInit()
 	HR_CHECK( CreateDXGIFactoryProc2( dxgiFactoryFlags, IID_PPV_ARGS( &pDxgiFactory ) ) );
 
 
-	dx12Device = Dx12CreateDeviceContext( pDxgiFactory );
+	dx12Backend.device = Dx12CreateDeviceContext( pDxgiFactory );
+	ID3D12Device9* pDevice = dx12Backend.device.pDevice;
+	ID3D12CommandQueue* pDirectQueue = dx12Backend.device.pCmdQueues[ DX12_QUEUE_ID_DIRECT ];
 
-	dx12BufferArena = {
+
+	dx12Backend.memArenaBuffers = {
 		.heapType = D3D12_HEAP_TYPE_DEFAULT,
 		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS | D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS,
 		.defaultBlockSize = 256 * MB
 	};
-	dx12TextureArena = {
+	dx12Backend.memArenaTextures = {
 		.heapType = D3D12_HEAP_TYPE_DEFAULT,
 		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES | D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS,
 		.defaultBlockSize = 256 * MB
 	};
-	dx12HostComArena = {
+	dx12Backend.memArenaHostCom = {
 		.heapType = D3D12_HEAP_TYPE_UPLOAD,
 		.usgFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS,
 		.defaultBlockSize = 256 * MB
 	};
 
-
-	dx12RscDescHeap = {
+	// TODO: rethink 
+	dx12Backend.descHeapResources = {
 		.descType = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-		.stride = dx12Device.pDevice->GetDescriptorHandleIncrementSize( D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV ),
+		.stride = pDevice->GetDescriptorHandleIncrementSize( D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV ),
 		.maxSize = UINT16_MAX,
 		.count = 0
 	};
+	dx12Backend.descHeapSamplers = {
+		.descType = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
+		.stride = pDevice->GetDescriptorHandleIncrementSize( D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER ),
+		.maxSize = 8,
+		.count = 0
+	};
 
-	D3D12_DESCRIPTOR_HEAP_DESC descHeapInfo = {
-		.Type = dx12RscDescHeap.descType,
-		.NumDescriptors = dx12RscDescHeap.maxSize,
+	D3D12_DESCRIPTOR_HEAP_DESC descHeapRscInfo = {
+		.Type = dx12Backend.descHeapResources.descType,
+		.NumDescriptors = dx12Backend.descHeapResources.maxSize,
 		.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 	};
-	HR_CHECK( dx12Device.pDevice->CreateDescriptorHeap( &descHeapInfo, IID_PPV_ARGS( &dx12RscDescHeap.heap ) ) );
+	HR_CHECK( pDevice->CreateDescriptorHeap( &descHeapRscInfo, IID_PPV_ARGS( &dx12Backend.descHeapResources.heap ) ) );
 
-	ID3D12Device9* pDevice = dx12Device.pDevice;
+	D3D12_DESCRIPTOR_HEAP_DESC descHeapSamplersInfo = {
+		.Type = dx12Backend.descHeapSamplers.descType,
+		.NumDescriptors = dx12Backend.descHeapSamplers.maxSize,
+		.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
+	};
+	HR_CHECK( pDevice->CreateDescriptorHeap( &descHeapSamplersInfo, IID_PPV_ARGS( &dx12Backend.descHeapSamplers.heap ) ) );
 
-	dx12_buffer_desc buffDesc = { 1000,4 * sizeof( float ),D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, false };
-
-	D3D12_RESOURCE_DESC rscDesc = Dx12ResouceFromBufferDesc( buffDesc );
-	dx12_allocation alloc = Dx12ArenaAlignAlloc( pDevice->GetResourceAllocationInfo( 0, 1, &rscDesc ), pDevice, dx12BufferArena );
-	ID3D12Resource* pRsc = 0;
-	HR_CHECK( pDevice->CreatePlacedResource( alloc.mem, alloc.offset, &rscDesc, D3D12_RESOURCE_STATE_COMMON, 0, IID_PPV_ARGS( &pRsc ) ) );
-
-
-	resource_hndl_pair hRscPair = Dx12AllocateViewPairHandle( dx12RscDescHeap );
-
-	auto viewDescPair = Dx12MakeResourceViewPairFromBufferDesc( buffDesc, 0 );
-	pDevice->CreateShaderResourceView(
-		pRsc, &viewDescPair.first, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.srv ) ) );
-	pDevice->CreateUnorderedAccessView(
-		pRsc, 0, &viewDescPair.second, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.uav ) ) );
+	//dx12_buffer_desc buffDesc = { 1000,4 * sizeof( float ),D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, false };
+	//
+	//D3D12_RESOURCE_DESC rscDesc = Dx12ResouceFromBufferDesc( buffDesc );
+	//dx12_allocation alloc = Dx12ArenaAlignAlloc( pDevice->GetResourceAllocationInfo( 0, 1, &rscDesc ), pDevice, dx12BufferArena );
+	//ID3D12Resource* pRsc = 0;
+	//HR_CHECK( pDevice->CreatePlacedResource( alloc.mem, alloc.offset, &rscDesc, D3D12_RESOURCE_STATE_COMMON, 0, IID_PPV_ARGS( &pRsc ) ) );
+	//
+	//
+	//resource_hndl_pair hRscPair = Dx12AllocateViewPairHandle( dx12RscDescHeap );
+	//
+	//auto viewDescPair = Dx12MakeResourceViewPairFromBufferDesc( buffDesc, 0 );
+	//pDevice->CreateShaderResourceView(
+	//	pRsc, &viewDescPair.first, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.srv ) ) );
+	//pDevice->CreateUnorderedAccessView(
+	//	pRsc, 0, &viewDescPair.second, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.uav ) ) );
 
 	// TODO: do it in the render loop as it can be dynamic
 	DXGI_FORMAT scFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-	dx12Swapchain = Dx12MakeSwapchain(
-		pDxgiFactory, dx12Device.pCmdQueues[ DX12_QUEUE_ID_DIRECT ], hWnd, scFormat, SCREEN_WIDTH, SCREEN_HEIGHT, 3 );
+	dx12Backend.swapchain = Dx12MakeSwapchain( pDxgiFactory, pDirectQueue, hWnd, scFormat, SCREEN_WIDTH, SCREEN_HEIGHT, 3 );
 
 
 	D3D12_ROOT_PARAMETER rootParameter = {};
@@ -954,16 +975,21 @@ inline void Dx12BackendInit()
 	};
 
 	ID3D12PipelineState* imguiPso = Dx12MakeGraphicsPso(
-		dx12Device.pDevice, globalRootSignature, vsDxilBlob, psDxilBlob,
+		pDevice, globalRootSignature, vsDxilBlob, psDxilBlob,
 		DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_D32_FLOAT, imguiPsoConfig );
 
-	for( virtual_frame& vf : virtualFrames ) vf = Dx12MakeVirtualFrame( dx12Device.pDevice );
+	for( virtual_frame& vf : dx12Backend.virtualFrames ) vf = Dx12MakeVirtualFrame( pDevice );
 
 
 }
 
 
-void Dx12HostFrames()
-{
+void Dx12HostFrames( 
+	UINT64 thisFrameIdx
+){
+	UINT64 thisFramebufferedIndex = thisFrameIdx % maxDx12FramesInFlight;
+
+	const virtual_frame& thisVirtFrame = dx12Backend.virtualFrames[ thisFramebufferedIndex ];
+
 
 }
