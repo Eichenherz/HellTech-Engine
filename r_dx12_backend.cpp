@@ -34,6 +34,10 @@ do{																		\
 	}																	\
 }while( 0 )	
 
+// NOTE: it's a full assert
+// TODO: custom err code based on HRESULT
+#define HR_ASSERT( x ) if( !x ) HR_CHECK( E_FAIL )
+
 #ifdef DX12_DEBUG
 
 #include <iostream>
@@ -107,6 +111,10 @@ inline static dx12_device Dx12CreateDeviceContext( IDXGIFactory7* pDxgiFactory )
 
 		D3D12_FEATURE_DATA_D3D12_OPTIONS3 options3 = {};
 		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_D3D12_OPTIONS3, &options3, sizeof( options3 ) ) );
+
+		D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7 = {};
+		HR_CHECK( pDevice->CheckFeatureSupport( D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof( options7 ) ) );
+
 		// TODO: handle more stuff
 		break;
 	}
@@ -176,13 +184,7 @@ struct dx12_device_block
 	UINT64 allocated;
 };
 
-// TODO: use this
-//struct dx12_allocation
-//{
-//	UINT32 offset;
-//	UINT32 size;
-//	UINT16 blockId;
-//};
+
 // TODO: handle heap, uasge, rsc desc better
 // TODO: how to handle CUSTOM HEAPS when time comes ?
 struct dx12_mem_arena
@@ -193,6 +195,7 @@ struct dx12_mem_arena
 	UINT32 defaultBlockSize;
 };
 
+// TODO: alloc handle depends on alloc pattern
 // TODO: improve
 // TODO: mem tracking
 struct dx12_allocation
@@ -200,6 +203,14 @@ struct dx12_allocation
 	ID3D12Heap* mem;
 	UINT64 offset;
 };
+
+// TODO: use this
+//struct dx12_allocation
+//{
+//	UINT32 offset;
+//	UINT32 size;
+//	UINT16 blockId;
+//};
 
 inline bool IsPowOf2( u64 addr )
 {
@@ -251,123 +262,6 @@ inline static dx12_allocation Dx12ArenaAlignAlloc(
 }
 
 
-struct dx12_buffer_desc
-{
-	UINT32 count;
-	UINT32 stride;
-	D3D12_RESOURCE_FLAGS usgFlags;
-	bool hasUavCounter;
-};
-
-// TODO: add sample stuff
-struct dx12_texture_desc
-{
-	UINT16 width;
-	UINT16 height;
-	UINT8 mipCount;
-	UINT8 depthOrArrayCount;
-	D3D12_RESOURCE_FLAGS usgFlags;
-	DXGI_FORMAT format;
-};
-
-// TODO: check sizes and stuff
-// TODO: allow other uses ?
-// TODO: no asserts
-inline static D3D12_RESOURCE_DESC Dx12ResouceFromBufferDesc( const dx12_buffer_desc& buffDesc )
-{
-	assert( buffDesc.usgFlags == D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS || buffDesc.usgFlags == D3D12_RESOURCE_FLAG_NONE );
-
-	D3D12_RESOURCE_DESC rscDesc = {};
-	rscDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	rscDesc.Alignment = 0;
-	rscDesc.Width = buffDesc.count * buffDesc.stride;
-	rscDesc.Height = rscDesc.DepthOrArraySize = rscDesc.MipLevels = 1;
-	rscDesc.Format = DXGI_FORMAT_UNKNOWN;
-	rscDesc.SampleDesc = { 1,0 };
-	rscDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-	rscDesc.Flags = buffDesc.usgFlags;
-
-	return rscDesc;
-}
-inline static D3D12_RESOURCE_DESC Dx12ResouceFromTextureDesc( const dx12_texture_desc& texDesc )
-{
-	D3D12_RESOURCE_DESC rscDesc = {};
-	rscDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-	rscDesc.Alignment = 0;
-	rscDesc.Width = texDesc.width;
-	rscDesc.Height = texDesc.height; 
-	rscDesc.DepthOrArraySize = 1;
-	rscDesc.MipLevels = texDesc.mipCount;
-	rscDesc.Format = texDesc.format;
-	rscDesc.SampleDesc = { 1,0 };
-	rscDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-	rscDesc.Flags = texDesc.usgFlags;
-
-	return rscDesc;
-}
-
-// TODO: store more stuff
-// TODO: separate buffers and tx ?
-struct dx12_resource
-{
-	dx12_allocation hAlloc;
-	ID3D12Resource2* pRsc;
-	UINT32 magicNum;
-};
-
-// TODO: more options and parameters ?
-// TODO: more resource view types
-// TODO: revisit when using MS images and stuff
-// TODO: wait for templates to get good in HLSL , until then use ByteAddressBuffers
-// TODO: DXGI_FORMAT_R32_TYPELESS for BABs 
-inline static std::pair<D3D12_SHADER_RESOURCE_VIEW_DESC, D3D12_UNORDERED_ACCESS_VIEW_DESC>
-Dx12MakeResourceViewPairFromBufferDesc( const dx12_buffer_desc& pRscDesc, UINT32 counterOffset )
-{
-	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
-	srv.Format = DXGI_FORMAT_R32_TYPELESS;
-	srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-	srv.Buffer.FirstElement = 0;
-	srv.Buffer.NumElements = pRscDesc.count;
-	srv.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-	srv.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
-		D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
-		D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
-		D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
-		D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_3
-	);
-
-	D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
-	uav.Format = DXGI_FORMAT_R32_TYPELESS;
-	uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-	uav.Buffer.FirstElement = 0;
-	uav.Buffer.NumElements = pRscDesc.count;
-	uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-	uav.Buffer.CounterOffsetInBytes = counterOffset;
-	
-	return { srv,uav };
-}
-// TODO: redundancy for mipped tex 
-// TODO: mip clamp
-// TODO: elem swizzeling ?
-inline static std::pair<D3D12_SHADER_RESOURCE_VIEW_DESC, D3D12_UNORDERED_ACCESS_VIEW_DESC>
-Dx12MakeResourceViewPairFromTextureDesc( const dx12_texture_desc& rscDesc, UINT32 mipLevel, UINT32 componentsSwizzeling )
-{
-	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
-	srv.Format = rscDesc.format;
-	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srv.Texture2D.MostDetailedMip = 0;
-	srv.Texture2D.MipLevels = rscDesc.mipCount;
-	srv.Texture2D.PlaneSlice = 0;
-	srv.Texture2D.ResourceMinLODClamp = rscDesc.mipCount;
-	srv.Shader4ComponentMapping = componentsSwizzeling;
-	D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
-	uav.Format = rscDesc.format;
-	uav.Texture2D.MipSlice = mipLevel;
-	uav.Texture2D.PlaneSlice = 0;
-
-	return { srv,uav };
-}
-
 // IDEA: null descriptors for read/write view that's not supposed to be accessed ?
 // TODO: rename ?
 struct dx12_descriptor
@@ -379,47 +273,273 @@ struct dx12_descriptor
 	UINT32 count;
 };
 
-inline static D3D12_CPU_DESCRIPTOR_HANDLE Dx12GetDescHeapPtrFromIdx( const dx12_descriptor& desc, UINT32 idx )
+// TODO: revisit
+inline static auto Dx12DescGetNextHandleAndIndex( dx12_descriptor& desc )
 {
-	return { desc.heap->GetCPUDescriptorHandleForHeapStart().ptr + idx * desc.stride };
+	struct __retval
+	{
+		D3D12_CPU_DESCRIPTOR_HANDLE handle;
+		UINT32 idx;
+	};
+	UINT32 currentCount = desc.count++;
+	return __retval{ desc.heap->GetCPUDescriptorHandleForHeapStart().ptr + currentCount * desc.stride,currentCount };
 }
 
-// NOTE: ver will wrap around, doesn't matter
-struct render_hndl
+// TODO: typed ?
+struct hndl32
 {
-	UINT32 h;
+	u32 h;
 
-	inline render_hndl() = default;
-	inline render_hndl( UINT32 verTagIdx ) : h{ verTagIdx }{}
-	inline operator UINT32() const { return h; }
+	inline hndl32() = default;
+	inline hndl32( u32 magicIdx ) : h{ magicIdx }{}
+	inline operator u32() const { return h; }
+};
+
+inline u32 IdxFromHndl32( hndl32 h )
+{
+	constexpr u32 standardIndexMask = ( 1ull << sizeof( hndl32 ) * 4 ) - 1;
+	return h & standardIndexMask;
+}
+inline u32 MagicFromHndl32( hndl32 h )
+{
+	constexpr u32 standardIndexMask = ( 1ull << sizeof( hndl32 ) * 4 ) - 1;
+	constexpr u32 standardMagicNumberMask = ~standardIndexMask;
+	return ( h & standardMagicNumberMask ) >> sizeof( hndl32 ) * 4;
+}
+inline hndl32 Hndl32FromMagicAndIdx( u32 m, u32 i )
+{
+	return u32( ( m << sizeof( hndl32 ) * 4 ) | i );
+}
+
+// TODO: rethink
+// TODO: add validation ?
+struct view_handle
+{
+	UINT16 h;
+
+	inline view_handle() = default;
+	inline view_handle( UINT16 idx ) : h{ idx }{}
+	inline operator UINT16() const { return h; }
+};
+inline UINT32 SrvFromViewHandle( view_handle h )
+{
+	return h;
+}
+inline UINT32 UavFromViewHadle( view_handle h )
+{
+	return h + 1;
+}
+
+// TODO: add views info as UINT8 ?
+// TODO: better ?
+// TODO: special allocator for : dx12_resource | viewIndices | views
+// TODO: special vector container ?
+// TODO: store more stuff
+struct dx12_buffer
+{
+	dx12_allocation hAlloc;
+	ID3D12Resource2* pRsc;
+	UINT8* hostVisible;
+	UINT32 magicNum;
+	view_handle hView;
+	view_handle optionalViews[ 4 ];
+};
+
+struct dx12_texture
+{
+	dx12_allocation hAlloc;
+	ID3D12Resource2* pRsc;
+	UINT32 magicNum;
+	view_handle hView;
+	view_handle optionalViews[ 16 ];
+	UINT8 mipCount;
+	UINT8 layerCount;
 };
 
 // TODO: no assert
-inline render_hndl RenderHndlFromVerTagIdx( UINT32 ver, UINT32 tag, UINT32 idx )
+inline view_handle Dx12GetTextureView( const dx12_texture& tex, UINT8 mip, UINT8 layer )
 {
-	assert( ver < 64 );
-	assert( tag < 8 );
-	assert( idx < ( 1U << 23 ) );
-
-	return { ver << 26 | tag << 23 | idx };
-}
-inline UINT32 RenderHndlGetIdx( render_hndl h )
-{
-	constexpr UINT32 standardIndexMask = ( 1U << 23 ) - 1;
-	return h & standardIndexMask;
+	assert( layer < tex.layerCount && mip < tex.mipCount );
+	return tex.optionalViews[ layer * tex.layerCount + mip ];
 }
 
-struct resource_hndl_pair
+// TODO: custom mip/layer retriver
+
+struct dx12_buffer_desc
 {
-	render_hndl srv, uav;
+	UINT32 count;
+	UINT32 stride;
+	D3D12_RESOURCE_FLAGS usgFlags;
+	UINT8 isRawBuffer : 1;
+	UINT8 isHostVisible : 1;
 };
-// TODO: version tag
-inline static resource_hndl_pair Dx12AllocateViewPairHandle( dx12_descriptor& desc )
+
+// TODO: add component swizzle
+// TODO: add sample stuff
+struct dx12_texture_desc
 {
-	UINT32 thisPairStart = desc.count;
-	desc.count += 2;
-	return { RenderHndlFromVerTagIdx( 0,0,thisPairStart ), RenderHndlFromVerTagIdx( 0,0,thisPairStart + 1 ) };
+	UINT16 width;
+	UINT16 height;
+	UINT8 mipCount;
+	UINT8 layerCount;
+	D3D12_RESOURCE_FLAGS usgFlags;
+	DXGI_FORMAT format;
+};
+
+#define DX12_DEFAULT_COMPONENT_MAPPING  \
+D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING( \
+D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0, \
+D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1, \
+D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2, \
+D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_3 )
+
+// TODO: null descriptor for read/write depending on the use case
+// TODO: check alignment
+// TODO: no assert
+// TODO: buff resource view type
+// TODO: handle handles
+inline static hndl32 Dx12CreateBuffer( 
+	const dx12_buffer_desc& buffDesc,
+	ID3D12Device9* pDevice,
+	dx12_mem_arena& dx12MemArena,
+	dx12_descriptor& dx12RscDescHeap,
+	std::vector<dx12_buffer>& resourceContainer
+){
+	D3D12_RESOURCE_DESC rscDesc = {};
+	rscDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	rscDesc.Alignment = 0;
+	rscDesc.Width = buffDesc.count * buffDesc.stride;
+	rscDesc.Height = rscDesc.DepthOrArraySize = rscDesc.MipLevels = 1;
+	rscDesc.Format = DXGI_FORMAT_UNKNOWN;
+	rscDesc.SampleDesc = { 1,0 };
+	rscDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	rscDesc.Flags = buffDesc.usgFlags;
+
+	dx12_allocation alloc = Dx12ArenaAlignAlloc( pDevice->GetResourceAllocationInfo( 0, 1, &rscDesc ), pDevice, dx12MemArena );
+
+	ID3D12Resource2* pRsc = 0;
+	HR_CHECK( pDevice->CreatePlacedResource( 
+		alloc.mem, alloc.offset, &rscDesc, D3D12_RESOURCE_STATE_COMMON, 0, IID_PPV_ARGS( &pRsc ) ) );
+	UINT8* hostVisible = 0;
+	if( buffDesc.isHostVisible ) HR_CHECK( pRsc->Map( 0, 0, ( void** ) &hostVisible ) );
+
+	DXGI_FORMAT viewFormat = buffDesc.isRawBuffer ? DXGI_FORMAT_R32_TYPELESS : DXGI_FORMAT_UNKNOWN;
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvInfo = {};
+	srvInfo.Format = viewFormat;
+	srvInfo.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+	srvInfo.Buffer.FirstElement = 0;
+	srvInfo.Buffer.NumElements = buffDesc.count;
+	srvInfo.Buffer.StructureByteStride = buffDesc.isRawBuffer ? 0 : buffDesc.stride;
+	srvInfo.Buffer.Flags = buffDesc.isRawBuffer ? D3D12_BUFFER_SRV_FLAG_RAW : D3D12_BUFFER_SRV_FLAG_NONE;
+	srvInfo.Shader4ComponentMapping = DX12_DEFAULT_COMPONENT_MAPPING;
+
+	D3D12_UNORDERED_ACCESS_VIEW_DESC uavInfo = {};
+	uavInfo.Format = viewFormat;
+	uavInfo.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+	uavInfo.Buffer.FirstElement = 0;
+	uavInfo.Buffer.NumElements = buffDesc.count;
+	uavInfo.Buffer.StructureByteStride = buffDesc.isRawBuffer ? 0 : buffDesc.stride;
+	uavInfo.Buffer.Flags = buffDesc.isRawBuffer ? D3D12_BUFFER_UAV_FLAG_RAW : D3D12_BUFFER_UAV_FLAG_NONE;
+	
+	auto[ srvHandle, srvIndex ] = Dx12DescGetNextHandleAndIndex( dx12RscDescHeap );
+	pDevice->CreateShaderResourceView( pRsc, &srvInfo, srvHandle );
+	auto[ uavHandle, uavIndex ] = Dx12DescGetNextHandleAndIndex( dx12RscDescHeap );
+	pDevice->CreateUnorderedAccessView( pRsc, 0, &uavInfo, uavHandle );
+
+
+	dx12_buffer rsc = {};
+	rsc.hAlloc = alloc;
+	rsc.pRsc = pRsc;
+	rsc.hostVisible = hostVisible;
+	rsc.hView = srvIndex;
+	resourceContainer.push_back( rsc );
+
+	return Hndl32FromMagicAndIdx( 0, std::size( resourceContainer ) - 1 );
 }
+
+
+inline static hndl32 Dx12CreateTexture(
+	const dx12_texture_desc& texDesc,
+	ID3D12Device9* pDevice,
+	dx12_mem_arena& dx12MemArena,
+	dx12_descriptor& dx12RscDescHeap,
+	std::vector<dx12_texture>& resourceContainer
+){
+	D3D12_RESOURCE_DESC rscDesc = {};
+	rscDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	rscDesc.Alignment = 0;
+	rscDesc.Width = texDesc.width;
+	rscDesc.Height = texDesc.height;
+	rscDesc.DepthOrArraySize = texDesc.layerCount;
+	rscDesc.MipLevels = texDesc.mipCount;
+	rscDesc.Format = texDesc.format;
+	rscDesc.SampleDesc = { 1,0 };
+	rscDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	rscDesc.Flags = texDesc.usgFlags;
+
+	dx12_allocation alloc = Dx12ArenaAlignAlloc( pDevice->GetResourceAllocationInfo( 0, 1, &rscDesc ), pDevice, dx12MemArena );
+
+	ID3D12Resource2* pRsc = 0;
+	HR_CHECK( pDevice->CreatePlacedResource(
+		alloc.mem, alloc.offset, &rscDesc, D3D12_RESOURCE_STATE_COMMON, 0, IID_PPV_ARGS( &pRsc ) ) );
+
+	
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvInfo = {};
+	srvInfo.Format = texDesc.format;
+	srvInfo.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvInfo.Texture2D.MostDetailedMip = 0;
+	srvInfo.Texture2D.MipLevels = texDesc.mipCount;
+	srvInfo.Texture2D.PlaneSlice = 0;
+	srvInfo.Texture2D.ResourceMinLODClamp = texDesc.mipCount;
+	srvInfo.Shader4ComponentMapping = DX12_DEFAULT_COMPONENT_MAPPING;
+	D3D12_UNORDERED_ACCESS_VIEW_DESC uavInfo = {};
+	uavInfo.Format = texDesc.format;
+	uavInfo.Texture2D.MipSlice = 0;
+	uavInfo.Texture2D.PlaneSlice = 0;
+
+	auto [srvHandle, srvIndex] = Dx12DescGetNextHandleAndIndex( dx12RscDescHeap );
+	pDevice->CreateShaderResourceView( pRsc, &srvInfo, srvHandle );
+	auto [uavHandle, uavIndex] = Dx12DescGetNextHandleAndIndex( dx12RscDescHeap );
+	pDevice->CreateUnorderedAccessView( pRsc, 0, &uavInfo, uavHandle );
+
+
+	dx12_texture tex = {};
+	tex.hAlloc = alloc;
+	tex.pRsc = pRsc;
+	tex.hView = srvIndex;
+	tex.mipCount = rscDesc.MipLevels;
+	tex.layerCount = rscDesc.DepthOrArraySize;
+
+	assert( tex.layerCount == 1 );
+	for( UINT64 mi = 0; mi < rscDesc.MipLevels; ++mi )
+	{
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvInfo = {};
+		srvInfo.Format = texDesc.format;
+		srvInfo.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvInfo.Texture2D.MostDetailedMip = mi;
+		srvInfo.Texture2D.MipLevels = 1;
+		srvInfo.Texture2D.PlaneSlice = 0;
+		srvInfo.Texture2D.ResourceMinLODClamp = texDesc.mipCount;
+		srvInfo.Shader4ComponentMapping = DX12_DEFAULT_COMPONENT_MAPPING;
+		D3D12_UNORDERED_ACCESS_VIEW_DESC uavInfo = {};
+		uavInfo.Format = texDesc.format;
+		uavInfo.Texture2D.MipSlice = mi;
+		uavInfo.Texture2D.PlaneSlice = 0;
+
+		auto [srvHandle, srvIndex] = Dx12DescGetNextHandleAndIndex( dx12RscDescHeap );
+		pDevice->CreateShaderResourceView( pRsc, &srvInfo, srvHandle );
+		auto [uavHandle, uavIndex] = Dx12DescGetNextHandleAndIndex( dx12RscDescHeap );
+		pDevice->CreateUnorderedAccessView( pRsc, 0, &uavInfo, uavHandle );
+
+		tex.optionalViews[ mi ] = srvIndex;
+	}
+	
+	resourceContainer.push_back( tex );
+
+	return Hndl32FromMagicAndIdx( 0, std::size( resourceContainer ) - 1 );
+}
+
 
 
 #include <dxcapi.h>
@@ -892,21 +1012,6 @@ inline void Dx12BackendInit(  )
 	};
 	HR_CHECK( pDevice->CreateDescriptorHeap( &descHeapSamplersInfo, IID_PPV_ARGS( &dx12Backend.descHeapSamplers.heap ) ) );
 
-	//dx12_buffer_desc buffDesc = { 1000,4 * sizeof( float ),D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, false };
-	//
-	//D3D12_RESOURCE_DESC rscDesc = Dx12ResouceFromBufferDesc( buffDesc );
-	//dx12_allocation alloc = Dx12ArenaAlignAlloc( pDevice->GetResourceAllocationInfo( 0, 1, &rscDesc ), pDevice, dx12BufferArena );
-	//ID3D12Resource* pRsc = 0;
-	//HR_CHECK( pDevice->CreatePlacedResource( alloc.mem, alloc.offset, &rscDesc, D3D12_RESOURCE_STATE_COMMON, 0, IID_PPV_ARGS( &pRsc ) ) );
-	//
-	//
-	//resource_hndl_pair hRscPair = Dx12AllocateViewPairHandle( dx12RscDescHeap );
-	//
-	//auto viewDescPair = Dx12MakeResourceViewPairFromBufferDesc( buffDesc, 0 );
-	//pDevice->CreateShaderResourceView(
-	//	pRsc, &viewDescPair.first, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.srv ) ) );
-	//pDevice->CreateUnorderedAccessView(
-	//	pRsc, 0, &viewDescPair.second, Dx12GetDescHeapPtrFromIdx( dx12RscDescHeap, RenderHndlGetIdx( hRscPair.uav ) ) );
 
 	// TODO: do it in the render loop as it can be dynamic
 	DXGI_FORMAT scFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -981,6 +1086,29 @@ inline void Dx12BackendInit(  )
 	for( virtual_frame& vf : dx12Backend.virtualFrames ) vf = Dx12MakeVirtualFrame( pDevice );
 
 
+}
+
+
+
+
+
+// TODO: proper file API
+// TODO: will handle asset compilation elsewere
+static void Dx12LoadDrakBinary( const char* assetPath )
+{
+	HANDLE hFile = CreateFileA( assetPath, GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, 0 );
+	if( hFile == INVALID_HANDLE_VALUE ) HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
+	LARGE_INTEGER fileSize = {};
+	if( !GetFileSizeEx( hFile, &fileSize ) ) HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
+
+	
+
+
+	//OVERLAPPED asyncIo = {};
+	//if( !ReadFileEx( hFile, std::data( fileData ), fileSize.QuadPart, &asyncIo, 0 ) )
+	//	HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
+
+	if( !CloseHandle( hFile ) ) HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
 }
 
 
