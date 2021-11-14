@@ -363,8 +363,7 @@ inline view_handle Dx12GetTextureView( const dx12_texture& tex, UINT8 mip, UINT8
 	return tex.optionalViews[ layer * tex.layerCount + mip ];
 }
 
-// TODO: custom mip/layer retriver
-
+// TODO: better automate these
 struct dx12_buffer_desc
 {
 	UINT32 count;
@@ -540,7 +539,39 @@ inline static hndl32 Dx12CreateTexture(
 	return Hndl32FromMagicAndIdx( 0, std::size( resourceContainer ) - 1 );
 }
 
+// TODO: extra checks
+inline static auto Dx12CreateUploadBuffer(
+	UINT32 size,
+	ID3D12Device9* pDevice,
+	dx12_mem_arena& hostComArena
+){
+	D3D12_RESOURCE_DESC rscDesc = {};
+	rscDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	rscDesc.Alignment = 0;
+	rscDesc.Width = size;
+	rscDesc.Height = rscDesc.DepthOrArraySize = rscDesc.MipLevels = 1;
+	rscDesc.Format = DXGI_FORMAT_UNKNOWN;
+	rscDesc.SampleDesc = { 1,0 };
+	rscDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	rscDesc.Flags = D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
 
+	dx12_allocation alloc = Dx12ArenaAlignAlloc( pDevice->GetResourceAllocationInfo( 0, 1, &rscDesc ), pDevice, hostComArena );
+
+	ID3D12Resource2* pRsc = 0;
+	constexpr D3D12_RESOURCE_STATES rscInitState = D3D12_RESOURCE_STATE_COMMON;
+	HR_CHECK( pDevice->CreatePlacedResource( alloc.mem, alloc.offset, &rscDesc, rscInitState, 0, IID_PPV_ARGS( &pRsc ) ) );
+	UINT8* hostVisible = 0;
+	HR_CHECK( pRsc->Map( 0, 0, ( void** ) &hostVisible ) );
+
+	struct __retval
+	{
+		dx12_allocation hAlloc;
+		ID3D12Resource2* pRsc;
+		UINT8* hostVisible;
+	};
+
+	return __retval{ alloc,pRsc,hostVisible };
+}
 
 #include <dxcapi.h>
 // TODO: write own ShaderBlob to control memory ?
@@ -1089,26 +1120,38 @@ inline void Dx12BackendInit(  )
 }
 
 
+struct dx12_resource_manager
+{
+	std::vector<dx12_buffer> buffers;
+	std::vector<dx12_texture> textrues;
+};
 
-
-
+#include "asset_compiler.h"
 // TODO: proper file API
 // TODO: will handle asset compilation elsewere
-static void Dx12LoadDrakBinary( const char* assetPath )
+static void Dx12LoadDrakBinaryFromDisk( const char* assetPath )
 {
 	HANDLE hFile = CreateFileA( assetPath, GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, 0 );
 	if( hFile == INVALID_HANDLE_VALUE ) HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
 	LARGE_INTEGER fileSize = {};
 	if( !GetFileSizeEx( hFile, &fileSize ) ) HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
 
+
+	auto pDevice = dx12Backend.device.pDevice;
+
+	assert( fileSize.QuadPart < UINT32( -1 ) );
+	auto[ hAlloc, pRsc, hostVisible ] = Dx12CreateUploadBuffer( UINT32( fileSize.QuadPart ), pDevice, dx12Backend.memArenaHostCom );
+
 	
-
-
-	//OVERLAPPED asyncIo = {};
-	//if( !ReadFileEx( hFile, std::data( fileData ), fileSize.QuadPart, &asyncIo, 0 ) )
-	//	HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
-
+	OVERLAPPED asyncIo = {};
+	if( !ReadFileEx( hFile, hostVisible, fileSize.QuadPart, &asyncIo, 0 ) )
+		HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
 	if( !CloseHandle( hFile ) ) HR_CHECK( HRESULT_FROM_WIN32( GetLastError() ) );
+
+	const drak_file_footer& fileFooter = *( drak_file_footer* ) ( hostVisible + fileSize.QuadPart - sizeof( drak_file_footer ) );
+
+
+	
 }
 
 
