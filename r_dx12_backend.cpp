@@ -315,20 +315,18 @@ inline hndl32 Hndl32FromMagicAndIdx( u32 m, u32 i )
 // TODO: add validation ?
 struct view_handle
 {
+	using srv = UINT16;
+	using uav = UINT16;
+
 	UINT16 h;
 
 	inline view_handle() = default;
 	inline view_handle( UINT16 idx ) : h{ idx }{}
 	inline operator UINT16() const { return h; }
+	//inline operator srv() const { return h; }
+	//inline operator uav() const { return h + 1; }
 };
-inline UINT32 SrvFromViewHandle( view_handle h )
-{
-	return h;
-}
-inline UINT32 UavFromViewHadle( view_handle h )
-{
-	return h + 1;
-}
+
 
 // TODO: add views info as UINT8 ?
 // TODO: better ?
@@ -342,7 +340,6 @@ struct dx12_buffer
 	UINT8* hostVisible;
 	UINT32 magicNum;
 	view_handle hView;
-	view_handle optionalViews[ 4 ];
 };
 
 struct dx12_texture
@@ -925,12 +922,17 @@ inline static dx12_swapchain Dx12MakeSwapchain(
 		.bufferCount = (UINT8) scInfo.BufferCount };
 }
 
-
+// TODO: join memory arenas ?
+// TODO: join descriptors ?
+// TODO: resource manager ?
 // TODO: revisit
 static struct {
 	dx12_device device;
+
 	dx12_swapchain swapchain;
+
 	virtual_frame virtualFrames[ maxDx12FramesInFlight ];
+
 	dx12_mem_arena memArenaBuffers;
 	dx12_mem_arena memArenaTextures;
 	dx12_mem_arena memArenaHostCom;
@@ -940,6 +942,7 @@ static struct {
 	dx12_descriptor descHeapRenderTargets;
 	dx12_descriptor descHeapDepthSetncil;
 
+	ID3D12RootSignature* globalRootSignature;
 } dx12Backend;
 
 
@@ -1074,9 +1077,8 @@ inline void Dx12BackendInit(  )
 		abort();
 	}
 
-	ID3D12RootSignature* globalRootSignature;
 	HR_CHECK( pDevice->CreateRootSignature(
-		0, pSignatureBlob->GetBufferPointer(), pSignatureBlob->GetBufferSize(), IID_PPV_ARGS( &globalRootSignature ) ) );
+		0, pSignatureBlob->GetBufferPointer(), pSignatureBlob->GetBufferSize(), IID_PPV_ARGS( &dx12Backend.globalRootSignature ) ) );
 
 
 	dxc_context dxc = DxcCreateContext();
@@ -1110,21 +1112,10 @@ inline void Dx12BackendInit(  )
 		.topology = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE
 	};
 
-	ID3D12PipelineState* imguiPso = Dx12MakeGraphicsPso(
-		pDevice, globalRootSignature, vsDxilBlob, psDxilBlob,
-		DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_D32_FLOAT, imguiPsoConfig );
-
 	for( virtual_frame& vf : dx12Backend.virtualFrames ) vf = Dx12MakeVirtualFrame( pDevice );
 
 
 }
-
-
-struct dx12_resource_manager
-{
-	std::vector<dx12_buffer> buffers;
-	std::vector<dx12_texture> textrues;
-};
 
 #include "asset_compiler.h"
 // TODO: proper file API
