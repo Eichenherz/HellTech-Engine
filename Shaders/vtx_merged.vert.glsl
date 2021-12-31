@@ -14,6 +14,7 @@ layout( push_constant ) uniform block{
 	uint64_t transfAddr;
 	//uint64_t drawCmdAddr;
 	//uint64_t camDataAddr;
+	uint64_t camIdx;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{

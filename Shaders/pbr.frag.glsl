@@ -7,7 +7,7 @@
 #include "..\r_data_structs.h"
 
 layout( push_constant ) uniform block{
-	layout( offset = 16 ) 
+	layout( offset = 24 ) 
 	uint64_t mtrlsAddr;
 	uint64_t lightsAddr;
 };

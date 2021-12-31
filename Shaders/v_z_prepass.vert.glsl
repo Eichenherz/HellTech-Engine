@@ -9,6 +9,7 @@ layout( push_constant ) uniform block{
 	uint64_t vtxAddr;
 	uint64_t transfAddr;
 	//uint64_t drawCmdAddr;
+	uint64_t camIdx;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
@@ -21,7 +22,8 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 //	draw_command drawCmd[];
 //};
 
-layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data cam; };
+//layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data cam; };
+layout( binding = 1, std430 ) readonly buffer global{ global_data cam; }buffers[];
 
 
 void main()
@@ -33,9 +35,10 @@ void main()
 	// TODO: trans only
 	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
 	instance_desc thisInst = inst_desc_ref( transfAddr ).instDescs[ instId ];
-	
+	global_data camData = buffers[ uint(camIdx) ].cam;
 
-	gl_Position = cam.proj * cam.mainView * thisInst.localToWorld * vec4( vtx.px, vtx.py, vtx.pz, 1.0f );
+	mat4 camProjMainView = camData.proj * camData.mainView;
+	gl_Position = camProjMainView * thisInst.localToWorld * vec4( vtx.px, vtx.py, vtx.pz, 1.0f );
 
 	//vertex vtx = vtx_ref( vtxAddr ).vertices[ gl_VertexIndex ];
 	//vec3 pos = vec3( vtx.px, vtx.py, vtx.pz );
