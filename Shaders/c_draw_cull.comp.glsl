@@ -7,8 +7,7 @@
 
 #extension GL_GOOGLE_include_directive: require
 
-#define GLOBAL_RESOURCES
-
+#define BINDLESS
 #include "..\r_data_structs.h"
 
 
@@ -25,6 +24,7 @@ layout( push_constant, scalar ) uniform block{
 	uint	    hizBuffIdx;
 	uint	    hizSamplerIdx;
 	uint		instCount;
+	uint		camIdx;
 };
 
 
@@ -82,6 +82,8 @@ void main()
 		// TODO: culling inspired by Nabla
 		// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
 		// TODO: cleanup revisit same in cluster culling
+
+		global_data cam = ssbos[camIdx].g;
 		mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
 
 		vec3 boxSize = boxMax - boxMin;

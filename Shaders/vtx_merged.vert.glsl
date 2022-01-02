@@ -4,9 +4,9 @@
 #extension GL_ARB_shader_draw_parameters : require
 #extension GL_GOOGLE_include_directive : require
 
-//#define GLOBAL_RESOURCES
-
+#define BINDLESS
 #include "..\r_data_structs.h"
+
 #include "glsl_func_lib.h"
 
 layout( push_constant ) uniform block{
@@ -15,6 +15,9 @@ layout( push_constant ) uniform block{
 	//uint64_t drawCmdAddr;
 	//uint64_t camDataAddr;
 	uint64_t camIdx;
+	uint64_t mtrlsAddr;
+	uint64_t lightsAddr;
+	uint64_t samplerIdx;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
@@ -26,9 +29,6 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 //layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
 //	global_data camera;
 //};
-
-
-layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data cam; };
 
 
 vec2 SignNonZero( vec2 e )
@@ -88,6 +88,9 @@ void main()
 	
 	vec3 worldPos = RotateQuat( vec3( vtx.px, vtx.py, vtx.pz ) * inst.scale, inst.rot ) + inst.pos;
 	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;
+
+	global_data cam = ssbos[uint(camIdx)].g;
+
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 
 	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
