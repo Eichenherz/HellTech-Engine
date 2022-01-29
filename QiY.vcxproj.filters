@@ -57,6 +57,9 @@
     <ClCompile Include="r_dx12_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="r_dxc_compiler.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
@@ -117,9 +120,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imstb_truetype.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="r_dxc_compiler.cpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
