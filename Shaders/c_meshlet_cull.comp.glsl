@@ -8,7 +8,7 @@
 
 #extension GL_GOOGLE_include_directive: require
 
-#define GLOBAL_RESOURCES
+#define BINDLESS
 #include "..\r_data_structs.h"
 
 layout( push_constant, scalar ) uniform block{
@@ -23,6 +23,7 @@ layout( push_constant, scalar ) uniform block{
 	uint64_t	dbgDrawCmdsAddr;
 	uint	    hizBuffIdx;
 	uint	    hizSamplerIdx;
+	uint		camIdx;
 };
 
 
@@ -92,6 +93,8 @@ void main()
 		vec3 boxMin = center - extent;
 		vec3 boxMax = center + extent;
 		
+		global_data cam = ssbos[camIdx].g;
+
 		// NOTE: frustum culling inspired by Nabla
 		// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
 		mat4 trsMvp = transpose( cam.proj * cam.mainView * parentInst.localToWorld );

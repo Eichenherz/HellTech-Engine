@@ -241,6 +241,15 @@ const uint VK_GLOBAL_DESC_SET = 1;
 
 #ifndef __cplusplus
 
+#ifdef BINDLESS
+
+layout( binding = 0 ) uniform sampler samplers[];
+layout( binding = 1 ) readonly buffer global { global_data g; } ssbos[];
+layout( binding = 2 ) writeonly uniform coherent image2D storageImages[];
+layout( binding = 3 ) uniform texture2D sampledImages[];
+
+#endif
+
 #ifdef GLOBAL_RESOURCES
 
 layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data g; } globalsCam[];
@@ -248,6 +257,7 @@ layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_da
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer vtx_buff{ vertex data[]; } buff0[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer inst_buff{ instance_desc data[]; } buff1[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer mlet_buff{ meshlet data[]; } buff2[];
+layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer global{ global_data g; } glob[];
 
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
 layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];

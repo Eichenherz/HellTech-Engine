@@ -22,3 +22,5 @@ struct range
 	u64 offset : 32;
 	u64 size : 32;
 };
+
+constexpr u64 INVALID_IDX = -1;

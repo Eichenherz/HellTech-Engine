@@ -2,14 +2,18 @@
 
 #extension GL_GOOGLE_include_directive : require
 
-#define GLOBAL_RESOURCES
-
+#define BINDLESS
 #include "..\r_data_structs.h"
 
 layout( push_constant ) uniform block{
-	layout( offset = 16 ) 
+	uint64_t vtxAddr;
+	uint64_t transfAddr;
+	//uint64_t drawCmdAddr;
+	//uint64_t camDataAddr;
+	uint64_t camIdx;
 	uint64_t mtrlsAddr;
 	uint64_t lightsAddr;
+	uint64_t samplerIdx;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mtl_ref{
@@ -119,11 +123,16 @@ layout( location = 0 ) out vec4 oCol;
 layout( early_fragment_tests ) in;
 void main()
 {
+	global_data cam = ssbos[uint(camIdx)].g;
+
 	material_data mtl = mtl_ref( mtrlsAddr ).materials[ mtlIdx ];
 
-	vec4 baseCol = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ 0 ] ), vsOut.uv );
-	vec3 orm = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ 0 ] ), vsOut.uv ).rgb;
-	vec3 normalFromMap = texture( sampler2D( sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ 0 ] ), vsOut.uv ).rgb;
+	vec4 baseCol = texture( sampler2D( 
+		sampledImages[ nonuniformEXT( mtl.baseColIdx ) ], samplers[ uint( samplerIdx ) ] ), vsOut.uv );
+	vec3 orm = texture( sampler2D( 
+		sampledImages[ nonuniformEXT( mtl.occRoughMetalIdx ) ], samplers[ uint( samplerIdx ) ] ), vsOut.uv ).rgb;
+	vec3 normalFromMap = texture( sampler2D( 
+		sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ uint( samplerIdx ) ] ), vsOut.uv ).rgb;
 
 	normalFromMap = normalFromMap * 2.0 - 1.0;
 	normalFromMap.b = sqrt( clamp( 1 - dot( normalFromMap.rg, normalFromMap.rg ), 0, 1 ) );
