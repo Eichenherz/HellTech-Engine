@@ -149,5 +149,6 @@
   <ItemGroup>
     <None Include="Shaders\imgui_gfx_lib.hlsl" />
     <None Include="packages.config" />
+    <None Include="Shaders\imgui.hlsl" />
   </ItemGroup>
 </Project>
