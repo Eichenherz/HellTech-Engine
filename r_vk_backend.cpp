@@ -423,6 +423,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
 		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+		VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
 
 		VK_KHR_ZERO_INITIALIZE_WORKGROUP_MEMORY_EXTENSION_NAME,
 
@@ -453,7 +454,10 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
 
-	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR };
+	VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeatures =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR };
+	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = 
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &dynamicRenderingFeatures };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
 	VkPhysicalDeviceInlineUniformBlockFeaturesEXT inlineBlockFeatures =
@@ -2651,7 +2655,15 @@ VkPipeline VkMakeGfxPipeline(
 	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
 	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+
+	VkPipelineRenderingCreateInfoKHR renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR };
+	renderingInfo.colorAttachmentCount = 1;
+	renderingInfo.pColorAttachmentFormats = &rndCtx.desiredColorFormat;
+	renderingInfo.depthAttachmentFormat = rndCtx.desiredDepthFormat;
+
+
 	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+	pipelineInfo.pNext = vkRndPass ? 0 : &renderingInfo;
 	pipelineInfo.stageCount = shaderStagesCount;// std::size( shaderStagesInfo );
 	pipelineInfo.pStages = shaderStagesInfo;
 	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
@@ -3818,7 +3830,6 @@ inline hndl64<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 
 
 static resource_vector<vk_image> textures;
-static resource_vector<vk_buffer> buffers;
 
 
 static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& entities, u64 currentFrameId )
@@ -4523,7 +4534,8 @@ void VkBackendInit()
 
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
-		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, zRndPass, vk.globalLayout, vertZPre.module, 0, {} );
+		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, 0, vk.globalLayout, vertZPre.module, 0, {} );
+		//gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, zRndPass, vk.globalLayout, vertZPre.module, 0, {} );
 
 		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
 	}
@@ -4578,7 +4590,8 @@ void VkBackendInit()
 		vk_gfx_pipeline_state opaqueState = {};
 
 		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline(
-			dc.device, 0, rndCtx.renderPass, vk.globalLayout, vtxMerged.module, fragPBR.module, opaqueState );
+			dc.device, 0, 0, vk.globalLayout, vtxMerged.module, fragPBR.module, opaqueState );
+			//dc.device, 0, rndCtx.renderPass, vk.globalLayout, vtxMerged.module, fragPBR.module, opaqueState );
 		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
 
 		vkDestroyShaderModule( dc.device, vtxMerged.module, 0 );
@@ -4702,12 +4715,19 @@ inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
 }
 
 
+inline static void
+FrameClearDataPass(
+	VkCommandBuffer			cmdBuff,
+	VkPipeline				vkPipeline
+) {
+
+}
+
 // TODO: alloc buffers here ?
 // TODO: reduce the ammount of counter buffers
 // TODO: visibility buffer ( not the VBuffer ) check Aaltonen
 // TODO: revisit triangle culling ?
 // TODO: optimize expansion shader
-// TODO: must pass vertexOffset around somehow
 inline static void 
 CullPass( 
 	VkCommandBuffer			cmdBuff, 
@@ -5155,13 +5175,15 @@ inline static void
 DrawIndexedIndirectMerged(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
-	VkRenderPass			vkRndPass,
-	VkFramebuffer			offscreenFbo,
+	//VkRenderPass			vkRndPass,
+	//VkFramebuffer			offscreenFbo,
+	//const VkClearValue* clearVals,
+	const VkRenderingAttachmentInfoKHR* pColInfo,
+	const VkRenderingAttachmentInfoKHR* pDepthInfo,
 	VkPipelineLayout       pipelineLayout,
 	const vk_buffer&      indexBuff,
 	const vk_buffer&      drawCmds,
 	const vk_buffer&      drawCount,
-	const VkClearValue*     clearVals,
 	const void* pPushData,
 	u64 pushDataSize
 ){
@@ -5171,14 +5193,22 @@ DrawIndexedIndirectMerged(
 
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = vkRndPass;
-	rndPassBegInfo.framebuffer = offscreenFbo;
-	rndPassBegInfo.renderArea = scissor;
-	rndPassBegInfo.clearValueCount = clearVals ? 2 : 0;
-	rndPassBegInfo.pClearValues = clearVals;
 
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	renderInfo.renderArea = scissor;
+	renderInfo.layerCount = 1;
+	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
+	renderInfo.pColorAttachments = pColInfo;
+	renderInfo.pDepthAttachment = pDepthInfo;
+	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
+
+	//VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	//rndPassBegInfo.renderPass = vkRndPass;
+	//rndPassBegInfo.framebuffer = offscreenFbo;
+	//rndPassBegInfo.renderArea = scissor;
+	//rndPassBegInfo.clearValueCount = clearVals ? 2 : 0;
+	//rndPassBegInfo.pClearValues = clearVals;
+	//vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
@@ -5193,7 +5223,9 @@ DrawIndexedIndirectMerged(
 	vkCmdDrawIndexedIndirectCount(
 		cmdBuff, drawCmds.hndl, offsetof( draw_command, cmd ), drawCount.hndl, 0, maxDrawCount, sizeof( draw_command ) );
 
-	vkCmdEndRenderPass( cmdBuff );
+	vkCmdEndRenderingKHR( cmdBuff );
+
+	//vkCmdEndRenderPass( cmdBuff );
 }
 
 #if 0
@@ -5518,6 +5550,25 @@ static render_path renderPath;
 
 // TODO: must bind textures !!!
 
+// TODO: enforce some clearOp ---> clearVals params correctness ?
+inline static VkRenderingAttachmentInfoKHR VkMakeAttachemntInfo(
+	VkImageView view,
+	VkAttachmentLoadOp       loadOp,
+	VkAttachmentStoreOp      storeOp,
+	VkClearValue             clearValue
+){
+	VkRenderingAttachmentInfoKHR info = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR };
+	info.imageView = view;
+	info.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+	info.loadOp = loadOp;
+	info.storeOp = storeOp;
+	if( info.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR )
+	{
+		info.clearValue = clearValue;
+	}
+	return info;
+}
+
 void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	// TODO: don't expose math stuff here
@@ -5758,6 +5809,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	const vk_image& depthPyramid = vk.imgPool.GetDataFromSlot( renderPath.hDepthPyramid );
 	const vk_image& colorTarget = vk.imgPool.GetDataFromSlot( renderPath.hColorTarget );
 
+	auto depthWrite = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
+	auto depthRead = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
+	auto colorWrite = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
 
 	// TODO: remove when dynamic rendering becomes a thing
 	VkImageView attachments[] = { depthTarget.view,colorTarget.view };
@@ -5959,16 +6013,29 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
 			gfxZPrepass,
-			zRndPass,
-			depthFbo,
+			0,
+			&depthWrite,
 			vk.globalLayout,
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
-			clearVals,
 			&zPrepassPush,
 			sizeof(zPrepassPush)
 		);
+
+		//DrawIndexedIndirectMerged(
+		//	thisVFrame.cmdBuff,
+		//	gfxZPrepass,
+		//	zRndPass,
+		//	depthFbo,
+		//	clearVals,
+		//	vk.globalLayout,
+		//	indirectMergedIndexBuff,
+		//	drawMergedCmd,
+		//	drawMergedCountBuff,
+		//	&zPrepassPush,
+		//	sizeof( zPrepassPush )
+		//);
 
 		DebugDrawPass(
 			thisVFrame.cmdBuff,
@@ -6010,7 +6077,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			&vk.descDealer.set, 0, 0 );
 
 		// TODO: Aaltonen double draw ? ( not double culling )
-		// TODO: merge up to 256 meshes 
 		CullPass( 
 			thisVFrame.cmdBuff, 
 			rndCtx.compPipeline, 
@@ -6022,7 +6088,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			renderPath.quadMinSamplerIdx
 		);
 
-		// TODO: Emit depth + HzB
+
 		vkCmdBindDescriptorSets(
 			thisVFrame.cmdBuff,
 			VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -6032,16 +6098,29 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
 			gfxZPrepass,
-			zRndPass,
-			depthFbo,
+			0,
+			&depthWrite,
 			vk.globalLayout,
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
-			clearVals,
 			&zPrepassPush,
 			sizeof(zPrepassPush)
 		);
+
+		//DrawIndexedIndirectMerged(
+		//	thisVFrame.cmdBuff,
+		//	gfxZPrepass,
+		//	zRndPass,
+		//	depthFbo,
+		//	clearVals,
+		//	vk.globalLayout,
+		//	indirectMergedIndexBuff,
+		//	drawMergedCmd,
+		//	drawMergedCountBuff,
+		//	&zPrepassPush,
+		//	sizeof( zPrepassPush )
+		//);
 
 		struct { u64 vtxAddr, transfAddr, camIdx, mtrlsAddr, lightsAddr, samplerIdx;
 		} shadingPush = { 
@@ -6059,16 +6138,29 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
 			rndCtx.gfxMergedPipeline,
-			rndCtx.renderPass,
-			depthColFbo,
+			&colorWrite,
+			&depthWrite,
 			vk.globalLayout,
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
-			clearVals,
 			&shadingPush,
 			sizeof(shadingPush)
 		);
+
+		//DrawIndexedIndirectMerged(
+		//	thisVFrame.cmdBuff,
+		//	rndCtx.gfxMergedPipeline,
+		//	rndCtx.renderPass,
+		//	depthColFbo,
+		//	clearVals,
+		//	vk.globalLayout,
+		//	indirectMergedIndexBuff,
+		//	drawMergedCmd,
+		//	drawMergedCountBuff,
+		//	&shadingPush,
+		//	sizeof( shadingPush )
+		//);
 
 		DebugDrawPass(
 			thisVFrame.cmdBuff,
