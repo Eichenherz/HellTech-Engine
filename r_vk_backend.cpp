@@ -3098,7 +3098,8 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	guiState.polyMode = VK_POLYGON_MODE_FILL;
 	guiState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	guiState.cullFlags = VK_CULL_MODE_NONE;
-	VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, 0, rndPass, pipelineLayout, vert.module, frag.module, guiState );
+	//VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, 0, rndPass, pipelineLayout, vert.module, frag.module, guiState );
+	VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, 0, 0, pipelineLayout, vert.module, frag.module, guiState );
 
 
 	
@@ -3132,97 +3133,6 @@ __forceinline auto ImguiGetFontImage()
 	return retval{ pixels,width,height };
 }
 
-// TODO: overdraw more efficiently 
-// TODO: no imgui dependency
-static inline void ImguiDrawUiPass(
-	const imgui_vk_context& ctx,
-	VkCommandBuffer cmdBuff,
-	VkFramebuffer uiFbo,
-	u64 frameIdx
-){
-	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
-	static_assert( sizeof( ImDrawIdx ) == 2 );
-
-	using namespace DirectX;
-
-	const ImDrawData* guiDrawData = ImGui::GetDrawData();
-	
-	const vk_buffer& vtxBuff = imguiVkCtx.vtxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
-	const vk_buffer& idxBuff = imguiVkCtx.idxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
-
-	assert( guiDrawData->TotalVtxCount < u16( -1 ) );
-	assert( guiDrawData->TotalVtxCount * sizeof( ImDrawVert ) < vtxBuff.size );
-
-	ImDrawVert* vtxDst = ( ImDrawVert* ) vtxBuff.hostVisible;
-	ImDrawIdx* idxDst = ( ImDrawIdx* ) idxBuff.hostVisible;
-	for( u64 ci = 0; ci < guiDrawData->CmdListsCount; ++ci )
-	{
-		const ImDrawList* cmdList = guiDrawData->CmdLists[ ci ];
-		std::memcpy( vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof( ImDrawVert ) );
-		std::memcpy( idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof( ImDrawIdx ) );
-		vtxDst += cmdList->VtxBuffer.Size;
-		idxDst += cmdList->IdxBuffer.Size;
-	}
-
-
-	vk_label label = { cmdBuff,"Draw Imgui Pass",{} };
-
-	VkClearValue clear = {};
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = ctx.renderPass;
-	rndPassBegInfo.framebuffer = uiFbo;
-	rndPassBegInfo.renderArea = { 0,0,sc.width,sc.height };
-	//rndPassBegInfo.clearValueCount = 1;
-	//rndPassBegInfo.pClearValues = &clear;
-
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
-
-	vk_descriptor_info pushDescs[] = {
-		Descriptor( vtxBuff ), {ctx.fontSampler, ctx.fontsImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR} };
-
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, ctx.descTemplate, ctx.pipelineLayout, 0, pushDescs );
-
-	float scale[ 2 ] = { 2.0f / guiDrawData->DisplaySize.x, 2.0f / guiDrawData->DisplaySize.y };
-	float move[ 2 ] = { -1.0f - guiDrawData->DisplayPos.x * scale[ 0 ], -1.0f - guiDrawData->DisplayPos.y * scale[ 1 ] };
-	XMFLOAT4 pushConst = { scale[ 0 ],scale[ 1 ],move[ 0 ],move[ 1 ] };
-	vkCmdPushConstants( cmdBuff, ctx.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( pushConst ), &pushConst );
-	vkCmdBindIndexBuffer( cmdBuff, idxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
-
-
-	// (0,0) unless using multi-viewports
-	XMFLOAT2 clipOff = { guiDrawData->DisplayPos.x, guiDrawData->DisplayPos.y };
-	// (1,1) unless using retina display which are often (2,2)
-	XMFLOAT2 clipScale = { guiDrawData->FramebufferScale.x, guiDrawData->FramebufferScale.y };
-
-	u32 vtxOffset = 0;
-	u32 idxOffset = 0;
-	for( u64 li = 0; li < guiDrawData->CmdListsCount; ++li )
-	{
-		const ImDrawList* cmdList = guiDrawData->CmdLists[ li ];
-		for( u64 ci = 0; ci < cmdList->CmdBuffer.Size; ++ci )
-		{
-			const ImDrawCmd* pCmd = &cmdList->CmdBuffer[ ci ];
-			// Project scissor/clipping rectangles into framebuffer space
-			XMFLOAT2 clipMin = { ( pCmd->ClipRect.x - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.y - clipOff.y ) * clipScale.y };
-			XMFLOAT2 clipMax = { ( pCmd->ClipRect.z - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.w - clipOff.y ) * clipScale.y };
-
-			// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
-			clipMin = { std::max( clipMin.x, 0.0f ), std::max( clipMin.y, 0.0f ) };
-			clipMax = { std::min( clipMax.x, ( float ) sc.width ), std::min( clipMax.y, ( float ) sc.height ) };
-			
-			if( clipMax.x < clipMin.x || clipMax.y < clipMin.y ) continue;
-
-			VkRect2D scissor = { i32( clipMin.x ), i32( clipMin.y ), u32( clipMax.x - clipMin.x ), u32( clipMax.y - clipMin.y ) };
-			vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-			
-			vkCmdDrawIndexed( cmdBuff, pCmd->ElemCount, 1, pCmd->IdxOffset + idxOffset, pCmd->VtxOffset + vtxOffset, 0 );
-		}
-		idxOffset += cmdList->IdxBuffer.Size;
-		vtxOffset += cmdList->VtxBuffer.Size;
-	}
-	vkCmdEndRenderPass( cmdBuff );
-}
 
 // TODO: use instancing 4 drawing ?
 struct debug_context
@@ -3282,42 +3192,6 @@ static inline debug_context VkMakeDebugContext(
 	dbgCtx.dbgTrisBuff = VkCreateAllocBindBuffer( 128 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena );
 
 	return dbgCtx;
-}
-
-// TODO: color depth toggle stuff
-inline static void
-DebugDrawPass(
-	VkCommandBuffer		cmdBuff,
-	VkPipeline			vkPipeline,
-	VkRenderPass		vkRndPass,
-	VkFramebuffer	    offscreenFbo,
-	const vk_buffer& drawBuff,
-	const vk_program& program,
-	const mat4& projView,
-	range		        drawRange
-){
-	vk_label label = { cmdBuff,"Dbg Draw Pass",{} };
-
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
-
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = vkRndPass;
-	rndPassBegInfo.framebuffer = offscreenFbo;
-	rndPassBegInfo.renderArea = scissor;
-
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
-
-	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
-
-	vk_descriptor_info pushDescs[] = { Descriptor( drawBuff ) };
-	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
-	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( mat4 ), &projView );
-
-	vkCmdDraw( cmdBuff, drawRange.size, 1, drawRange.offset, 0 );
-
-	vkCmdEndRenderPass( cmdBuff );
 }
 
 static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
@@ -4528,14 +4402,10 @@ void VkBackendInit()
 
 	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
 	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
-	zRndPass = VkMakeRenderPass( dc.device, 0, -1, 1, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
-	depthReadRndPass = VkMakeRenderPass( dc.device, 0, -1, 0, -1, rndCtx.desiredDepthFormat, VkFormat( 0 ) );
-
 
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, 0, vk.globalLayout, vertZPre.module, 0, {} );
-		//gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, zRndPass, vk.globalLayout, vertZPre.module, 0, {} );
 
 		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
 	}
@@ -4554,7 +4424,7 @@ void VkBackendInit()
 
 		dbgDrawProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol } );
 		gfxDrawIndirDbg = VkMakeGfxPipeline(
-			dc.device, 0, rndCtx.renderPass, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module, lineDrawPipelineState );
+			dc.device, 0, 0, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module, lineDrawPipelineState );
 
 		vkDestroyShaderModule( dc.device, vertBox.module, 0 );
 		vkDestroyShaderModule( dc.device, normalCol.module, 0 );
@@ -4591,7 +4461,6 @@ void VkBackendInit()
 
 		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline(
 			dc.device, 0, 0, vk.globalLayout, vtxMerged.module, fragPBR.module, opaqueState );
-			//dc.device, 0, rndCtx.renderPass, vk.globalLayout, vtxMerged.module, fragPBR.module, opaqueState );
 		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
 
 		vkDestroyShaderModule( dc.device, vtxMerged.module, 0 );
@@ -4662,7 +4531,7 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, frag, 0 );
 	}
 
-	vkDbgCtx = VkMakeDebugContext( dc.device, rndCtx.renderPass, dc.gpuProps );
+	vkDbgCtx = VkMakeDebugContext( dc.device, 0, dc.gpuProps );
 
 	imguiVkCtx = ImguiMakeVkContext( dc.device, dc.gpuProps, VK_FORMAT_B8G8R8A8_UNORM );
 
@@ -5074,6 +4943,149 @@ CullRasterizeLightProxy(
 	vkCmdEndRenderPass( cmdBuff );
 }
 
+
+// TODO: overdraw more efficiently 
+// TODO: no imgui dependency
+static inline void ImguiDrawUiPass(
+	const imgui_vk_context& ctx,
+	VkCommandBuffer cmdBuff,
+	const VkRenderingAttachmentInfoKHR* pColInfo,
+	const VkRenderingAttachmentInfoKHR* pDepthInfo,
+	//VkFramebuffer uiFbo,
+	u64 frameIdx
+) {
+	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
+	static_assert( sizeof( ImDrawIdx ) == 2 );
+
+	using namespace DirectX;
+
+	const ImDrawData* guiDrawData = ImGui::GetDrawData();
+
+	const vk_buffer& vtxBuff = imguiVkCtx.vtxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	const vk_buffer& idxBuff = imguiVkCtx.idxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+
+	assert( guiDrawData->TotalVtxCount < u16( -1 ) );
+	assert( guiDrawData->TotalVtxCount * sizeof( ImDrawVert ) < vtxBuff.size );
+
+	ImDrawVert* vtxDst = ( ImDrawVert* ) vtxBuff.hostVisible;
+	ImDrawIdx* idxDst = ( ImDrawIdx* ) idxBuff.hostVisible;
+	for( u64 ci = 0; ci < guiDrawData->CmdListsCount; ++ci )
+	{
+		const ImDrawList* cmdList = guiDrawData->CmdLists[ ci ];
+		std::memcpy( vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof( ImDrawVert ) );
+		std::memcpy( idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof( ImDrawIdx ) );
+		vtxDst += cmdList->VtxBuffer.Size;
+		idxDst += cmdList->IdxBuffer.Size;
+	}
+
+
+	vk_label label = { cmdBuff,"Draw Imgui Pass",{} };
+
+	VkRect2D scissor = { 0,0,sc.width,sc.height };
+	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	renderInfo.renderArea = scissor;
+	renderInfo.layerCount = 1;
+	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
+	renderInfo.pColorAttachments = pColInfo;
+	renderInfo.pDepthAttachment = pDepthInfo;
+	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
+
+	//VkClearValue clear = {};
+	//VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	//rndPassBegInfo.renderPass = ctx.renderPass;
+	//rndPassBegInfo.framebuffer = uiFbo;
+	//rndPassBegInfo.renderArea = { 0,0,sc.width,sc.height };
+	////rndPassBegInfo.clearValueCount = 1;
+	////rndPassBegInfo.pClearValues = &clear;
+	//vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
+
+	vk_descriptor_info pushDescs[] = {
+		Descriptor( vtxBuff ), {ctx.fontSampler, ctx.fontsImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR} };
+
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, ctx.descTemplate, ctx.pipelineLayout, 0, pushDescs );
+
+	float scale[ 2 ] = { 2.0f / guiDrawData->DisplaySize.x, 2.0f / guiDrawData->DisplaySize.y };
+	float move[ 2 ] = { -1.0f - guiDrawData->DisplayPos.x * scale[ 0 ], -1.0f - guiDrawData->DisplayPos.y * scale[ 1 ] };
+	XMFLOAT4 pushConst = { scale[ 0 ],scale[ 1 ],move[ 0 ],move[ 1 ] };
+	vkCmdPushConstants( cmdBuff, ctx.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( pushConst ), &pushConst );
+	vkCmdBindIndexBuffer( cmdBuff, idxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
+
+
+	// (0,0) unless using multi-viewports
+	XMFLOAT2 clipOff = { guiDrawData->DisplayPos.x, guiDrawData->DisplayPos.y };
+	// (1,1) unless using retina display which are often (2,2)
+	XMFLOAT2 clipScale = { guiDrawData->FramebufferScale.x, guiDrawData->FramebufferScale.y };
+
+	u32 vtxOffset = 0;
+	u32 idxOffset = 0;
+	for( u64 li = 0; li < guiDrawData->CmdListsCount; ++li )
+	{
+		const ImDrawList* cmdList = guiDrawData->CmdLists[ li ];
+		for( u64 ci = 0; ci < cmdList->CmdBuffer.Size; ++ci )
+		{
+			const ImDrawCmd* pCmd = &cmdList->CmdBuffer[ ci ];
+			// Project scissor/clipping rectangles into framebuffer space
+			XMFLOAT2 clipMin = { ( pCmd->ClipRect.x - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.y - clipOff.y ) * clipScale.y };
+			XMFLOAT2 clipMax = { ( pCmd->ClipRect.z - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.w - clipOff.y ) * clipScale.y };
+
+			// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
+			clipMin = { std::max( clipMin.x, 0.0f ), std::max( clipMin.y, 0.0f ) };
+			clipMax = { std::min( clipMax.x, ( float ) sc.width ), std::min( clipMax.y, ( float ) sc.height ) };
+
+			if( clipMax.x < clipMin.x || clipMax.y < clipMin.y ) continue;
+
+			VkRect2D scissor = { i32( clipMin.x ), i32( clipMin.y ), u32( clipMax.x - clipMin.x ), u32( clipMax.y - clipMin.y ) };
+			vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+			vkCmdDrawIndexed( cmdBuff, pCmd->ElemCount, 1, pCmd->IdxOffset + idxOffset, pCmd->VtxOffset + vtxOffset, 0 );
+		}
+		idxOffset += cmdList->IdxBuffer.Size;
+		vtxOffset += cmdList->VtxBuffer.Size;
+	}
+
+	//vkCmdEndRenderPass( cmdBuff );
+	vkCmdEndRenderingKHR( cmdBuff );
+}
+
+// TODO: color depth toggle stuff
+inline static void
+DebugDrawPass(
+	VkCommandBuffer		cmdBuff,
+	VkPipeline			vkPipeline,
+	const VkRenderingAttachmentInfoKHR* pColInfo,
+	const VkRenderingAttachmentInfoKHR* pDepthInfo,
+	const vk_buffer& drawBuff,
+	const vk_program& program,
+	const mat4& projView,
+	range		        drawRange
+) {
+	vk_label label = { cmdBuff,"Dbg Draw Pass",{} };
+
+	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+
+	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	renderInfo.renderArea = scissor;
+	renderInfo.layerCount = 1;
+	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
+	renderInfo.pColorAttachments = pColInfo;
+	renderInfo.pDepthAttachment = pDepthInfo;
+	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
+
+	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
+
+	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
+
+	vk_descriptor_info pushDescs[] = { Descriptor( drawBuff ) };
+	vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, pushDescs );
+	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( mat4 ), &projView );
+
+	vkCmdDraw( cmdBuff, drawRange.size, 1, drawRange.offset, 0 );
+
+	vkCmdEndRenderingKHR( cmdBuff );
+}
+
 // TODO: redesign
 inline static void
 DrawIndexedIndirectPass(
@@ -5131,8 +5143,8 @@ inline static void
 DrawIndirectPass(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
-	VkRenderPass			vkRndPass,
-	VkFramebuffer			offscreenFbo,
+	const VkRenderingAttachmentInfoKHR* pColInfo,
+	const VkRenderingAttachmentInfoKHR* pDepthInfo,
 	const vk_buffer&      drawCmds,
 	VkBuffer				drawCmdCount,
 	const vk_program&       program,
@@ -5142,12 +5154,13 @@ DrawIndirectPass(
 
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = vkRndPass;
-	rndPassBegInfo.framebuffer = offscreenFbo;
-	rndPassBegInfo.renderArea = scissor;
-
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	renderInfo.renderArea = scissor;
+	renderInfo.layerCount = 1;
+	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
+	renderInfo.pColorAttachments = pColInfo;
+	renderInfo.pDepthAttachment = pDepthInfo;
+	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
 
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
@@ -5165,7 +5178,7 @@ DrawIndirectPass(
 	vkCmdDrawIndirectCount(
 		cmdBuff, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCmdCount, 0, maxDrawCnt, sizeof( draw_indirect ) );
 
-	vkCmdEndRenderPass( cmdBuff );
+	vkCmdEndRenderingKHR( cmdBuff );
 }
 
 
@@ -5175,9 +5188,6 @@ inline static void
 DrawIndexedIndirectMerged(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
-	//VkRenderPass			vkRndPass,
-	//VkFramebuffer			offscreenFbo,
-	//const VkClearValue* clearVals,
 	const VkRenderingAttachmentInfoKHR* pColInfo,
 	const VkRenderingAttachmentInfoKHR* pDepthInfo,
 	VkPipelineLayout       pipelineLayout,
@@ -5193,7 +5203,6 @@ DrawIndexedIndirectMerged(
 
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
-
 	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
 	renderInfo.renderArea = scissor;
 	renderInfo.layerCount = 1;
@@ -5202,13 +5211,6 @@ DrawIndexedIndirectMerged(
 	renderInfo.pDepthAttachment = pDepthInfo;
 	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
 
-	//VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	//rndPassBegInfo.renderPass = vkRndPass;
-	//rndPassBegInfo.framebuffer = offscreenFbo;
-	//rndPassBegInfo.renderArea = scissor;
-	//rndPassBegInfo.clearValueCount = clearVals ? 2 : 0;
-	//rndPassBegInfo.pClearValues = clearVals;
-	//vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
 
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
@@ -5224,8 +5226,6 @@ DrawIndexedIndirectMerged(
 		cmdBuff, drawCmds.hndl, offsetof( draw_command, cmd ), drawCount.hndl, 0, maxDrawCount, sizeof( draw_command ) );
 
 	vkCmdEndRenderingKHR( cmdBuff );
-
-	//vkCmdEndRenderPass( cmdBuff );
 }
 
 #if 0
@@ -5526,11 +5526,6 @@ FinalCompositionPass(
 }
 
 
-
-// TODO: delete
-static std::vector<VkFramebuffer> recycleFboList;
-
-
 struct render_path
 {
 	VkSampler quadMinSampler;
@@ -5812,24 +5807,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	auto depthWrite = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
 	auto depthRead = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 	auto colorWrite = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
-
-	// TODO: remove when dynamic rendering becomes a thing
-	VkImageView attachments[] = { depthTarget.view,colorTarget.view };
-	u32 fboWidth = depthTarget.width;
-	u32 fboHeight = depthTarget.height;
-	
-	if( std::size( recycleFboList ) )
-	{
-		for( VkFramebuffer& fbo : recycleFboList )
-		{
-			vkDestroyFramebuffer( dc.device, fbo, 0 );
-		}
-		recycleFboList.resize( 0 );
-	}
-	VkFramebuffer depthFbo = VkMakeFramebuffer( dc.device, zRndPass, attachments, 1, fboWidth, fboHeight );
-	VkFramebuffer depthColFbo = VkMakeFramebuffer( dc.device, rndCtx.renderPass, attachments, 2, fboWidth, fboHeight );
-	recycleFboList.push_back( depthFbo );
-	recycleFboList.push_back( depthColFbo );
+	auto colorRead = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 
 	static bool rescUploaded = 0;
 	if( !rescUploaded )
@@ -6023,25 +6001,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			sizeof(zPrepassPush)
 		);
 
-		//DrawIndexedIndirectMerged(
-		//	thisVFrame.cmdBuff,
-		//	gfxZPrepass,
-		//	zRndPass,
-		//	depthFbo,
-		//	clearVals,
-		//	vk.globalLayout,
-		//	indirectMergedIndexBuff,
-		//	drawMergedCmd,
-		//	drawMergedCountBuff,
-		//	&zPrepassPush,
-		//	sizeof( zPrepassPush )
-		//);
-
 		DebugDrawPass(
 			thisVFrame.cmdBuff,
 			vkDbgCtx.drawAsTriangles,
-			rndCtx.render2ndPass,
-			depthColFbo,
+			0,
+			&depthRead,
 			vkDbgCtx.dbgTrisBuff,
 			vkDbgCtx.pipeProg,
 			frameData.mainProjView,
@@ -6108,20 +6072,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			sizeof(zPrepassPush)
 		);
 
-		//DrawIndexedIndirectMerged(
-		//	thisVFrame.cmdBuff,
-		//	gfxZPrepass,
-		//	zRndPass,
-		//	depthFbo,
-		//	clearVals,
-		//	vk.globalLayout,
-		//	indirectMergedIndexBuff,
-		//	drawMergedCmd,
-		//	drawMergedCountBuff,
-		//	&zPrepassPush,
-		//	sizeof( zPrepassPush )
-		//);
-
 		struct { u64 vtxAddr, transfAddr, camIdx, mtrlsAddr, lightsAddr, samplerIdx;
 		} shadingPush = { 
 					 globVertexBuff.devicePointer, 
@@ -6148,25 +6098,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			sizeof(shadingPush)
 		);
 
-		//DrawIndexedIndirectMerged(
-		//	thisVFrame.cmdBuff,
-		//	rndCtx.gfxMergedPipeline,
-		//	rndCtx.renderPass,
-		//	depthColFbo,
-		//	clearVals,
-		//	vk.globalLayout,
-		//	indirectMergedIndexBuff,
-		//	drawMergedCmd,
-		//	drawMergedCountBuff,
-		//	&shadingPush,
-		//	sizeof( shadingPush )
-		//);
-
 		DebugDrawPass(
 			thisVFrame.cmdBuff,
 			vkDbgCtx.drawAsTriangles,
-			rndCtx.render2ndPass,
-			depthColFbo,
+			&colorRead,
+			&depthRead,
 			vkDbgCtx.dbgTrisBuff,
 			vkDbgCtx.pipeProg,
 			frameData.activeProjView,
@@ -6192,8 +6128,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 			DebugDrawPass( thisVFrame.cmdBuff,
 						   vkDbgCtx.drawAsLines,
-						   rndCtx.render2ndPass,
-						   depthColFbo,
+						   &colorRead,
+						   0,
 						   vkDbgCtx.dbgLinesBuff,
 						   vkDbgCtx.pipeProg,
 						   frameData.activeProjView,
@@ -6203,8 +6139,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			{
 				DrawIndirectPass( thisVFrame.cmdBuff,
 								  gfxDrawIndirDbg,
-								  rndCtx.render2ndPass,
-								  depthColFbo,
+								  &colorRead,
+								  0,
 								  drawCmdAabbsBuff,
 								  drawCountDbgBuff.hndl,
 								  dbgDrawProgram,
@@ -6252,9 +6188,14 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkViewport uiViewport = { 0, 0, ( float ) sc.width, ( float ) sc.height, 0, 1.0f };
 		vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &uiViewport );
 
-		VkFramebuffer uiFbo = VkMakeFramebuffer( dc.device, imguiVkCtx.renderPass, &sc.imgViews[ imgIdx ], 1, sc.width, sc.height );
-		recycleFboList.push_back( uiFbo );
-		ImguiDrawUiPass( imguiVkCtx, thisVFrame.cmdBuff, uiFbo, currentFrameIdx );
+		auto swapchainUIRW = VkMakeAttachemntInfo( 
+			sc.imgViews[ imgIdx ], VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
+		ImguiDrawUiPass( 
+			imguiVkCtx, 
+			thisVFrame.cmdBuff, 
+			&swapchainUIRW,
+			0,
+			currentFrameIdx );
 
 
 		VkImageMemoryBarrier2KHR presentWaitBarrier = VkMakeImageBarrier2(
