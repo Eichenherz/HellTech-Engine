@@ -52,9 +52,21 @@ struct sampler_config
 	//gltf_sampler_address_mode	addrW;
 };
 
+struct uuid128
+{
+	u64 dataChunk[ 2 ];
+
+	bool operator==( const uuid128& other ) const
+	{
+		return ( this->dataChunk[ 0 ] == other.dataChunk[ 0 ] ) && 
+			( this->dataChunk[ 1 ] == other.dataChunk[ 1 ] );
+	}
+};
+
 struct image_metadata
 {
-	u64				nameHash;
+	//uuid128         uuid;
+	u64             nameHash;
 	range			texBinRange;
 	u16				width;
 	u16				height;
@@ -64,6 +76,7 @@ struct image_metadata
 	u8				layerCount = 1;
 };
 
+// TODO: must add dataOffset and have the ranges offset into that
 // TODO: count bytes or elements
 struct drak_file_footer
 {

@@ -271,6 +271,7 @@
     <ClCompile Include="imgui\imgui_widgets.cpp" />
     <ClCompile Include="lz4.c" />
     <ClCompile Include="miniz.c" />
+    <ClCompile Include="r_dxc_compiler.ixx" />
     <ClCompile Include="r_dx12_backend.cpp" />
     <ClCompile Include="r_vk_backend.cpp" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
@@ -297,8 +298,8 @@
     <ClInclude Include="lz4.h" />
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
-    <ClInclude Include="r_dxc_compiler.cpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
+    <ClInclude Include="r_data.h" />
     <ClInclude Include="spirv_reflect.h" />
     <ClInclude Include="spng.h" />
     <ClInclude Include="sys_os_api.h" />
@@ -417,7 +418,19 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\imgui.hlsl">
+    <None Include="Shaders\culling.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">4.0</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">4.0</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">4.0</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">4.0</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">4.0</ShaderModel>
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
