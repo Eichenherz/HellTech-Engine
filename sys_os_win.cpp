@@ -408,6 +408,92 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 #include "imgui/imgui.h"
 
+// TODO: add more ?
+struct win_file
+{
+	HANDLE hndl = INVALID_HANDLE_VALUE;
+	HANDLE mapping = INVALID_HANDLE_VALUE;
+	UINT8* pMemView = 0;
+	UINT64 size = -1;
+	bool readOnly;
+};
+
+inline win_file WinMountMemMappedFile( const char* path )
+{
+	win_file dataFile = {};
+
+	WIN32_FILE_ATTRIBUTE_DATA fileInfo = {};
+	assert( GetFileAttributesEx( path, GetFileExInfoStandard, &fileInfo ) );
+	assert( !( fileInfo.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) );
+
+	LARGE_INTEGER fileSize = {};
+	fileSize.LowPart = fileInfo.nFileSizeLow;
+	fileSize.HighPart = fileInfo.nFileSizeHigh;
+	assert( fileSize.QuadPart );
+
+	dataFile.readOnly = fileInfo.dwFileAttributes & FILE_ATTRIBUTE_READONLY;
+	dataFile.size = fileSize.QuadPart;
+
+	DWORD accessMode = GENERIC_READ;
+	DWORD flagsAndAttrs = FILE_ATTRIBUTE_READONLY;
+	dataFile.hndl = CreateFile( path, accessMode, 0, 0, OPEN_EXISTING, flagsAndAttrs, 0 );
+	dataFile.mapping = CreateFileMapping( dataFile.hndl, 0, PAGE_READONLY, 0, 0, 0 );
+
+	dataFile.pMemView = ( UINT8* ) MapViewOfFile( dataFile.mapping, FILE_MAP_READ, 0, 0, dataFile.size );
+
+	return dataFile;
+}
+
+#include <span>
+
+struct pak_header
+{
+	u32 entryCount = 0;
+	u16 contentVer = 0;
+	char id[ 4 ] = "PAK";
+	char ver = 0;
+	char folderPath[ 100 ];
+	char pakName[ 50 ];
+};
+
+// TODO: add UUID
+struct pak_entry
+{
+	u32 uncompressedSizeInBytes;
+	u32 compressedSizeInBytes;
+	u32 offsetInBytes;
+	char filePath[ 255 ];
+};
+
+inline bool PakEntryIsCompressed( const pak_entry& pe )
+{
+	return pe.compressedSizeInBytes == pe.uncompressedSizeInBytes;
+}
+
+// TODO: should own the physical archive/s
+struct pak_filesystem
+{
+	pak_header header;
+	std::span<pak_entry> entries;
+	std::span<u8> blob;
+};
+
+inline pak_filesystem PakMountFromWinFile( const win_file& winFile )
+{
+	pak_filesystem pakFs = {};
+	pakFs.header = ( const pak_header& ) winFile.pMemView;
+
+	//assert( ( const u32& ) pakFs.header.id == ( const u32& ) ( "PAK" ) );
+
+	pakFs.entries = { ( pak_entry* ) ( winFile.pMemView + sizeof( pak_header ) ),pakFs.header.entryCount };
+	u64 dataOffset = sizeof( pak_header ) + BYTE_COUNT( pakFs.entries );
+	pakFs.blob = { winFile.pMemView + dataOffset, winFile.size - dataOffset };
+
+	return pakFs;
+}
+
+
+
 INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
@@ -483,7 +569,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	gpu_data gpuData = {};
 	frame_data frameData = {};
 
-	Dx12BackendInit();
+	//Dx12BackendInit();
 
 	VkBackendInit();
 
@@ -505,6 +591,12 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	io.Fonts->Build();
 	
 
+	constexpr char pakPath[] = //"Assets/data.pak";
+	"Assets/cyberbaron.drak";
+	static bool loadedPakFile = false;
+
+	win_file dataFile = {};
+	pak_filesystem pakFs = {};
 	// TODO: QUIT immediately ?
 	while( isRunning )
 	{
@@ -514,6 +606,16 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		//accumulator += elapsedSecs;
 
 		isRunning = SysPumpUserInput( &m, &kbd, 1 );
+
+
+		//if( !loadedPakFile )
+		//{
+		//	dataFile = WinMountMemMappedFile( pakPath );
+		//	pakFs = PakMountFromWinFile( dataFile );
+		//
+		//	loadedPakFile = true;
+		//}
+
 
 		// TODO: smooth camera some more ?
 		// TODO: wtf Newton ?

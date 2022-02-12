@@ -833,7 +833,7 @@ void CompileGlbAssetToBinary(
 	fileFooter.compressedSize = totalDataSize;
 	fileFooter.originalSize = totalDataSize;
 	
-	std::vector<u8> outData( fileFooter.originalSize + +sizeof( fileFooter ) );
+	std::vector<u8> outData( fileFooter.originalSize + sizeof( fileFooter ) );
 	u8* pOutData = std::data( outData );
 	const u8* pDataBegin = std::data( outData );
 

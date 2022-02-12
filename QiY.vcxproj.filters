@@ -122,6 +122,9 @@
     <ClInclude Include="imgui\imstb_truetype.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="r_data.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
@@ -149,5 +152,6 @@
   <ItemGroup>
     <None Include="Shaders\imgui_gfx_lib.hlsl" />
     <None Include="packages.config" />
+    <None Include="Shaders\culling.hlsl" />
   </ItemGroup>
 </Project>
