@@ -60,6 +60,9 @@
     <ClCompile Include="r_dxc_compiler.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="r_vk_resources.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">

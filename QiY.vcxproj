@@ -276,6 +276,7 @@
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
+    <ClCompile Include="r_vk_resources.ixx" />
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="spng.c" />
     <ClCompile Include="sys_os_win.cpp">
