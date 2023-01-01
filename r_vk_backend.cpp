@@ -245,6 +245,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
 		VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME,
+		//VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME
 	};
 
 	u32 numDevices = 0;
@@ -252,7 +253,8 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
-
+	//VkPhysicalDeviceDescriptorBufferPropertiesEXT descBuffProps =
+	//{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT };
 	VkPhysicalDeviceInlineUniformBlockPropertiesEXT inlineBlockProps =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT };
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
@@ -261,6 +263,8 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
 
+	//VkPhysicalDeviceDescriptorBufferFeaturesEXT descBuffFeatures = 
+	//{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT };
 	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES };
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = 
@@ -826,7 +830,7 @@ struct render_context
 	VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
 	VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-	vk_gpu_timer vkGpuTimer[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	vk_gpu_timer    vkGpuTimer[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 	virtual_frame	vrtFrames[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 	VkSemaphore     timelineSema;
 	u64				vFrameIdx = 0;
@@ -1427,29 +1431,6 @@ inline static vk_program VkMakePipelineProgram(
 inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
 {}
 
-
-
-inline static VkFramebuffer
-VkMakeFramebuffer(
-	VkDevice		vkDevice,
-	VkRenderPass	vkRndPass,
-	VkImageView*    attachements,
-	u32				attachementCount,
-	u32				width,
-	u32				height
-){
-	VkFramebufferCreateInfo fboInfo = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
-	fboInfo.renderPass = vkRndPass;
-	fboInfo.attachmentCount = attachementCount;
-	fboInfo.pAttachments = attachements;
-	fboInfo.width = width;
-	fboInfo.height = height;
-	fboInfo.layers = 1;
-
-	VkFramebuffer fbo;
-	VK_CHECK( vkCreateFramebuffer( vkDevice, &fboInfo, 0, &fbo ) );
-	return fbo;
-}
 
 // TODO: rename to program 
 // TODO: what about descriptors ?

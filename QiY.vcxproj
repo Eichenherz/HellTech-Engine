@@ -263,6 +263,7 @@
   <ItemGroup>
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
+    <ClCompile Include="handle_map.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -286,6 +287,7 @@
     <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="bcn_compressor.h" />
     <ClInclude Include="cgltf.h" />
+    <ClInclude Include="handle_map.hpp" />
     <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
     <ClInclude Include="imgui\imconfig.h" />

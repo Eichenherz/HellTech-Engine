@@ -60,6 +60,9 @@
     <ClCompile Include="r_dxc_compiler.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="handle_map.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
@@ -132,6 +135,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="r_vk_pipelines.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="handle_map.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
