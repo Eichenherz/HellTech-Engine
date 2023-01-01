@@ -1,3 +1,5 @@
+#pragma once
+
 /* VK_GEN_VERSION_DEFINE */
 #define VK_GEN_HEADER_VERSION 230
 /* VK_GEN_VERSION_DEFINE */

@@ -276,7 +276,6 @@
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <ClCompile Include="r_vk_resources.ixx" />
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="spng.c" />
     <ClCompile Include="sys_os_win.cpp">
@@ -298,12 +297,14 @@
     <ClInclude Include="lz4.h" />
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
+    <ClInclude Include="r_vk_resources.hpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="spirv_reflect.h" />
     <ClInclude Include="spng.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="vk_procs.h" />
+    <ClInclude Include="vk_utils.hpp" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">

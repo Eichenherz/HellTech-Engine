@@ -1,5 +1,3 @@
-import r_vk_resources;
-
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
 #define __VK
@@ -36,6 +34,9 @@ import r_vk_resources;
 
 #endif
 
+#include "r_vk_resources.hpp"
+#include "vk_utils.hpp"
+
 #include <DirectXPackedVector.h>
 
 namespace DXPacked = DirectX::PackedVector;
@@ -43,80 +44,14 @@ namespace DXPacked = DirectX::PackedVector;
 #include "sys_os_api.h"
 #include "core_lib_api.h"
 
-// TODO: gen from VkResult ?
-inline std::string_view VkResErrorString( VkResult errorCode )
-{
-	switch( errorCode )			{
-#define STR(r) case VK_ ##r: return #r
-		STR( NOT_READY );
-		STR( TIMEOUT );
-		STR( EVENT_SET );
-		STR( EVENT_RESET );
-		STR( INCOMPLETE );
-		STR( ERROR_OUT_OF_HOST_MEMORY );
-		STR( ERROR_OUT_OF_DEVICE_MEMORY );
-		STR( ERROR_INITIALIZATION_FAILED );
-		STR( ERROR_DEVICE_LOST );
-		STR( ERROR_MEMORY_MAP_FAILED );
-		STR( ERROR_LAYER_NOT_PRESENT );
-		STR( ERROR_EXTENSION_NOT_PRESENT );
-		STR( ERROR_FEATURE_NOT_PRESENT );
-		STR( ERROR_INCOMPATIBLE_DRIVER );
-		STR( ERROR_TOO_MANY_OBJECTS );
-		STR( ERROR_FORMAT_NOT_SUPPORTED );
-		STR( ERROR_FRAGMENTED_POOL );
-		STR( ERROR_UNKNOWN );
-		STR( ERROR_OUT_OF_POOL_MEMORY );
-		STR( ERROR_INVALID_EXTERNAL_HANDLE );
-		STR( ERROR_FRAGMENTATION );
-		STR( ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS );
-		STR( ERROR_SURFACE_LOST_KHR );
-		STR( ERROR_NATIVE_WINDOW_IN_USE_KHR );
-		STR( SUBOPTIMAL_KHR );
-		STR( ERROR_OUT_OF_DATE_KHR );
-		STR( ERROR_INCOMPATIBLE_DISPLAY_KHR );
-		STR( ERROR_VALIDATION_FAILED_EXT );
-		STR( ERROR_INVALID_SHADER_NV );
-		STR( ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT );
-		STR( ERROR_NOT_PERMITTED_EXT );
-		STR( ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT );
-		STR( THREAD_IDLE_KHR );
-		STR( THREAD_DONE_KHR );
-		STR( OPERATION_DEFERRED_KHR );
-		STR( OPERATION_NOT_DEFERRED_KHR );
-		STR( PIPELINE_COMPILE_REQUIRED_EXT );
-		STR( RESULT_MAX_ENUM );
-#undef STR
-		default: return "VK_UNKNOWN_INTERNAL_ERROR";
-	}
-}
-inline VkResult VkResFromStatement( bool statement )
-{
-	return !statement ? VK_SUCCESS : VkResult( int( 0x8FFFFFFF ) );
-}
-// TODO: keep ?
-#define VK_INTERNAL_ERROR( vk ) VkResFromStatement( bool( vk ) )
-
-#define VK_CHECK( vk )																\
-do{																					\
-	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";				\
-	VkResult res = vk;																\
-	if( res ){																		\
-		char dbgStr[256] = {};														\
-		strcat_s( dbgStr, sizeof( dbgStr ), DEV_ERR_STR );							\
-		strcat_s( dbgStr, sizeof( dbgStr ), std::data( VkResErrorString( res ) ) );	\
-		SysErrMsgBox( dbgStr );														\
-		abort();																	\
-	}																				\
-}while( 0 )		
 
 //====================CONSTS====================//
 constexpr u32 VK_SWAPCHAIN_MAX_IMG_ALLOWED = 3;
 constexpr u64 VK_MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
-constexpr u64 MAX_MIP_LEVELS = 12;
 constexpr u32 NOT_USED_IDX = -1;
 constexpr u32 OBJ_CULL_WORKSIZE = 64;
 constexpr u32 MLET_CULL_WORKSIZE = 256;
+constexpr u32 VK_API_VERSION = VK_API_VERSION_1_3;
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
@@ -129,140 +64,12 @@ static_assert( multiPassDepthPyramid );
 // TODO: enable gfx debug outside of VS Debug
 constexpr bool vkValidationLayerFeatures = 1;
 constexpr bool worldLeftHanded = 1;
-constexpr bool objectNaming = 1;
+
 // TODO: cvar or constexpr ?
 constexpr bool dbgDraw = true;
 //==============================================//
 
-template<typename VKH>
-constexpr VkObjectType VkGetObjTypeFromHandle()
-{
-#define if_same_type( VKT ) if( std::is_same<VKH, VKT>::value )
 
-	if_same_type( VkInstance ) return VK_OBJECT_TYPE_INSTANCE;
-	if_same_type( VkPhysicalDevice ) return VK_OBJECT_TYPE_PHYSICAL_DEVICE;
-	if_same_type( VkDevice ) return VK_OBJECT_TYPE_DEVICE;
-	if_same_type( VkSemaphore ) return VK_OBJECT_TYPE_SEMAPHORE;
-	if_same_type( VkCommandBuffer ) return VK_OBJECT_TYPE_COMMAND_BUFFER;
-	if_same_type( VkFence ) return VK_OBJECT_TYPE_FENCE;
-	if_same_type( VkDeviceMemory ) return VK_OBJECT_TYPE_DEVICE_MEMORY;
-	if_same_type( VkBuffer ) return VK_OBJECT_TYPE_BUFFER;
-	if_same_type( VkImage ) return VK_OBJECT_TYPE_IMAGE;
-	if_same_type( VkEvent ) return VK_OBJECT_TYPE_EVENT;
-	if_same_type( VkQueryPool ) return VK_OBJECT_TYPE_QUERY_POOL;
-	if_same_type( VkBufferView ) return VK_OBJECT_TYPE_BUFFER_VIEW;
-	if_same_type( VkImageView ) return VK_OBJECT_TYPE_IMAGE_VIEW;
-	if_same_type( VkShaderModule ) return VK_OBJECT_TYPE_SHADER_MODULE;
-	if_same_type( VkPipelineCache ) return VK_OBJECT_TYPE_PIPELINE_CACHE;
-	if_same_type( VkPipelineLayout ) return VK_OBJECT_TYPE_PIPELINE_LAYOUT;
-	if_same_type( VkRenderPass ) return VK_OBJECT_TYPE_RENDER_PASS;
-	if_same_type( VkPipeline ) return VK_OBJECT_TYPE_PIPELINE;
-	if_same_type( VkDescriptorSetLayout ) return VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT;
-	if_same_type( VkSampler ) return VK_OBJECT_TYPE_SAMPLER;
-	if_same_type( VkDescriptorPool ) return VK_OBJECT_TYPE_DESCRIPTOR_POOL;
-	if_same_type( VkDescriptorSet ) return VK_OBJECT_TYPE_DESCRIPTOR_SET;
-	if_same_type( VkFramebuffer ) return VK_OBJECT_TYPE_FRAMEBUFFER;
-	if_same_type( VkCommandPool ) return VK_OBJECT_TYPE_COMMAND_POOL;
-	if_same_type( VkSamplerYcbcrConversion ) return VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION;
-	if_same_type( VkDescriptorUpdateTemplate ) return VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE;
-	if_same_type( VkSurfaceKHR ) return VK_OBJECT_TYPE_SURFACE_KHR;
-	if_same_type( VkSwapchainKHR ) return VK_OBJECT_TYPE_SURFACE_KHR;
-	if_same_type( VkSurfaceKHR ) return VK_OBJECT_TYPE_SWAPCHAIN_KHR;
-	
-	assert( 0 );
-	return VK_OBJECT_TYPE_UNKNOWN;
-
-#undef if_same_type
-}
-
-template<typename VKH>
-inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
-{
-	if constexpr( !objectNaming ) return;
-
-	static_assert( sizeof( vkHandle ) == sizeof( u64 ) );
-	VkDebugUtilsObjectNameInfoEXT nameInfo = { VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT };
-	nameInfo.objectType = VkGetObjTypeFromHandle<VKH>();
-	nameInfo.objectHandle = (u64) vkHandle;
-	nameInfo.pObjectName = name;
-
-	VK_CHECK( vkSetDebugUtilsObjectNameEXT( vkDevice, &nameInfo ) );
-}
-
-// TODO: remove ?
-static const DXPacked::XMCOLOR white = { 255u, 255u, 255u, 1 };
-static const DXPacked::XMCOLOR black = { 0u, 0u, 0u, 1 };
-static const DXPacked::XMCOLOR gray = { 0x80u, 0x80u, 0x80u, 1 };
-static const DXPacked::XMCOLOR lightGray = { 0xD3u, 0xD3u, 0xD3u, 1 };
-static const DXPacked::XMCOLOR red = { 255u, 0u, 0u, 1 };
-static const DXPacked::XMCOLOR green = { 0u, 255u, 0u, 1 };
-static const DXPacked::XMCOLOR blue = { 0u, 0u, 255u, 1 };
-static const DXPacked::XMCOLOR yellow = { 255u, 255u, 0u, 1 };
-static const DXPacked::XMCOLOR cyan = { 0u, 255u, 255u, 1 };
-static const DXPacked::XMCOLOR magenta = { 255u, 0u, 255u, 1 };
-
-
-struct vk_label
-{
-	const VkCommandBuffer& cmdBuff;
-
-	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
-		: cmdBuff{ cmdBuff }
-	{
-		assert( cmdBuff );
-
-		VkDebugUtilsLabelEXT dbgLabel = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
-		dbgLabel.pLabelName = labelName;
-		dbgLabel.color[ 0 ] = col.r;
-		dbgLabel.color[ 1 ] = col.g;
-		dbgLabel.color[ 2 ] = col.b;
-		dbgLabel.color[ 3 ] = col.a;
-		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
-	}
-	inline ~vk_label()
-	{
-		assert( cmdBuff );
-		vkCmdEndDebugUtilsLabelEXT( cmdBuff );
-	}
-};
-
-#ifdef _VK_DEBUG_
-
-#include <iostream>
-
-VKAPI_ATTR VkBool32 VKAPI_CALL
-VkDbgUtilsMsgCallback(
-	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
-	VkDebugUtilsMessageTypeFlagsEXT				msgType,
-	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
-	void* userData
-){
-	// NOTE: validation layer bug
-	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
-
-
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
-	{
-		std::string_view msgView = { callbackData->pMessage };
-		std::cout << msgView.substr( msgView.rfind( "| " ) + 2 ) << "\n";
-
-		return VK_FALSE;
-	}
-
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
-	{
-		std::cout << ">>> VK_WARNING <<<\n";
-	}
-	else if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT )
-	{
-		std::cout << ">>> VK_ERROR <<<\n";
-	}
-	std::cout << callbackData->pMessageIdName << "\n" << callbackData->pMessage << "\n" << "\n";
-
-	return VK_FALSE;
-}
-
-#endif
 
 // NOTE: GPU validation broken
 // NOTE: Sync validation doesn't work with desc indexing ?
@@ -358,7 +165,7 @@ inline static vk_instance VkMakeInstance()
 
 	VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
 	VK_CHECK( vkEnumerateInstanceVersion( &appInfo.apiVersion ) );
-	VK_CHECK( VK_INTERNAL_ERROR( appInfo.apiVersion < VK_API_VERSION_1_2 ) );
+	VK_CHECK( VK_INTERNAL_ERROR( appInfo.apiVersion < VK_API_VERSION ) );
 
 	VkInstanceCreateInfo instInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 #ifdef _VK_DEBUG_
@@ -401,7 +208,7 @@ static VkDebugUtilsMessengerEXT	vkDbgMsg = 0;
 
 // TODO: separate GPU and logical device ?
 // TODO: physical_device_info ?
-struct device
+struct vk_device
 {
 	VkPhysicalDeviceProperties gpuProps;
 	VkPhysicalDevice gpu;
@@ -416,7 +223,7 @@ struct device
 	u8				waveSize;
 };
 
-inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
+inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
 {
 	constexpr const char* ENABLED_DEVICE_EXTS[] = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -424,7 +231,6 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
 		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-		VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
 
 		VK_KHR_ZERO_INITIALIZE_WORKGROUP_MEMORY_EXTENSION_NAME,
 
@@ -438,7 +244,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
-		VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME
+		VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME,
 	};
 
 	u32 numDevices = 0;
@@ -455,7 +261,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
 
-	VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeatures =
+	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR };
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &dynamicRenderingFeatures };
@@ -558,7 +364,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 		queueInfos[ qi ].pQueuePriorities = &queuePriorities;
 	}
 
-	device dc = {};
+	vk_device dc = {};
 
 	VkDeviceCreateInfo deviceInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	deviceInfo.pNext = &gpuFeatures;
@@ -590,7 +396,7 @@ inline static device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf
 }
 
 
-static device dc;
+static vk_device dc;
 
 static vk_mem_arena vkRscArena, vkStagingArena, vkAlbumArena, vkHostComArena, vkDbgArena;
 // TODO: move debug stuff out of here ?
@@ -613,8 +419,6 @@ VkStartGfxMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
 
 	vkDbgArena = VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vkDevice );
 }
-
-
 
 // TODO: handle concept
 
@@ -942,9 +746,6 @@ struct render_context
 	VkPipeline      compExpanderPipe;
 	VkPipeline      compClusterCullPipe;
 	VkPipeline      compExpMergePipe;
-
-	VkRenderPass	renderPass;
-	VkRenderPass	render2ndPass;
 
 	VkSampler		quadMinSampler;
 	VkSampler		pbrTexSampler;
@@ -1673,7 +1474,6 @@ using vk_shader_stage_list = std::initializer_list<VkPipelineShaderStageCreateIn
 VkPipeline VkMakeGfxPipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,
-	VkRenderPass		vkRndPass,
 	VkPipelineLayout	vkPipelineLayout,
 	vk_shader_stage_list stageList,
 	const vk_gfx_pipeline_state& pipelineState
@@ -1746,7 +1546,6 @@ VkPipeline VkMakeGfxPipeline(
 	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
 	pipelineInfo.pDynamicState = &dynamicStateInfo;
 	pipelineInfo.layout = vkPipelineLayout;
-	pipelineInfo.renderPass = vkRndPass;
 	pipelineInfo.basePipelineIndex = -1;
 
 	VkPipeline vkGfxPipeline;
@@ -1762,7 +1561,6 @@ VkPipeline VkMakeGfxPipeline(
 VkPipeline VkMakeGfxPipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,
-	VkRenderPass		vkRndPass,
 	VkPipelineLayout	vkPipelineLayout,
 	VkShaderModule		vs,
 	VkShaderModule		fs,
@@ -1836,14 +1634,14 @@ VkPipeline VkMakeGfxPipeline(
 	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
 
-	VkPipelineRenderingCreateInfoKHR renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR };
+	VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
 	renderingInfo.colorAttachmentCount = 1;
 	renderingInfo.pColorAttachmentFormats = &rndCtx.desiredColorFormat;
 	renderingInfo.depthAttachmentFormat = rndCtx.desiredDepthFormat;
 
 
 	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-	pipelineInfo.pNext = vkRndPass ? 0 : &renderingInfo;
+	pipelineInfo.pNext = &renderingInfo;
 	pipelineInfo.stageCount = shaderStagesCount;// std::size( shaderStagesInfo );
 	pipelineInfo.pStages = shaderStagesInfo;
 	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
@@ -1856,7 +1654,6 @@ VkPipeline VkMakeGfxPipeline(
 	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
 	pipelineInfo.pDynamicState = &dynamicStateInfo;
 	pipelineInfo.layout = vkPipelineLayout;
-	pipelineInfo.renderPass = vkRndPass;
 	pipelineInfo.basePipelineIndex = -1;
 
 	VkPipeline vkGfxPipeline;
@@ -1891,60 +1688,6 @@ VkPipeline VkMakeComputePipeline(
 	VK_CHECK( vkCreateComputePipelines( vkDevice, vkPipelineCache, 1, &compPipelineInfo, 0, &pipeline ) );
 
 	return pipeline;
-}
-
-// TODO: use VK_ATTACHMENT_UNUSED
-// TODO: must make own assert thing
-inline static VkRenderPass
-VkMakeRenderPass(
-	VkDevice vkDevice,
-	u64      depthSlot,
-	u64      colSlot,
-	bool     depthLoadClear,
-	bool     colLoadClear,
-	VkFormat depthFormat,
-	VkFormat colFormat
-){
-	assert( ( ( depthSlot != -1 ) && depthFormat ) || ( ( colSlot != -1 ) && colFormat ) );
-	// NOTE: support any permutation of 0 and 1 ;
-	assert( colSlot * depthSlot == 0 );
-
-	VkAttachmentReference colorAttachement = { colSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
-	VkAttachmentReference depthAttachement = { depthSlot, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR };
-
-	VkSubpassDescription subpassDescr = {};
-	subpassDescr.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-	subpassDescr.colorAttachmentCount = ( colSlot != -1 ) ? 1 : 0;
-	subpassDescr.pColorAttachments = ( colSlot != -1 ) ? &colorAttachement : 0;
-	subpassDescr.pDepthStencilAttachment = ( depthSlot != -1 ) ? &depthAttachement : 0;
-
-	VkAttachmentDescription attachmentDescriptions[ 2 ] = {};
-	// NOTE: invariants for now
-	attachmentDescriptions[ 0 ].samples = attachmentDescriptions[ 1 ].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachmentDescriptions[ 0 ].storeOp = attachmentDescriptions[ 1 ].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	attachmentDescriptions[ 0 ].stencilLoadOp = attachmentDescriptions[ 1 ].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].stencilStoreOp = attachmentDescriptions[ 1 ].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attachmentDescriptions[ 0 ].initialLayout = attachmentDescriptions[ 1 ].initialLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-	attachmentDescriptions[ 0 ].finalLayout = attachmentDescriptions[ 1 ].finalLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-	if( colSlot != -1 )
-	{
-		attachmentDescriptions[ colSlot ].format = colFormat;
-		attachmentDescriptions[ colSlot ].loadOp = colLoadClear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-	}
-	if( depthSlot != -1 )
-	{
-		attachmentDescriptions[ depthSlot ].format = depthFormat;
-		attachmentDescriptions[ depthSlot ].loadOp = depthLoadClear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-	}
-	VkRenderPassCreateInfo renderPassInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
-	renderPassInfo.attachmentCount = std::max( i64( depthSlot ), i64( colSlot ) ) + 1;
-	renderPassInfo.pAttachments = attachmentDescriptions;
-	renderPassInfo.subpassCount = 1;
-	renderPassInfo.pSubpasses = &subpassDescr;
-
-	VkRenderPass rndPass;
-	VK_CHECK( vkCreateRenderPass( vkDevice, &renderPassInfo, 0, &rndPass ) );
-	return rndPass;
 }
 
 inline static VkFramebuffer
@@ -2193,7 +1936,6 @@ struct imgui_vk_context
 	vk_buffer                 vtxBuffs[ 2 ];
 	vk_buffer                 idxBuffs[ 2 ];
 	vk_image                       fontsImg;
-	VkRenderPass                renderPass;
 	VkDescriptorSetLayout       descSetLayout;
 	VkPipelineLayout            pipelineLayout;
 	VkDescriptorUpdateTemplate  descTemplate = {};
@@ -2210,8 +1952,6 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	const VkPhysicalDeviceProperties& gpuProps,
 	VkFormat colDstFormat
 ){
-	VkRenderPass rndPass = VkMakeRenderPass( vkDevice, -1, 0, -1, 0, VkFormat( 0 ), colDstFormat );
-
 	VkSampler fontSampler = VkMakeSampler( vkDevice, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 	
 	VkDescriptorSetLayoutBinding descSetBindings[ 2 ] = {};
@@ -2278,18 +2018,14 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	guiState.polyMode = VK_POLYGON_MODE_FILL;
 	guiState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	guiState.cullFlags = VK_CULL_MODE_NONE;
-	//VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, 0, rndPass, pipelineLayout, vert.module, frag.module, guiState );
-	VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, 0, 0, pipelineLayout, vert.module, frag.module, guiState );
+	VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, 0, pipelineLayout, vert.module, frag.module, guiState );
 
-
-	
 	imgui_vk_context ctx = {};
 	ctx.descSetLayout = descSetLayout;
 	ctx.pipelineLayout = pipelineLayout;
 	ctx.pipeline = pipeline;
 	ctx.descTemplate = descTemplate;
 	ctx.fontSampler = fontSampler;
-	ctx.renderPass = rndPass;
 	ctx.vtxBuffs[ 0 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena, dc.gpu );
 	ctx.idxBuffs[ 0 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, vkHostComArena, dc.gpu );
 	ctx.vtxBuffs[ 1 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena, dc.gpu );
@@ -2329,11 +2065,8 @@ static debug_context vkDbgCtx;
 // TODO: query for gpu props ?
 // TODO: dbgGeom buffer size based on what ?
 // TODO: shader rename
-static inline debug_context VkMakeDebugContext( 
-	VkDevice							vkDevice, 
-	VkRenderPass						vkRndPass,
-	const VkPhysicalDeviceProperties&	gpuProps 
-){
+static inline debug_context VkMakeDebugContext( VkDevice vkDevice, const VkPhysicalDeviceProperties& gpuProps )
+{
 	debug_context dbgCtx = {};
 
 	vk_shader vert = VkLoadShader( "Shaders/v_cpu_dbg_draw.vert.spv", vkDevice );
@@ -2351,7 +2084,7 @@ static inline debug_context VkMakeDebugContext(
 	lineDrawPipelineState.polyMode = VK_POLYGON_MODE_LINE;
 	lineDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	dbgCtx.drawAsLines = VkMakeGfxPipeline( 
-		vkDevice, 0, vkRndPass, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module, lineDrawPipelineState );
+		vkDevice, 0, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module, lineDrawPipelineState );
 
 	vk_gfx_pipeline_state triDrawPipelineState = {};
 	triDrawPipelineState.blendCol = VK_TRUE;
@@ -2362,7 +2095,7 @@ static inline debug_context VkMakeDebugContext(
 	triDrawPipelineState.polyMode = VK_POLYGON_MODE_FILL;
 	triDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	dbgCtx.drawAsTriangles = VkMakeGfxPipeline( 
-		vkDevice, 0, vkRndPass, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module, triDrawPipelineState );
+		vkDevice, 0, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module, triDrawPipelineState );
 
 
 	vkDestroyShaderModule( vkDevice, vert.module, 0 );
@@ -3484,6 +3217,20 @@ inline VkPipelineLayout VkMakeGlobalPipelineLayout(
 	return pipelineLayout;
 }
 
+
+struct vk_backend_context
+{
+	VkInstance inst;
+	VkDebugUtilsMessengerEXT dbgMsg;
+	VkSurfaceKHR surface;
+};
+
+
+inline static vk_backend_context MakeVkBackendCtx() 
+{
+
+}
+
 // TODO: no structured binding
 void VkBackendInit()
 {
@@ -3580,13 +3327,9 @@ void VkBackendInit()
 	vk.globalLayout = VkMakeGlobalPipelineLayout( dc.device, dc.gpuProps, vk.descDealer );
 	VkDbgNameObj( vk.globalLayout, dc.device, "Vk_Pipeline_Layout_Global" );
 
-
-	rndCtx.renderPass = VkMakeRenderPass( dc.device, 0, 1, 1, 1, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
-	rndCtx.render2ndPass = VkMakeRenderPass( dc.device, 0, 1, 0, 0, rndCtx.desiredDepthFormat, rndCtx.desiredColorFormat );
-
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
-		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, 0, vk.globalLayout, vertZPre.module, 0, {} );
+		gfxZPrepass = VkMakeGfxPipeline( dc.device, 0, vk.globalLayout, vertZPre.module, 0, {} );
 
 		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
 	}
@@ -3605,7 +3348,7 @@ void VkBackendInit()
 
 		dbgDrawProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol } );
 		gfxDrawIndirDbg = VkMakeGfxPipeline(
-			dc.device, 0, 0, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module, lineDrawPipelineState );
+			dc.device, 0, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module, lineDrawPipelineState );
 
 		vkDestroyShaderModule( dc.device, vertBox.module, 0 );
 		vkDestroyShaderModule( dc.device, normalCol.module, 0 );
@@ -3641,7 +3384,7 @@ void VkBackendInit()
 		vk_gfx_pipeline_state opaqueState = {};
 
 		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline(
-			dc.device, 0, 0, vk.globalLayout, vtxMerged.module, fragPBR.module, opaqueState );
+			dc.device, 0, vk.globalLayout, vtxMerged.module, fragPBR.module, opaqueState );
 		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
 
 		vkDestroyShaderModule( dc.device, vtxMerged.module, 0 );
@@ -3653,7 +3396,7 @@ void VkBackendInit()
 		vk_gfx_pipeline_state meshletState = {};
 		gfxMeshletProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertMeshlet, &fragCol } );
 		rndCtx.gfxMeshletPipeline = VkMakeGfxPipeline(
-			dc.device, 0, rndCtx.renderPass, gfxMeshletProgram.pipeLayout, vertMeshlet.module, fragCol.module, meshletState );
+			dc.device, 0, gfxMeshletProgram.pipeLayout, vertMeshlet.module, fragCol.module, meshletState );
 		VkDbgNameObj( rndCtx.gfxMeshletPipeline, dc.device, "Pipeline_Gfx_MeshletDraw" );
 
 		vkDestroyShaderModule( dc.device, vertMeshlet.module, 0 );
@@ -3702,7 +3445,7 @@ void VkBackendInit()
 		VK_CHECK( vkCreatePipelineLayout( dc.device, &pipelineLayoutInfo, 0, &layout ) );
 
 		vk_gfx_pipeline_state state = { .conservativeRasterEnable = true, .depthWrite = false, .blendCol = false };
-		VkPipeline pipeline = VkMakeGfxPipeline( dc.device, 0, depthReadRndPass, layout, vtx, frag, state );
+		VkPipeline pipeline = VkMakeGfxPipeline( dc.device, 0, layout, vtx, frag, state );
 
 		vk_graphics_program program = { pipeline, layout };
 
@@ -3712,7 +3455,7 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, frag, 0 );
 	}
 
-	vkDbgCtx = VkMakeDebugContext( dc.device, 0, dc.gpuProps );
+	vkDbgCtx = VkMakeDebugContext( dc.device, dc.gpuProps );
 
 	imguiVkCtx = ImguiMakeVkContext( dc.device, dc.gpuProps, VK_FORMAT_B8G8R8A8_UNORM );
 
@@ -4163,22 +3906,13 @@ static inline void ImguiDrawUiPass(
 	vk_label label = { cmdBuff,"Draw Imgui Pass",{} };
 
 	VkRect2D scissor = { 0,0,sc.width,sc.height };
-	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	VkRenderingInfo renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO };
 	renderInfo.renderArea = scissor;
 	renderInfo.layerCount = 1;
 	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
 	renderInfo.pColorAttachments = pColInfo;
 	renderInfo.pDepthAttachment = pDepthInfo;
-	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
-
-	//VkClearValue clear = {};
-	//VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	//rndPassBegInfo.renderPass = ctx.renderPass;
-	//rndPassBegInfo.framebuffer = uiFbo;
-	//rndPassBegInfo.renderArea = { 0,0,sc.width,sc.height };
-	////rndPassBegInfo.clearValueCount = 1;
-	////rndPassBegInfo.pClearValues = &clear;
-	//vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
+	vkCmdBeginRendering( cmdBuff, &renderInfo );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
 
@@ -4226,8 +3960,7 @@ static inline void ImguiDrawUiPass(
 		vtxOffset += cmdList->VtxBuffer.Size;
 	}
 
-	//vkCmdEndRenderPass( cmdBuff );
-	vkCmdEndRenderingKHR( cmdBuff );
+	vkCmdEndRendering( cmdBuff );
 }
 
 // TODO: color depth toggle stuff
@@ -4246,13 +3979,13 @@ DebugDrawPass(
 
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
-	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	VkRenderingInfo renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO };
 	renderInfo.renderArea = scissor;
 	renderInfo.layerCount = 1;
 	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
 	renderInfo.pColorAttachments = pColInfo;
 	renderInfo.pDepthAttachment = pDepthInfo;
-	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
+	vkCmdBeginRendering( cmdBuff, &renderInfo );
 
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
@@ -4264,7 +3997,7 @@ DebugDrawPass(
 
 	vkCmdDraw( cmdBuff, drawRange.size, 1, drawRange.offset, 0 );
 
-	vkCmdEndRenderingKHR( cmdBuff );
+	vkCmdEndRendering( cmdBuff );
 }
 
 // TODO: redesign
@@ -4335,13 +4068,13 @@ DrawIndirectPass(
 
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
-	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	VkRenderingInfo renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO };
 	renderInfo.renderArea = scissor;
 	renderInfo.layerCount = 1;
 	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
 	renderInfo.pColorAttachments = pColInfo;
 	renderInfo.pDepthAttachment = pDepthInfo;
-	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
+	vkCmdBeginRendering( cmdBuff, &renderInfo );
 
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
@@ -4359,7 +4092,7 @@ DrawIndirectPass(
 	vkCmdDrawIndirectCount(
 		cmdBuff, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCmdCount, 0, maxDrawCnt, sizeof( draw_indirect ) );
 
-	vkCmdEndRenderingKHR( cmdBuff );
+	vkCmdEndRendering( cmdBuff );
 }
 
 
@@ -4384,13 +4117,13 @@ DrawIndexedIndirectMerged(
 
 	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
-	VkRenderingInfoKHR renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	VkRenderingInfo renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO };
 	renderInfo.renderArea = scissor;
 	renderInfo.layerCount = 1;
 	renderInfo.colorAttachmentCount = pColInfo ? 1 : 0;
 	renderInfo.pColorAttachments = pColInfo;
 	renderInfo.pDepthAttachment = pDepthInfo;
-	vkCmdBeginRenderingKHR( cmdBuff, &renderInfo );
+	vkCmdBeginRendering( cmdBuff, &renderInfo );
 
 
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
@@ -4406,7 +4139,7 @@ DrawIndexedIndirectMerged(
 	vkCmdDrawIndexedIndirectCount(
 		cmdBuff, drawCmds.hndl, offsetof( draw_command, cmd ), drawCount.hndl, 0, maxDrawCount, sizeof( draw_command ) );
 
-	vkCmdEndRenderingKHR( cmdBuff );
+	vkCmdEndRendering( cmdBuff );
 }
 
 #if 0

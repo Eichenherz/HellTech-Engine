@@ -60,9 +60,6 @@
     <ClCompile Include="r_dxc_compiler.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="r_vk_resources.ixx">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
@@ -123,6 +120,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imstb_truetype.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="r_vk_resources.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_utils.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
