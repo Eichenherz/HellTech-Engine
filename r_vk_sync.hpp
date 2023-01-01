@@ -14,6 +14,22 @@
 
 #include <utility>
 
+inline  VkMemoryBarrier2
+VkMakeMemoryBarrier2(
+	VkAccessFlags2KHR			srcAccess,
+	VkPipelineStageFlags2KHR	srcStage,
+	VkAccessFlags2KHR			dstAccess,
+	VkPipelineStageFlags2KHR	dstStage
+) {
+	VkMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+	barrier.srcStageMask = srcStage;
+	barrier.srcAccessMask = srcAccess;
+	barrier.dstStageMask = dstStage;
+	barrier.dstAccessMask = dstAccess;
+
+	return barrier;
+}
+
 inline  VkBufferMemoryBarrier2
 VkMakeBufferBarrier2(
 	VkBuffer					hBuff,
@@ -85,23 +101,32 @@ VkMakeImageBarrier2(
 	return barrier;
 }
 
-inline void VkCmdPipelineBarrier(
+
+inline void VkCmdPipelineFlushCacheAndPerformImgLayoutTransitionBarriers(
 	VkCommandBuffer cmdBuff,
-	const std::span<VkBufferMemoryBarrier2> buffBarriers,
+	const std::span<VkMemoryBarrier2> memBarriers,
 	const std::span<VkImageMemoryBarrier2> imgBarriers
 ) {
 	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 	dependency.imageMemoryBarrierCount = std::size( imgBarriers );
 	dependency.pImageMemoryBarriers = std::data( imgBarriers );
-	dependency.bufferMemoryBarrierCount = std::size( buffBarriers );
-	dependency.pBufferMemoryBarriers = std::data( buffBarriers );
+	dependency.memoryBarrierCount = std::size( memBarriers );
+	dependency.pMemoryBarriers = std::data( memBarriers );
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );
 }
 
-inline void VkCmdPipelineFullMemoryBarrier( VkCommandBuffer cmdBuff, const std::span<VkMemoryBarrier2> memBarriers )
+inline void VkCmdPipelineFlushCacheBarriers( VkCommandBuffer cmdBuff, const std::span<VkMemoryBarrier2> memBarriers )
 {
 	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 	dependency.memoryBarrierCount = std::size( memBarriers );
 	dependency.pMemoryBarriers = std::data( memBarriers );
+	vkCmdPipelineBarrier2( cmdBuff, &dependency );
+}
+
+inline void VkCmdPipelineImgLayoutTransitionBarriers( VkCommandBuffer cmdBuff, const std::span<VkImageMemoryBarrier2> imgBarriers)
+{
+	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	dependency.imageMemoryBarrierCount = std::size( imgBarriers );
+	dependency.pImageMemoryBarriers = std::data( imgBarriers );
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );
 }
