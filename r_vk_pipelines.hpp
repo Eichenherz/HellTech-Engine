@@ -62,90 +62,12 @@ VkMakeSpecializationInfo(
 	return specInfo;
 }
 
+struct vk_render_attachment
+{
+	VkFormat format;
+};
 
-VkPipeline VkMakeGfxPipeline(
-	VkDevice			vkDevice,
-	VkPipelineLayout	vkPipelineLayout,
-	vk_shader_stage_list stageList,
-	const vk_gfx_pipeline_state& pipelineState
-) {
-	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-	inAsmStateInfo.topology = pipelineState.primTopology;
-
-	VkPipelineViewportStateCreateInfo viewportInfo = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
-	viewportInfo.viewportCount = 1;
-	viewportInfo.scissorCount = 1;
-
-	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-
-	VkPipelineDynamicStateCreateInfo dynamicStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-	dynamicStateInfo.dynamicStateCount = std::size( dynamicStates );
-	dynamicStateInfo.pDynamicStates = dynamicStates;
-
-	// TODO: place inside if ?
-	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState =
-	{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT };
-	conservativeRasterState.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
-	conservativeRasterState.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize;
-
-	VkPipelineRasterizationStateCreateInfo rasterInfo = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
-	rasterInfo.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0;
-	rasterInfo.depthClampEnable = 0;
-	rasterInfo.rasterizerDiscardEnable = 0;
-	rasterInfo.polygonMode = pipelineState.polyMode;
-	rasterInfo.cullMode = pipelineState.cullFlags;
-	rasterInfo.frontFace = pipelineState.frontFace;
-	rasterInfo.lineWidth = 1.0f;
-
-	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-	depthStencilState.depthTestEnable = pipelineState.depthTestEnable;
-	depthStencilState.depthWriteEnable = pipelineState.depthWrite;
-	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER;
-	depthStencilState.depthBoundsTestEnable = VK_TRUE;
-	depthStencilState.minDepthBounds = 0;
-	depthStencilState.maxDepthBounds = 1.0f;
-
-	VkPipelineColorBlendAttachmentState blendConfig = {};
-	blendConfig.blendEnable = pipelineState.blendCol;
-	blendConfig.srcColorBlendFactor = pipelineState.srcColorBlendFactor;
-	blendConfig.dstColorBlendFactor = pipelineState.dstColorBlendFactor;
-	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor;
-	blendConfig.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor;
-	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.colorWriteMask =
-		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-	colorBlendStateInfo.attachmentCount = 1;
-	colorBlendStateInfo.pAttachments = &blendConfig;
-
-	// TODO: only if we use frag
-	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-	multisamplingInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-	pipelineInfo.stageCount = std::size( stageList );
-	pipelineInfo.pStages = std::data( stageList );
-	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
-	pipelineInfo.pInputAssemblyState = &inAsmStateInfo;
-	pipelineInfo.pViewportState = &viewportInfo;
-	pipelineInfo.pRasterizationState = &rasterInfo;
-	pipelineInfo.pMultisampleState = &multisamplingInfo;
-	pipelineInfo.pDepthStencilState = &depthStencilState;
-	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
-	pipelineInfo.pDynamicState = &dynamicStateInfo;
-	pipelineInfo.layout = vkPipelineLayout;
-	pipelineInfo.basePipelineIndex = -1;
-
-	VkPipeline vkGfxPipeline;
-	VK_CHECK( vkCreateGraphicsPipelines( vkDevice, 0, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
-
-	return vkGfxPipeline;
-}
-
-// TODO: shader stages more general
+// TODO: rework
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
 // TODO: entry point name
@@ -154,7 +76,7 @@ VkPipeline VkMakeGfxPipeline(
 	VkPipelineLayout	vkPipelineLayout,
 	VkShaderModule		vs,
 	VkShaderModule		fs,
-	VkFormat desiredColorFormat,
+	const VkFormat* desiredColorFormat,
     VkFormat           desiredDepthFormat,
 	const vk_gfx_pipeline_state& pipelineState
 ) {
@@ -227,14 +149,14 @@ VkPipeline VkMakeGfxPipeline(
 
 
 	VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-	renderingInfo.colorAttachmentCount = 1;
-	renderingInfo.pColorAttachmentFormats = &desiredColorFormat;
+	renderingInfo.colorAttachmentCount = desiredColorFormat ? 1 : 0;
+	renderingInfo.pColorAttachmentFormats = desiredColorFormat;
 	renderingInfo.depthAttachmentFormat = desiredDepthFormat;
 
 
 	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
 	pipelineInfo.pNext = &renderingInfo;
-	pipelineInfo.stageCount = shaderStagesCount;// std::size( shaderStagesInfo );
+	pipelineInfo.stageCount = shaderStagesCount;
 	pipelineInfo.pStages = shaderStagesInfo;
 	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
 	pipelineInfo.pVertexInputState = &vtxInCreateInfo;

@@ -60,7 +60,16 @@
     <ClCompile Include="r_dxc_compiler.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="handle_map.cpp">
+    <ClCompile Include="handle_map.inl">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="pak_file.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="sys_mmaped.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="filesystem.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -140,6 +149,9 @@
     <ClInclude Include="handle_map.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="pak_file.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
@@ -167,5 +179,8 @@
   <ItemGroup>
     <None Include="Shaders\imgui_gfx_lib.hlsl" />
     <None Include="packages.config" />
+    <None Include="sys_err.inl">
+      <Filter>Header Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

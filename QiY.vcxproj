@@ -263,7 +263,9 @@
   <ItemGroup>
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
-    <ClCompile Include="handle_map.cpp" />
+    <ClCompile Include="filesystem.ixx" />
+    <ClCompile Include="pak_file.cpp" />
+    <ClCompile Include="handle_map.inl" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -279,6 +281,7 @@
     </CustomBuild>
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="spng.c" />
+    <ClCompile Include="sys_mmaped.cpp" />
     <ClCompile Include="sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
     </ClCompile>
@@ -287,9 +290,10 @@
     <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="bcn_compressor.h" />
     <ClInclude Include="cgltf.h" />
-    <ClInclude Include="handle_map.hpp" />
     <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
+    <ClInclude Include="pak_file.h" />
+    <ClInclude Include="handle_map.hpp" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
@@ -420,6 +424,7 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">4.0</ShaderModel>
       <FileType>Document</FileType>
     </None>
+    <None Include="sys_err.inl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

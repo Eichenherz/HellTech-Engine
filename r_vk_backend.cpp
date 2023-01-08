@@ -16,9 +16,10 @@
 #include <charconv>
 #include <span>
 
+#include "handle_map.hpp"
+#include "handle_map.inl"
+
 // TODO: use own allocator
-// TODO: precompiled header
-#include "diy_pch.h"
 
 // NOTE: clang-cl on VS issue
 #ifdef __clang__
@@ -405,8 +406,7 @@ static vk_device dc;
 static vk_mem_arena vkRscArena, vkStagingArena, vkAlbumArena, vkHostComArena, vkDbgArena;
 // TODO: move debug stuff out of here ?
 // TODO: make into a mem system
-inline void
-VkStartGfxMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
+inline void VkStartGfxMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
 {
 	VkPhysicalDeviceMemoryProperties memProps;
 	vkGetPhysicalDeviceMemoryProperties( vkPhysicalDevice, &memProps );
@@ -423,109 +423,6 @@ VkStartGfxMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
 
 	vkDbgArena = VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vkDevice );
 }
-
-// TODO: handle concept
-
-// NOTE: inspired by Our Machinery
-template<typename object_t, typename handle_t>
-struct slot_vector
-{
-	struct item
-	{
-		union{
-			object_t data;
-			u32 nextFree;
-		};
-		u32 generation;
-	};
-
-	std::vector<item> items;
-
-	handle_t AllocSlot( const object_t& resource );
-	void FreeSlot( handle_t h );
-	object_t& GetDataFromSlot( handle_t h );
-};
-
-template<typename object_t, typename handle_t>
-inline handle_t slot_vector<object_t, handle_t>::AllocSlot( const object_t& resource )
-{
-	if( std::size( this->items ) == 0 ) this->items.push_back( {} );
-
-	u32 slot = this->items[ 0 ].nextFree;
-	this->items[ 0 ].nextFree = this->items[ slot ].nextFree;
-	// If the freelist is empty, slot will be 0, because the header item will point to itself.
-	if( slot )
-	{
-		this->items[ slot ].data = resource;
-		handle_t h = {};
-		h.idx = slot;
-		h.generation = this->items[ slot ].generation;
-		return h;
-	}
-	this->items.resize( std::size( this->items ) + 1 );
-	u32 idx = std::size( this->items ) - 1;
-	this->items[ idx ] = { resource,0 };
-
-	handle_t h = {};
-	h.idx = idx;
-	h.generation = 0;
-	return h;
-}
-
-template<typename object_t, typename handle_t>
-inline void slot_vector<object_t, handle_t>::FreeSlot( handle_t h )
-{
-	u32 idx = h.idx;
-	auto& slot = this->items[ idx ];
-	assert( slot.generation == h.generation );
-
-	++slot.generation;
-	// Add to the freelist, which is stored in slot 0.
-	this->items[ idx ].nextFree = this->items[ 0 ].nextFree;
-	this->items[ 0 ].nextFree = idx;
-}
-
-template<typename object_t, typename handle_t>
-inline object_t& slot_vector<object_t, handle_t>::GetDataFromSlot( handle_t h )
-{
-	u32 idx = h.idx;
-	assert( idx < std::size( this->items ) );
-	auto& slot = this->items[ idx ];
-	assert( slot.generation == h.generation );
-
-	return slot.data;
-}
-
-
-
-struct buffer_handle
-{
-	union
-	{
-		struct
-		{
-			u64 resourceIdx : 32;
-			u64 generation : 32;
-		};
-		u64 h;
-	};
-
-	inline bool IsInvalid() const { return h == INVALID_IDX; }
-};
-
-struct image_handle
-{
-	union{
-		struct{
-			u64 idx : 32;
-			u64 generation : 32;
-		};
-		u64 h;
-	};
-
-	inline bool IsInvalid() const { return h == INVALID_IDX; }
-};
-
 
 // NOTE: for timestamps we need 2 queries 
 struct vk_gpu_timer
@@ -557,12 +454,14 @@ static inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCo
 static inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& vkTimer )
 {
 	vkCmdCopyQueryPoolResults(
-		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ),
+		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ), 
 		VK_QUERY_RESULT_64_BIT );// | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT );
 
-	VkMemoryBarrier2 readTimestampsBarrier[] = { VkMakeMemoryBarrier2(
+	VkMemoryBarrier2 readTimestampsBarrier[] = { 
+		VkMakeMemoryBarrier2(
 		VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-		VK_ACCESS_2_HOST_READ_BIT, VK_PIPELINE_STAGE_2_HOST_BIT ) };
+		VK_ACCESS_2_HOST_READ_BIT, VK_PIPELINE_STAGE_2_HOST_BIT ) 
+	};
 
 	VkCmdPipelineFlushCacheBarriers( cmdBuff, readTimestampsBarrier );
 
@@ -1672,7 +1571,8 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	const VkPhysicalDeviceProperties& gpuProps,
 	VkFormat colDstFormat
 ){
-	VkSampler fontSampler = VkMakeSampler( vkDevice, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+	VkSampler fontSampler = VkMakeSampler( 
+		vkDevice, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 	
 	VkDescriptorSetLayoutBinding descSetBindings[ 2 ] = {};
 	descSetBindings[ 0 ].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -1738,8 +1638,8 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	guiState.polyMode = VK_POLYGON_MODE_FILL;
 	guiState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	guiState.cullFlags = VK_CULL_MODE_NONE;
-	VkPipeline pipeline = VkMakeGfxPipeline( vkDevice, pipelineLayout, vert.module, frag.module, 
-											 rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, guiState );
+	VkPipeline pipeline = VkMakeGfxPipeline( 
+		vkDevice, pipelineLayout, vert.module, frag.module, &colDstFormat, rndCtx.desiredDepthFormat, guiState );
 
 	imgui_vk_context ctx = {};
 	ctx.descSetLayout = descSetLayout;
@@ -1805,7 +1705,7 @@ static inline debug_context VkMakeDebugContext( VkDevice vkDevice, const VkPhysi
 	lineDrawPipelineState.polyMode = VK_POLYGON_MODE_LINE;
 	lineDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	dbgCtx.drawAsLines = VkMakeGfxPipeline( vkDevice, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module,
-											rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, lineDrawPipelineState );
+											&rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, lineDrawPipelineState );
 
 	vk_gfx_pipeline_state triDrawPipelineState = {};
 	triDrawPipelineState.blendCol = VK_TRUE;
@@ -1816,7 +1716,7 @@ static inline debug_context VkMakeDebugContext( VkDevice vkDevice, const VkPhysi
 	triDrawPipelineState.polyMode = VK_POLYGON_MODE_FILL;
 	triDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	dbgCtx.drawAsTriangles = VkMakeGfxPipeline( vkDevice, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module, 
-												rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, triDrawPipelineState );
+												0, rndCtx.desiredDepthFormat, triDrawPipelineState );
 
 
 	vkDestroyShaderModule( vkDevice, vert.module, 0 );
@@ -2340,13 +2240,64 @@ inline hndl64<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
 static resource_vector<vk_image> textures;
 
 
+enum MMF_OPENFLAGS : u8
+{
+	OPN_READ = 0,
+	OPN_READWRITE
+};
+
+// TODO: file system should ref count
+struct win32_mmaped_file_handle
+{
+	HANDLE hFile = INVALID_HANDLE_VALUE;
+	HANDLE hFileMapping = INVALID_HANDLE_VALUE;
+	std::span<u8> dataView;
+
+	~win32_mmaped_file_handle()
+	{
+		UnmapViewOfFile( std::data( dataView ) );
+		CloseHandle( hFileMapping );
+		CloseHandle( hFile );
+	}
+};
+
+win32_mmaped_file_handle OpenMmappedFile( std::string_view fileName, MMF_OPENFLAGS oflags )
+{
+	DWORD dwflags = ( OPN_READWRITE == oflags ) ? GENERIC_READ | GENERIC_WRITE : GENERIC_READ;
+	HANDLE hFile = CreateFileA(
+		std::data( fileName ), dwflags, FILE_SHARE_READ, 0, OPEN_ALWAYS, FILE_FLAG_SEQUENTIAL_SCAN, 0 );
+	//WIN_CHECK( hFile == INVALID_HANDLE_VALUE );
+
+	DWORD dwFileSizeHigh;
+	size_t qwFileSize = GetFileSize( hFile, &dwFileSizeHigh );
+	qwFileSize += ( size_t( dwFileSizeHigh ) << 32 );
+	//WIN_CHECK( qwFileSize == 0 );
+
+	DWORD dwFlagsFileMapping = ( OPN_READWRITE == oflags ) ? PAGE_READWRITE : PAGE_READONLY;
+	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFlagsFileMapping, 0, 0, 0 );
+	//WIN_CHECK( !hFileMapping );
+
+	//DWORD dwFlagsView = (OPN_WRITE == oflags || OPN_READWRITE == oflags) ? FILE_MAP_WRITE: FILE_MAP_READ;
+	DWORD dwFlagsView = ( OPN_READWRITE == oflags ) ? FILE_MAP_WRITE : FILE_MAP_READ;
+	u8* pData = ( u8* ) MapViewOfFile( hFileMapping, dwFlagsView, 0, 0, qwFileSize );
+
+	//WIN_CHECK( !pData );
+
+	return win32_mmaped_file_handle{ hFile, hFileMapping, std::span<u8>{pData, qwFileSize} };
+}
+
+
 static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& entities, u64 currentFrameId )
 {
-	std::vector<u8> binaryData;
+	win32_mmaped_file_handle hMmf = OpenMmappedFile( drakPath, OPN_READ );
+	std::span<u8> binaryData = hMmf.dataView;
+	
 	// TODO: add renderable_instances
 	// TODO: extra checks and stuff ?
 	// TODO: ensure resources of the same type are contiguous ?
+	if( 0 )
 	{
+		std::vector<u8> binaryData;
 		binaryData = SysReadFile( drakPath );
 		if( std::size( binaryData ) == 0 )
 		{
@@ -2417,7 +2368,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	std::vector<u32> proxyIdx;
 	{
 		GenerateIcosphere( proxyVtx, proxyIdx, 1 );
-		// TODO: stupid templates
 		u64 uniqueVtxCount = MeshoptReindexMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
 		proxyVtx.resize( uniqueVtxCount );
 		MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3>{ proxyVtx }, proxyIdx );
@@ -2439,7 +2389,11 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 
 	// TODO: make easier to use 
-	std::vector<VkMemoryBarrier2> buffBarriers;
+	VkMemoryBarrier2 buffBarriers[] = { 
+		VkMakeMemoryBarrier2(
+		VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+		VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE ) 
+	};
 	{
 		const std::span<u8> vtxView = { std::data( binaryData ) + fileFooter.vtxByteRange.offset, fileFooter.vtxByteRange.size };
 		
@@ -2456,10 +2410,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, globVertexBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeMemoryBarrier2( 
-			VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ) );
 	}
 	{
 		const std::span<u8> idxSpan = { std::data( binaryData ) + fileFooter.idxByteRange.offset, fileFooter.idxByteRange.size };
@@ -2474,9 +2424,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, indexBuff.hndl, 1, &copyRegion );
-		buffBarriers.push_back( VkMakeMemoryBarrier2( 
-			VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_INDEX_READ_BIT, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT ) );
 	}
 	{
 		meshBuff = VkCreateAllocBindBuffer( BYTE_COUNT( meshes ),
@@ -2492,11 +2439,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ) );
 	}
 	{
 		lightsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( lights ),
@@ -2512,10 +2454,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, lightsBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT ) );
 	}
 	{
 		instDescBuff = VkCreateAllocBindBuffer( BYTE_COUNT( instDesc ),
@@ -2531,12 +2469,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, instDescBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ) );
-
 	}
 	{
 		materialsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mtrls ),
@@ -2552,12 +2484,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, materialsBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT ) );
 	}
 	{
 		const std::span<u8> mletView = { std::data( binaryData ) + fileFooter.mletsByteRange.offset,fileFooter.mletsByteRange.size };
@@ -2577,12 +2503,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ) );
 	}
 	{
 		const std::span<u8> mletDataView = { 
@@ -2603,12 +2523,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshletDataBuff.hndl, 1, &copyRegion );
-
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ) );
 	}
 
 
@@ -2627,11 +2541,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, proxyGeomBuff.hndl, 1, &copyRegion );
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ) );
 	}
 	{
 		proxyIdxBuff = VkCreateAllocBindBuffer(
@@ -2644,11 +2553,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 		VkBufferCopy copyRegion = { 0,0,stagingBuf.size };
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, proxyIdxBuff.hndl, 1, &copyRegion );
-		buffBarriers.push_back( VkMakeMemoryBarrier2(
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_INDEX_READ_BIT,
-			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT ) );
 	}
 
 	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
@@ -2888,7 +2792,7 @@ static VkDescriptorSet frameDesc[ 3 ] = {};
 
 struct vk_backend
 {
-	slot_vector<vk_image, image_handle> imgPool;
+	handle_map<vk_image> imgPool;
 	vk_descriptor_dealer descDealer;
 	VkPipelineLayout globalLayout;
 };
@@ -3023,7 +2927,7 @@ void VkBackendInit()
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 		gfxZPrepass = VkMakeGfxPipeline( 
-			dc.device, vk.globalLayout, vertZPre.module, 0, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, {} );
+			dc.device, vk.globalLayout, vertZPre.module, 0, 0, rndCtx.desiredDepthFormat, {} );
 
 		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
 	}
@@ -3043,7 +2947,7 @@ void VkBackendInit()
 		dbgDrawProgram = VkMakePipelineProgram(
 			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol } );
 		gfxDrawIndirDbg = VkMakeGfxPipeline( dc.device, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module, 
-											 rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, lineDrawPipelineState );
+											 &rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, lineDrawPipelineState );
 
 		vkDestroyShaderModule( dc.device, vertBox.module, 0 );
 		vkDestroyShaderModule( dc.device, normalCol.module, 0 );
@@ -3079,7 +2983,7 @@ void VkBackendInit()
 		vk_gfx_pipeline_state opaqueState = {};
 
 		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline( dc.device, vk.globalLayout, vtxMerged.module, fragPBR.module, 
-													  rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, opaqueState );
+													  &rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, opaqueState );
 		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
 
 		vkDestroyShaderModule( dc.device, vtxMerged.module, 0 );
@@ -3092,7 +2996,7 @@ void VkBackendInit()
 		gfxMeshletProgram = VkMakePipelineProgram( 
 			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertMeshlet, &fragCol } );
 		rndCtx.gfxMeshletPipeline = VkMakeGfxPipeline( dc.device, gfxMeshletProgram.pipeLayout, vertMeshlet.module,
-													   fragCol.module, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, 
+													   fragCol.module, &rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, 
 													   meshletState );
 		VkDbgNameObj( rndCtx.gfxMeshletPipeline, dc.device, "Pipeline_Gfx_MeshletDraw" );
 
@@ -3143,7 +3047,7 @@ void VkBackendInit()
 
 		vk_gfx_pipeline_state state = { .conservativeRasterEnable = true, .depthWrite = false, .blendCol = false };
 		VkPipeline pipeline = VkMakeGfxPipeline( 
-			dc.device, layout, vtx, frag, rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, state );
+			dc.device, layout, vtx, frag, &rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, state );
 
 		vk_graphics_program program = { pipeline, layout };
 
@@ -3451,7 +3355,6 @@ static inline void ImguiDrawUiPass(
 	VkCommandBuffer cmdBuff,
 	const VkRenderingAttachmentInfoKHR* pColInfo,
 	const VkRenderingAttachmentInfoKHR* pDepthInfo,
-	//VkFramebuffer uiFbo,
 	u64 frameIdx
 ) {
 	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
@@ -3678,8 +3581,8 @@ inline static void
 DrawIndexedIndirectMerged(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
-	const VkRenderingAttachmentInfoKHR* pColInfo,
-	const VkRenderingAttachmentInfoKHR* pDepthInfo,
+	const VkRenderingAttachmentInfo* pColInfo,
+	const VkRenderingAttachmentInfo* pDepthInfo,
 	VkPipelineLayout       pipelineLayout,
 	const vk_buffer&      indexBuff,
 	const vk_buffer&      drawCmds,
@@ -3991,14 +3894,15 @@ FinalCompositionPass(
 
 }
 
+using image_handle = handle64<vk_image>;
 
 struct render_path
 {
 	VkSampler quadMinSampler;
 	VkSampler pbrSampler;
-	image_handle hColorTarget = { .h = INVALID_IDX };
-	image_handle hDepthTarget = { .h = INVALID_IDX };
-	image_handle hDepthPyramid = { .h = INVALID_IDX };
+	image_handle hColorTarget; // .index = INVALID_IDX 
+	image_handle hDepthTarget;
+	image_handle hDepthPyramid;
 	u16 depthSrv = INVALID_IDX;
 	u16 hizSrv = INVALID_IDX;
 	u16 colSrv = INVALID_IDX;
@@ -4009,16 +3913,15 @@ struct render_path
 
 static render_path renderPath;
 
-// TODO: must bind textures !!!
-
 // TODO: enforce some clearOp ---> clearVals params correctness ?
-inline static VkRenderingAttachmentInfoKHR VkMakeAttachemntInfo(
+inline static VkRenderingAttachmentInfo 
+VkMakeAttachemntInfo(
 	VkImageView view,
 	VkAttachmentLoadOp       loadOp,
 	VkAttachmentStoreOp      storeOp,
 	VkClearValue             clearValue
 ){
-	VkRenderingAttachmentInfoKHR info = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR };
+	VkRenderingAttachmentInfo info = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR };
 	info.imageView = view;
 	info.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
 	info.loadOp = loadOp;
@@ -4079,7 +3982,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
 	
 
-	if( renderPath.hDepthPyramid.IsInvalid() )
+	if( !vk.imgPool.isValid( renderPath.hDepthPyramid ) )
 	{
 		u16 squareDim = 512;
 		u8 hiZMipCount = GetImgMipCountForPow2( squareDim, squareDim );
@@ -4090,7 +3993,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
 			VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-		renderPath.hDepthPyramid = vk.imgPool.AllocSlot( VkCreateAllocBindImage( {
+		renderPath.hDepthPyramid = vk.imgPool.insert( VkCreateAllocBindImage( {
 			.name = "Img_depthPyramid",
 			.format = VK_FORMAT_R32_SFLOAT,
 			.usg = hiZUsg,
@@ -4100,7 +4003,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			.mipCount = hiZMipCount },
 			vkAlbumArena, dc.device, dc.gpu ) );
 
-		vk_image& hiz = vk.imgPool.GetDataFromSlot( renderPath.hDepthPyramid );
+		vk_image& hiz = vk.imgPool[ renderPath.hDepthPyramid ];
 
 		for( u64 i = 0; i < hiz.mipCount; ++i )
 		{
@@ -4141,11 +4044,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		vkUpdateDescriptorSets( dc.device, 1, &samplerUpdate, 0, 0 );
 
 	}
-	if( renderPath.hDepthTarget.IsInvalid() )
+	if( !vk.imgPool.isValid( renderPath.hDepthTarget ) )
 	{
 		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
-		renderPath.hDepthTarget = vk.imgPool.AllocSlot( VkCreateAllocBindImage( {
+		renderPath.hDepthTarget = vk.imgPool.insert( VkCreateAllocBindImage( {
 				.name = "Img_depthTarget",
 				.format = VK_FORMAT_D32_SFLOAT,
 				.usg = usgFlags,
@@ -4156,9 +4059,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				vkAlbumArena, dc.device, dc.gpu ) );
 
 		
-		const vk_image& depthTarget = vk.imgPool.GetDataFromSlot( renderPath.hDepthTarget );
-		const vk_image& depthPyramid = vk.imgPool.GetDataFromSlot( renderPath.hDepthPyramid );
-
+		const vk_image& depthTarget = vk.imgPool[ renderPath.hDepthTarget ];
+		const vk_image& depthPyramid = vk.imgPool[ renderPath.hDepthPyramid ];
 
 		VkImageMemoryBarrier2 initBarriers[] = {
 		VkMakeImageBarrier2(
@@ -4204,12 +4106,12 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
 	}
-	if( renderPath.hColorTarget.IsInvalid() )
+	if( !vk.imgPool.isValid( renderPath.hColorTarget ) )
 	{
 		constexpr VkImageUsageFlags usgFlags =
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
-		renderPath.hColorTarget = vk.imgPool.AllocSlot( VkCreateAllocBindImage( {
+		renderPath.hColorTarget = vk.imgPool.insert( VkCreateAllocBindImage( {
 				.name = "Img_colorTarget",
 				.format = VK_FORMAT_R16G16B16A16_SFLOAT,
 				.usg = usgFlags,
@@ -4219,7 +4121,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				.mipCount = 1 },
 				vkAlbumArena, dc.device, dc.gpu ) );
 
-		const vk_image& colorTarget = vk.imgPool.GetDataFromSlot( renderPath.hColorTarget );
+		const vk_image& colorTarget = vk.imgPool[ renderPath.hColorTarget];
 
 		VkImageMemoryBarrier2 initBarrier[] = { VkMakeImageBarrier2(
 			colorTarget.hndl,
@@ -4260,9 +4162,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	}
 
-	const vk_image& depthTarget = vk.imgPool.GetDataFromSlot( renderPath.hDepthTarget );
-	const vk_image& depthPyramid = vk.imgPool.GetDataFromSlot( renderPath.hDepthPyramid );
-	const vk_image& colorTarget = vk.imgPool.GetDataFromSlot( renderPath.hColorTarget );
+	const vk_image& depthTarget = vk.imgPool[ renderPath.hDepthTarget ];
+	const vk_image& depthPyramid = vk.imgPool[ renderPath.hDepthPyramid ];
+	const vk_image& colorTarget = vk.imgPool[ renderPath.hColorTarget ];
 
 	auto depthWrite = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
 	auto depthRead = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
@@ -4465,10 +4367,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 
 		VkMemoryBarrier2 clearDrawCountBarrier[] = { VkMakeMemoryBarrier2(
-			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR ) };
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR, VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR ) 
+		};
 		VkCmdPipelineFlushCacheBarriers( thisVFrame.cmdBuff, clearDrawCountBarrier );
 
 		vkCmdBindDescriptorSets(
@@ -4478,7 +4379,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			0, 1, 
 			&vk.descDealer.set, 0, 0 );
 
-		// TODO: Aaltonen double draw ? ( not double culling )
 		CullPass( 
 			thisVFrame.cmdBuff, 
 			rndCtx.compPipeline, 
@@ -4625,12 +4525,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		auto swapchainUIRW = VkMakeAttachemntInfo( 
 			sc.imgViews[ imgIdx ], VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
-		ImguiDrawUiPass( 
-			imguiVkCtx, 
-			thisVFrame.cmdBuff, 
-			&swapchainUIRW,
-			0,
-			currentFrameIdx );
+		ImguiDrawUiPass( imguiVkCtx, thisVFrame.cmdBuff, &swapchainUIRW, 0, currentFrameIdx );
 
 
 		VkImageMemoryBarrier2KHR presentWaitBarrier[] = { VkMakeImageBarrier2(
