@@ -373,30 +373,6 @@ static inline bool	SysPumpUserInput( mouse* m, keyboard* kbd, bool insideWnd )
 	return true;
 }
 
-static inline u8*	SysReadOnlyMemMapFile( const char* file )
-{
-	// TODO: for final version we don't share files
-	HANDLE hFileToMap =  CreateFileA( file,
-									 GENERIC_READ, 
-									 FILE_SHARE_READ,0, 
-									 OPEN_EXISTING,
-									 FILE_ATTRIBUTE_READONLY,0 );
-
-	HANDLE hFileMapping = CreateFileMappingA( hFileToMap, 0,
-										PAGE_READONLY, 0, 0, 0 );
-	// TODO: name files ?
-	void* mmFile = MapViewOfFile( hFileMapping,
-								  FILE_MAP_READ, 0, 0, 0 );
-	CloseHandle( hFileMapping );
-	CloseHandle( hFileToMap );
-	return (u8*)mmFile;
-}
-static inline void	SysCloseMemMapFile( void* mmFile )
-{
-	UnmapViewOfFile( mmFile );
-	//mmFile = 0;
-}
-
 LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
 	switch( uMsg )

@@ -71,8 +71,6 @@ extern void		SysDbgPrint( const char* str );
 extern void		SysErrMsgBox( const char* str );
 // FILE API--------------------------
 extern u32		SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize );
-extern u8*		SysReadOnlyMemMapFile( const char* file );
-extern void		SysCloseMemMapFile( void* mmFile );
 extern std::vector<u8> SysReadFile( const char* fileName );
 extern u64		SysGetFileTimestamp( const char* filename );
 extern bool		SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes );
