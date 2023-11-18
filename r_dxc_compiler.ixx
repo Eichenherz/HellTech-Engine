@@ -54,7 +54,6 @@ export{
 		bool compileToSpirv,
 		dxc_context& ctx
 	);
-
 }
 
 

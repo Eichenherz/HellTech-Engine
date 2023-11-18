@@ -120,28 +120,34 @@ VkPipeline VkMakeGfxPipeline(
 	rasterInfo.frontFace = pipelineState.frontFace;
 	rasterInfo.lineWidth = 1.0f;
 
-	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-	depthStencilState.depthTestEnable = pipelineState.depthTestEnable;
-	depthStencilState.depthWriteEnable = pipelineState.depthWrite;
-	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER;
-	depthStencilState.depthBoundsTestEnable = VK_TRUE;
-	depthStencilState.minDepthBounds = 0;
-	depthStencilState.maxDepthBounds = 1.0f;
+	VkPipelineDepthStencilStateCreateInfo depthStencilState = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, 
+		.depthTestEnable = pipelineState.depthTestEnable,
+		.depthWriteEnable = pipelineState.depthWrite,
+		.depthCompareOp = VK_COMPARE_OP_GREATER,
+		.depthBoundsTestEnable = VK_TRUE,
+		.minDepthBounds = 0.0f,
+		.maxDepthBounds = 1.0f
+	};
 
-	VkPipelineColorBlendAttachmentState blendConfig = {};
-	blendConfig.blendEnable = pipelineState.blendCol;
-	blendConfig.srcColorBlendFactor = pipelineState.srcColorBlendFactor;
-	blendConfig.dstColorBlendFactor = pipelineState.dstColorBlendFactor;
-	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor;
-	blendConfig.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor;
-	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.colorWriteMask =
+	constexpr VkColorComponentFlags colWriteMask = 
 		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-	colorBlendStateInfo.attachmentCount = 1;
-	colorBlendStateInfo.pAttachments = &blendConfig;
+	VkPipelineColorBlendAttachmentState blendConfig = {
+		.blendEnable = pipelineState.blendCol,
+		.srcColorBlendFactor = pipelineState.srcColorBlendFactor,
+		.dstColorBlendFactor = pipelineState.dstColorBlendFactor,
+		.colorBlendOp = VK_BLEND_OP_ADD,
+		.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor,
+		.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor,
+		.alphaBlendOp = VK_BLEND_OP_ADD,
+		.colorWriteMask = colWriteMask
+	};
+	
+	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &blendConfig
+	};
 
 	// TODO: only if we use frag
 	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };

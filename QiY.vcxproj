@@ -265,7 +265,6 @@
     <ClCompile Include="bcn_compressor.cpp" />
     <ClCompile Include="filesystem.ixx" />
     <ClCompile Include="pak_file.cpp" />
-    <ClCompile Include="handle_map.inl" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -293,7 +292,9 @@
     <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
     <ClInclude Include="pak_file.h" />
-    <ClInclude Include="handle_map.hpp" />
+    <ClCompile Include="handles.ixx">
+      <FileType>Document</FileType>
+    </ClCompile>
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />

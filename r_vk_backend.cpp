@@ -16,8 +16,7 @@
 #include <charconv>
 #include <span>
 
-#include "handle_map.hpp"
-#include "handle_map.inl"
+import handles;
 
 // TODO: use own allocator
 
@@ -326,7 +325,6 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VK_CHECK( VK_INTERNAL_ERROR( !gpu ) );
 
 	gpuFeatures.features.geometryShader = 0;
-	// NOTE: might help debugging ?
 	gpuFeatures.features.robustBufferAccess = 0;
 
 
@@ -473,7 +471,6 @@ static inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_
 	return ( timestampEnd - timestampBeg ) / vkTimer.timestampPeriod * nsToMs;
 }
 
-// TODO: extend ?
 struct vk_time_section
 {
 	const VkCommandBuffer& cmdBuff;
@@ -850,7 +847,6 @@ inline static VkDescriptorSetLayout VkMakeDescriptorSetLayout(
 
 using vk_binding_list = std::initializer_list<std::pair<u32, u32>>;
 
-// TODO: write own c++ vector + stack_vector
 inline static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
 	VkDevice         vkDevice,
 	VkDescriptorPool vkDescPool, 
@@ -1164,7 +1160,6 @@ inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* s
 	return sm;
 }
 
-// TODO: no C++ and vector ?
 inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
 {
 	// TODO: 
@@ -1326,20 +1321,14 @@ inline static vk_program VkMakePipelineProgram(
 	return program;
 }
 
-// TODO: 
-inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
-{}
-
 
 // TODO: rename to program 
 // TODO: what about descriptors ?
 // TODO: what about spec consts
-// TODO: where to store the fbo ?
 struct vk_graphics_program
 {
 	VkPipeline pipeline;
 	VkPipelineLayout layout;
-	//VkFramebuffer fbo;
 	// TODO: store push consts data ?
 };
 
@@ -2831,13 +2820,12 @@ inline static vk_backend_context MakeVkBackendCtx()
 
 }
 
-// TODO: no structured binding
 void VkBackendInit()
 {
-	auto [vkInst, vkDbgMsg] = VkMakeInstance();
+	vk_instance vkInst = VkMakeInstance();
 
-	vkSurf = VkMakeWinSurface( vkInst, hInst, hWnd );
-	dc = VkMakeDeviceContext( vkInst, vkSurf );
+	vkSurf = VkMakeWinSurface( vkInst.inst, hInst, hWnd );
+	dc = VkMakeDeviceContext( vkInst.inst, vkSurf );
 
 	VkStartGfxMemory( dc.gpu, dc.device );
 

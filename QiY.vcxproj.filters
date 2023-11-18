@@ -60,9 +60,6 @@
     <ClCompile Include="r_dxc_compiler.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="handle_map.inl">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="pak_file.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -71,6 +68,9 @@
     </ClCompile>
     <ClCompile Include="filesystem.ixx">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="handles.ixx">
+      <Filter>Header Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -144,9 +144,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="r_vk_pipelines.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="handle_map.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="pak_file.h">

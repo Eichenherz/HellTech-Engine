@@ -1,12 +1,103 @@
-#include "handle_map.hpp"
-
 // NOTE: inspired by http://jeffkiah.com/game-engine-containers-1-handle_map/
-
-
 #include <vector>
 #include <assert.h>
-
 #include "sys_os_api.h"
+
+export module handles;
+
+export {
+	template<typename T>
+	struct handle64
+	{
+		union
+		{
+			// NOTE: order of bitfield is important for sorting prioritized by free, then metaData, then generation, then index
+			struct
+			{
+				u32 index;
+				u16 generation;
+				u16 meta : 15;
+				u16 free : 1;
+			};
+			u64 value;
+		};
+	};
+
+	template <typename T>
+	class handle_map
+	{
+	public:
+		struct meta_t
+		{
+			// NOTE: index into mSparseIds array stored in mMeta
+			u32	denseToSparse;
+		};
+
+		using handle_t = handle64<T>;
+		using handle_set_t = std::vector<handle_t>;
+		using dense_set_t = std::vector<T>;
+		using meta_set_t = std::vector<meta_t>;
+
+		handle_map() = default;
+		explicit handle_map( size_t reserveCount )
+		{
+			mSparseIds.reserve( reserveCount );
+			mItems.reserve( reserveCount );
+			mMeta.reserve( reserveCount );
+		}
+
+		T& at( handle64<T> hndl );
+		const T& at( handle64<T> hndl ) const;
+		T& operator[]( handle64<T> hndl ) { return at( hndl ); }
+		const T& operator[]( handle64<T> hndl ) const { return at( hndl ); }
+
+		template <typename... Params>
+		handle64<T> emplace( Params... args ) { return insert( T{ args... } ); }
+
+		typename dense_set_t::iterator		begin() { return mItems.begin(); }
+		typename dense_set_t::const_iterator	cbegin() const { return mItems.cbegin(); }
+		typename dense_set_t::iterator		end() { return mItems.end(); }
+		typename dense_set_t::const_iterator	cend() const { return mItems.cend(); }
+
+		size_t erase( handle64<T> hndl );
+		handle64<T> insert( T&& i );
+		handle64<T> insert( const T& i );
+
+		void clear() noexcept;
+
+		void reset() noexcept;
+
+		bool isValid( handle64<T> hndl ) const;
+		size_t size() const noexcept { return std::size( mItems ); }
+		size_t capacity() const noexcept { return mItems.capacity(); }
+
+		template <typename Compare>
+		size_t	defragment( Compare comp, size_t maxSwaps = 0 );
+
+		dense_set_t& getItems() { return mItems; }
+		const dense_set_t& getItems() const { return mItems; }
+		meta_set_t& getMeta() { return mMeta; }
+		const meta_set_t& getMeta() const { return mMeta; }
+		handle_set_t& getIds() { return mSparseIds; }
+		const handle_set_t& getIds() const { return mSparseIds; }
+
+		u32			getFreeListFront() const { return mFreeListStartIdx; }
+		u32			getFreeListBack() const { return mFreeListEndIdx; }
+
+		u32			getInnerIndex( handle64<T> hndl ) const;
+	private:
+		// NOTE: freeList is empty when the front is set to 32 bit max value (the back will match)
+		bool freeListEmpty() const { return mFreeListStartIdx == u32( -1 ); }
+
+	private:
+		handle_set_t		mSparseIds;
+		dense_set_t	mItems;
+		meta_set_t	mMeta;
+		u32	mFreeListStartIdx = u32( -1 ); // start index in the embedded ComponentId freelist
+		u32	mFreeListEndIdx = u32( -1 ); // last index in the freelist
+		u8		mFragmented = 0; // set to 1 if modified by insert or erase since last complete defragment
+	};
+}
 
 template<typename T>
 inline bool operator==( const handle64<T>& a, const handle64<T>& b ) { return ( a.value == b.value ); }
@@ -33,14 +124,14 @@ handle64<T> handle_map<T>::insert( T&& i )
 	}
 	else
 	{
-		u32 outerIndex = this->mFreeListFront;
+		u32 outerIndex = this->mFreeListStartIdx;
 		handle64<T>& innerId = this->mSparseIds[ outerIndex ];
 
 		// the index of a free slot refers to the next free slot
-		this->mFreeListFront = innerId.index; 
+		this->mFreeListStartIdx = innerId.index;
 		if( this->freeListEmpty() )
 		{
-			this->mFreeListBack = this->mFreeListFront;
+			this->mFreeListEndIdx = this->mFreeListStartIdx;
 		}
 
 		// convert the index from freelist to inner index
@@ -57,13 +148,11 @@ handle64<T> handle_map<T>::insert( T&& i )
 	return hndl;
 }
 
-
 template <typename T>
 handle64<T> handle_map<T>::insert( const T& i )
 {
 	return this->insert( std::move( T{ i } ) );
 }
-
 
 template <typename T>
 size_t handle_map<T>::erase( handle64<T> hndl )
@@ -86,13 +175,13 @@ size_t handle_map<T>::erase( handle64<T> hndl )
 	if( freeListEmpty() )
 	{
 		// if the freelist was empty, it now starts (and ends) at this index
-		this->mFreeListFront = hndl.index;
-		this->mFreeListBack = mFreeListFront;
+		this->mFreeListStartIdx = hndl.index;
+		this->mFreeListEndIdx = mFreeListStartIdx;
 	}
 	else
 	{
-		this->mSparseIds[ mFreeListBack ].index = hndl.index; // previous back of the freelist points to new back
-		this->mFreeListBack = hndl.index; // new freelist back is stored
+		this->mSparseIds[ mFreeListEndIdx ].index = hndl.index; // previous back of the freelist points to new back
+		this->mFreeListEndIdx = hndl.index; // new freelist back is stored
 	}
 
 	// remove the component by swapping with the last element, then pop_back
@@ -111,7 +200,6 @@ size_t handle_map<T>::erase( handle64<T> hndl )
 	return 1;
 }
 
-
 template <typename T>
 void handle_map<T>::clear() noexcept
 {
@@ -122,8 +210,8 @@ void handle_map<T>::clear() noexcept
 		this->mItems.clear();
 		this->mMeta.clear();
 
-		this->mFreeListFront = 0;
-		this->mFreeListBack = size - 1;
+		this->mFreeListStartIdx = 0;
+		this->mFreeListEndIdx = size - 1;
 		this->mFragmented = 0;
 
 		for( uint32_t i = 0; i < size; ++i )
@@ -137,19 +225,17 @@ void handle_map<T>::clear() noexcept
 	}
 }
 
-
 template <typename T>
 void handle_map<T>::reset() noexcept
 {
-	this->mFreeListFront = u32( -1 );
-	this->mFreeListBack = u32( -1 );
+	this->mFreeListStartIdx = u32( -1 );
+	this->mFreeListEndIdx = u32( -1 );
 	this->mFragmented = 0;
 
 	this->mItems.clear();
 	this->mMeta.clear();
 	this->mSparseIds.clear();
 }
-
 
 template <typename T>
 inline T& handle_map<T>::at( handle64<T> hndl )
@@ -164,7 +250,6 @@ inline T& handle_map<T>::at( handle64<T> hndl )
 	return this->mItems[ innerId.index ];
 }
 
-
 template <typename T>
 inline const T& handle_map<T>::at( handle64<T> hndl ) const
 {
@@ -177,7 +262,6 @@ inline const T& handle_map<T>::at( handle64<T> hndl ) const
 
 	return this->mItems[ innerId.index ];
 }
-
 
 template <typename T>
 inline bool handle_map<T>::isValid( handle64<T> hndl ) const
@@ -192,7 +276,6 @@ inline bool handle_map<T>::isValid( handle64<T> hndl ) const
 	return ( innerId.index < std::size( this->mItems ) ) && ( hndl.generation == innerId.generation );
 }
 
-
 template <typename T>
 inline uint32_t handle_map<T>::getInnerIndex( handle64<T> hndl ) const
 {
@@ -206,7 +289,6 @@ inline uint32_t handle_map<T>::getInnerIndex( handle64<T> hndl ) const
 	return innerId.index;
 }
 
-
 template <typename T>
 template <typename Compare>
 size_t handle_map<T>::defragment( Compare comp, size_t maxSwaps )
@@ -215,7 +297,7 @@ size_t handle_map<T>::defragment( Compare comp, size_t maxSwaps )
 	size_t swaps = 0;
 
 	i32 i = 1;
-	for( ; i < std::size(this->mItems ) && ( maxSwaps == 0 || swaps < maxSwaps ); ++i )
+	for( ; i < std::size( this->mItems ) && ( maxSwaps == 0 || swaps < maxSwaps ); ++i )
 	{
 		T tmp = this->mItems[ i ];
 		meta_t tmpMeta = this->mMeta[ i ];
