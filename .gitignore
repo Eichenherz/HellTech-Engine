@@ -43,3 +43,5 @@ stb_truetype.h
 
 imgui/
 Shader.hlsl
+
+vk_procs.h
