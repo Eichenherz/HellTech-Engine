@@ -43,7 +43,3 @@ stb_truetype.h
 
 imgui/
 Shader.hlsl
-
-QiY.vcxproj.filters
-
-QiY.vcxproj

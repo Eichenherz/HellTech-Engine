@@ -16,4 +16,4 @@ struct range
 	u64 size : 32;
 };
 
-constexpr u64 INVALID_IDX = -1;
+constexpr u32 INVALID_IDX = -1;

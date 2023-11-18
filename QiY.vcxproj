@@ -264,6 +264,8 @@
   <ItemGroup>
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
+    <ClCompile Include="filesystem.ixx" />
+    <ClCompile Include="pak_file.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -279,6 +281,7 @@
     </CustomBuild>
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="spng.c" />
+    <ClCompile Include="sys_mmaped.cpp" />
     <ClCompile Include="sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
     </ClCompile>
@@ -289,6 +292,10 @@
     <ClInclude Include="cgltf.h" />
     <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
+    <ClInclude Include="pak_file.h" />
+    <ClCompile Include="handles.ixx">
+      <FileType>Document</FileType>
+    </ClCompile>
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
@@ -298,6 +305,9 @@
     <ClInclude Include="lz4.h" />
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
+    <ClInclude Include="r_vk_pipelines.hpp" />
+    <ClInclude Include="r_vk_resources.hpp" />
+    <ClInclude Include="r_vk_sync.hpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="r_data.h" />
     <ClInclude Include="spirv_reflect.h" />
@@ -305,6 +315,7 @@
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="vk_procs.h" />
+    <ClInclude Include="vk_utils.hpp" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">
@@ -416,6 +427,7 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">4.0</ShaderModel>
       <FileType>Document</FileType>
     </None>
+    <None Include="sys_err.inl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\culling.hlsl">
