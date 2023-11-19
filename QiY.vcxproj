@@ -265,6 +265,9 @@
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
     <ClCompile Include="filesystem.ixx" />
+    <ClInclude Include="geometry.hpp">
+      <FileType>Document</FileType>
+    </ClInclude>
     <ClCompile Include="pak_file.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />

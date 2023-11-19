@@ -15,9 +15,12 @@
 #include <string_view>
 #include <charconv>
 #include <span>
+#include <functional>
 
 import handles;
 
+#include "r_data_structs.h"
+#include "geometry.hpp"
 // TODO: use own allocator
 
 // NOTE: clang-cl on VS issue
@@ -65,9 +68,8 @@ constexpr bool multiPassDepthPyramid = 1;
 static_assert( multiPassDepthPyramid );
 // TODO: enable gfx debug outside of VS Debug
 constexpr bool vkValidationLayerFeatures = 1;
-constexpr bool worldLeftHanded = 1;
+//constexpr bool worldLeftHanded = 1;
 
-// TODO: cvar or constexpr ?
 constexpr bool dbgDraw = true;
 //==============================================//
 
@@ -282,18 +284,17 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &sync2Features };
 	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &extDynamicStateFeatures };
-	// NOTE: Vulkan SDK 1.2.189 complains about this stuff , wtf ?
 	VkPhysicalDeviceVulkan11Features gpuFeatures11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &gpuFeatures12 };
 	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
 
 	// TODO: check for more stuff ?
-	VkPhysicalDevice gpu = 0;
-	for( u64 i = 0; i < numDevices; ++i )
+	VkPhysicalDevice vkGpu = 0;
+	for( const VkPhysicalDevice currentVkGpu : availableDevices )
 	{
 		u32 extsNum = 0;
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ i ], 0, &extsNum, 0 ) || !extsNum ) continue;
+		if( vkEnumerateDeviceExtensionProperties( currentVkGpu, 0, &extsNum, 0 ) || !extsNum ) continue;
 		std::vector<VkExtensionProperties> availableExts( extsNum );
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ i ], 0, &extsNum, std::data( availableExts ) ) ) continue;
+		if( vkEnumerateDeviceExtensionProperties( currentVkGpu, 0, &extsNum, std::data( availableExts ) ) ) continue;
 
 		for( std::string_view requiredExt : ENABLED_DEVICE_EXTS )
 		{
@@ -309,36 +310,35 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 			if( !foundExt ) goto NEXT_DEVICE;
 		};
 
-		vkGetPhysicalDeviceProperties2( availableDevices[ i ], &gpuProps2 );
-		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_2 ) continue;
+		vkGetPhysicalDeviceProperties2( currentVkGpu, &gpuProps2 );
+		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_3 ) continue;
 		if( gpuProps2.properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) continue;
 		if( !gpuProps2.properties.limits.timestampComputeAndGraphics ) continue;
 
-		vkGetPhysicalDeviceFeatures2( availableDevices[ i ], &gpuFeatures );
+		vkGetPhysicalDeviceFeatures2( currentVkGpu, &gpuFeatures );
 
-		gpu = availableDevices[ i ];
+		vkGpu = currentVkGpu;
 
 		break;
 
 	NEXT_DEVICE:;
 	}
-	VK_CHECK( VK_INTERNAL_ERROR( !gpu ) );
+	VK_CHECK( VK_INTERNAL_ERROR( !vkGpu ) );
 
 	gpuFeatures.features.geometryShader = 0;
 	gpuFeatures.features.robustBufferAccess = 0;
 
 
 	u32 queueFamNum = 0;
-	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, 0 );
+	vkGetPhysicalDeviceQueueFamilyProperties( vkGpu, &queueFamNum, 0 );
 	VK_CHECK( VK_INTERNAL_ERROR( !queueFamNum ) );
 	std::vector<VkQueueFamilyProperties>  queueFamProps( queueFamNum );
-	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, std::data( queueFamProps ) );
+	vkGetPhysicalDeviceQueueFamilyProperties( vkGpu, &queueFamNum, std::data( queueFamProps ) );
 
 	constexpr VkQueueFlags careAboutQueueTypes = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
 	constexpr VkQueueFlags presentQueueFlags = careAboutQueueTypes ^ VK_QUEUE_TRANSFER_BIT;
 
 	u32 qGfxIdx = -1, qCompIdx = -1, qTransfIdx = -1;
-
 	for( u32 qIdx = 0; qIdx < queueFamNum; ++qIdx )
 	{
 		if( queueFamProps[ qIdx ].queueCount == 0 ) continue;
@@ -347,7 +347,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		if( familyFlags & presentQueueFlags )
 		{
 			VkBool32 present = 0;
-			vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qIdx, vkSurf, &present );
+			vkGetPhysicalDeviceSurfaceSupportKHR( vkGpu, qIdx, vkSurf, &present );
 			VK_CHECK( VK_INTERNAL_ERROR( !present ) );
 		}
 		if( familyFlags & VK_QUEUE_GRAPHICS_BIT ) qGfxIdx = qIdx;
@@ -361,10 +361,12 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VkDeviceQueueCreateInfo queueInfos[ 3 ] = {};
 	for( u32 qi = 0; qi < std::size( queueInfos ); ++qi )
 	{
-		queueInfos[ qi ].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queueInfos[ qi ].queueFamilyIndex = qi;
-		queueInfos[ qi ].queueCount = 1;
-		queueInfos[ qi ].pQueuePriorities = &queuePriorities;
+		queueInfos[ qi ] = {
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = qi, 
+			.queueCount = 1,
+			.pQueuePriorities = &queuePriorities 
+		};
 	}
 
 	vk_device dc = {};
@@ -375,7 +377,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	deviceInfo.pQueueCreateInfos = &queueInfos[ 0 ];
 	deviceInfo.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS );
 	deviceInfo.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS;
-	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, 0, &dc.device ) );
+	VK_CHECK( vkCreateDevice( vkGpu, &deviceInfo, 0, &dc.device ) );
 
 
 	VkLoadDeviceProcs( dc.device );
@@ -390,7 +392,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	dc.gfxQueueIdx = queueInfos[ qGfxIdx ].queueFamilyIndex;
 	dc.compQueueIdx = queueInfos[ qCompIdx ].queueFamilyIndex;
 	dc.transfQueueIdx = queueInfos[ qTransfIdx ].queueFamilyIndex;
-	dc.gpu = gpu;
+	dc.gpu = vkGpu;
 	dc.gpuProps = gpuProps2.properties;
 	dc.timestampPeriod = gpuProps2.properties.limits.timestampPeriod;
 	dc.waveSize = waveProps.subgroupSize;
@@ -550,13 +552,13 @@ struct swapchain
 	u8				imgCount;
 };
 
+#ifdef VK_USE_PLATFORM_WIN32_KHR
 // TODO: where to place these ?
 extern HINSTANCE hInst;
 extern HWND hWnd;
 
 inline static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
 {
-#ifdef VK_USE_PLATFORM_WIN32_KHR
 	VkWin32SurfaceCreateInfoKHR surfInfo = { VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
 	surfInfo.hinstance = hInst;
 	surfInfo.hwnd = hWnd;
@@ -564,14 +566,13 @@ inline static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst,
 	VkSurfaceKHR vkSurf;
 	VK_CHECK( vkCreateWin32SurfaceKHR( vkInst, &surfInfo, 0, &vkSurf ) );
 	return vkSurf;
-
+}
 #else
 #error Must provide OS specific Surface
-#endif // VK_USE_PLATFORM_WIN32_KHR
-}
-// TODO: sep initial validation form sc creation when resize ?
+#endif  // VK_USE_PLATFORM_WIN32_KHR
+
+// TODO: sep initial validation form sc creation WHEN RESIZE ?
 // TODO: tweak settings/config
-// TODO: present from compute and graphics
 inline static swapchain
 VkMakeSwapchain(
 	VkDevice			vkDevice,
@@ -599,13 +600,14 @@ VkMakeSwapchain(
 		std::vector<VkSurfaceFormatKHR> formats( formatCount );
 		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, std::data( formats ) ) );
 
-		for( u64 i = 0; i < formatCount; ++i )
-			if( formats[ i ].format == scDesiredFormat )
+		for( const VkSurfaceFormatKHR& surfFormat : formats )
+		{
+			if( surfFormat.format == scDesiredFormat )
 			{
-				scFormatAndColSpace = formats[ i ];
+				scFormatAndColSpace = surfFormat;
 				break;
 			}
-
+		}
 		VK_CHECK( VK_INTERNAL_ERROR( !scFormatAndColSpace.format ) );
 	}
 
@@ -618,11 +620,13 @@ VkMakeSwapchain(
 
 		constexpr VkPresentModeKHR desiredPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 		for( u32 j = 0; j < numPresentModes; ++j )
+		{
 			if( presentModes[ j ] == desiredPresentMode )
 			{
 				presentMode = desiredPresentMode;
 				break;
 			}
+		}
 		VK_CHECK( VK_INTERNAL_ERROR( !presentMode ) );
 	}
 
@@ -633,11 +637,10 @@ VkMakeSwapchain(
 			( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
 
 	VkImageUsageFlags scImgUsage =
-		VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-		VK_IMAGE_USAGE_STORAGE_BIT;
+		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
 	VK_CHECK( VK_INTERNAL_ERROR( ( surfaceCaps.supportedUsageFlags & scImgUsage ) != scImgUsage ) );
 
+	assert( surfaceCaps.maxImageArrayLayers >= 1 );
 
 	VkSwapchainCreateInfoKHR scInfo = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
 	scInfo.surface = vkSurf;
@@ -645,7 +648,6 @@ VkMakeSwapchain(
 	scInfo.imageFormat = scFormatAndColSpace.format;
 	scInfo.imageColorSpace = scFormatAndColSpace.colorSpace;
 	scInfo.imageExtent = surfaceCaps.currentExtent;
-	assert( surfaceCaps.maxImageArrayLayers >= 1 );
 	scInfo.imageArrayLayers = 1;
 	scInfo.imageUsage = scImgUsage;
 	scInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -704,7 +706,7 @@ struct renderer_config
 	u16             rednerHeight;
 	u8              maxAllowedFramesInFlight = 2;
 };
-// TODO: remake
+// TODO: 
 struct render_context
 {
 	VkPipeline		gfxPipeline;
@@ -734,9 +736,6 @@ struct render_context
 };
 
 static render_context rndCtx;
-
-
-#include "r_data_structs.h"
 
 
 // TODO: tewak ? make own ?
@@ -894,7 +893,6 @@ struct vk_srv_manager
 };
 static vk_srv_manager srvManager = {};
 // TODO: inline uniforms
-// TODO: no templates ?
 template<typename T>
 inline static VkWriteDescriptorSet
 VkWriteDescriptorSetUpdate(
@@ -929,8 +927,6 @@ VkWriteDescriptorSetUpdate(
 	{
 		descSlotUpdate.pImageInfo = ( const VkDescriptorImageInfo* ) srvInfos;
 	}
-	//else static_assert( 0 );
-
 
 	return descSlotUpdate;
 }
@@ -1145,8 +1141,6 @@ inline auto VkAllocDescriptorIdx( VkDevice vkDevice, const T& rscDescInfo, vk_de
 import r_dxc_compiler;
 
 using dxc_options = std::initializer_list<LPCWSTR>;
-
-
 
 
 inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
@@ -1365,7 +1359,7 @@ inline VkImageType VkGetImageType( texture_type t )
 	default: assert( 0 ); return VK_IMAGE_TYPE_MAX_ENUM;
 	}
 }
-// TODO: default types ?
+
 inline VkFilter VkGetFilterTypeFromGltf( gltf_sampler_filter f )
 {
 	switch( f )
@@ -1520,19 +1514,6 @@ StagingManagerPushForRecycle( VkBuffer stagingBuf, staging_manager& stgMngr, u64
 
 
 static staging_manager stagingManager;
-
-
-struct box_bounds
-{
-	DirectX::XMFLOAT3 min;
-	DirectX::XMFLOAT3 max;
-};
-
-struct entities_data
-{
-	std::vector<DirectX::XMFLOAT4X4A> transforms;
-	std::vector<box_bounds> instAabbs;
-};
 
 
 #include "imgui/imgui.h"
@@ -1717,314 +1698,6 @@ static inline debug_context VkMakeDebugContext( VkDevice vkDevice, const VkPhysi
 	return dbgCtx;
 }
 
-static constexpr void ReverseTriangleWinding( u32* indices, u64 count )
-{
-	assert( count % 3 == 0 );
-	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
-}
-// TODO: improve ?
-static void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vector<u32>& idxData, u64 numIters )
-{
-	using namespace DirectX;
-
-	constexpr u64 ICOSAHEDRON_FACE_NUM = 20;
-	constexpr u64 ICOSAHEDRON_VTX_NUM = 12;
-
-	constexpr float X = 0.525731112119133606f;
-	constexpr float Z = 0.850650808352039932f;
-	constexpr float N = 0;
-
-	constexpr XMFLOAT3 vertices[ ICOSAHEDRON_VTX_NUM ] =
-	{
-		{-X,N,Z}, {X,N,Z}, {-X,N,-Z}, {X,N,-Z},
-		{N,Z,X}, {N,Z,-X}, {N,-Z,X}, {N,-Z,-X},
-		{Z,X,N}, {-Z,X, N}, {Z,-X,N}, {-Z,-X, N}
-	};
-
-	u32 triangles[ 3 * ICOSAHEDRON_FACE_NUM ] =
-	{
-		0,4,1,	0,9,4,	9,5,4,	4,5,8,	4,8,1,
-		8,10,1,	8,3,10,	5,3,8,	5,2,3,	2,7,3,
-		7,10,3,	7,6,10,	7,11,6,	11,0,6,	0,1,6,
-		6,1,10,	9,0,11,	9,11,2,	9,2,5,	7,2,11
-	};
-
-	if constexpr( worldLeftHanded ) ReverseTriangleWinding( triangles, std::size( triangles ) );
-
-	std::vector<XMFLOAT3> vtxCache;
-	std::vector<u32> idxCache;
-
-	vtxCache = { std::begin( vertices ), std::end( vertices ) };
-	idxData = { std::begin( triangles ),std::end( triangles ) };
-
-	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * std::exp2( numIters ) );
-	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
-	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
-
-
-	for( u64 i = 0; i < numIters; ++i )
-	{
-		for( u64 t = 0; t < std::size( idxData ); t += 3 )
-		{
-			u32 i0 = idxData[ t ];
-			u32 i1 = idxData[ t + 1 ];
-			u32 i2 = idxData[ t + 2 ];
-
-			XMVECTOR v0 = XMLoadFloat3( &vtxCache[ i0 ] );
-			XMVECTOR v1 = XMLoadFloat3( &vtxCache[ i1 ] );
-			XMVECTOR v2 = XMLoadFloat3( &vtxCache[ i2 ] );
-			XMFLOAT3 m01, m12, m20;
-			XMStoreFloat3( &m01, XMVector3Normalize( XMVectorAdd( v0, v1 ) ) );
-			XMStoreFloat3( &m12, XMVector3Normalize( XMVectorAdd( v1, v2 ) ) );
-			XMStoreFloat3( &m20, XMVector3Normalize( XMVectorAdd( v2, v0 ) ) );
-
-			u32 idxOffset = std::size( vtxCache ) - 1;
-
-			vtxCache.push_back( m01 );
-			vtxCache.push_back( m12 );
-			vtxCache.push_back( m20 );
-
-			if constexpr( !worldLeftHanded )
-			{
-				idxCache.push_back( idxOffset + 1 );
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( i0 );
-
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( i2 );
-				idxCache.push_back( idxOffset + 3 );
-
-				idxCache.push_back( idxOffset + 1 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( idxOffset + 3 );
-
-				idxCache.push_back( i1 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( idxOffset + 1 );
-			}
-			else
-			{
-				idxCache.push_back( i0 );
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( idxOffset + 1 );
-
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( i2 );
-				idxCache.push_back( idxOffset + 2 );
-
-				idxCache.push_back( idxOffset + 3 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( idxOffset + 1 );
-
-				idxCache.push_back( idxOffset + 1 );
-				idxCache.push_back( idxOffset + 2 );
-				idxCache.push_back( i1 );
-			}
-		}
-
-		idxData = idxCache;
-	}
-
-	vtxData = std::move( vtxCache );
-}
-// TODO: remove ?
-static void GenerateBoxCube( std::vector<DirectX::XMFLOAT4>& vtx, std::vector<u32>& idx )
-{
-	using namespace DirectX;
-
-	constexpr float w = 0.5f;
-	constexpr float h = 0.5f;
-	constexpr float t = 0.5f;
-
-	XMFLOAT3 c0 = { w, h,-t };
-	XMFLOAT3 c1 = { -w, h,-t };
-	XMFLOAT3 c2 = { -w,-h,-t };
-	XMFLOAT3 c3 = { w,-h,-t };
-
-	XMFLOAT3 c4 = { w, h, t };
-	XMFLOAT3 c5 = { -w, h, t };
-	XMFLOAT3 c6 = { -w,-h, t };
-	XMFLOAT3 c7 = { w,-h, t };
-
-	constexpr XMFLOAT4 col = {};
-
-	XMFLOAT4 vertices[] = {
-		// Bottom
-		{c0.x,c0.y,c0.z,1.0f},
-		{c1.x,c1.y,c1.z,1.0f},
-		{c2.x,c2.y,c2.z,1.0f},
-		{c3.x,c3.y,c3.z,1.0f},
-		// Left					
-		{c7.x,c7.y,c7.z,1.0f },
-		{c4.x,c4.y,c4.z,1.0f },
-		{c0.x,c0.y,c0.z,1.0f },
-		{c3.x,c3.y,c3.z,1.0f },
-		// Front			
-		{c4.x,c4.y,c4.z,1.0f },
-		{c5.x,c5.y,c5.z,1.0f },
-		{c1.x,c1.y,c1.z,1.0f },
-		{c0.x,c0.y,c0.z,1.0f },
-		// Back				
-		{c6.x,c6.y,c6.z,1.0f },
-		{c7.x,c7.y,c7.z,1.0f },
-		{c3.x,c3.y,c3.z,1.0f },
-		{c2.x,c2.y,c2.z,1.0f },
-		// Right			
-		{c5.x,c5.y,c5.z,1.0f },
-		{c6.x,c6.y,c6.z,1.0f },
-		{c2.x,c2.y,c2.z,1.0f },
-		{c1.x,c1.y,c1.z,1.0f },
-		// Top				
-		{c7.x,c7.y,c7.z,1.0f },
-		{c6.x,c6.y,c6.z,1.0f },
-		{c5.x,c5.y,c5.z,1.0f },
-		{c4.x,c4.y,c4.z,1.0f }
-	};
-
-	u32 indices[] = {
-			0, 1, 3,        1, 2, 3,        // Bottom	
-			4, 5, 7,        5, 6, 7,        // Left
-			8, 9, 11,       9, 10, 11,      // Front
-			12, 13, 15,     13, 14, 15,     // Back
-			16, 17, 19,     17, 18, 19,	    // Right
-			20, 21, 23,     21, 22, 23	    // Top
-	};
-
-	if constexpr( worldLeftHanded ) ReverseTriangleWinding( indices, std::size( indices ) );
-
-	vtx.insert( std::end( vtx ), std::begin( vertices ), std::end( vertices ) );
-	idx.insert( std::end( idx ), std::begin( indices ), std::end( indices ) );
-}
-
-
-constexpr u64 boxLineVertexCount = 24u;
-constexpr u64 boxTrisVertexCount = 36u;
-/*
-// NOTE: corners are stored in this way:
-//	   3---------7
-//	  /|        /|
-//	 / |       / |
-//	1---------5  |
-//	|  2- - - |- 6
-//	| /       | /
-//	|/        |/
-//	0---------4
-*/
-constexpr u8 boxLineIndices[] = {
-	0,1,	0,2,	1,3,	2,3,
-	0,4,	1,5,	2,6,	3,7,
-	4,5,	4,6,	5,7,	6,7
-};
-// NOTE: counter-clockwise
-constexpr u8 boxTrisIndices[] = {
-	0, 1, 2,    // side 1
-	2, 1, 3,
-	4, 0, 6,    // side 2
-	6, 0, 2,
-	7, 5, 6,    // side 3
-	6, 5, 4,
-	3, 1, 7,    // side 4
-	7, 1, 5,
-	4, 5, 0,    // side 5
-	0, 5, 1,
-	3, 7, 2,    // side 6
-	2, 7, 6,
-};
-
-inline void XM_CALLCONV
-TrnasformBoxVertices(
-	DirectX::XMMATRIX		transf,
-	DirectX::XMFLOAT3		boxMin,
-	DirectX::XMFLOAT3		boxMax,
-	DirectX::XMFLOAT4* boxCorners
-) {
-	using namespace DirectX;
-
-	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z, 1.0f };
-	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z, 1.0f };
-	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z, 1.0f };
-	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z, 1.0f };
-	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z, 1.0f };
-	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z, 1.0f };
-	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z, 1.0f };
-	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z, 1.0f };
-
-	for( u64 ci = 0; ci < 8; ++ci )
-	{
-		XMFLOAT4& outCorner = boxCorners[ ci ];
-		XMVECTOR trnasformedCorner = XMVector4Transform( XMLoadFloat4( &outCorner ), transf );
-		XMStoreFloat4( &outCorner, trnasformedCorner );
-	}
-}
-
-// TODO: draw them filled ? 
-// TODO: rethink ?
-
-// TODO: remove ?
-inline void WriteBoundingBoxLines(
-	const DirectX::XMFLOAT4X4A& mat,
-	const DirectX::XMFLOAT3& min,
-	const DirectX::XMFLOAT3& max,
-	const DirectX::XMFLOAT4& col,
-	dbg_vertex* thisLineRange
-) {
-	using namespace DirectX;
-
-	XMFLOAT4 boxVertices[ 8 ] = {};
-	TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), min, max, boxVertices );
-
-	for( u64 ii = 0; ii < boxLineVertexCount; ++ii )
-	{
-		thisLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
-	}
-}
-
-inline std::vector<dbg_vertex>
-ComputeSceneDebugBoundingBoxes(
-	DirectX::XMMATRIX frustDrawMat,
-	const entities_data& entities
-) {
-	using namespace DirectX;
-
-	assert( std::size( entities.instAabbs ) == std::size( entities.transforms ) );
-	assert( boxLineVertexCount == std::size( boxLineIndices ) );
-
-	u64 entitiesCount = std::size( entities.transforms );
-	std::vector<dbg_vertex> dbgGeom;
-	// NOTE: + boxLineVertexCount for frustum
-	dbgGeom.resize( entitiesCount * boxLineVertexCount + boxLineVertexCount );
-
-	for( u64 i = 0; i < entitiesCount; ++i )
-	{
-		const box_bounds& aabb = entities.instAabbs[ i ];
-		const XMFLOAT4X4A& mat = entities.transforms[ i ];
-
-		XMFLOAT4 boxVertices[ 8 ] = {};
-		TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
-
-		dbg_vertex* boxLineRange = std::data( dbgGeom ) + i * boxLineVertexCount;
-		constexpr XMFLOAT4 col = { 255.0f,255.0f,0.0f,1.0f };
-		for( u64 ii = 0; ii < boxLineVertexCount; ++ii )
-		{
-			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
-		}
-	}
-
-	u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
-
-	XMFLOAT4 boxVertices[ 8 ] = {};
-	TrnasformBoxVertices( frustDrawMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
-
-	dbg_vertex* boxLineRange = std::data( dbgGeom ) + frustBoxOffset;
-	constexpr XMFLOAT4 frustCol = { 0.0f, 255.0f, 255.0f, 1.0f };
-	for( u64 i = 0; i < boxLineVertexCount; ++i )
-	{
-		boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],frustCol };
-	}
-
-	return dbgGeom;
-}
-
 
 static entities_data entities;
 static std::vector<dbg_vertex> dbgLineGeomCache;
@@ -2067,94 +1740,6 @@ static vk_buffer drawMergedCmd;
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
 
-constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
-// TODO: remove ?
-inline static std::vector<instance_desc>
-SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrlCount, float sceneRadius )
-{
-	using namespace DirectX;
-
-	std::vector<instance_desc> insts( drawCount );
-	float scale = 1.0f;
-	for( instance_desc& i : insts )
-	{
-		i.meshIdx = rand() % std::size( meshes );
-		i.mtrlIdx = 0;
-		i.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		i.scale = scale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-
-		XMVECTOR axis = XMVector3Normalize(
-			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 0 ) );
-		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
-
-		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
-		XMVECTOR quat = XMQuaternionIdentity();
-		XMStoreFloat4( &i.rot, quat );
-
-		XMMATRIX scaleM = XMMatrixScaling( i.scale, i.scale, i.scale );
-		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
-		XMMATRIX moveM = XMMatrixTranslation( i.pos.x, i.pos.y, i.pos.z );
-
-		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
-
-		XMStoreFloat4x4A( &i.localToWorld, localToWorld );
-	}
-
-	return insts;
-}
-inline static std::vector<DirectX::XMFLOAT4X4A> SpawmRandomTransforms( u64 instCount, float sceneRadius, float globalScale )
-{
-	using namespace DirectX;
-
-	std::vector<XMFLOAT4X4A> transf( instCount );
-	for( XMFLOAT4X4A& t : transf )
-	{
-		float posX = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		float posY = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		float posZ = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		float scale = globalScale * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-
-		XMVECTOR axis = XMVector3Normalize(
-			XMVectorSet( float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 float( rand() * RAND_MAX_SCALE ) * 2.0f - 1.0f,
-						 0 ) );
-		float angle = XMConvertToRadians( float( rand() * RAND_MAX_SCALE ) * 90.0f );
-
-		//XMVECTOR quat = XMQuaternionRotationNormal( axis, angle );
-		XMVECTOR quat = XMQuaternionIdentity();
-
-		XMMATRIX scaleM = XMMatrixScaling( scale, scale, scale );
-		XMMATRIX rotM = XMMatrixRotationQuaternion( quat );
-		XMMATRIX moveM = XMMatrixTranslation( posX, posY, posZ );
-
-		XMMATRIX localToWorld = XMMatrixMultiply( scaleM, XMMatrixMultiply( rotM, moveM ) );
-
-		XMStoreFloat4x4A( &t, localToWorld );
-	}
-
-	return transf;
-}
-inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float sceneRadius )
-{
-	std::vector<light_data> lights( lightCount );
-	for( light_data& l : lights )
-	{
-		l.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.radius = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-		l.col = { 600.0f,200.0f,100.0f };
-	}
-
-	return lights;
-}
-
 constexpr u64 randSeed = 42;
 constexpr u64 drawCount = 5;
 constexpr u64 lightCount = 100;
@@ -2166,67 +1751,7 @@ constexpr u64 tileCount = tileRowSize * ( SCREEN_HEIGHT + tileSize - 1 ) / tileS
 constexpr u64 wordsPerTile = ( lightCount + 31 ) / 32;
 
 
-
-template<typename T>
-struct hndl64
-{
-	u64 h = 0;
-
-	inline hndl64() = default;
-	inline hndl64( u64 magkIdx ) : h{ magkIdx } {}
-	inline operator u64() const { return h; }
-};
-
-template <typename T>
-inline u64 IdxFromHndl64( hndl64<T> h )
-{
-	constexpr u64 standardIndexMask = ( 1ull << 32 ) - 1;
-	return h & standardIndexMask;
-}
-template <typename T>
-inline u64 MagicFromHndl64( hndl64<T> h )
-{
-	constexpr u64 standardIndexMask = ( 1ull << 32 ) - 1;
-	constexpr u64 standardMagicNumberMask = ~standardIndexMask;
-	return ( h & standardMagicNumberMask ) >> 32;
-}
-template <typename T>
-inline hndl64<T> Hndl64FromMagicAndIdx( u64 m, u64 i )
-{
-	return u64( ( m << 32 ) | i );
-}
-
-// TODO: remove
-template<typename T>
-struct resource_vector
-{
-	struct resource { T data; u64 magicId; };
-	std::vector<resource> rsc;
-	u64 magicCounter;
-};
-
-template<typename T>
-inline const T& GetResourceFromHndl( hndl64<T> h, const resource_vector<T>& buf )
-{
-	assert( std::size( buf ) );
-	assert( h );
-
-	const T& entry = buf[ IdxFromHndl64( h ) ];
-	assert( entry.magicId == MagicFromHndl64( h ) );
-
-	return entry.data;
-}
-template<typename T>
-inline hndl64<T> PushResourceToContainer( T& rsc, resource_vector<T>& buf )
-{
-	u64 magicCounter = buf.magicCounter++;
-	buf.rsc.push_back( { rsc, magicCounter } );
-
-	return Hndl64FromMagicAndIdx<T>( magicCounter, std::size( buf.rsc ) );
-}
-
-
-static resource_vector<vk_image> textures;
+static handle_map<vk_image> textures;
 
 
 enum MMF_OPENFLAGS : u8
@@ -2325,9 +1850,9 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		//refM.normalMapIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
 		//refM.occRoughMetalIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
 
-		refM.baseColIdx += std::size( textures.rsc );
-		refM.normalMapIdx += std::size( textures.rsc );
-		refM.occRoughMetalIdx += std::size( textures.rsc );
+		refM.baseColIdx += std::size( textures );
+		refM.normalMapIdx += std::size( textures );
+		refM.occRoughMetalIdx += std::size( textures );
 
 
 
@@ -2378,19 +1903,16 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 
 	// TODO: make easier to use 
-	VkMemoryBarrier2 buffBarriers[] = {
-		VkMakeMemoryBarrier2(
-		VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-		VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE )
+	VkMemoryBarrier2 buffBarriers[] = { VkMakeMemoryBarrier2(
+		VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_NONE )
 	};
 	{
 		const std::span<u8> vtxView = { std::data( binaryData ) + fileFooter.vtxByteRange.offset, fileFooter.vtxByteRange.size };
 
-		globVertexBuff = VkCreateAllocBindBuffer( std::size( vtxView ),
-												  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-												  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												  vkRscArena, dc.gpu );
+		globVertexBuff = VkCreateAllocBindBuffer( 
+			std::size( vtxView ),
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			vkRscArena, dc.gpu );
 		VkDbgNameObj( globVertexBuff.hndl, dc.device, "Buff_Vtx" );
 
 		vk_buffer stagingBuf = VkCreateAllocBindBuffer( std::size( vtxView ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
@@ -2415,14 +1937,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, indexBuff.hndl, 1, &copyRegion );
 	}
 	{
-		meshBuff = VkCreateAllocBindBuffer( BYTE_COUNT( meshes ),
-											VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-											VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-											vkRscArena, dc.gpu );
+		meshBuff = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( meshes ),
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			vkRscArena, dc.gpu );
 		VkDbgNameObj( meshBuff.hndl, dc.device, "Buff_Mesh_Desc" );
 
-		vk_buffer stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( meshes ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
+		vk_buffer stagingBuf = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( meshes ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
 		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( meshes ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
@@ -2430,14 +1952,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, meshBuff.hndl, 1, &copyRegion );
 	}
 	{
-		lightsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( lights ),
-											  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-											  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-											  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-											  vkRscArena, dc.gpu );
+		lightsBuff = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( lights ),
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			vkRscArena, dc.gpu );
 		VkDbgNameObj( lightsBuff.hndl, dc.device, "Buff_Lights" );
 
-		vk_buffer stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( lights ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
+		vk_buffer stagingBuf = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( lights ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
 		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( lights ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
@@ -2445,14 +1967,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, lightsBuff.hndl, 1, &copyRegion );
 	}
 	{
-		instDescBuff = VkCreateAllocBindBuffer( BYTE_COUNT( instDesc ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-												VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												vkRscArena, dc.gpu );
+		instDescBuff = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( instDesc ),
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			vkRscArena, dc.gpu );
 		VkDbgNameObj( instDescBuff.hndl, dc.device, "Buff_Inst_Descs" );
 
-		vk_buffer stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( instDesc ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
+		vk_buffer stagingBuf = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( instDesc ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
 		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( instDesc ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
@@ -2460,14 +1982,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, instDescBuff.hndl, 1, &copyRegion );
 	}
 	{
-		materialsBuff = VkCreateAllocBindBuffer( BYTE_COUNT( mtrls ),
-												 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-												 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-												 vkRscArena, dc.gpu );
+		materialsBuff = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( mtrls ),
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			vkRscArena, dc.gpu );
 		VkDbgNameObj( materialsBuff.hndl, dc.device, "Buff_Mtrls" );
 
-		vk_buffer stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( mtrls ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
+		vk_buffer stagingBuf = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( mtrls ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
 		std::memcpy( stagingBuf.hostVisible, ( const u8* ) std::data( mtrls ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
@@ -2518,13 +2040,12 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	{
 		proxyGeomBuff = VkCreateAllocBindBuffer(
 			BYTE_COUNT( proxyVtx ),
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-			VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			vkRscArena, dc.gpu );
 		VkDbgNameObj( proxyGeomBuff.hndl, dc.device, "Buff_Proxy_Vtx" );
 
-		vk_buffer stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( proxyVtx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
+		vk_buffer stagingBuf = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( proxyVtx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
 		std::memcpy( stagingBuf.hostVisible, std::data( proxyVtx ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
@@ -2536,7 +2057,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			BYTE_COUNT( proxyIdx ), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, vkRscArena, dc.gpu );
 		VkDbgNameObj( proxyIdxBuff.hndl, dc.device, "Buff_Proxy_Idx" );
 
-		vk_buffer stagingBuf = VkCreateAllocBindBuffer( BYTE_COUNT( proxyIdx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
+		vk_buffer stagingBuf = VkCreateAllocBindBuffer( 
+			BYTE_COUNT( proxyIdx ), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vkStagingArena, dc.gpu );
 		std::memcpy( stagingBuf.hostVisible, std::data( proxyIdx ), stagingBuf.size );
 		StagingManagerPushForRecycle( stagingBuf.hndl, stagingManager, currentFrameId );
 
@@ -2544,11 +2066,10 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		vkCmdCopyBuffer( cmdBuff, stagingBuf.hndl, proxyIdxBuff.hndl, 1, &copyRegion );
 	}
 
-	drawCmdBuff = VkCreateAllocBindBuffer( std::size( instDesc ) * sizeof( draw_command ),
-										   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-										   VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-										   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-										   vkRscArena, dc.gpu );
+	drawCmdBuff = VkCreateAllocBindBuffer(
+		std::size( instDesc ) * sizeof( draw_command ),
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		vkRscArena, dc.gpu );
 	VkDbgNameObj( drawCmdBuff.hndl, dc.device, "Buff_Indirect_Draw_Cmds" );
 
 	drawCmdDbgBuff = VkCreateAllocBindBuffer(
@@ -2564,61 +2085,35 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 	intermediateIndexBuff = VkCreateAllocBindBuffer(
 		maxByteCountMergedIndexBuff,
-		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena, dc.gpu );
 	VkDbgNameObj( intermediateIndexBuff.hndl, dc.device, "Buff_Intermediate_Idx" );
 
 	indirectMergedIndexBuff = VkCreateAllocBindBuffer(
 		maxByteCountMergedIndexBuff,
-		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-		VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena, dc.gpu );
 	VkDbgNameObj( indirectMergedIndexBuff.hndl, dc.device, "Buff_Merged_Idx" );
 
-	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 10'000 * sizeof( draw_indirect ),
-												VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-												VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-												VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-												vkRscArena, dc.gpu );
+	drawCmdAabbsBuff = VkCreateAllocBindBuffer( 
+		10'000 * sizeof( draw_indirect ),
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		vkRscArena, dc.gpu );
 
 
 	drawMergedCmd = VkCreateAllocBindBuffer(
 		sizeof( draw_command ),
-		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		vkRscArena, dc.gpu );
 
-	// NOTE: create and texture uploads
-	std::vector<VkImageMemoryBarrier2KHR> imageBarriers;
+
+	std::vector<VkImageMemoryBarrier2KHR> imageNewBarriers;
+	std::vector<std::function<void()>> copyCmds;
+	std::vector<VkImageMemoryBarrier2KHR> imageInitBarriers;
 	{
-		imageBarriers.reserve( std::size( imgDesc ) );
-
-		u64 newTexturesOffset = std::size( textures.rsc );
-
-		for( const image_metadata& meta : imgDesc )
-		{
-			VkImageCreateInfo info = VkGetImageInfoFromMetadata( meta, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
-			vk_image img = VkCreateAllocBindImage( info, vkAlbumArena, dc.gpu );
-
-			imageBarriers.push_back( VkMakeImageBarrier2(
-				img.hndl,
-				0, 0,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-				VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				VK_IMAGE_ASPECT_COLOR_BIT ) );
-
-
-			hndl64<vk_image> hImg = PushResourceToContainer( img, textures );
-		}
-
-		VkCmdPipelineImgLayoutTransitionBarriers( cmdBuff, imageBarriers );
-
-		imageBarriers.resize( 0 );
+		imageNewBarriers.reserve( std::size( imgDesc ) );
+		copyCmds.reserve( std::size( imgDesc ) );
+		imageInitBarriers.reserve( std::size( imgDesc ) );
 
 		const u8* pTexBinData = std::data( binaryData ) + fileFooter.texBinByteRange.offset;
 
@@ -2627,22 +2122,40 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 		std::memcpy( stagingBuff.hostVisible, pTexBinData, stagingBuff.size );
 		StagingManagerPushForRecycle( stagingBuff.hndl, stagingManager, currentFrameId );
 
-		for( u64 i = 0; i < std::size( imgDesc ); ++i )
+		for( const image_metadata& meta : imgDesc )
 		{
-			const vk_image& dst = textures.rsc[ i + newTexturesOffset ].data;
+			VkImageCreateInfo info = VkGetImageInfoFromMetadata( 
+				meta, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
+			vk_image img = VkCreateAllocBindImage( info, vkAlbumArena, dc.gpu );
 
-			VkBufferImageCopy imgCopyRegion = {};
-			imgCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			imgCopyRegion.bufferOffset = imgDesc[ i ].texBinRange.offset;
-			imgCopyRegion.imageSubresource.mipLevel = 0;
-			imgCopyRegion.imageSubresource.baseArrayLayer = 0;
-			imgCopyRegion.imageSubresource.layerCount = 1;
-			imgCopyRegion.imageOffset = VkOffset3D{};
-			imgCopyRegion.imageExtent = { u32( dst.width ),u32( dst.height ),1 };
-			vkCmdCopyBufferToImage( cmdBuff, stagingBuff.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
+			imageNewBarriers.push_back( VkMakeImageBarrier2(
+				img.hndl,
+				0, 0,
+				VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+				VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VK_IMAGE_ASPECT_COLOR_BIT ) );
 
-			imageBarriers.push_back( VkMakeImageBarrier2(
-				dst.hndl,
+			hndl64<vk_image> hImg = textures.emplace( img );
+			//TODO: untested
+			copyCmds.push_back([ & ] () {
+					VkBufferImageCopy imgCopyRegion = {
+						.bufferOffset = meta.texBinRange.offset,
+						.imageSubresource = {
+							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
+							.imageOffset = {},
+							.imageExtent = { u32( img.width ), u32( img.height ),1 }
+					};
+
+					vkCmdCopyBufferToImage( 
+						cmdBuff, stagingBuff.hndl, img.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
+				}
+			);
+			
+
+			imageInitBarriers.push_back( VkMakeImageBarrier2(
+				img.hndl,
 				VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
 				VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
 				VK_ACCESS_2_SHADER_READ_BIT_KHR,
@@ -2651,10 +2164,16 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 				VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 				VK_IMAGE_ASPECT_COLOR_BIT ) );
 		}
+
+		VkCmdPipelineImgLayoutTransitionBarriers( cmdBuff, imageNewBarriers );
+		for( const auto& cpCmd : copyCmds )
+		{
+			cpCmd();
+		}
 	}
 
 	VkCmdPipelineFlushCacheBarriers( cmdBuff, buffBarriers );
-	VkCmdPipelineImgLayoutTransitionBarriers( cmdBuff, imageBarriers );
+	VkCmdPipelineImgLayoutTransitionBarriers( cmdBuff, imageInitBarriers );
 }
 
 static vk_buffer drawCountBuff;
@@ -3885,15 +3404,13 @@ FinalCompositionPass(
 
 }
 
-using image_handle = handle64<vk_image>;
-
 struct render_path
 {
 	VkSampler quadMinSampler;
 	VkSampler pbrSampler;
-	image_handle hColorTarget; // .index = INVALID_IDX 
-	image_handle hDepthTarget;
-	image_handle hDepthPyramid;
+	hndl64<vk_image> hColorTarget; // .index = INVALID_IDX 
+	hndl64<vk_image> hDepthTarget;
+	hndl64<vk_image> hDepthPyramid;
 	u16 depthSrv = INVALID_IDX;
 	u16 hizSrv = INVALID_IDX;
 	u16 colSrv = INVALID_IDX;
@@ -3964,7 +3481,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		auto [update, globalsSrv] = VkAllocDescriptorIdx( dc.device, srvInfo, vk.descDealer );
 		vkUpdateDescriptorSets( dc.device, 1, &update.write, 0, 0 );
 
-		// TODO: fucking ouch
 		const_cast< virtual_frame& >( thisVFrame ).frameDescIdx = globalsSrv;
 	}
 
@@ -4242,13 +3758,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		descUpdates.push_back( samplerUpdate );
 
 		std::vector<VkDescriptorImageInfo> texDescs;
-		texDescs.reserve( std::size( textures.rsc ) );
-		for( const auto& i : textures.rsc )
+		texDescs.reserve( std::size( textures ) );
+		for( const auto& i : textures )
 		{
-			texDescs.push_back( { 0, i.data.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR } );
+			texDescs.push_back( { 0, i.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR } );
 
 			auto [okGotBored, itsJustTemp] = VkAllocDescriptorIdx(
-				dc.device, VkDescriptorImageInfo{ 0, i.data.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descDealer );
+				dc.device, VkDescriptorImageInfo{ 0, i.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descDealer );
 			vkDescUpdateCache.push_back( okGotBored );
 		}
 
@@ -4266,15 +3782,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		vkUpdateDescriptorSets( dc.device, std::size( srvUpdates ), std::data( srvUpdates ), 0, 0 );
 
 		// TODO: remove from here
-		XMMATRIX t = XMMatrixMultiply( XMMatrixScaling( 100.0f, 60.0f, 20.0f ), XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
-		XMFLOAT4 boxVertices[ 8 ] = {};
-		TrnasformBoxVertices( t, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
-		std::span<dbg_vertex> occlusionBoxSpan = { ( dbg_vertex* ) vkDbgCtx.dbgTrisBuff.hostVisible,boxTrisVertexCount };
-		assert( std::size( occlusionBoxSpan ) == std::size( boxTrisIndices ) );
-		for( u64 i = 0; i < std::size( occlusionBoxSpan ); ++i )
-		{
-			occlusionBoxSpan[ i ] = { boxVertices[ boxTrisIndices[ i ] ],{0.000004f,0.000250f,0.000123f,1.0f} };
-		}
+		WrtieOcclusionBoxes( ( dbg_vertex* ) vkDbgCtx.dbgTrisBuff.hostVisible );
 	}
 
 	// TODO: compute shader to init stuff

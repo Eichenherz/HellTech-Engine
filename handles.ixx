@@ -7,7 +7,7 @@ export module handles;
 
 export {
 	template<typename T>
-	struct handle64
+	struct hndl64
 	{
 		union
 		{
@@ -33,7 +33,7 @@ export {
 			u32	denseToSparse;
 		};
 
-		using handle_t = handle64<T>;
+		using handle_t = hndl64<T>;
 		using handle_set_t = std::vector<handle_t>;
 		using dense_set_t = std::vector<T>;
 		using meta_set_t = std::vector<meta_t>;
@@ -46,28 +46,28 @@ export {
 			mMeta.reserve( reserveCount );
 		}
 
-		T& at( handle64<T> hndl );
-		const T& at( handle64<T> hndl ) const;
-		T& operator[]( handle64<T> hndl ) { return at( hndl ); }
-		const T& operator[]( handle64<T> hndl ) const { return at( hndl ); }
+		T& at( hndl64<T> hndl );
+		const T& at( hndl64<T> hndl ) const;
+		T& operator[]( hndl64<T> hndl ) { return at( hndl ); }
+		const T& operator[]( hndl64<T> hndl ) const { return at( hndl ); }
 
 		template <typename... Params>
-		handle64<T> emplace( Params... args ) { return insert( T{ args... } ); }
+		hndl64<T> emplace( Params... args ) { return insert( T{ args... } ); }
 
 		typename dense_set_t::iterator		begin() { return mItems.begin(); }
 		typename dense_set_t::const_iterator	cbegin() const { return mItems.cbegin(); }
 		typename dense_set_t::iterator		end() { return mItems.end(); }
 		typename dense_set_t::const_iterator	cend() const { return mItems.cend(); }
 
-		size_t erase( handle64<T> hndl );
-		handle64<T> insert( T&& i );
-		handle64<T> insert( const T& i );
+		size_t erase( hndl64<T> hndl );
+		hndl64<T> insert( T&& i );
+		hndl64<T> insert( const T& i );
 
 		void clear() noexcept;
 
 		void reset() noexcept;
 
-		bool isValid( handle64<T> hndl ) const;
+		bool isValid( hndl64<T> hndl ) const;
 		size_t size() const noexcept { return std::size( mItems ); }
 		size_t capacity() const noexcept { return mItems.capacity(); }
 
@@ -84,7 +84,7 @@ export {
 		u32			getFreeListFront() const { return mFreeListStartIdx; }
 		u32			getFreeListBack() const { return mFreeListEndIdx; }
 
-		u32			getInnerIndex( handle64<T> hndl ) const;
+		u32			getInnerIndex( hndl64<T> hndl ) const;
 	private:
 		// NOTE: freeList is empty when the front is set to 32 bit max value (the back will match)
 		bool freeListEmpty() const { return mFreeListStartIdx == u32( -1 ); }
@@ -100,24 +100,24 @@ export {
 }
 
 template<typename T>
-inline bool operator==( const handle64<T>& a, const handle64<T>& b ) { return ( a.value == b.value ); }
+inline bool operator==( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value == b.value ); }
 template<typename T>
-inline bool operator!=( const handle64<T>& a, const handle64<T>& b ) { return ( a.value != b.value ); }
+inline bool operator!=( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value != b.value ); }
 template<typename T>
-inline bool operator< ( const handle64<T>& a, const handle64<T>& b ) { return ( a.value < b.value ); }
+inline bool operator< ( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value < b.value ); }
 template<typename T>
-inline bool operator> ( const handle64<T>& a, const handle64<T>& b ) { return ( a.value > b.value ); }
+inline bool operator> ( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value > b.value ); }
 
 
 template <typename T>
-handle64<T> handle_map<T>::insert( T&& i )
+hndl64<T> handle_map<T>::insert( T&& i )
 {
-	handle64<T> hndl = {};
+	hndl64<T> hndl = {};
 	this->mFragmented = 1;
 
 	if( freeListEmpty() )
 	{
-		handle64<T> innerId = { u32( std::size( this->mItems ) ), 1, 0, 0 };
+		hndl64<T> innerId = { u32( std::size( this->mItems ) ), 1, 0, 0 };
 		hndl = innerId;
 		hndl.index = u32( std::size( this->mSparseIds ) );
 		this->mSparseIds.push_back( innerId );
@@ -125,7 +125,7 @@ handle64<T> handle_map<T>::insert( T&& i )
 	else
 	{
 		u32 outerIndex = this->mFreeListStartIdx;
-		handle64<T>& innerId = this->mSparseIds[ outerIndex ];
+		hndl64<T>& innerId = this->mSparseIds[ outerIndex ];
 
 		// the index of a free slot refers to the next free slot
 		this->mFreeListStartIdx = innerId.index;
@@ -149,13 +149,13 @@ handle64<T> handle_map<T>::insert( T&& i )
 }
 
 template <typename T>
-handle64<T> handle_map<T>::insert( const T& i )
+hndl64<T> handle_map<T>::insert( const T& i )
 {
 	return this->insert( std::move( T{ i } ) );
 }
 
 template <typename T>
-size_t handle_map<T>::erase( handle64<T> hndl )
+size_t handle_map<T>::erase( hndl64<T> hndl )
 {
 	if( !isValid( hndl ) )
 	{
@@ -163,7 +163,7 @@ size_t handle_map<T>::erase( handle64<T> hndl )
 	}
 	this->mFragmented = 1;
 
-	handle64<T> innerId = this->mSparseIds[ hndl.index ];
+	hndl64<T> innerId = this->mSparseIds[ hndl.index ];
 	u32 innerIndex = innerId.index;
 
 	// push this slot to the back of the freelist
@@ -238,11 +238,11 @@ void handle_map<T>::reset() noexcept
 }
 
 template <typename T>
-inline T& handle_map<T>::at( handle64<T> hndl )
+inline T& handle_map<T>::at( hndl64<T> hndl )
 {
 	assert( ( hndl.index < std::size( this->mSparseIds ) ) && "outer index out of range" );
 
-	handle64<T> innerId = this->mSparseIds[ hndl.index ];
+	hndl64<T> innerId = this->mSparseIds[ hndl.index ];
 
 	assert( ( hndl.generation == innerId.generation ) && "at called with old generation" );
 	assert( ( innerId.index < std::size( this->mItems ) ) && "inner index out of range" );
@@ -251,11 +251,11 @@ inline T& handle_map<T>::at( handle64<T> hndl )
 }
 
 template <typename T>
-inline const T& handle_map<T>::at( handle64<T> hndl ) const
+inline const T& handle_map<T>::at( hndl64<T> hndl ) const
 {
 	assert( ( hndl.index < std::size( this->mSparseIds ) ) && "outer index out of range" );
 
-	handle64<T> innerId = this->mSparseIds[ hndl.index ];
+	hndl64<T> innerId = this->mSparseIds[ hndl.index ];
 
 	assert( ( hndl.generation == innerId.generation ) && "at called with old generation" );
 	assert( ( innerId.index < std::size( this->mItems ) ) && "inner index out of range" );
@@ -264,24 +264,24 @@ inline const T& handle_map<T>::at( handle64<T> hndl ) const
 }
 
 template <typename T>
-inline bool handle_map<T>::isValid( handle64<T> hndl ) const
+inline bool handle_map<T>::isValid( hndl64<T> hndl ) const
 {
 	if( hndl.index >= std::size( this->mSparseIds ) )
 	{
 		return false;
 	}
 
-	handle64<T> innerId = this->mSparseIds[ hndl.index ];
+	hndl64<T> innerId = this->mSparseIds[ hndl.index ];
 
 	return ( innerId.index < std::size( this->mItems ) ) && ( hndl.generation == innerId.generation );
 }
 
 template <typename T>
-inline uint32_t handle_map<T>::getInnerIndex( handle64<T> hndl ) const
+inline uint32_t handle_map<T>::getInnerIndex( hndl64<T> hndl ) const
 {
 	assert( ( hndl.index < std::size( this->mSparseIds ) ) && "outer index out of range" );
 
-	handle64<T> innerId = this->mSparseIds[ hndl.index ];
+	hndl64<T> innerId = this->mSparseIds[ hndl.index ];
 
 	assert( ( hndl.generation == innerId.generation ) && "at called with old generation" );
 	assert( ( innerId.index < std::size( this->mItems ) ) && "inner index out of range" );
