@@ -264,6 +264,8 @@
   <ItemGroup>
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
+    <ClCompile Include="containers.cpp" />
+    <ClCompile Include="containers.ixx" />
     <ClCompile Include="filesystem.ixx" />
     <ClInclude Include="geometry.hpp">
       <FileType>Document</FileType>
@@ -310,6 +312,7 @@
     <ClInclude Include="r_data_structs.h" />
     <ClInclude Include="r_vk_pipelines.hpp" />
     <ClInclude Include="r_vk_resources.hpp" />
+    <ClInclude Include="r_vk_shaders.hpp" />
     <ClInclude Include="r_vk_sync.hpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="r_data.h" />

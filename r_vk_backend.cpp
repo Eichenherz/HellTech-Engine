@@ -18,6 +18,7 @@
 #include <functional>
 
 import handles;
+import containers;
 
 #include "r_data_structs.h"
 #include "geometry.hpp"
@@ -41,6 +42,7 @@ import handles;
 #include "vk_utils.hpp"
 #include "r_vk_sync.hpp"
 #include "r_vk_pipelines.hpp"
+#include "r_vk_shaders.hpp"
 
 #include <DirectXPackedVector.h>
 
@@ -234,8 +236,6 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		VK_KHR_PRESENT_ID_EXTENSION_NAME,
 		VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
-		VK_KHR_ZERO_INITIALIZE_WORKGROUP_MEMORY_EXTENSION_NAME,
-
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 
 		//VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
@@ -246,8 +246,8 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
-		VK_EXT_INLINE_UNIFORM_BLOCK_EXTENSION_NAME,
-		//VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME
+		VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+		VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME
 	};
 
 	u32 numDevices = 0;
@@ -255,35 +255,29 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
-	//VkPhysicalDeviceDescriptorBufferPropertiesEXT descBuffProps =
-	//{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT };
-	VkPhysicalDeviceInlineUniformBlockPropertiesEXT inlineBlockProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT };
+	VkPhysicalDeviceShaderObjectPropertiesEXT shaderObjProps = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_PROPERTIES_EXT};
+	VkPhysicalDeviceDescriptorBufferPropertiesEXT descBuffProps =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT, &shaderObjProps};
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &inlineBlockProps };
-	VkPhysicalDeviceSubgroupProperties waveProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
-	VkPhysicalDeviceVulkan12Properties gpuProps12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &waveProps };
-	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps12 };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &descBuffProps };
+	VkPhysicalDeviceSubgroupProperties waveProps = 
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
+	VkPhysicalDeviceVulkan13Properties gpuProps13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, &waveProps };
+	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps13 };
 
-	//VkPhysicalDeviceDescriptorBufferFeaturesEXT descBuffFeatures = 
-	//{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT };
-	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES };
+	VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT };
+	VkPhysicalDeviceDescriptorBufferFeaturesEXT descBuffFeatures = 
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT, &shaderObjFeatures };
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &dynamicRenderingFeatures };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &shaderObjFeatures };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
-	VkPhysicalDeviceInlineUniformBlockFeaturesEXT inlineBlockFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT, &presentIdFeatures };
 	VkPhysicalDeviceIndexTypeUint8FeaturesEXT uint8IdxFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT, &inlineBlockFeatures };
-	VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR zeroInitWorkgrMemFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ZERO_INITIALIZE_WORKGROUP_MEMORY_FEATURES_KHR, &uint8IdxFeatures };
-	VkPhysicalDeviceSynchronization2Features sync2Features =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES, &zeroInitWorkgrMemFeatures };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT, &presentWaitFeatures };
 	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &sync2Features };
-	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &extDynamicStateFeatures };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &uint8IdxFeatures };
+	VkPhysicalDeviceVulkan13Features gpuFeatures13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &extDynamicStateFeatures };
+	VkPhysicalDeviceVulkan12Features gpuFeatures12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &gpuFeatures13 };
 	VkPhysicalDeviceVulkan11Features gpuFeatures11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &gpuFeatures12 };
 	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
 
@@ -335,15 +329,15 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	std::vector<VkQueueFamilyProperties>  queueFamProps( queueFamNum );
 	vkGetPhysicalDeviceQueueFamilyProperties( vkGpu, &queueFamNum, std::data( queueFamProps ) );
 
-	constexpr VkQueueFlags careAboutQueueTypes = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
-	constexpr VkQueueFlags presentQueueFlags = careAboutQueueTypes ^ VK_QUEUE_TRANSFER_BIT;
+	constexpr VkQueueFlags transferQueueType = VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT;
+	constexpr VkQueueFlags presentQueueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
 
 	u32 qGfxIdx = -1, qCompIdx = -1, qTransfIdx = -1;
 	for( u32 qIdx = 0; qIdx < queueFamNum; ++qIdx )
 	{
 		if( queueFamProps[ qIdx ].queueCount == 0 ) continue;
 
-		VkQueueFlags familyFlags = queueFamProps[ qIdx ].queueFlags & careAboutQueueTypes;
+		VkQueueFlags familyFlags = queueFamProps[ qIdx ].queueFlags;
 		if( familyFlags & presentQueueFlags )
 		{
 			VkBool32 present = 0;
@@ -352,7 +346,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		}
 		if( familyFlags & VK_QUEUE_GRAPHICS_BIT ) qGfxIdx = qIdx;
 		else if( familyFlags & VK_QUEUE_COMPUTE_BIT ) qCompIdx = qIdx;
-		else if( familyFlags & VK_QUEUE_TRANSFER_BIT ) qTransfIdx = qIdx;
+		else if( !(familyFlags ^ transferQueueType ) ) qTransfIdx = qIdx;
 	}
 
 	VK_CHECK( VK_INTERNAL_ERROR( ( qGfxIdx == u32( -1 ) ) || ( qCompIdx == u32( -1 ) ) || ( qTransfIdx == u32( -1 ) ) ) );
@@ -371,12 +365,14 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 
 	vk_device dc = {};
 
-	VkDeviceCreateInfo deviceInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-	deviceInfo.pNext = &gpuFeatures;
-	deviceInfo.queueCreateInfoCount = std::size( queueInfos );
-	deviceInfo.pQueueCreateInfos = &queueInfos[ 0 ];
-	deviceInfo.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS );
-	deviceInfo.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS;
+	VkDeviceCreateInfo deviceInfo = { 
+		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, 
+		.pNext = &gpuFeatures,
+		.queueCreateInfoCount = std::size( queueInfos ),
+		.pQueueCreateInfos = &queueInfos[ 0 ],
+		.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS ),
+		.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS
+	};
 	VK_CHECK( vkCreateDevice( vkGpu, &deviceInfo, 0, &dc.device ) );
 
 
@@ -404,8 +400,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 static vk_device dc;
 
 static vk_mem_arena vkRscArena, vkStagingArena, vkAlbumArena, vkHostComArena, vkDbgArena;
-// TODO: move debug stuff out of here ?
-// TODO: make into a mem system
+
 inline void VkStartGfxMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
 {
 	VkPhysicalDeviceMemoryProperties memProps;
@@ -738,60 +733,6 @@ struct render_context
 static render_context rndCtx;
 
 
-// TODO: tewak ? make own ?
-// TODO: provide with own allocators
-#define WIN32
-#include "spirv_reflect.h"
-#undef WIN32
-
-
-// TODO: rethink 
-// TODO: cache shader ?
-struct vk_shader
-{
-	VkShaderModule	module;
-	std::vector<u8>	spvByteCode;
-	u64				timestamp;
-	char			entryPointName[ 32 ];
-};
-
-// TODO: where to place this ?
-struct group_size
-{
-	u32 x;
-	u32 y;
-	u32 z;
-};
-
-// TODO: should make obsolete
-// TODO: vk_shader_program ?
-// TODO: put shader module inside ?
-struct vk_program
-{
-	VkPipelineLayout			pipeLayout;
-	VkDescriptorUpdateTemplate	descUpdateTemplate;
-	VkShaderStageFlags			pushConstStages;
-	VkDescriptorSetLayout       descSetLayout;
-	group_size					groupSize;
-};
-
-struct vk_descriptor_info
-{
-	union
-	{
-		VkDescriptorBufferInfo buff;
-		VkDescriptorImageInfo img;
-	};
-
-	vk_descriptor_info() = default;
-
-	vk_descriptor_info( VkBuffer buff, u64 offset, u64 range ) : buff{ buff, offset, range } {}
-	vk_descriptor_info( VkDescriptorBufferInfo buffInfo ) : buff{ buffInfo } {}
-	vk_descriptor_info( VkSampler sampler, VkImageView view, VkImageLayout imgLayout ) : img{ sampler, view, imgLayout } {}
-	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo } {}
-};
-
-// TODO: no indexable samplers ?
 constexpr VkDescriptorType globalDescTable[] = {
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -801,135 +742,8 @@ constexpr VkDescriptorType globalDescTable[] = {
 	VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT
 };
 
-struct vk_global_descriptor
-{
-	VkDescriptorSetLayout	setLayout;
-	VkDescriptorSet			set;
-};
-
-static vk_global_descriptor globBindlessDesc;
-
-
-struct vk_slot_info
-{
-	VkDescriptorType type;
-	u32 slot;
-	u32 count;
-};
-using vk_slot_list = std::initializer_list<vk_slot_info>;
-inline static VkDescriptorSetLayout VkMakeDescriptorSetLayout(
-	VkDevice         vkDevice,
-	vk_slot_list	 bindingList
-) {
-	std::vector<VkDescriptorSetLayoutBinding> bindingEntries;
-	for( auto& e : bindingList )
-	{
-		bindingEntries.push_back( { e.slot, e.type, e.count, VK_SHADER_STAGE_ALL } );
-	}
-	constexpr VkDescriptorBindingFlags flag =
-		VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-	std::vector<VkDescriptorBindingFlags> flags( std::size( bindingEntries ), flag );
-
-	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFalgs = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
-	descSetFalgs.bindingCount = std::size( flags );
-	descSetFalgs.pBindingFlags = std::data( flags );
-	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	descSetLayoutInfo.pNext = &descSetFalgs;
-	descSetLayoutInfo.bindingCount = std::size( bindingEntries );
-	descSetLayoutInfo.pBindings = std::data( bindingEntries );
-
-	VkDescriptorSetLayout layout = {};
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &layout ) );
-
-	return layout;
-}
-
 using vk_binding_list = std::initializer_list<std::pair<u32, u32>>;
 
-inline static vk_global_descriptor VkMakeBindlessGlobalDescriptor(
-	VkDevice         vkDevice,
-	VkDescriptorPool vkDescPool,
-	vk_binding_list	 bindingList
-) {
-	std::vector<VkDescriptorSetLayoutBinding> bindingEntries;
-	for( auto& e : bindingList )
-	{
-		bindingEntries.push_back( { e.first, globalDescTable[ e.first ], e.second, VK_SHADER_STAGE_ALL } );
-	}
-	constexpr VkDescriptorBindingFlags flag =
-		VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-	std::vector<VkDescriptorBindingFlags> flags( std::size( bindingEntries ), flag );
-
-	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFalgs = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
-	descSetFalgs.bindingCount = std::size( flags );
-	descSetFalgs.pBindingFlags = std::data( flags );
-	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	descSetLayoutInfo.pNext = &descSetFalgs;
-	descSetLayoutInfo.bindingCount = std::size( bindingEntries );
-	descSetLayoutInfo.pBindings = std::data( bindingEntries );
-
-	VkDescriptorSetLayout layout = {};
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &layout ) );
-
-
-	VkDescriptorSetAllocateInfo descSetInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-	descSetInfo.descriptorPool = vkDescPool;
-	descSetInfo.descriptorSetCount = 1;
-	descSetInfo.pSetLayouts = &layout;
-
-	VkDescriptorSet set = {};
-	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &set ) );
-
-	return { layout, set };
-}
-
-
-// TODO: keep Vk Descriptor stuff in here ?
-struct vk_srv_manager
-{
-	u32 slotSizeTable[ std::size( globalDescTable ) ];
-	u32 slotsNext[ std::size( globalDescTable ) ];
-	VkDescriptorSet			set;
-};
-static vk_srv_manager srvManager = {};
-// TODO: inline uniforms
-template<typename T>
-inline static VkWriteDescriptorSet
-VkWriteDescriptorSetUpdate(
-	VkDevice vkDevice,
-	u32 dstBinding,
-	const T* srvInfos,
-	u32 srvInfosCount,
-	vk_srv_manager& srvManager
-) {
-	assert( dstBinding >= 0 && dstBinding < std::size( globalDescTable ) );
-
-	u32 dstArrayIdx = srvManager.slotsNext[ dstBinding ];
-
-	assert( dstArrayIdx <= srvManager.slotSizeTable[ dstBinding ] );
-	assert( dstArrayIdx + srvInfosCount <= srvManager.slotSizeTable[ dstBinding ] );
-
-	srvManager.slotsNext[ dstBinding ] += srvInfosCount;
-
-
-	VkWriteDescriptorSet descSlotUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-	descSlotUpdate.dstSet = srvManager.set;
-	descSlotUpdate.dstBinding = dstBinding;
-	descSlotUpdate.dstArrayElement = dstArrayIdx;
-	descSlotUpdate.descriptorCount = srvInfosCount;
-	descSlotUpdate.descriptorType = globalDescTable[ dstBinding ];
-
-	if constexpr( std::is_same<T, VkDescriptorBufferInfo>::value )
-	{
-		descSlotUpdate.pBufferInfo = ( const VkDescriptorBufferInfo* ) srvInfos;
-	}
-	else if constexpr( std::is_same<T, VkDescriptorImageInfo>::value )
-	{
-		descSlotUpdate.pImageInfo = ( const VkDescriptorImageInfo* ) srvInfos;
-	}
-
-	return descSlotUpdate;
-}
 
 constexpr VkDescriptorType bindingToTypeMap[] = {
 	VK_DESCRIPTOR_TYPE_SAMPLER,
@@ -961,12 +775,11 @@ constexpr u32 VkDescTypeToBinding( VkDescriptorType type )
 	}
 }
 
-// TODO: use ring buffers ?
 // TODO: better bindingSlot <--> descType mapping
-// TODO: internal handling of updates ?
 // TODO: return u32 handles instead of raw u16 indices ?
-struct vk_descriptor_dealer
+struct vk_descriptor_manager
 {
+	// TODO: use freelist ?
 	struct vk_table_entry
 	{
 		std::vector<u16> freeSlots;
@@ -975,13 +788,15 @@ struct vk_descriptor_dealer
 	};
 
 	vk_table_entry table[ std::size( bindingToTypeMap ) ];
+	std::vector<VkWriteDescriptorSet> pendingUpdates;
+
 	VkDescriptorPool pool;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSet set;
 };
 
 
-inline vk_descriptor_dealer VkMakeDescriptorDealer( VkDevice vkDevice, const VkPhysicalDeviceProperties& gpuProps )
+inline vk_descriptor_manager VkMakeDescriptorManager( VkDevice vkDevice, const VkPhysicalDeviceProperties& gpuProps )
 {
 	constexpr u32 maxSize = u16( -1 );
 	constexpr u32 maxSetCount = 1;
@@ -993,7 +808,7 @@ inline vk_descriptor_dealer VkMakeDescriptorDealer( VkDevice vkDevice, const VkP
 		std::min( maxSize, gpuProps.limits.maxDescriptorSetSampledImages )
 	};
 
-	vk_descriptor_dealer dealer = {};
+	vk_descriptor_manager dealer = {};
 
 
 	VkDescriptorPoolSize poolSizes[ std::size( bindingToTypeMap ) ] = {};
@@ -1063,37 +878,45 @@ inline vk_descriptor_dealer VkMakeDescriptorDealer( VkDevice vkDevice, const VkP
 	return dealer;
 }
 
-struct vk_descriptor_write
+
+using vk_buffer_descriptor_info = VkDescriptorBufferInfo;
+using vk_image_descriptor_info = VkDescriptorImageInfo;
+
+struct vk_sampler_descriptor_info
 {
-	VkWriteDescriptorSet write;
-	vk_descriptor_info descInfo;
+	VkDescriptorImageInfo descInfo;
+	vk_sampler_descriptor_info( VkSampler vkSampler )
+	{
+		this->descInfo = VkDescriptorImageInfo{ .sampler = vkSampler };
+	}
 };
 
 template<typename T>
-inline auto VkAllocDescriptorIdx( VkDevice vkDevice, const T& rscDescInfo, vk_descriptor_dealer& dealer )
+inline u16 VkAllocDescriptorIdx( VkDevice vkDevice, const T& rscDescInfo, vk_descriptor_manager& dealer )
 {
-	struct _retval
-	{
-		vk_descriptor_write descUpdate;
-		u16 descIdx;
-	};
-
 	VkDescriptorType descriptorType = {};
 	const VkDescriptorBufferInfo* pBuffInfo = 0;
 	const VkDescriptorImageInfo* pImgInfo = 0;
-	if constexpr( std::is_same<T, VkDescriptorBufferInfo>::value )
+	if constexpr( std::is_same<T, vk_buffer_descriptor_info>::value )
 	{
 		descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		pBuffInfo = ( const VkDescriptorBufferInfo* ) &rscDescInfo;
 	}
-	else if constexpr( std::is_same<T, VkDescriptorImageInfo>::value )
+	else if constexpr( std::is_same<T, vk_image_descriptor_info>::value )
 	{
 		const VkDescriptorImageInfo& imgDescInfo = rscDescInfo;
-		assert( ( imgDescInfo.imageView && imgDescInfo.imageLayout ) ^ bool( imgDescInfo.sampler ) );
-		descriptorType = ( imgDescInfo.sampler ) ? VK_DESCRIPTOR_TYPE_SAMPLER :
-			( imgDescInfo.imageLayout == VK_IMAGE_LAYOUT_GENERAL ) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
+		assert( imgDescInfo.sampler == 0 );
+		assert( imgDescInfo.imageView && imgDescInfo.imageLayout );
+		descriptorType = ( imgDescInfo.imageLayout == VK_IMAGE_LAYOUT_GENERAL ) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
 			VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 
+		pImgInfo = &imgDescInfo;
+	}
+	else if constexpr( std::is_same<T, vk_sampler_descriptor_info>::value )
+	{
+		auto& imgDescInfo = ( const VkDescriptorImageInfo& )rscDescInfo;
+		assert( imgDescInfo.sampler != 0 );
+		descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
 		pImgInfo = &imgDescInfo;
 	}
 	//else static_assert( 0 );
@@ -1132,208 +955,36 @@ inline auto VkAllocDescriptorIdx( VkDevice vkDevice, const T& rscDescInfo, vk_de
 		.pImageInfo = pImgInfo,
 		.pBufferInfo = pBuffInfo
 	};
-
-	return _retval{ vk_descriptor_write{ writeEntryInfo, rscDescInfo }, destIndex };
+	dealer.pendingUpdates.emplace_back( writeEntryInfo );
+	return destIndex;
 }
+
+inline void VkFlushDescriptorUpdates( VkDevice vkDevice, vk_descriptor_manager& dealer )
+{
+	if( std::size( dealer.pendingUpdates ) == 0 )
+	{
+		return;
+	}
+
+	vkUpdateDescriptorSets( vkDevice, std::size( dealer.pendingUpdates ), std::data( dealer.pendingUpdates ), 0, 0 );
+	dealer.pendingUpdates.resize( 0 );
+}
+
+
+struct vk_backend
+{
+	handle_map<vk_image> imgPool;
+	vk_descriptor_manager descMngr;
+	VkPipelineLayout globalLayout;
+};
+
+static vk_backend vk;
 
 
 
 import r_dxc_compiler;
 
 using dxc_options = std::initializer_list<LPCWSTR>;
-
-
-inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
-{
-	VkShaderModuleCreateInfo shaderModuleInfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
-	shaderModuleInfo.codeSize = size;
-	shaderModuleInfo.pCode = spv;
-
-	VkShaderModule sm = {};
-	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &sm ) );
-	return sm;
-}
-
-inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
-{
-	// TODO: 
-	using namespace std;
-	constexpr std::string_view shadersFolder = "Shaders/"sv;
-	constexpr std::string_view shaderExtension = ".spv"sv;
-
-	std::vector<u8> binSpvShader = SysReadFile( shaderPath );
-
-	vk_shader shader = {};
-	shader.spvByteCode = std::move( binSpvShader );
-	shader.module = VkMakeShaderModule( vkDevice,
-										( const u32* ) std::data( shader.spvByteCode ),
-										std::size( shader.spvByteCode ) );
-
-	std::string_view shaderName = { shaderPath };
-	shaderName.remove_prefix( std::size( shadersFolder ) );
-	shaderName.remove_suffix( std::size( shaderExtension ) - 1 );
-	VkDbgNameObj( shader.module, vkDevice, &shaderName[ 0 ] );
-
-	return shader;
-}
-
-inline static void VkReflectShaderLayout(
-	const VkPhysicalDeviceProperties& gpuProps,
-	const std::vector<u8>& spvByteCode,
-	std::vector<VkDescriptorSetLayoutBinding>& descSetBindings,
-	std::vector<VkPushConstantRange>& pushConstRanges,
-	group_size& gs,
-	char* entryPointName,
-	u64											entryPointNameStrLen
-) {
-	SpvReflectShaderModule shaderReflection;
-	VK_CHECK( ( VkResult ) spvReflectCreateShaderModule( std::size( spvByteCode ) * sizeof( spvByteCode[ 0 ] ),
-														 std::data( spvByteCode ),
-														 &shaderReflection ) );
-
-	SpvReflectDescriptorSet& set = shaderReflection.descriptor_sets[ 0 ];
-
-	for( u64 bindingIdx = 0; bindingIdx < set.binding_count; ++bindingIdx )
-	{
-		if( set.set > 0 ) continue;
-
-		const SpvReflectDescriptorBinding& descBinding = *set.bindings[ bindingIdx ];
-
-		if( bindingIdx < std::size( descSetBindings ) )
-		{
-			// NOTE: if binding matches, assume the same resource will be used in multiple shaders in the same pipeline/program
-			// TODO: should VK_CHECK here ?
-			assert( descSetBindings[ bindingIdx ].descriptorType == VkDescriptorType( descBinding.descriptor_type ) );
-			descSetBindings[ bindingIdx ].stageFlags |= shaderReflection.shader_stage;
-			continue;
-		}
-
-		VkDescriptorSetLayoutBinding binding = {};
-		binding.binding = descBinding.binding;
-		binding.descriptorType = VkDescriptorType( descBinding.descriptor_type );
-		binding.descriptorCount = descBinding.count;
-		binding.stageFlags = shaderReflection.shader_stage;
-		descSetBindings.push_back( binding );
-	}
-
-	for( u64 pci = 0; pci < shaderReflection.push_constant_block_count; ++pci )
-	{
-		VkPushConstantRange pushConstRange = {};
-		pushConstRange.stageFlags = shaderReflection.shader_stage;
-		pushConstRange.offset = shaderReflection.push_constant_blocks[ pci ].offset;
-		pushConstRange.size = shaderReflection.push_constant_blocks[ pci ].size;
-		VK_CHECK( VK_INTERNAL_ERROR( pushConstRange.size > gpuProps.limits.maxPushConstantsSize ) );
-
-		pushConstRanges.push_back( pushConstRange );
-	}
-
-	assert( shaderReflection.entry_point_count == 1 );
-	const SpvReflectEntryPoint& entryPoint = shaderReflection.entry_points[ 0 ];
-	assert( std::strlen( entryPoint.name ) <= entryPointNameStrLen );
-	std::memcpy( entryPointName, entryPoint.name, entryPointNameStrLen );
-	if( VkShaderStageFlags( shaderReflection.shader_stage ) == VK_SHADER_STAGE_COMPUTE_BIT )
-		gs = { entryPoint.local_size.x, entryPoint.local_size.y, entryPoint.local_size.z };
-
-	spvReflectDestroyShaderModule( &shaderReflection );
-}
-
-// TODO: map spec consts ?
-using vk_shader_list = std::initializer_list<vk_shader*>;
-using vk_dynamic_states = std::initializer_list<VkDynamicState>;
-
-// TODO: bindlessLayout only for the shaders that use it ?
-inline static vk_program VkMakePipelineProgram(
-	VkDevice							vkDevice,
-	const VkPhysicalDeviceProperties& gpuProps,
-	VkPipelineBindPoint					bindPoint,
-	vk_shader_list						shaders,
-	VkDescriptorSetLayout				bindlessLayout = globBindlessDesc.setLayout
-) {
-	assert( std::size( shaders ) );
-
-	vk_program program = {};
-
-	std::vector<VkDescriptorSetLayoutBinding> bindings;
-	std::vector<VkPushConstantRange>	pushConstRanges;
-	group_size gs = {};
-
-	for( vk_shader* s : shaders )
-	{
-		VkReflectShaderLayout(
-			gpuProps, s->spvByteCode, bindings, pushConstRanges, gs, s->entryPointName, std::size( s->entryPointName ) );
-	}
-
-	VkDescriptorSetLayout descSetLayout = {};
-	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	descSetLayoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-	descSetLayoutInfo.bindingCount = std::size( bindings );
-	descSetLayoutInfo.pBindings = std::data( bindings );
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &descSetLayout ) );
-
-	VkDescriptorSetLayout setLayouts[] = { descSetLayout, bindlessLayout };
-
-	VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-	pipeLayoutInfo.setLayoutCount = std::size( setLayouts );
-	pipeLayoutInfo.pSetLayouts = setLayouts;
-	pipeLayoutInfo.pushConstantRangeCount = std::size( pushConstRanges );
-	pipeLayoutInfo.pPushConstantRanges = std::data( pushConstRanges );
-	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &program.pipeLayout ) );
-
-	if( std::size( bindings ) )
-	{
-		std::vector<VkDescriptorUpdateTemplateEntry> entries;
-		entries.reserve( std::size( bindings ) );
-		for( const VkDescriptorSetLayoutBinding& binding : bindings )
-		{
-			VkDescriptorUpdateTemplateEntry entry = {};
-			entry.dstBinding = binding.binding;
-			entry.dstArrayElement = 0;
-			entry.descriptorCount = binding.descriptorCount;
-			entry.descriptorType = binding.descriptorType;
-			entry.offset = std::size( entries ) * sizeof( vk_descriptor_info );
-			entry.stride = sizeof( vk_descriptor_info );
-			entries.emplace_back( entry );
-		}
-
-		VkDescriptorUpdateTemplateCreateInfo templateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
-		templateInfo.descriptorUpdateEntryCount = std::size( entries );
-		templateInfo.pDescriptorUpdateEntries = std::data( entries );
-		templateInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
-		templateInfo.descriptorSetLayout = descSetLayout;
-		templateInfo.pipelineBindPoint = bindPoint;
-		templateInfo.pipelineLayout = program.pipeLayout;
-		templateInfo.set = 0;
-		VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &program.descUpdateTemplate ) );
-	}
-
-	//vkDestroyDescriptorSetLayout( vkDevice, descSetLayout, 0 );
-
-	program.descSetLayout = descSetLayout;
-	program.pushConstStages = std::size( pushConstRanges ) ? pushConstRanges[ 0 ].stageFlags : 0;
-	program.groupSize = gs;
-
-	return program;
-}
-
-
-// TODO: rename to program 
-// TODO: what about descriptors ?
-// TODO: what about spec consts
-struct vk_graphics_program
-{
-	VkPipeline pipeline;
-	VkPipelineLayout layout;
-	// TODO: store push consts data ?
-};
-
-struct vk_compute_program
-{
-	VkPipeline pipeline;
-	VkPipelineLayout layout;
-	u16 workgrX;
-	u16 workgrY;
-	u16 workgrZ;
-};
 
 #include "asset_compiler.h"
 
@@ -1653,6 +1304,7 @@ struct debug_context
 
 static debug_context vkDbgCtx;
 
+
 // TODO: query for gpu props ?
 // TODO: dbgGeom buffer size based on what ?
 // TODO: shader rename
@@ -1663,7 +1315,8 @@ static inline debug_context VkMakeDebugContext( VkDevice vkDevice, const VkPhysi
 	vk_shader vert = VkLoadShader( "Shaders/v_cpu_dbg_draw.vert.spv", vkDevice );
 	vk_shader frag = VkLoadShader( "Shaders/f_pass_col.frag.spv", vkDevice );
 
-	dbgCtx.pipeProg = VkMakePipelineProgram( vkDevice, gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vert, &frag } );
+	dbgCtx.pipeProg = VkMakePipelineProgram( 
+		vkDevice, gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vert, &frag }, vk.descMngr.setLayout );
 
 	static_assert( worldLeftHanded );
 	vk_gfx_pipeline_state lineDrawPipelineState = {};
@@ -2298,19 +1951,12 @@ static vk_graphics_program  lighCullProgam = {};
 static VkDescriptorPool vkDescPool = {};
 static VkDescriptorSet frameDesc[ 3 ] = {};
 
-struct vk_backend
-{
-	handle_map<vk_image> imgPool;
-	vk_descriptor_dealer descDealer;
-	VkPipelineLayout globalLayout;
-};
 
-static vk_backend vk;
 
 inline VkPipelineLayout VkMakeGlobalPipelineLayout(
 	VkDevice vkDevice,
 	const VkPhysicalDeviceProperties& props,
-	const vk_descriptor_dealer& vkDescDealer
+	const vk_descriptor_manager& vkDescDealer
 ) {
 	VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_ALL, 0, props.limits.maxPushConstantsSize };
 	VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
@@ -2379,57 +2025,17 @@ void VkBackendInit()
 			{ VK_DESCRIPTOR_TYPE_SAMPLER, std::min( 4u, dc.gpuProps.limits.maxDescriptorSetSamplers ) }
 		};
 
-		VkDescriptorPoolCreateInfo descPoolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-		descPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-		descPoolInfo.maxSets = 4;
-		descPoolInfo.poolSizeCount = std::size( sizes );
-		descPoolInfo.pPoolSizes = sizes;
-		VK_CHECK( vkCreateDescriptorPool( dc.device, &descPoolInfo, 0, &vkDescPool ) );
-
 		vk_binding_list bindingList = {
 			{VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8},
 			{VK_GLOBAL_SLOT_SAMPLED_IMAGE, 1024},
 			{VK_GLOBAL_SLOT_SAMPLER, 2},
 			{VK_GLOBAL_SLOT_STORAGE_IMAGE, 128}
 		};
-		globBindlessDesc = VkMakeBindlessGlobalDescriptor( dc.device, vkDescPool, bindingList );
 
-
-		// TODO: delete
-		vk_slot_list bindlessSlots = {
-			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_GLOBAL_SLOT_STORAGE_BUFFER, 3 },
-			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_GLOBAL_SLOT_UNIFORM_BUFFER, 8u },
-			{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_GLOBAL_SLOT_SAMPLED_IMAGE, 256 },
-			{ VK_DESCRIPTOR_TYPE_SAMPLER, VK_GLOBAL_SLOT_SAMPLER, 4 },
-			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_GLOBAL_SLOT_STORAGE_IMAGE, 128 }
-		};
-
-		// TODO: delete
-		VkDescriptorSetLayout frameDescLayout = VkMakeDescriptorSetLayout( dc.device, { {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, 1} } );
-		VkDescriptorSetLayout bindlessLayout = VkMakeDescriptorSetLayout( dc.device, bindlessSlots );
-		VkDescriptorSetLayout allocDescLayouts[] = { frameDescLayout, frameDescLayout, bindlessLayout };
-
-		VkDescriptorSetAllocateInfo descSetInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-		descSetInfo.descriptorPool = vkDescPool;
-		descSetInfo.descriptorSetCount = std::size( allocDescLayouts );
-		descSetInfo.pSetLayouts = allocDescLayouts;
-		VK_CHECK( vkAllocateDescriptorSets( dc.device, &descSetInfo, frameDesc ) );
-		// TODO: delete
-		{
-			assert( std::size( bindlessSlots ) <= std::size( srvManager.slotSizeTable ) );
-
-			for( u64 i = 0; i < std::size( bindlessSlots ); ++i )
-			{
-				srvManager.slotSizeTable[ i ] = ( std::begin( bindlessSlots ) + i )->count;
-				srvManager.slotsNext[ i ] = 0;
-			}
-			srvManager.set = frameDesc[ 2 ];
-		}
+		vk.descMngr = VkMakeDescriptorManager( dc.device, dc.gpuProps );
+		vk.globalLayout = VkMakeGlobalPipelineLayout( dc.device, dc.gpuProps, vk.descMngr );
+		VkDbgNameObj( vk.globalLayout, dc.device, "Vk_Pipeline_Layout_Global" );
 	}
-
-	vk.descDealer = VkMakeDescriptorDealer( dc.device, dc.gpuProps );
-	vk.globalLayout = VkMakeGlobalPipelineLayout( dc.device, dc.gpuProps, vk.descDealer );
-	VkDbgNameObj( vk.globalLayout, dc.device, "Vk_Pipeline_Layout_Global" );
 
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
@@ -2452,7 +2058,7 @@ void VkBackendInit()
 		lineDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
 		dbgDrawProgram = VkMakePipelineProgram(
-			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol } );
+			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol }, vk.descMngr.setLayout );
 		gfxDrawIndirDbg = VkMakeGfxPipeline( dc.device, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module,
 											 &rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, lineDrawPipelineState );
 
@@ -2501,7 +2107,7 @@ void VkBackendInit()
 		vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
 		vk_gfx_pipeline_state meshletState = {};
 		gfxMeshletProgram = VkMakePipelineProgram(
-			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertMeshlet, &fragCol } );
+			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertMeshlet, &fragCol }, vk.descMngr.setLayout );
 		rndCtx.gfxMeshletPipeline = VkMakeGfxPipeline( dc.device, gfxMeshletProgram.pipeLayout, vertMeshlet.module,
 													   fragCol.module, &rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat,
 													   meshletState );
@@ -2512,13 +2118,15 @@ void VkBackendInit()
 	}
 	{
 		vk_shader avgLum = VkLoadShader( "Shaders/avg_luminance.comp.spv", dc.device );
-		avgLumCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLum } );
+		avgLumCompProgram = VkMakePipelineProgram( 
+			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLum }, vk.descMngr.setLayout );
 		rndCtx.compAvgLumPipe =
 			VkMakeComputePipeline( dc.device, 0, avgLumCompProgram.pipeLayout, avgLum.module, { dc.waveSize } );
 		VkDbgNameObj( rndCtx.compAvgLumPipe, dc.device, "Pipeline_Comp_AvgLum" );
 
 		vk_shader toneMapper = VkLoadShader( "Shaders/tonemap_gamma.comp.spv", dc.device );
-		tonemapCompProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &toneMapper } );
+		tonemapCompProgram = VkMakePipelineProgram( 
+			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &toneMapper }, vk.descMngr.setLayout );
 		rndCtx.compTonemapPipe = VkMakeComputePipeline( dc.device, 0, tonemapCompProgram.pipeLayout, toneMapper.module, {} );
 		VkDbgNameObj( rndCtx.compTonemapPipe, dc.device, "Pipeline_Comp_Tonemap" );
 
@@ -2528,7 +2136,8 @@ void VkBackendInit()
 	{
 		static_assert( multiPassDepthPyramid );
 		vk_shader downsampler = VkLoadShader( "Shaders/pow2_downsampler.comp.spv", dc.device );
-		depthPyramidMultiProgram = VkMakePipelineProgram( dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &downsampler } );
+		depthPyramidMultiProgram = VkMakePipelineProgram( 
+			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &downsampler }, vk.descMngr.setLayout );
 		rndCtx.compHiZPipeline = VkMakeComputePipeline( dc.device, 0, depthPyramidMultiProgram.pipeLayout, downsampler.module, {} );
 		VkDbgNameObj( rndCtx.compHiZPipeline, dc.device, "Pipeline_Comp_DepthPyr" );
 
@@ -2996,6 +2605,7 @@ DrawIndexedIndirectPass(
 	VkPipeline				vkPipeline,
 	VkRenderPass			vkRndPass,
 	VkFramebuffer			offscreenFbo,
+	VkDescriptorSet descSet,
 	const vk_buffer& drawCmds,
 	const vk_buffer& camData,
 	VkBuffer				drawCmdCount,
@@ -3025,7 +2635,7 @@ DrawIndexedIndirectPass(
 
 	if( fullPass )
 	{
-		vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &globBindlessDesc.set, 0, 0 );
+		vkCmdBindDescriptorSets( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeLayout, 1, 1, &descSet, 0, 0 );
 	}
 
 	struct { u64 vtxAddr, transfAddr, drawCmdAddr, camAddr; } push = {
@@ -3041,7 +2651,6 @@ DrawIndexedIndirectPass(
 	vkCmdEndRenderPass( cmdBuff );
 }
 
-// TODO: sexier
 inline static void
 DrawIndirectPass(
 	VkCommandBuffer			cmdBuff,
@@ -3443,14 +3052,11 @@ VkMakeAttachemntInfo(
 
 void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
-	// TODO: don't expose math stuff here
 	using namespace DirectX;
 
 	u64 currentFrameIdx = rndCtx.vFrameIdx++;
 	u64 frameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ frameBufferedIdx ];
-
-	std::vector<vk_descriptor_write> vkDescUpdateCache;
 
 	VkSemaphoreWaitInfo waitInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO };
 	waitInfo.semaphoreCount = 1;
@@ -3476,29 +3082,25 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	// TODO: 
 	if( currentFrameIdx < VK_MAX_FRAMES_IN_FLIGHT_ALLOWED )
 	{
-		VkDescriptorBufferInfo srvInfo = { thisVFrame.frameData.hndl, 0, sizeof( globs ) };
+		u16 globalsDescIdx = VkAllocDescriptorIdx( 
+			dc.device, VkDescriptorBufferInfo{ thisVFrame.frameData.hndl, 0, sizeof( globs ) }, vk.descMngr );
+		//VkFlushDescriptorUpdates( dc.device, vk.descDealer );
 
-		auto [update, globalsSrv] = VkAllocDescriptorIdx( dc.device, srvInfo, vk.descDealer );
-		vkUpdateDescriptorSets( dc.device, 1, &update.write, 0, 0 );
-
-		const_cast< virtual_frame& >( thisVFrame ).frameDescIdx = globalsSrv;
+		const_cast< virtual_frame& >( thisVFrame ).frameDescIdx = globalsDescIdx;
 	}
 
-	VkCommandBufferBeginInfo cmdBufBegInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-	cmdBufBegInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	VkCommandBufferBeginInfo cmdBufBegInfo = { 
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
-
 
 	if( !vk.imgPool.isValid( renderPath.hDepthPyramid ) )
 	{
-		u16 squareDim = 512;
+		constexpr u16 squareDim = 512;
 		u8 hiZMipCount = GetImgMipCountForPow2( squareDim, squareDim );
 
 		constexpr VkImageUsageFlags hiZUsg =
-			VK_IMAGE_USAGE_SAMPLED_BIT |
-			VK_IMAGE_USAGE_STORAGE_BIT |
-			VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-			VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
 		renderPath.hDepthPyramid = vk.imgPool.insert( VkCreateAllocBindImage( {
 			.name = "Img_depthPyramid",
@@ -3510,46 +3112,26 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			.mipCount = hiZMipCount },
 			vkAlbumArena, dc.device, dc.gpu ) );
 
-		vk_image& hiz = vk.imgPool[ renderPath.hDepthPyramid ];
+		const vk_image& hiz = vk.imgPool[ renderPath.hDepthPyramid ];
 
-		for( u64 i = 0; i < hiz.mipCount; ++i )
-		{
-			hiz.optionalViews[ i ] = VkMakeImgView( dc.device, hiz.hndl, hiz.nativeFormat, i, 1 );
-		}
-
-
-		auto [hizDescUpdate, hizSrv] = VkAllocDescriptorIdx(
-			dc.device, VkDescriptorImageInfo{ 0,hiz.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descDealer );
-		vkDescUpdateCache.push_back( hizDescUpdate );
+		u16 hizDescIdx = VkAllocDescriptorIdx(
+			dc.device, VkDescriptorImageInfo{ 0,hiz.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
 
 		std::vector<u16> mipUavs;
 		for( u32 i = 0; i < hiz.mipCount; ++i )
 		{
-			auto [mipDescUpdate, uav] = VkAllocDescriptorIdx(
-				dc.device, VkDescriptorImageInfo{ 0,hiz.optionalViews[ i ], VK_IMAGE_LAYOUT_GENERAL }, vk.descDealer );
-			mipUavs.push_back( uav );
-			vkDescUpdateCache.push_back( mipDescUpdate );
+			u16 hizMipDescIdx = VkAllocDescriptorIdx(
+				dc.device, VkDescriptorImageInfo{ 0,hiz.optionalViews[ i ], VK_IMAGE_LAYOUT_GENERAL }, vk.descMngr );
+			mipUavs.push_back( hizMipDescIdx );
 		}
 
-		renderPath.hizSrv = hizSrv;
+		renderPath.hizSrv = hizDescIdx;
 
 		renderPath.quadMinSampler =
 			VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-
-		VkDescriptorImageInfo samplerInfo = { renderPath.quadMinSampler };
-
-		VkWriteDescriptorSet samplerUpdate = {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = vk.descDealer.set,
-			.dstBinding = 0,
-			.dstArrayElement = 0,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-			.pImageInfo = &samplerInfo
-		};
-		renderPath.quadMinSamplerIdx = 0;
-		vkUpdateDescriptorSets( dc.device, 1, &samplerUpdate, 0, 0 );
-
+		u16 quadMinSamplerIdx = VkAllocDescriptorIdx(
+			dc.device, vk_sampler_descriptor_info{ renderPath.quadMinSampler }, vk.descMngr );
+		renderPath.quadMinSamplerIdx = quadMinSamplerIdx;
 	}
 	if( !vk.imgPool.isValid( renderPath.hDepthTarget ) )
 	{
@@ -3567,7 +3149,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 
 		const vk_image& depthTarget = vk.imgPool[ renderPath.hDepthTarget ];
-		const vk_image& depthPyramid = vk.imgPool[ renderPath.hDepthPyramid ];
 
 		VkImageMemoryBarrier2 initBarriers[] = {
 		VkMakeImageBarrier2(
@@ -3588,30 +3169,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkCmdPipelineImgLayoutTransitionBarriers( thisVFrame.cmdBuff, initBarriers );
 
 
-		auto [depthDescUpdate, depthSrv] = VkAllocDescriptorIdx(
-			dc.device, VkDescriptorImageInfo{ 0,depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descDealer );
-		vkDescUpdateCache.push_back( depthDescUpdate );
+		u16 depthDescIdx = VkAllocDescriptorIdx(
+			dc.device, VkDescriptorImageInfo{ 0,depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
 
-
-
-		renderPath.depthSrv = depthSrv;
-
-		std::vector<VkWriteDescriptorSet> descUpdates;
-
-		VkDescriptorImageInfo depth_Srv = { 0,depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
-		descUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLED_IMAGE, &depth_Srv, 1, srvManager ) );
-		VkDescriptorImageInfo hiz_Srv = { 0,depthPyramid.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
-		descUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLED_IMAGE, &hiz_Srv, 1, srvManager ) );
-
-		std::vector<VkDescriptorImageInfo> mipLevelDesc( depthPyramid.mipCount );
-		for( u64 i = 0; i < depthPyramid.mipCount; ++i )
-		{
-			mipLevelDesc[ i ] = { 0,depthPyramid.optionalViews[ i ], VK_IMAGE_LAYOUT_GENERAL };
-		}
-		descUpdates.push_back( VkWriteDescriptorSetUpdate(
-			dc.device, VK_GLOBAL_SLOT_STORAGE_IMAGE, std::data( mipLevelDesc ), std::size( mipLevelDesc ), srvManager ) );
-
-		vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
+		renderPath.depthSrv = depthDescIdx;
 	}
 	if( !vk.imgPool.isValid( renderPath.hColorTarget ) )
 	{
@@ -3639,35 +3200,21 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			VK_IMAGE_ASPECT_COLOR_BIT ) };
 		VkCmdPipelineImgLayoutTransitionBarriers( thisVFrame.cmdBuff, initBarrier );
 
-		auto [colDescUpdate, colSrv] = VkAllocDescriptorIdx(
-			dc.device, VkDescriptorImageInfo{ 0,colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descDealer );
-		vkDescUpdateCache.push_back( colDescUpdate );
+		u16 colDescIdx = VkAllocDescriptorIdx(
+			dc.device, VkDescriptorImageInfo{ 0,colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
 
-		VkDescriptorImageInfo srvColTarget = { 0,colorTarget.view,VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
-		auto descUpdate = VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLED_IMAGE, &srvColTarget, 1, srvManager );
-		vkUpdateDescriptorSets( dc.device, 1, &descUpdate, 0, 0 );
-
-		renderPath.colSrv = colSrv;
+		renderPath.colSrv = colDescIdx;
 
 		// TODO: move
 		renderPath.pbrSampler =
 			VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
-
-		VkDescriptorImageInfo samplerInfo = { renderPath.pbrSampler };
-
-		VkWriteDescriptorSet samplerUpdate = {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = vk.descDealer.set,
-			.dstBinding = 0,
-			.dstArrayElement = 1,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-			.pImageInfo = &samplerInfo
-		};
-		renderPath.pbrSamplerIdx = 1;
-		vkUpdateDescriptorSets( dc.device, 1, &samplerUpdate, 0, 0 );
-
+		u16 pbrSamplerIdx = VkAllocDescriptorIdx(
+			dc.device, vk_sampler_descriptor_info{ renderPath.pbrSampler }, vk.descMngr );
+		renderPath.pbrSamplerIdx = pbrSamplerIdx;
 	}
+
+	//VkFlushDescriptorUpdates( dc.device, vk.descDealer );
+	
 
 	const vk_image& depthTarget = vk.imgPool[ renderPath.hDepthTarget ];
 	const vk_image& depthPyramid = vk.imgPool[ renderPath.hDepthPyramid ];
@@ -3730,56 +3277,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		VkUploadResources( thisVFrame.cmdBuff, entities, currentFrameIdx );
 		rescUploaded = 1;
 
-		// NOTE: UpdateDescriptors
-		std::vector<VkWriteDescriptorSet> descUpdates;
-		std::vector<VkWriteDescriptorSet> srvUpdates;
-
-
-		VkDescriptorImageInfo samplerDesc = { rndCtx.pbrTexSampler };
-		VkDescriptorImageInfo hizSamplerDesc = { rndCtx.quadMinSampler };
-		srvUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLER, &samplerDesc, 1, srvManager ) );
-		srvUpdates.push_back( VkWriteDescriptorSetUpdate( dc.device, VK_GLOBAL_SLOT_SAMPLER, &hizSamplerDesc, 1, srvManager ) );
-
-		auto [pbrSamplerUpdate, pbrSampler] = VkAllocDescriptorIdx(
-			dc.device, VkDescriptorImageInfo{ rndCtx.pbrTexSampler }, vk.descDealer );
-		vkDescUpdateCache.push_back( pbrSamplerUpdate );
-		auto [hizSamplerUpdate, quadMinSampler] = VkAllocDescriptorIdx(
-			dc.device, VkDescriptorImageInfo{ rndCtx.quadMinSampler }, vk.descDealer );
-		vkDescUpdateCache.push_back( hizSamplerUpdate );
-
-		VkWriteDescriptorSet samplerUpdate = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		samplerUpdate.dstSet = globBindlessDesc.set;
-		samplerUpdate.dstBinding = VK_GLOBAL_SLOT_SAMPLER;
-		samplerUpdate.dstArrayElement = 0;
-		samplerUpdate.descriptorCount = 1;
-		samplerUpdate.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLER ];
-		samplerUpdate.pImageInfo = &samplerDesc;
-
-		descUpdates.push_back( samplerUpdate );
-
-		std::vector<VkDescriptorImageInfo> texDescs;
-		texDescs.reserve( std::size( textures ) );
 		for( const auto& i : textures )
 		{
-			texDescs.push_back( { 0, i.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR } );
-
-			auto [okGotBored, itsJustTemp] = VkAllocDescriptorIdx(
-				dc.device, VkDescriptorImageInfo{ 0, i.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descDealer );
-			vkDescUpdateCache.push_back( okGotBored );
+			u16 itsJustTemp = VkAllocDescriptorIdx(
+				dc.device, VkDescriptorImageInfo{ 0, i.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
 		}
-
-		VkWriteDescriptorSet texUpdates = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		texUpdates.dstSet = globBindlessDesc.set;
-		texUpdates.dstBinding = VK_GLOBAL_SLOT_SAMPLED_IMAGE;
-		texUpdates.dstArrayElement = 0;
-		texUpdates.descriptorType = globalDescTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
-		texUpdates.descriptorCount = std::size( texDescs );
-		texUpdates.pImageInfo = std::data( texDescs );
-
-		descUpdates.push_back( texUpdates );
-
-		vkUpdateDescriptorSets( dc.device, std::size( descUpdates ), std::data( descUpdates ), 0, 0 );
-		vkUpdateDescriptorSets( dc.device, std::size( srvUpdates ), std::data( srvUpdates ), 0, 0 );
 
 		// TODO: remove from here
 		WrtieOcclusionBoxes( ( dbg_vertex* ) vkDbgCtx.dbgTrisBuff.hostVisible );
@@ -3804,10 +3306,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		initBuffers = 1;
 	}
 
-	std::vector<VkWriteDescriptorSet> fuckThis;
-	for( auto& descUpdate : vkDescUpdateCache ) fuckThis.push_back( descUpdate.write );
-	if( std::size( fuckThis ) )
-		vkUpdateDescriptorSets( dc.device, std::size( fuckThis ), std::data( fuckThis ), 0, 0 );
+	VkFlushDescriptorUpdates( dc.device, vk.descMngr );
 
 
 	// TODO: recycle stuff
@@ -3828,7 +3327,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			thisVFrame.cmdBuff,
 			VK_PIPELINE_BIND_POINT_GRAPHICS,
 			vk.globalLayout,
-			0, 1, &vk.descDealer.set, 0, 0 );
+			0, 1, &vk.descMngr.set, 0, 0 );
 
 		struct { u64 vtxAddr, transfAddr, camIdx; } zPrepassPush = {
 			globVertexBuff.devicePointer, instDescBuff.devicePointer, thisVFrame.frameDescIdx };
@@ -3876,7 +3375,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			VK_PIPELINE_BIND_POINT_COMPUTE,
 			vk.globalLayout,
 			0, 1,
-			&vk.descDealer.set, 0, 0 );
+			&vk.descMngr.set, 0, 0 );
 
 		CullPass(
 			thisVFrame.cmdBuff,
@@ -3894,7 +3393,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			thisVFrame.cmdBuff,
 			VK_PIPELINE_BIND_POINT_GRAPHICS,
 			vk.globalLayout,
-			0, 1, &vk.descDealer.set, 0, 0 );
+			0, 1, &vk.descMngr.set, 0, 0 );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
@@ -3922,7 +3421,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		};
 
 		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.globalLayout, 0, 1, &vk.descDealer.set, 0, 0 );
+			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.globalLayout, 0, 1, &vk.descMngr.set, 0, 0 );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
@@ -3954,7 +3453,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		std::memcpy( vkDbgCtx.dbgLinesBuff.hostVisible, std::data( dbgLineGeomCache ), BYTE_COUNT( dbgLineGeomCache ) );
 
 		// TODO: remove the depth target from these ?
-		// TODO: rethink
 		if( dbgDraw && ( frameData.freezeMainView || frameData.dbgDraw ) )
 		{
 			u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;

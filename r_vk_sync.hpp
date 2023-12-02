@@ -42,7 +42,7 @@ VkMakeBufferBarrier2(
 	u32							srcQueueFamIdx = VK_QUEUE_FAMILY_IGNORED,
 	u32							dstQueueFamIdx = VK_QUEUE_FAMILY_IGNORED
 ) {
-	VkBufferMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2_KHR };
+	VkBufferMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 };
 	barrier.srcStageMask = srcStage;
 	barrier.srcAccessMask = srcAccess;
 	barrier.dstStageMask = dstStage;
