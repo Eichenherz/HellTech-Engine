@@ -182,7 +182,7 @@ VkPipeline VkMakeGfxPipeline(
 	return vkGfxPipeline;
 }
 
-// TODO: pipeline caputre representations blah blah ?
+
 VkPipeline VkMakeComputePipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,

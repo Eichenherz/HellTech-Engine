@@ -16,13 +16,6 @@ struct imgui_vertex
 [[vk::binding( 1 )]] Texture2D fontAtals;
 [[vk::binding( 2 )]] SamplerState fontSampler;
 
-
-///struct vs_out
-///{
-///[[vk::location( 0 )]] float4 col : COLOR0;
-///[[vk::location( 1 )]] float2 uv : TEXCOORD0;
-///};
-
 [ shader( "vertex" ) ]
 void VsMain( 
 	in uint vtxID : SV_VertexID,

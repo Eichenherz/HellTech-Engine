@@ -2,7 +2,6 @@
 #define VK_NO_PROTOTYPES
 #define __VK
 #include "DEFS_WIN32_NO_BS.h"
-// TODO: autogen custom vulkan ?
 #include <vulkan.h>
 // TODO: header + .cpp ?
 // TODO: revisit this
@@ -18,7 +17,6 @@
 #include <functional>
 
 import handles;
-import containers;
 
 #include "r_data_structs.h"
 #include "geometry.hpp"
@@ -119,8 +117,6 @@ inline static vk_instance VkMakeInstance()
 
 	VK_CHECK( VK_INTERNAL_ERROR( !( VK_DLL = SysDllLoad( "vulkan-1.dll" ) ) ) );
 
-	// TODO: full vk file generation ?
-
 	vkGetInstanceProcAddr = ( PFN_vkGetInstanceProcAddr ) SysGetProcAddr( VK_DLL, "vkGetInstanceProcAddr" );
 	vkCreateInstance = ( PFN_vkCreateInstance ) vkGetInstanceProcAddr( 0, "vkCreateInstance" );
 	vkEnumerateInstanceExtensionProperties =
@@ -213,7 +209,6 @@ static VkDebugUtilsMessengerEXT	vkDbgMsg = 0;
 
 
 // TODO: separate GPU and logical device ?
-// TODO: physical_device_info ?
 struct vk_device
 {
 	VkPhysicalDeviceProperties gpuProps;
@@ -246,8 +241,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
-		VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
-		VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME
+		VK_EXT_SHADER_OBJECT_EXTENSION_NAME
 	};
 
 	u32 numDevices = 0;
@@ -256,18 +250,14 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
 	VkPhysicalDeviceShaderObjectPropertiesEXT shaderObjProps = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_PROPERTIES_EXT};
-	VkPhysicalDeviceDescriptorBufferPropertiesEXT descBuffProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT, &shaderObjProps};
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &descBuffProps };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &shaderObjProps };
 	VkPhysicalDeviceSubgroupProperties waveProps = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
 	VkPhysicalDeviceVulkan13Properties gpuProps13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps13 };
 
 	VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT };
-	VkPhysicalDeviceDescriptorBufferFeaturesEXT descBuffFeatures = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT, &shaderObjFeatures };
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &shaderObjFeatures };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures =
@@ -281,7 +271,6 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VkPhysicalDeviceVulkan11Features gpuFeatures11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &gpuFeatures12 };
 	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
 
-	// TODO: check for more stuff ?
 	VkPhysicalDevice vkGpu = 0;
 	for( const VkPhysicalDevice currentVkGpu : availableDevices )
 	{
@@ -305,7 +294,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		};
 
 		vkGetPhysicalDeviceProperties2( currentVkGpu, &gpuProps2 );
-		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_3 ) continue;
+		if( gpuProps2.properties.apiVersion < VK_API_VERSION ) continue;
 		if( gpuProps2.properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) continue;
 		if( !gpuProps2.properties.limits.timestampComputeAndGraphics ) continue;
 
@@ -511,16 +500,21 @@ static inline virtual_frame VkCreateVirtualFrame(
 ) {
 	virtual_frame vrtFrame = {};
 
-	VkCommandPoolCreateInfo cmdPoolInfo = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-	//cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-	cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-	cmdPoolInfo.queueFamilyIndex = exectutionQueueIdx;
+	VkCommandPoolCreateInfo cmdPoolInfo = { 
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		//.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+		.queueFamilyIndex = exectutionQueueIdx
+	};
 	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &vrtFrame.cmdPool ) );
 
-	VkCommandBufferAllocateInfo cmdBuffAllocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-	cmdBuffAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	cmdBuffAllocInfo.commandBufferCount = 1;
-	cmdBuffAllocInfo.commandPool = vrtFrame.cmdPool;
+	VkCommandBufferAllocateInfo cmdBuffAllocInfo = { 
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = vrtFrame.cmdPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+
+	};
 	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &vrtFrame.cmdBuff ) );
 
 	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
@@ -552,11 +546,13 @@ struct swapchain
 extern HINSTANCE hInst;
 extern HWND hWnd;
 
-inline static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
+inline static VkSurfaceKHR VkMakeSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
 {
-	VkWin32SurfaceCreateInfoKHR surfInfo = { VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
-	surfInfo.hinstance = hInst;
-	surfInfo.hwnd = hWnd;
+	VkWin32SurfaceCreateInfoKHR surfInfo = { 
+		.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+		.hinstance = hInst,
+		.hwnd = hWnd
+	};
 
 	VkSurfaceKHR vkSurf;
 	VK_CHECK( vkCreateWin32SurfaceKHR( vkInst, &surfInfo, 0, &vkSurf ) );
@@ -691,12 +687,12 @@ static swapchain sc;
 
 
 // TODO:
-struct renderer_config
+struct vk_renderer_config
 {
-	static constexpr u8 MAX_FRAMES_ALLOWED = 2;
+	static constexpr u8             MAX_FRAMES_ALLOWED = 2;
+	static constexpr VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
+	static constexpr VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-	VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 	u16             renderWidth;
 	u16             rednerHeight;
 	u8              maxAllowedFramesInFlight = 2;
@@ -732,21 +728,12 @@ struct render_context
 
 static render_context rndCtx;
 
-
-constexpr VkDescriptorType globalDescTable[] = {
-	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-	VK_DESCRIPTOR_TYPE_SAMPLER,
-	VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-	VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT
-};
-
 using vk_binding_list = std::initializer_list<std::pair<u32, u32>>;
 
 
 constexpr VkDescriptorType bindingToTypeMap[] = {
 	VK_DESCRIPTOR_TYPE_SAMPLER,
+	//VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 	VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
 	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
@@ -793,6 +780,7 @@ struct vk_descriptor_manager
 	VkDescriptorPool pool;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSet set;
+	VkPipelineLayout globalPipelineLayout;
 };
 
 
@@ -808,7 +796,7 @@ inline vk_descriptor_manager VkMakeDescriptorManager( VkDevice vkDevice, const V
 		std::min( maxSize, gpuProps.limits.maxDescriptorSetSampledImages )
 	};
 
-	vk_descriptor_manager dealer = {};
+	vk_descriptor_manager mngr = {};
 
 
 	VkDescriptorPoolSize poolSizes[ std::size( bindingToTypeMap ) ] = {};
@@ -824,7 +812,7 @@ inline vk_descriptor_manager VkMakeDescriptorManager( VkDevice vkDevice, const V
 		.poolSizeCount = std::size( poolSizes ),
 		.pPoolSizes = poolSizes
 	};
-	VK_CHECK( vkCreateDescriptorPool( vkDevice, &descPoolInfo, 0, &dealer.pool ) );
+	VK_CHECK( vkCreateDescriptorPool( vkDevice, &descPoolInfo, 0, &mngr.pool ) );
 
 
 	constexpr VkDescriptorBindingFlags flag =
@@ -858,24 +846,35 @@ inline vk_descriptor_manager VkMakeDescriptorManager( VkDevice vkDevice, const V
 		.pBindings = descSetLayout
 	};
 
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &dealer.setLayout ) );
+	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &mngr.setLayout ) );
 
 	VkDescriptorSetAllocateInfo descSetInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-		.descriptorPool = dealer.pool,
+		.descriptorPool = mngr.pool,
 		.descriptorSetCount = 1,
-		.pSetLayouts = &dealer.setLayout
+		.pSetLayouts = &mngr.setLayout
 	};
 
 	VkDescriptorSet set = {};
-	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &dealer.set ) );
+	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &mngr.set ) );
 
-	for( u32 i = 0; i < std::size( dealer.table ); ++i )
+	for( u32 i = 0; i < std::size( mngr.table ); ++i )
 	{
-		dealer.table[ i ] = { .slotsCount = maxSize, .usedSlots = 0 };
+		mngr.table[ i ] = { .slotsCount = maxSize, .usedSlots = 0 };
 	}
 
-	return dealer;
+	VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_ALL, 0, gpuProps.limits.maxPushConstantsSize };
+	VkPipelineLayoutCreateInfo pipeLayoutInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1,
+		.pSetLayouts = &mngr.setLayout,
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &pushConstRange
+	};
+	VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &mngr.globalPipelineLayout ) );
+	VkDbgNameObj( mngr.globalPipelineLayout, dc.device, "Vk_Pipeline_Layout_Global" );
+
+	return mngr;
 }
 
 
@@ -975,11 +974,27 @@ struct vk_backend
 {
 	handle_map<vk_image> imgPool;
 	vk_descriptor_manager descMngr;
-	VkPipelineLayout globalLayout;
 };
 
 static vk_backend vk;
 
+
+struct render_path
+{
+	VkSampler quadMinSampler;
+	VkSampler pbrSampler;
+	hndl64<vk_image> hColorTarget; // .index = INVALID_IDX 
+	hndl64<vk_image> hDepthTarget;
+	hndl64<vk_image> hDepthPyramid;
+	u16 depthTargetIdx = INVALID_IDX;
+	u16 hizTargetIdx = INVALID_IDX;
+	u16 colTargetIdx = INVALID_IDX;
+	u16 hizMipIdx[ MAX_MIP_LEVELS + 1 ]; // Store the whole thing here
+	u16 quadMinSamplerIdx;
+	u16 pbrSamplerIdx;
+};
+
+static render_path renderPath;
 
 
 import r_dxc_compiler;
@@ -1141,11 +1156,7 @@ inline VkSampler VkMakeSampler(
 	return sampler;
 }
 
-
-// TODO: recycle_queue for more objects
-// TODO: rethink
-// TODO: async 
-// TODO: MT 
+// TODO: 
 struct staging_manager
 {
 	struct upload_job
@@ -1932,11 +1943,9 @@ inline static void VkInitInternalBuffers()
 static vk_program gfxMergedProgram = {};
 static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
-static vk_program	cullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
 static vk_program	tonemapCompProgram = {};
-static vk_program	depthPyramidMultiProgram = {};
 
 static vk_program   dbgDrawProgram = {};
 static VkPipeline   gfxDrawIndirDbg = {};
@@ -1946,30 +1955,6 @@ static VkRenderPass zRndPass = {};
 static VkRenderPass depthReadRndPass = {};
 
 static vk_graphics_program  lighCullProgam = {};
-
-// TODO: delete
-static VkDescriptorPool vkDescPool = {};
-static VkDescriptorSet frameDesc[ 3 ] = {};
-
-
-
-inline VkPipelineLayout VkMakeGlobalPipelineLayout(
-	VkDevice vkDevice,
-	const VkPhysicalDeviceProperties& props,
-	const vk_descriptor_manager& vkDescDealer
-) {
-	VkPushConstantRange pushConstRange = { VK_SHADER_STAGE_ALL, 0, props.limits.maxPushConstantsSize };
-	VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-	pipeLayoutInfo.setLayoutCount = 1;
-	pipeLayoutInfo.pSetLayouts = &vkDescDealer.setLayout;
-	pipeLayoutInfo.pushConstantRangeCount = 1;
-	pipeLayoutInfo.pPushConstantRanges = &pushConstRange;
-
-	VkPipelineLayout pipelineLayout = {};
-	VK_CHECK( vkCreatePipelineLayout( dc.device, &pipeLayoutInfo, 0, &pipelineLayout ) );
-
-	return pipelineLayout;
-}
 
 
 struct vk_backend_context
@@ -1989,7 +1974,7 @@ void VkBackendInit()
 {
 	vk_instance vkInst = VkMakeInstance();
 
-	vkSurf = VkMakeWinSurface( vkInst.inst, hInst, hWnd );
+	vkSurf = VkMakeSurface( vkInst.inst, hInst, hWnd );
 	dc = VkMakeDeviceContext( vkInst.inst, vkSurf );
 
 	VkStartGfxMemory( dc.gpu, dc.device );
@@ -2011,9 +1996,10 @@ void VkBackendInit()
 	VK_CHECK( vkCreateSemaphore( dc.device, &timelineSemaInfo, 0, &rndCtx.timelineSema ) );
 
 
-	rndCtx.quadMinSampler =
+	renderPath.quadMinSampler =
 		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-	rndCtx.pbrTexSampler = VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+	renderPath.pbrSampler = 
+		VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 
 
 	{
@@ -2033,14 +2019,12 @@ void VkBackendInit()
 		};
 
 		vk.descMngr = VkMakeDescriptorManager( dc.device, dc.gpuProps );
-		vk.globalLayout = VkMakeGlobalPipelineLayout( dc.device, dc.gpuProps, vk.descMngr );
-		VkDbgNameObj( vk.globalLayout, dc.device, "Vk_Pipeline_Layout_Global" );
 	}
 
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
 		gfxZPrepass = VkMakeGfxPipeline(
-			dc.device, vk.globalLayout, vertZPre.module, 0, 0, rndCtx.desiredDepthFormat, {} );
+			dc.device, vk.descMngr.globalPipelineLayout, vertZPre.module, 0, 0, rndCtx.desiredDepthFormat, {} );
 
 		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
 	}
@@ -2048,15 +2032,15 @@ void VkBackendInit()
 		vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", dc.device );
 		vk_shader normalCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
 
-		vk_gfx_pipeline_state lineDrawPipelineState = {};
-		lineDrawPipelineState.blendCol = VK_FALSE;
-		lineDrawPipelineState.depthWrite = VK_FALSE;
-		lineDrawPipelineState.depthTestEnable = VK_FALSE;
-		lineDrawPipelineState.cullFlags = VK_CULL_MODE_NONE;
-		lineDrawPipelineState.primTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-		lineDrawPipelineState.polyMode = VK_POLYGON_MODE_LINE;
-		lineDrawPipelineState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
+		vk_gfx_pipeline_state lineDrawPipelineState = {
+			.polyMode = VK_POLYGON_MODE_LINE,
+			.cullFlags = VK_CULL_MODE_NONE,
+			.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+			.primTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+			.depthWrite = VK_FALSE,
+			.depthTestEnable = VK_FALSE,
+			.blendCol = VK_FALSE,
+		};
 		dbgDrawProgram = VkMakePipelineProgram(
 			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol }, vk.descMngr.setLayout );
 		gfxDrawIndirDbg = VkMakeGfxPipeline( dc.device, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module,
@@ -2067,22 +2051,23 @@ void VkBackendInit()
 	}
 	{
 		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", dc.device );
-		cullCompProgram.groupSize = { 32,1,1 };
-		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, vk.globalLayout, drawCull.module, { 32u } );
+		rndCtx.compPipeline = VkMakeComputePipeline( 
+			dc.device, 0, vk.descMngr.globalPipelineLayout, drawCull.module, { 32u } );
 		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
 
 		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", dc.device );
-		rndCtx.compClusterCullPipe = VkMakeComputePipeline( dc.device, 0, vk.globalLayout, clusterCull.module, {} );
+		rndCtx.compClusterCullPipe = VkMakeComputePipeline( 
+			dc.device, 0, vk.descMngr.globalPipelineLayout, clusterCull.module, {} );
 		VkDbgNameObj( rndCtx.compClusterCullPipe, dc.device, "Pipeline_Comp_ClusterCull" );
 
 
 
 		vk_shader expansionComp = VkLoadShader( "Shaders/c_id_expander.comp.spv", dc.device );
-		rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, vk.globalLayout, expansionComp.module, {} );
+		rndCtx.compExpanderPipe = VkMakeComputePipeline( dc.device, 0, vk.descMngr.globalPipelineLayout, expansionComp.module, {} );
 		VkDbgNameObj( rndCtx.compExpanderPipe, dc.device, "Pipeline_Comp_iD_Expander" );
 
 		vk_shader expMerge = VkLoadShader( "Shaders/comp_expand_merge.comp.spv", dc.device );
-		rndCtx.compExpMergePipe = VkMakeComputePipeline( dc.device, 0, vk.globalLayout, expMerge.module, {} );
+		rndCtx.compExpMergePipe = VkMakeComputePipeline( dc.device, 0, vk.descMngr.globalPipelineLayout, expMerge.module, {} );
 		VkDbgNameObj( rndCtx.compExpMergePipe, dc.device, "Pipeline_Comp_ExpMerge" );
 
 		vkDestroyShaderModule( dc.device, drawCull.module, 0 );
@@ -2095,7 +2080,7 @@ void VkBackendInit()
 		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", dc.device );
 		vk_gfx_pipeline_state opaqueState = {};
 
-		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline( dc.device, vk.globalLayout, vtxMerged.module, fragPBR.module,
+		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline( dc.device, vk.descMngr.globalPipelineLayout, vtxMerged.module, fragPBR.module,
 													  &rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, opaqueState );
 		VkDbgNameObj( rndCtx.gfxMergedPipeline, dc.device, "Pipeline_Gfx_Merged" );
 
@@ -2136,10 +2121,9 @@ void VkBackendInit()
 	{
 		static_assert( multiPassDepthPyramid );
 		vk_shader downsampler = VkLoadShader( "Shaders/pow2_downsampler.comp.spv", dc.device );
-		depthPyramidMultiProgram = VkMakePipelineProgram( 
-			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &downsampler }, vk.descMngr.setLayout );
-		rndCtx.compHiZPipeline = VkMakeComputePipeline( dc.device, 0, depthPyramidMultiProgram.pipeLayout, downsampler.module, {} );
-		VkDbgNameObj( rndCtx.compHiZPipeline, dc.device, "Pipeline_Comp_DepthPyr" );
+		rndCtx.compHiZPipeline = VkMakeComputePipeline( 
+			dc.device, 0, vk.descMngr.globalPipelineLayout, downsampler.module, {} );
+		VkDbgNameObj( rndCtx.compHiZPipeline, dc.device, "Pipeline_Comp_DepthPyramid" );
 
 		vkDestroyShaderModule( dc.device, downsampler.module, 0 );
 	}
@@ -2234,7 +2218,6 @@ FrameClearDataPass(
 
 }
 
-// TODO: alloc buffers here ?
 // TODO: reduce the ammount of counter buffers
 // TODO: visibility buffer ( not the VBuffer ) check Aaltonen
 // TODO: revisit triangle culling ?
@@ -2243,12 +2226,12 @@ inline static void
 CullPass(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
-	const vk_program& program,
 	const vk_image& depthPyramid,
 	const VkSampler& minQuadSampler,
 	u16 _camIdx,
 	u16 _hizBuffIdx,
-	u16 samplerIdx
+	u16 samplerIdx,
+	group_size groupSize
 ) {
 	// NOTE: wtf Vulkan ?
 	constexpr u64 VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
@@ -2318,8 +2301,8 @@ CullPass(
 		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
-		vkCmdDispatch( cmdBuff, GroupCount( instCount, program.groupSize.x ), 1, 1 );
+		vkCmdPushConstants( cmdBuff, vk.descMngr.globalPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
+		vkCmdDispatch( cmdBuff, GroupCount( instCount, groupSize.x ), 1, 1 );
 	}
 
 	VkMemoryBarrier2 dispatchSyncBarriers[] = {
@@ -2350,7 +2333,7 @@ CullPass(
 		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpanderPipe );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
+		vkCmdPushConstants( cmdBuff, vk.descMngr.globalPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff0.hndl, 0 );
 	}
 
@@ -2374,7 +2357,7 @@ CullPass(
 		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
+		vkCmdPushConstants( cmdBuff, vk.descMngr.globalPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff1.hndl, 0 );
 	}
 
@@ -2394,7 +2377,7 @@ CullPass(
 		} pushConst = {};
 
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpMergePipe );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
+		vkCmdPushConstants( cmdBuff, vk.descMngr.globalPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
 		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff0.hndl, 0 );
 	}
 
@@ -2812,15 +2795,17 @@ DepthPyramidPass(
 }
 #endif
 
-// TODO: bindless
+
 inline static void
 DepthPyramidMultiPass(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
-	VkSampler				pointMinSampler,
-	const vk_image& depthTarget,
-	const vk_image& depthPyramid,
-	const vk_program& program
+	vk_image depthTarget,
+	vk_image depthPyramid,
+	u16 depthTargetIdx,
+	std::span<u16> hizMipIdx,
+	u16 samplerIdx,
+	group_size groupSize
 ) {
 	vk_label label = { cmdBuff,"HiZ Multi Pass",{} };
 
@@ -2848,9 +2833,14 @@ DepthPyramidMultiPass(
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 
-	VkDescriptorImageInfo sourceDepth = { pointMinSampler, depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
+	struct hiz_push
+	{
+		vec2 reduceData;
+		u32 samplerIdx;
 
-
+		u32 inSampledImgIdx;
+		u32 outImgIdx;
+	};
 
 	VkMemoryBarrier2 executionBarrier[] = { VkMakeMemoryBarrier2(
 		VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -2859,24 +2849,28 @@ DepthPyramidMultiPass(
 
 	for( u64 i = 0; i < depthPyramid.mipCount; ++i )
 	{
-		if( i != 0 ) sourceDepth = { pointMinSampler, depthPyramid.optionalViews[ i - 1 ], VK_IMAGE_LAYOUT_GENERAL };
-
-		VkDescriptorImageInfo destDepth = { 0, depthPyramid.optionalViews[ i ], VK_IMAGE_LAYOUT_GENERAL };
-		vk_descriptor_info descriptors[] = { destDepth, sourceDepth };
-
-		vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
-
 		u32 levelWidth = std::max( 1u, u32( depthPyramid.width ) >> i );
 		u32 levelHeight = std::max( 1u, u32( depthPyramid.height ) >> i );
 
-		vec2 reduceData = {};
-		reduceData.x = levelWidth;
-		reduceData.y = levelHeight;
+		hiz_push pushConst = { .reduceData = { ( float ) levelWidth, ( float ) levelHeight }, .samplerIdx = samplerIdx };
 
-		vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( reduceData ), &reduceData );
+		[[unlikely]]
+		if( i == 0 )
+		{
+			pushConst.inSampledImgIdx = depthTargetIdx;
+			pushConst.outImgIdx = hizMipIdx[ 0 ];
+		} 
+		else
+		{
+			pushConst.inSampledImgIdx = hizMipIdx[ i - 1 ];
+			pushConst.outImgIdx = hizMipIdx[ i ];
+		}
 
-		u32 dispatchX = GroupCount( levelWidth, program.groupSize.x );
-		u32 dispatchY = GroupCount( levelHeight, program.groupSize.y );
+		vkCmdPushConstants(
+			cmdBuff, vk.descMngr.globalPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
+
+		u32 dispatchX = GroupCount( levelWidth, groupSize.x );
+		u32 dispatchY = GroupCount( levelHeight, groupSize.y );
 		vkCmdDispatch( cmdBuff, dispatchX, dispatchY, 1 );
 
 		VkCmdPipelineFlushCacheBarriers( cmdBuff, executionBarrier );
@@ -3013,22 +3007,6 @@ FinalCompositionPass(
 
 }
 
-struct render_path
-{
-	VkSampler quadMinSampler;
-	VkSampler pbrSampler;
-	hndl64<vk_image> hColorTarget; // .index = INVALID_IDX 
-	hndl64<vk_image> hDepthTarget;
-	hndl64<vk_image> hDepthPyramid;
-	u16 depthSrv = INVALID_IDX;
-	u16 hizSrv = INVALID_IDX;
-	u16 colSrv = INVALID_IDX;
-	u16 hizMipUavs[ MAX_MIP_LEVELS ];
-	u16 quadMinSamplerIdx;
-	u16 pbrSamplerIdx;
-};
-
-static render_path renderPath;
 
 // TODO: enforce some clearOp ---> clearVals params correctness ?
 inline static VkRenderingAttachmentInfo
@@ -3058,10 +3036,12 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	u64 frameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ frameBufferedIdx ];
 
-	VkSemaphoreWaitInfo waitInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO };
-	waitInfo.semaphoreCount = 1;
-	waitInfo.pSemaphores = &rndCtx.timelineSema;
-	waitInfo.pValues = &currentFrameIdx;
+	VkSemaphoreWaitInfo waitInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+		.semaphoreCount = 1,
+		.pSemaphores = &rndCtx.timelineSema,
+		.pValues = &currentFrameIdx
+	};
 	VK_CHECK( VK_INTERNAL_ERROR( vkWaitSemaphores( dc.device, &waitInfo, UINT64_MAX ) > VK_TIMEOUT ) );
 
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
@@ -3093,6 +3073,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
 	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
 
+	[[unlikely]]
 	if( !vk.imgPool.isValid( renderPath.hDepthPyramid ) )
 	{
 		constexpr u16 squareDim = 512;
@@ -3116,23 +3097,22 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		u16 hizDescIdx = VkAllocDescriptorIdx(
 			dc.device, VkDescriptorImageInfo{ 0,hiz.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
+		renderPath.hizTargetIdx = hizDescIdx;
+		renderPath.hizMipIdx[0] = hizDescIdx;
 
-		std::vector<u16> mipUavs;
 		for( u32 i = 0; i < hiz.mipCount; ++i )
 		{
 			u16 hizMipDescIdx = VkAllocDescriptorIdx(
 				dc.device, VkDescriptorImageInfo{ 0,hiz.optionalViews[ i ], VK_IMAGE_LAYOUT_GENERAL }, vk.descMngr );
-			mipUavs.push_back( hizMipDescIdx );
+			renderPath.hizMipIdx[ i + 1 ] = hizMipDescIdx;
 		}
+		
 
-		renderPath.hizSrv = hizDescIdx;
-
-		renderPath.quadMinSampler =
-			VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
 		u16 quadMinSamplerIdx = VkAllocDescriptorIdx(
 			dc.device, vk_sampler_descriptor_info{ renderPath.quadMinSampler }, vk.descMngr );
 		renderPath.quadMinSamplerIdx = quadMinSamplerIdx;
 	}
+	[[unlikely]]
 	if( !vk.imgPool.isValid( renderPath.hDepthTarget ) )
 	{
 		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -3171,9 +3151,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		u16 depthDescIdx = VkAllocDescriptorIdx(
 			dc.device, VkDescriptorImageInfo{ 0,depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
-
-		renderPath.depthSrv = depthDescIdx;
+		renderPath.depthTargetIdx = depthDescIdx;
 	}
+	[[unlikely]]
 	if( !vk.imgPool.isValid( renderPath.hColorTarget ) )
 	{
 		constexpr VkImageUsageFlags usgFlags =
@@ -3202,18 +3182,12 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		u16 colDescIdx = VkAllocDescriptorIdx(
 			dc.device, VkDescriptorImageInfo{ 0,colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
+		renderPath.colTargetIdx = colDescIdx;
 
-		renderPath.colSrv = colDescIdx;
-
-		// TODO: move
-		renderPath.pbrSampler =
-			VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 		u16 pbrSamplerIdx = VkAllocDescriptorIdx(
 			dc.device, vk_sampler_descriptor_info{ renderPath.pbrSampler }, vk.descMngr );
 		renderPath.pbrSamplerIdx = pbrSamplerIdx;
 	}
-
-	//VkFlushDescriptorUpdates( dc.device, vk.descDealer );
 	
 
 	const vk_image& depthTarget = vk.imgPool[ renderPath.hDepthTarget ];
@@ -3226,6 +3200,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	auto colorRead = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 
 	static bool rescUploaded = 0;
+	[[unlikely]]
 	if( !rescUploaded )
 	{
 		if( !imguiVkCtx.fontsImg.hndl )
@@ -3312,7 +3287,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	// TODO: recycle stuff
 	if( std::size( stagingManager.pendingUploads ) ) {}
 
-
+	// TODO: must reset somewhere
 	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.frameTimer );
 	vkCmdResetQueryPool( thisVFrame.cmdBuff, thisVFrame.frameTimer.queryPool, 0, thisVFrame.frameTimer.queryCount );
 	{
@@ -3326,7 +3301,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		vkCmdBindDescriptorSets(
 			thisVFrame.cmdBuff,
 			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			vk.globalLayout,
+			vk.descMngr.globalPipelineLayout,
 			0, 1, &vk.descMngr.set, 0, 0 );
 
 		struct { u64 vtxAddr, transfAddr, camIdx; } zPrepassPush = {
@@ -3337,7 +3312,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			gfxZPrepass,
 			0,
 			&depthWrite,
-			vk.globalLayout,
+			vk.descMngr.globalPipelineLayout,
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
@@ -3355,13 +3330,23 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			frameData.mainProjView,
 			{ 0,boxTrisVertexCount } );
 
+		vkCmdBindDescriptorSets(
+			thisVFrame.cmdBuff,
+			VK_PIPELINE_BIND_POINT_COMPUTE,
+			vk.descMngr.globalPipelineLayout,
+			0, 1,
+			&vk.descMngr.set, 0, 0 );
+
 		DepthPyramidMultiPass(
 			thisVFrame.cmdBuff,
 			rndCtx.compHiZPipeline,
-			rndCtx.quadMinSampler,
 			depthTarget,
 			depthPyramid,
-			depthPyramidMultiProgram );
+			renderPath.depthTargetIdx,
+			std::span{renderPath.hizMipIdx},
+			renderPath.quadMinSamplerIdx,
+			{ 32, 32, 1 }
+		);
 
 
 		VkMemoryBarrier2 clearDrawCountBarrier[] = { VkMakeMemoryBarrier2(
@@ -3370,29 +3355,22 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		};
 		VkCmdPipelineFlushCacheBarriers( thisVFrame.cmdBuff, clearDrawCountBarrier );
 
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff,
-			VK_PIPELINE_BIND_POINT_COMPUTE,
-			vk.globalLayout,
-			0, 1,
-			&vk.descMngr.set, 0, 0 );
-
 		CullPass(
 			thisVFrame.cmdBuff,
 			rndCtx.compPipeline,
-			cullCompProgram,
 			depthPyramid,
 			renderPath.quadMinSampler,
 			thisVFrame.frameDescIdx,
-			renderPath.hizSrv,
-			renderPath.quadMinSamplerIdx
+			renderPath.hizTargetIdx,
+			renderPath.quadMinSamplerIdx,
+			{ 32, 1, 1 }
 		);
 
 
 		vkCmdBindDescriptorSets(
 			thisVFrame.cmdBuff,
 			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			vk.globalLayout,
+			vk.descMngr.globalPipelineLayout,
 			0, 1, &vk.descMngr.set, 0, 0 );
 
 		DrawIndexedIndirectMerged(
@@ -3400,7 +3378,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			gfxZPrepass,
 			0,
 			&depthWrite,
-			vk.globalLayout,
+			vk.descMngr.globalPipelineLayout,
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
@@ -3421,14 +3399,14 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		};
 
 		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.globalLayout, 0, 1, &vk.descMngr.set, 0, 0 );
+			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.descMngr.globalPipelineLayout, 0, 1, &vk.descMngr.set, 0, 0 );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
 			rndCtx.gfxMergedPipeline,
 			&colorWrite,
 			&depthWrite,
-			vk.globalLayout,
+			vk.descMngr.globalPipelineLayout,
 			indirectMergedIndexBuff,
 			drawMergedCmd,
 			drawMergedCountBuff,
@@ -3540,33 +3518,40 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	}
 	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
 
-
+	constexpr VkPipelineStageFlags waitDstStageMsk = 
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;// VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 	VkSemaphore signalSemas[] = { thisVFrame.canPresentSema, rndCtx.timelineSema };
 	u64 signalValues[] = { 0, rndCtx.vFrameIdx };
 
-	VkTimelineSemaphoreSubmitInfo timelineInfo = { VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
-	timelineInfo.signalSemaphoreValueCount = std::size( signalValues );
-	timelineInfo.pSignalSemaphoreValues = signalValues;
 
-	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-	submitInfo.pNext = &timelineInfo;
-	submitInfo.waitSemaphoreCount = 1;
-	submitInfo.pWaitSemaphores = &thisVFrame.canGetImgSema;
-	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;// VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-	submitInfo.pWaitDstStageMask = &waitDstStageMsk;
-	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &thisVFrame.cmdBuff;
-	submitInfo.signalSemaphoreCount = std::size( signalSemas );
-	submitInfo.pSignalSemaphores = signalSemas;
+	VkTimelineSemaphoreSubmitInfo timelineInfo = { 
+		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.signalSemaphoreValueCount = std::size( signalValues ),
+		.pSignalSemaphoreValues = signalValues
+	};
+
+	VkSubmitInfo submitInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = &timelineInfo,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = &thisVFrame.canGetImgSema,
+		.pWaitDstStageMask = &waitDstStageMsk,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &thisVFrame.cmdBuff,
+		.signalSemaphoreCount = std::size( signalSemas ),
+		.pSignalSemaphores = signalSemas
+	};
 	// NOTE: queue submit has implicit host sync for trivial stuff
 	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, 0 ) );
 
-	VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
-	presentInfo.waitSemaphoreCount = 1;
-	presentInfo.pWaitSemaphores = &thisVFrame.canPresentSema;
-	presentInfo.swapchainCount = 1;
-	presentInfo.pSwapchains = &sc.swapchain;
-	presentInfo.pImageIndices = &imgIdx;
+	VkPresentInfoKHR presentInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = &thisVFrame.canPresentSema,
+		.swapchainCount = 1,
+		.pSwapchains = &sc.swapchain,
+		.pImageIndices = &imgIdx
+	};
 	VK_CHECK( vkQueuePresentKHR( dc.gfxQueue, &presentInfo ) );
 }
 

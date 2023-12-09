@@ -264,8 +264,6 @@
   <ItemGroup>
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
-    <ClCompile Include="containers.cpp" />
-    <ClCompile Include="containers.ixx" />
     <ClCompile Include="filesystem.ixx" />
     <ClInclude Include="geometry.hpp">
       <FileType>Document</FileType>
@@ -433,6 +431,9 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">4.0</ShaderModel>
       <FileType>Document</FileType>
     </None>
+    <CustomBuild Include="Shaders\meshlet.vert.glsl">
+      <FileType>Document</FileType>
+    </CustomBuild>
     <None Include="sys_err.inl" />
   </ItemGroup>
   <ItemGroup>

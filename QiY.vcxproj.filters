@@ -72,12 +72,6 @@
     <ClCompile Include="handles.ixx">
       <Filter>Header Files</Filter>
     </ClCompile>
-    <ClCompile Include="containers.ixx">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="containers.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
@@ -187,6 +181,7 @@
     <CustomBuild Include="Shaders\f_light_cull.frag.glsl" />
     <CustomBuild Include="imgui\shader_imgui.vert.glsl" />
     <CustomBuild Include="imgui\shader_imgui.frag.glsl" />
+    <CustomBuild Include="Shaders\meshlet.vert.glsl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\imgui_gfx_lib.hlsl" />

@@ -175,7 +175,7 @@ void main()
 	
 
 	//{
-	//	light_data flashlight = { cam.camPos, vec3( 500.0 ), 50.0 };
+	//	light_data flashlight = { cam.worldPos, vec3( 500.0 ), 50.0 };
 	//	const vec2 spotCosInOut = cos( vec2( radians( 12.5 ), radians( 17.5 ) ) );
 	//	float spotCos = dot( viewDir, normalize( cam.camViewDir ) );
 	//
@@ -196,5 +196,5 @@ void main()
 	//}
 
 	//oCol = vec4( ( bumpN * 0.5 + 0.5 ) * 0.0015, 1 );
-	oCol = vec4( ( n * 0.5 + 0.5 ) * 0.0015, 1 );
+	//oCol = vec4( ( n * 0.5 + 0.5 ) * 0.0015, 1 );
 }
