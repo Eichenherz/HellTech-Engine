@@ -36,7 +36,8 @@ struct vk_instance
 	VkDebugUtilsMessengerEXT dbgMsg;
 };
 
-inline static vk_instance VkMakeInstance()
+// NOTE: StOOPid Cpp
+inline static std::tuple<u64, VkInstance, VkDebugUtilsMessengerEXT> VkMakeInstance()
 {
 	u64 vkDllHandle = SysDllLoad( "vulkan-1.dll" );
 

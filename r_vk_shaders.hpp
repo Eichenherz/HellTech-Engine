@@ -35,12 +35,12 @@ struct vk_shader
 	char			entryPointName[ 32 ];
 };
 
-// TODO: where to place this ?
 struct group_size
 {
-	u32 x;
-	u32 y;
-	u32 z;
+	u32 x : 8;
+	u32 y : 8;
+	u32 z : 8;
+	u32 padding : 8;
 };
 
 // TODO: should make obsolete

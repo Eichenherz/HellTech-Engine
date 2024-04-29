@@ -298,6 +298,7 @@
     <ClInclude Include="hell_log.hpp" />
     <ClInclude Include="math_util.hpp" />
     <ClInclude Include="r_vk_memory.hpp" />
+    <ClInclude Include="vk_descriptors.hpp" />
     <ClInclude Include="vk_device.hpp" />
     <ClInclude Include="vk_instance.hpp" />
     <ClInclude Include="pak_file.h" />
