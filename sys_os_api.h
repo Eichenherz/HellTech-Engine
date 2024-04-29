@@ -2,18 +2,7 @@
 
 #include "core_types.h"
 #include <vector>
-//////////////////////////////////////
-// MACROS
-//////////////////////////////////////
-#define STRINGIZE(x) STRINGIZE2(x)
-#define STRINGIZE2(x) #x
-#define LINE_STR STRINGIZE(__LINE__)
-
-#define RUNTIME_ERR_LINE_FILE_STR ">>>RUNTIME_ERROR<<<\nLine: " LINE_STR", File: " __FILE__
-
-// NOTE: doesn't work with arrays passed as pointers in args
-#define POPULATION( arr ) (u64) sizeof( arr )/ sizeof( arr[ 0 ] )
-
+#include "hell_log.hpp"
 #define BYTE_COUNT( buffer ) (u64) std::size( buffer ) * sizeof( buffer[ 0 ] )
 
 #define GB (u64)( 1 << 30 )

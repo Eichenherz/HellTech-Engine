@@ -1,4 +1,4 @@
-#include "r_data.h"
+#include "../r_data.h"
 
 // TODO: spv intrins ?
 #define SPV_BUILTIN_NUM_WORKGROUPS 24

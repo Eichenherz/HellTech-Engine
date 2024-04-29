@@ -491,7 +491,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	hid[ 1 ].hwndTarget = hWnd;
 	// NOTE: won't pass msgs like PtrSc
 	hid[ 1 ].dwFlags = 0;// RIDEV_NOLEGACY;
-	WIN_CHECK( !RegisterRawInputDevices( hid, POPULATION( hid ), sizeof( RAWINPUTDEVICE ) ) );
+	WIN_CHECK( !RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
 
 	mouse m = {};
