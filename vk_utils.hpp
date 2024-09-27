@@ -284,3 +284,45 @@ struct vk_time_section
 		vkCmdWriteTimestamp2( cmdBuff, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, queryPool, queryIdx + 1 );
 	}
 };
+
+inline VkDeviceAddress VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
+{
+	VkBufferDeviceAddressInfo deviceAddrInfo = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+		.buffer = hndl
+	};
+	VkDeviceAddress bda = vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
+	VK_CHECK( VK_INTERNAL_ERROR( !bda ) );
+	return bda;
+}
+
+inline VkImageView
+VkMakeImgView(
+	VkDevice		vkDevice,
+	VkImage			vkImg,
+	VkFormat		imgFormat,
+	u32				mipLevel,
+	u32				levelCount,
+	VkImageAspectFlags aspectMask,
+	VkImageViewType imgViewType = VK_IMAGE_VIEW_TYPE_2D,
+	u32				arrayLayer = 0,
+	u32				layerCount = 1
+) {
+	VkImageViewCreateInfo viewInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = vkImg,
+		.viewType = imgViewType,
+		.format = imgFormat,
+		.subresourceRange = {
+			.aspectMask = aspectMask,
+			.baseMipLevel = mipLevel,
+			.levelCount = levelCount,
+			.baseArrayLayer = arrayLayer,
+			.layerCount = layerCount,
+	}
+	};
+	VkImageView view;
+	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
+
+	return view;
+}

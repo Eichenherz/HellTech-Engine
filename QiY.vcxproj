@@ -265,6 +265,8 @@
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
     <ClCompile Include="filesystem.ixx" />
+    <ClCompile Include="vk_device.cpp" />
+    <ClCompile Include="vk_resources.cpp" />
     <ClInclude Include="geometry.hpp">
       <FileType>Document</FileType>
     </ClInclude>
@@ -297,14 +299,14 @@
     <ClInclude Include="core_types.h" />
     <ClInclude Include="hell_log.hpp" />
     <ClInclude Include="math_util.hpp" />
-    <ClInclude Include="r_vk_memory.hpp" />
+    <ClInclude Include="metaprogramming.hpp" />
     <ClInclude Include="vk_descriptors.hpp" />
     <ClInclude Include="vk_device.hpp" />
     <ClInclude Include="vk_instance.hpp" />
     <ClInclude Include="pak_file.h" />
-    <ClCompile Include="handles.ixx">
+    <ClInclude Include="handles.hpp">
       <FileType>Document</FileType>
-    </ClCompile>
+    </ClInclude>
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
@@ -324,7 +326,9 @@
     <ClInclude Include="spng.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
+    <ClInclude Include="vk_mem_alloc.h" />
     <ClInclude Include="vk_procs.h" />
+    <ClInclude Include="vk_swapchain.hpp" />
     <ClInclude Include="vk_utils.hpp" />
   </ItemGroup>
   <ItemGroup>

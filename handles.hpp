@@ -1,103 +1,104 @@
 // NOTE: inspired by http://jeffkiah.com/game-engine-containers-1-handle_map/
+
+#ifndef _HANDLES_
+#define _HANDLES_
+
 #include <vector>
 #include <assert.h>
 #include "sys_os_api.h"
 
-export module handles;
 
-export {
-	template<typename T>
-	struct hndl64
+template<typename T>
+struct hndl64
+{
+	union
 	{
-		union
+		// NOTE: order of bitfield is important for sorting prioritized by free, then metaData, then generation, then index
+		struct
 		{
-			// NOTE: order of bitfield is important for sorting prioritized by free, then metaData, then generation, then index
-			struct
-			{
-				u32 index;
-				u16 generation;
-				u16 meta : 15;
-				u16 free : 1;
-			};
-			u64 value;
+			u32 index;
+			u16 generation;
+			u16 meta : 15;
+			u16 free : 1;
 		};
+		u64 value;
+	};
+};
+
+template <typename T>
+class handle_map
+{
+public:
+	struct meta_t
+	{
+		// NOTE: index into mSparseIds array stored in mMeta
+		u32	denseToSparse;
 	};
 
-	template <typename T>
-	class handle_map
+	using handle_t = hndl64<T>;
+	using handle_set_t = std::vector<handle_t>;
+	using dense_set_t = std::vector<T>;
+	using meta_set_t = std::vector<meta_t>;
+
+	handle_map() = default;
+	explicit handle_map( size_t reserveCount )
 	{
-	public:
-		struct meta_t
-		{
-			// NOTE: index into mSparseIds array stored in mMeta
-			u32	denseToSparse;
-		};
+		mSparseIds.reserve( reserveCount );
+		mItems.reserve( reserveCount );
+		mMeta.reserve( reserveCount );
+	}
 
-		using handle_t = hndl64<T>;
-		using handle_set_t = std::vector<handle_t>;
-		using dense_set_t = std::vector<T>;
-		using meta_set_t = std::vector<meta_t>;
+	T& at( hndl64<T> hndl );
+	const T& at( hndl64<T> hndl ) const;
+	T& operator[]( hndl64<T> hndl ) { return at( hndl ); }
+	const T& operator[]( hndl64<T> hndl ) const { return at( hndl ); }
 
-		handle_map() = default;
-		explicit handle_map( size_t reserveCount )
-		{
-			mSparseIds.reserve( reserveCount );
-			mItems.reserve( reserveCount );
-			mMeta.reserve( reserveCount );
-		}
+	template <typename... Params>
+	hndl64<T> emplace( Params... args ) { return insert( T{ args... } ); }
 
-		T& at( hndl64<T> hndl );
-		const T& at( hndl64<T> hndl ) const;
-		T& operator[]( hndl64<T> hndl ) { return at( hndl ); }
-		const T& operator[]( hndl64<T> hndl ) const { return at( hndl ); }
+	typename dense_set_t::iterator		begin() { return mItems.begin(); }
+	typename dense_set_t::const_iterator	cbegin() const { return mItems.cbegin(); }
+	typename dense_set_t::iterator		end() { return mItems.end(); }
+	typename dense_set_t::const_iterator	cend() const { return mItems.cend(); }
 
-		template <typename... Params>
-		hndl64<T> emplace( Params... args ) { return insert( T{ args... } ); }
+	size_t erase( hndl64<T> hndl );
+	hndl64<T> insert( T&& i );
+	hndl64<T> insert( const T& i );
 
-		typename dense_set_t::iterator		begin() { return mItems.begin(); }
-		typename dense_set_t::const_iterator	cbegin() const { return mItems.cbegin(); }
-		typename dense_set_t::iterator		end() { return mItems.end(); }
-		typename dense_set_t::const_iterator	cend() const { return mItems.cend(); }
+	void clear() noexcept;
 
-		size_t erase( hndl64<T> hndl );
-		hndl64<T> insert( T&& i );
-		hndl64<T> insert( const T& i );
+	void reset() noexcept;
 
-		void clear() noexcept;
+	bool isValid( hndl64<T> hndl ) const;
+	size_t size() const noexcept { return std::size( mItems ); }
+	size_t capacity() const noexcept { return mItems.capacity(); }
 
-		void reset() noexcept;
+	template <typename Compare>
+	size_t	defragment( Compare comp, size_t maxSwaps = 0 );
 
-		bool isValid( hndl64<T> hndl ) const;
-		size_t size() const noexcept { return std::size( mItems ); }
-		size_t capacity() const noexcept { return mItems.capacity(); }
+	dense_set_t& getItems() { return mItems; }
+	const dense_set_t& getItems() const { return mItems; }
+	meta_set_t& getMeta() { return mMeta; }
+	const meta_set_t& getMeta() const { return mMeta; }
+	handle_set_t& getIds() { return mSparseIds; }
+	const handle_set_t& getIds() const { return mSparseIds; }
 
-		template <typename Compare>
-		size_t	defragment( Compare comp, size_t maxSwaps = 0 );
+	u32			getFreeListFront() const { return mFreeListStartIdx; }
+	u32			getFreeListBack() const { return mFreeListEndIdx; }
 
-		dense_set_t& getItems() { return mItems; }
-		const dense_set_t& getItems() const { return mItems; }
-		meta_set_t& getMeta() { return mMeta; }
-		const meta_set_t& getMeta() const { return mMeta; }
-		handle_set_t& getIds() { return mSparseIds; }
-		const handle_set_t& getIds() const { return mSparseIds; }
+	u32			getInnerIndex( hndl64<T> hndl ) const;
+private:
+	// NOTE: freeList is empty when the front is set to 32 bit max value (the back will match)
+	bool freeListEmpty() const { return mFreeListStartIdx == u32( -1 ); }
 
-		u32			getFreeListFront() const { return mFreeListStartIdx; }
-		u32			getFreeListBack() const { return mFreeListEndIdx; }
-
-		u32			getInnerIndex( hndl64<T> hndl ) const;
-	private:
-		// NOTE: freeList is empty when the front is set to 32 bit max value (the back will match)
-		bool freeListEmpty() const { return mFreeListStartIdx == u32( -1 ); }
-
-	private:
-		handle_set_t		mSparseIds;
-		dense_set_t	mItems;
-		meta_set_t	mMeta;
-		u32	mFreeListStartIdx = u32( -1 ); // start index in the embedded ComponentId freelist
-		u32	mFreeListEndIdx = u32( -1 ); // last index in the freelist
-		u8		mFragmented = 0; // set to 1 if modified by insert or erase since last complete defragment
-	};
-}
+private:
+	handle_set_t		mSparseIds;
+	dense_set_t	mItems;
+	meta_set_t	mMeta;
+	u32	mFreeListStartIdx = u32( -1 ); // start index in the embedded ComponentId freelist
+	u32	mFreeListEndIdx = u32( -1 ); // last index in the freelist
+	u8		mFragmented = 0; // set to 1 if modified by insert or erase since last complete defragment
+};
 
 template<typename T>
 inline bool operator==( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value == b.value ); }
@@ -351,3 +352,5 @@ size_t handle_map<T>::defragment( Compare comp, size_t maxSwaps )
 
 	return swaps;
 }
+
+#endif //_HANDLES_

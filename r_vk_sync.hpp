@@ -21,13 +21,13 @@ VkMakeMemoryBarrier2(
 	VkAccessFlags2KHR			dstAccess,
 	VkPipelineStageFlags2KHR	dstStage
 ) {
-	VkMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-	barrier.srcStageMask = srcStage;
-	barrier.srcAccessMask = srcAccess;
-	barrier.dstStageMask = dstStage;
-	barrier.dstAccessMask = dstAccess;
-
-	return barrier;
+	return {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+		.srcStageMask = srcStage,
+		.srcAccessMask = srcAccess,
+		.dstStageMask = dstStage,
+		.dstAccessMask = dstAccess,
+	};
 }
 
 inline  VkBufferMemoryBarrier2
@@ -42,21 +42,21 @@ VkMakeBufferBarrier2(
 	u32							srcQueueFamIdx = VK_QUEUE_FAMILY_IGNORED,
 	u32							dstQueueFamIdx = VK_QUEUE_FAMILY_IGNORED
 ) {
-	VkBufferMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 };
-	barrier.srcStageMask = srcStage;
-	barrier.srcAccessMask = srcAccess;
-	barrier.dstStageMask = dstStage;
-	barrier.dstAccessMask = dstAccess;
-	barrier.srcQueueFamilyIndex = srcQueueFamIdx;
-	barrier.dstQueueFamilyIndex = dstQueueFamIdx;
-	barrier.buffer = hBuff;
-	barrier.offset = buffOffset;
-	barrier.size = buffSize;
-
-	return barrier;
+	return { 
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+		.srcStageMask = srcStage,
+		.srcAccessMask = srcAccess,
+		.dstStageMask = dstStage,
+		.dstAccessMask = dstAccess,
+		.srcQueueFamilyIndex = srcQueueFamIdx,
+		.dstQueueFamilyIndex = dstQueueFamIdx,
+		.buffer = hBuff,
+		.offset = buffOffset,
+		.size = buffSize,
+	};
 }
 
-inline  VkBufferMemoryBarrier2KHR VkReverseBufferBarrier2( const VkBufferMemoryBarrier2& b )
+inline VkBufferMemoryBarrier2KHR VkReverseBufferBarrier2( const VkBufferMemoryBarrier2& b )
 {
 	VkBufferMemoryBarrier2 barrier = b;
 	std::swap( barrier.srcAccessMask, barrier.dstAccessMask );
@@ -82,23 +82,25 @@ VkMakeImageBarrier2(
 	u32							srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 	u32							dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
 ) {
-	VkImageMemoryBarrier2 barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
-	barrier.image = hImg;
-	barrier.srcAccessMask = srcAccessMask;
-	barrier.srcStageMask = srcStageMask;
-	barrier.dstAccessMask = dstAccessMask;
-	barrier.dstStageMask = dstStageMask;
-	barrier.oldLayout = oldLayout;
-	barrier.newLayout = newLayout;
-	barrier.srcQueueFamilyIndex = srcQueueFamilyIndex;
-	barrier.dstQueueFamilyIndex = dstQueueFamilyIndex;
-	barrier.subresourceRange.aspectMask = aspectMask;
-	barrier.subresourceRange.baseArrayLayer = baseArrayLayer;
-	barrier.subresourceRange.baseMipLevel = baseMipLevel;
-	barrier.subresourceRange.layerCount = ( layerCount ) ? layerCount : VK_REMAINING_ARRAY_LAYERS;
-	barrier.subresourceRange.levelCount = ( mipCount ) ? mipCount : VK_REMAINING_MIP_LEVELS;
-
-	return barrier;
+	return {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+		.srcStageMask = srcStageMask,
+		.srcAccessMask = srcAccessMask,
+		.dstStageMask = dstStageMask,
+		.dstAccessMask = dstAccessMask,
+		.oldLayout = oldLayout,
+		.newLayout = newLayout,
+		.srcQueueFamilyIndex = srcQueueFamilyIndex,
+		.dstQueueFamilyIndex = dstQueueFamilyIndex,
+		.image = hImg,
+		.subresourceRange = {
+			.aspectMask = aspectMask,
+			.baseMipLevel = baseMipLevel,
+			.levelCount = ( mipCount ) ? mipCount : VK_REMAINING_MIP_LEVELS,
+			.baseArrayLayer = baseArrayLayer,
+			.layerCount = ( layerCount ) ? layerCount : VK_REMAINING_ARRAY_LAYERS,
+	    },
+	};
 }
 
 
@@ -107,26 +109,50 @@ inline void VkCmdPipelineFlushCacheAndPerformImgLayoutTransitionBarriers(
 	const std::span<VkMemoryBarrier2> memBarriers,
 	const std::span<VkImageMemoryBarrier2> imgBarriers
 ) {
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	dependency.imageMemoryBarrierCount = std::size( imgBarriers );
-	dependency.pImageMemoryBarriers = std::data( imgBarriers );
-	dependency.memoryBarrierCount = std::size( memBarriers );
-	dependency.pMemoryBarriers = std::data( memBarriers );
+	VkDependencyInfo dependency = { 
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.memoryBarrierCount = std::size( memBarriers ),
+		.pMemoryBarriers = std::data( memBarriers ),
+		.imageMemoryBarrierCount = std::size( imgBarriers ),
+		.pImageMemoryBarriers = std::data( imgBarriers ),
+	};
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );
 }
 
 inline void VkCmdPipelineFlushCacheBarriers( VkCommandBuffer cmdBuff, const std::span<VkMemoryBarrier2> memBarriers )
 {
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	dependency.memoryBarrierCount = std::size( memBarriers );
-	dependency.pMemoryBarriers = std::data( memBarriers );
+	VkDependencyInfo dependency = { 
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.memoryBarrierCount = std::size( memBarriers ),
+		.pMemoryBarriers = std::data( memBarriers ),
+	};
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );
 }
 
 inline void VkCmdPipelineImgLayoutTransitionBarriers( VkCommandBuffer cmdBuff, const std::span<VkImageMemoryBarrier2> imgBarriers)
 {
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	dependency.imageMemoryBarrierCount = std::size( imgBarriers );
-	dependency.pImageMemoryBarriers = std::data( imgBarriers );
+	VkDependencyInfo dependency = { 
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.imageMemoryBarrierCount = std::size( imgBarriers ),
+		.pImageMemoryBarriers = std::data( imgBarriers ),
+	};
+	vkCmdPipelineBarrier2( cmdBuff, &dependency );
+}
+
+inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
+{
+	VkMemoryBarrier2 everythingBarrier = { 
+		.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+		.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+		.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+	};
+	
+	VkDependencyInfo dependency = { 
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.memoryBarrierCount = 1,
+		.pMemoryBarriers = &everythingBarrier
+	};
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );
 }

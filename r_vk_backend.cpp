@@ -16,7 +16,7 @@
 #include <span>
 #include <functional>
 
-import handles;
+#include "handles.hpp"
 
 #include "r_data_structs.h"
 #include "geometry.hpp"
@@ -53,9 +53,10 @@ namespace DXPacked = DirectX::PackedVector;
 #include "vk_instance.hpp"
 #include "vk_device.hpp"
 #include "vk_descriptors.hpp"
+#include "vk_swapchain.hpp"
 
+// TODO: golbal file
 //====================CONSTS====================//
-constexpr u32 VK_SWAPCHAIN_MAX_IMG_ALLOWED = 3;
 constexpr u64 VK_MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
 constexpr u32 NOT_USED_IDX = -1;
 constexpr u32 OBJ_CULL_WORKSIZE = 64;
@@ -78,68 +79,7 @@ constexpr bool vkValidationLayerFeatures = 1;
 constexpr bool dbgDraw = true;
 //==============================================//
 
-
-struct virtual_frame
-{
-	vk_buffer		frameData;
-	vk_gpu_timer frameTimer;
-	VkCommandPool	cmdPool;
-	VkCommandBuffer cmdBuff;
-	VkSemaphore		canGetImgSema;
-	VkSemaphore		canPresentSema;
-	u16 frameDescIdx;
-};
-
-// TODO: buffer_desc ?
-// TODO: revisit
-inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32 bufferSize )
-{
-	virtual_frame vrtFrame = {};
-
-	VkCommandPoolCreateInfo cmdPoolInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-		.queueFamilyIndex = vkDevice.gfxQueueIdx
-	};
-	VK_CHECK( vkCreateCommandPool( vkDevice.device, &cmdPoolInfo, 0, &vrtFrame.cmdPool ) );
-
-	VkCommandBufferAllocateInfo cmdBuffAllocInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = vrtFrame.cmdPool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1,
-	};
-	VK_CHECK( vkAllocateCommandBuffers( vkDevice.device, &cmdBuffAllocInfo, &vrtFrame.cmdBuff ) );
-
-	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-	VK_CHECK( vkCreateSemaphore( vkDevice.device, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
-	VK_CHECK( vkCreateSemaphore( vkDevice.device, &semaInfo, 0, &vrtFrame.canPresentSema ) );
-
-	VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | HLTK_BUFFER_USE_HOST;
-	vrtFrame.frameData = VkCreateAllocBindBuffer(
-		vkDevice, { .name = "Buff_Frame_Data", .usage = usg, .elemCount = bufferSize, .stride = 1 } );
-
-	constexpr u32 queryCount = 2;
-	VkBufferUsageFlags usgQuery = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-	vk_buffer resultBuff = VkCreateAllocBindBuffer(
-		vkDevice, { .name = "Buff_Timestamp_Queries", .usage = usgQuery, .elemCount = queryCount, .stride = sizeof( u64 ) } );
-	VkQueryPool queryPool = VkMakeQueryPool( vkDevice.device, queryCount, "VkQueryPool_GPU_timer" );
-	vrtFrame.frameTimer = { resultBuff, queryPool, queryCount, vkDevice.timestampPeriod };
-
-	return vrtFrame;
-}
-
-
-struct vk_swapchain
-{
-	VkSwapchainKHR	swapchain;
-	VkImageView		imgViews[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
-	VkImage			imgs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
-	VkFormat		imgFormat;
-	u16				width;
-	u16				height;
-	u8				imgCount;
-};
+#include "metaprogramming.hpp"
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 // TODO: where to place these ?
@@ -148,7 +88,9 @@ extern HWND hWnd;
 
 inline VkSurfaceKHR VkMakeSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
 {
-	VkWin32SurfaceCreateInfoKHR surfInfo = { .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR, .hinstance = hInst, .hwnd = hWnd };
+	VkWin32SurfaceCreateInfoKHR surfInfo = { 
+		.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR, .hinstance = hInst, .hwnd = hWnd 
+	};
 	VkSurfaceKHR vkSurf;
 	VK_CHECK( vkCreateWin32SurfaceKHR( vkInst, &surfInfo, 0, &vkSurf ) );
 	return vkSurf;
@@ -157,125 +99,7 @@ inline VkSurfaceKHR VkMakeSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd
 #error Must provide OS specific Surface
 #endif  // VK_USE_PLATFORM_WIN32_KHR
 
-// TODO: sep initial validation form sc creation WHEN RESIZE ?
-// TODO: tweak settings/config
-inline static vk_swapchain
-VkMakeSwapchain(
-	VkDevice			vkDevice,
-	VkPhysicalDevice	vkPhysicalDevice,
-	VkSurfaceKHR		vkSurf,
-	u32					queueFamIdx,
-	VkFormat			scDesiredFormat
-) {
-	VkSurfaceCapabilitiesKHR surfaceCaps;
-	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkPhysicalDevice, vkSurf, &surfaceCaps ) );
 
-	VkCompositeAlphaFlagBitsKHR surfaceComposite =
-		( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR )
-		? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
-		: ( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR )
-		? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
-		: ( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR )
-		? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
-		: VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-
-	VkSurfaceFormatKHR scFormatAndColSpace = {};
-	{
-		u32 formatCount = 0;
-		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, 0 ) );
-		std::vector<VkSurfaceFormatKHR> formats( formatCount );
-		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, std::data( formats ) ) );
-
-		for( const VkSurfaceFormatKHR& surfFormat : formats )
-		{
-			if( surfFormat.format == scDesiredFormat )
-			{
-				scFormatAndColSpace = surfFormat;
-				break;
-			}
-		}
-		VK_CHECK( VK_INTERNAL_ERROR( !scFormatAndColSpace.format ) );
-	}
-
-	VkPresentModeKHR presentMode = VkPresentModeKHR( 0 );
-	{
-		u32 numPresentModes;
-		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( vkPhysicalDevice, vkSurf, &numPresentModes, 0 ) );
-		std::vector<VkPresentModeKHR> presentModes( numPresentModes );
-		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( vkPhysicalDevice, vkSurf, &numPresentModes, std::data( presentModes ) ) );
-
-		constexpr VkPresentModeKHR desiredPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-		for( u32 j = 0; j < numPresentModes; ++j )
-		{
-			if( presentModes[ j ] == desiredPresentMode )
-			{
-				presentMode = desiredPresentMode;
-				break;
-			}
-		}
-		VK_CHECK( VK_INTERNAL_ERROR( !presentMode ) );
-	}
-
-
-	u32 scImgCount = VK_SWAPCHAIN_MAX_IMG_ALLOWED;
-	assert( ( scImgCount > surfaceCaps.minImageCount ) && ( scImgCount < surfaceCaps.maxImageCount ) );
-	assert( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
-			( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
-
-	VkImageUsageFlags scImgUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-	VK_CHECK( VK_INTERNAL_ERROR( ( surfaceCaps.supportedUsageFlags & scImgUsage ) != scImgUsage ) );
-
-	assert( surfaceCaps.maxImageArrayLayers >= 1 );
-
-	VkSwapchainCreateInfoKHR scInfo = {
-		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-		.surface = vkSurf,
-		.minImageCount = scImgCount,
-		.imageFormat = scFormatAndColSpace.format,
-		.imageColorSpace = scFormatAndColSpace.colorSpace,
-		.imageExtent = surfaceCaps.currentExtent,
-		.imageArrayLayers = 1,
-		.imageUsage = scImgUsage,
-		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.queueFamilyIndexCount = 1,
-		.pQueueFamilyIndices = &queueFamIdx,
-		.preTransform = surfaceCaps.currentTransform,
-		.compositeAlpha = surfaceComposite,
-		.presentMode = presentMode,
-		.clipped = VK_TRUE,
-		.oldSwapchain = 0,
-	};
-	
-	VkImageFormatProperties scImageProps = {};
-	VK_CHECK( vkGetPhysicalDeviceImageFormatProperties( vkPhysicalDevice,
-														scInfo.imageFormat,
-														VK_IMAGE_TYPE_2D,
-														VK_IMAGE_TILING_OPTIMAL,
-														scInfo.imageUsage,
-														scInfo.flags,
-														&scImageProps ) );
-
-
-	vk_swapchain sc = {};
-	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &sc.swapchain ) );
-
-	u32 scImgsNum = 0;
-	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, sc.swapchain, &scImgsNum, 0 ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !( scImgsNum == scInfo.minImageCount ) ) );
-	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, sc.swapchain, &scImgsNum, sc.imgs ) );
-
-	for( u64 i = 0; i < scImgsNum; ++i )
-	{
-		sc.imgViews[ i ] = VkMakeImgView( vkDevice, sc.imgs[ i ], scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
-	}
-
-	sc.width = scInfo.imageExtent.width;
-	sc.height = scInfo.imageExtent.height;
-	sc.imgCount = scInfo.minImageCount;
-	sc.imgFormat = scInfo.imageFormat;
-
-	return sc;
-}
 
 
 // TODO:
@@ -290,24 +114,6 @@ struct vk_renderer_config
 	u16             rednerHeight;
 	u8              maxAllowedFramesInFlight = 2;
 };
-
-
-struct render_path
-{
-	VkSampler quadMinSampler;
-	VkSampler pbrSampler;
-	hndl64<vk_image> hColorTarget; // .index = INVALID_IDX 
-	hndl64<vk_image> hDepthTarget;
-	hndl64<vk_image> hDepthPyramid;
-	u16 depthTargetIdx = INVALID_IDX;
-	u16 hizTargetIdx = INVALID_IDX;
-	u16 colTargetIdx = INVALID_IDX;
-	u16 hizMipIdx[ MAX_MIP_LEVELS + 1 ]; // Store the whole thing here
-	u16 quadMinSamplerIdx;
-	u16 pbrSamplerIdx;
-};
-
-static render_path renderPath;
 
 import r_dxc_compiler;
 
@@ -473,31 +279,32 @@ inline VkSampler VkMakeSampler(
 
 #include "imgui/imgui.h"
 
-// TODO: better double buffer vert + idx
 // TODO: move spv shaders into exe folder
 struct imgui_vk_context
 {
+	// TODO: make part of frame resources 
 	vk_buffer                 vtxBuffs[ 2 ];
 	vk_buffer                 idxBuffs[ 2 ];
 	vk_image                       fontsImg;
+
 	VkDescriptorSetLayout       descSetLayout;
 	VkPipelineLayout            pipelineLayout;
-	VkDescriptorUpdateTemplate  descTemplate = {};
+	VkDescriptorUpdateTemplate  descTemplate;
 	VkPipeline	                pipeline;
 	VkSampler                   fontSampler;
+	VkFormat colDstFormat;
 };
 
 static imgui_vk_context imguiVkCtx;
 
-// TODO: buffer resize ?
-// TODO: vk formats 
-static inline imgui_vk_context ImguiMakeVkContext(
-	VkDevice vkDevice,
-	const VkPhysicalDeviceProperties& gpuProps,
-	VkFormat colDstFormat
-) {
-	VkSampler fontSampler = VkMakeSampler(
-		vkDevice, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+
+inline auto ImguiPreparePipeline( VkDevice vkDevice, VkSampler fontSampler )
+{
+	struct {
+		VkDescriptorSetLayout descSetLayout = {};
+		VkPipelineLayout pipelineLayout = {};
+		VkDescriptorUpdateTemplate descTemplate = {};
+	} retval;
 
 	VkDescriptorSetLayoutBinding descSetBindings[] = {
 		{
@@ -512,32 +319,29 @@ static inline imgui_vk_context ImguiMakeVkContext(
 			.descriptorCount = 1,
 			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
 			.pImmutableSamplers = &fontSampler,
-			
+
 		}
 	};
-	
-	VkDescriptorSetLayoutCreateInfo descSetInfo = { 
+
+	VkDescriptorSetLayoutCreateInfo descSetInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
 		.bindingCount = std::size( descSetBindings ),
 		.pBindings = descSetBindings
 	};
+
 	
-	VkDescriptorSetLayout descSetLayout = {};
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetInfo, 0, &descSetLayout ) );
+	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetInfo, 0, &retval.descSetLayout ) );
 
 	VkPushConstantRange pushConst = { VK_SHADER_STAGE_VERTEX_BIT, 0,sizeof( float ) * 4 };
-	VkPipelineLayoutCreateInfo pipelineLayoutInfo = { 
+	VkPipelineLayoutCreateInfo pipelineLayoutInfo = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.setLayoutCount = 1,
-		.pSetLayouts = &descSetLayout,
+		.pSetLayouts = &retval.descSetLayout,
 		.pushConstantRangeCount = 1,
 		.pPushConstantRanges = &pushConst,
 	};
-	
-
-	VkPipelineLayout pipelineLayout = {};
-	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipelineLayoutInfo, 0, &pipelineLayout ) );
+	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipelineLayoutInfo, 0, &retval.pipelineLayout ) );
 
 	VkDescriptorUpdateTemplateEntry entries[] = {
 		{
@@ -555,69 +359,85 @@ static inline imgui_vk_context ImguiMakeVkContext(
 			.stride = sizeof( vk_descriptor_info ),
 		}
 	};
-	
-	VkDescriptorUpdateTemplateCreateInfo templateInfo = { 
+
+	VkDescriptorUpdateTemplateCreateInfo templateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO,
 		.descriptorUpdateEntryCount = std::size( entries ),
 		.pDescriptorUpdateEntries = std::data( entries ),
 		.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR,
-		.descriptorSetLayout = descSetLayout,
+		.descriptorSetLayout = retval.descSetLayout,
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-		.pipelineLayout = pipelineLayout,
+		.pipelineLayout = retval.pipelineLayout,
 	};
-	
+	VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &retval.descTemplate ) );
 
-	VkDescriptorUpdateTemplate descTemplate = {};
-	VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &descTemplate ) );
-
-	vk_shader vert = VkLoadShader( "Shaders/shader_imgui.vert.spv", vkDevice );
-	vk_shader frag = VkLoadShader( "Shaders/shader_imgui.frag.spv", vkDevice );
-
-	vk_gfx_pipeline_state guiState = {};
-	guiState.blendCol = true;
-	guiState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-	guiState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-	guiState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-	guiState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-	guiState.depthWrite = false;
-	guiState.depthTestEnable = false;
-	guiState.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-	guiState.polyMode = VK_POLYGON_MODE_FILL;
-	guiState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	guiState.cullFlags = VK_CULL_MODE_NONE;
-	VkPipeline pipeline = VkMakeGfxPipeline(
-		vkDevice, pipelineLayout, vert.module, frag.module, &colDstFormat, rndCtx.desiredDepthFormat, guiState );
-
+	auto&& [e0, e1, e2] = std::forward<decltype(retval)>(retval);
+	return std::make_tuple( e0, e1, e2 );
+}
+// TODO: buffer resize ?
+// TODO: vk formats 
+static inline imgui_vk_context ImguiMakeVkContext(
+	const vk_device& vkDc,
+	VkFormat colDstFormat
+) {
 	imgui_vk_context ctx = {};
-	ctx.descSetLayout = descSetLayout;
-	ctx.pipelineLayout = pipelineLayout;
-	ctx.pipeline = pipeline;
-	ctx.descTemplate = descTemplate;
-	ctx.fontSampler = fontSampler;
+	ctx.fontSampler = VkMakeSampler( vkDc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+	std::tie( ctx.descSetLayout, ctx.pipelineLayout, ctx.descTemplate ) = ImguiPreparePipeline( vkDc.device, ctx.fontSampler );
 
+	vk_shader vert = VkLoadShader( "Shaders/shader_imgui.vert.spv", vkDc.device );
+	vk_shader frag = VkLoadShader( "Shaders/shader_imgui.frag.spv", vkDc.device );
 
+	vk_gfx_pipeline_state guiState = {
+		.polyMode = VK_POLYGON_MODE_FILL,
+		.cullFlags = VK_CULL_MODE_NONE,
+		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+		.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+		.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+		.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.depthWrite = false,
+		.depthTestEnable = false,
+		.blendCol = true,
+	};
+	ctx.pipeline = VkMakeGfxPipeline(
+		vkDc.device, ctx.pipelineLayout, vert.module, frag.module, &colDstFormat, VK_FORMAT_D32_SFLOAT, guiState, "Pipe_Gfx_ImGui");
 
-	ctx.vtxBuffs[ 0 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena, dc.gpu );
-	ctx.idxBuffs[ 0 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, vkHostComArena, dc.gpu );
-	ctx.vtxBuffs[ 1 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vkHostComArena, dc.gpu );
-	ctx.idxBuffs[ 1 ] = VkCreateAllocBindBuffer( 64 * KB, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, vkHostComArena, dc.gpu );
+	ctx.vtxBuffs[ 0 ] = VkCreateAllocBindBuffer( 
+		vkDc, { "Buff_Vtx_Imgui0", VK_BUFFER_USAGE_STORAGE_BUFFER_BIT ,64 * KB, 1 }, vk_mem_usage::HOST_VISIBLE);
+	ctx.idxBuffs[ 0 ] = VkCreateAllocBindBuffer( 
+		vkDc, { "Buff_Idx_Imgui0", VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 64 * KB, 1 }, vk_mem_usage::HOST_VISIBLE );
+	ctx.vtxBuffs[ 1 ] = VkCreateAllocBindBuffer(
+		vkDc, { "Buff_Vtx_Imgui1", VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 64 * KB, 1 }, vk_mem_usage::HOST_VISIBLE );
+	ctx.idxBuffs[ 1 ] = VkCreateAllocBindBuffer( 
+		vkDc, { "Buff_Idx_Imgui1", VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 64 * KB, 1 }, vk_mem_usage::HOST_VISIBLE );
+
+	ctx.fontsImg = VkCreateAllocBindImage(
+		vkDc,
+		{
+			.name = "Img_Imgui_Fonts",
+			.format = VK_FORMAT_R8G8B8A8_UNORM, // Don't hardcode ?
+			.usg = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // Don't hardcode ?
+			.width = ( u16 ) ImGui::GetIO().Fonts->TexWidth,
+			.height = ( u16 ) ImGui::GetIO().Fonts->TexHeight,
+			.layerCount = 1,
+			.mipCount = 1
+		} 
+	);
+
 	return ctx;
 }
 
-__forceinline auto ImguiGetFontImage()
+inline auto ImguiGetFontImage()
 {
-	struct retval
-	{
+	struct {
 		u8* pixels;
 		u32 width;
-		u32 heigh;
-	};
+		u32 height;
+	} retval;
 
-	u8* pixels = 0;
-	u32 width = 0, height = 0;
-	ImGui::GetIO().Fonts->GetTexDataAsRGBA32( &pixels, ( int* ) &width, ( int* ) &height );
-
-	return retval{ pixels,width,height };
+	ImGui::GetIO().Fonts->GetTexDataAsRGBA32( &retval.pixels, ( int* ) &retval.width, ( int* ) &retval.height );
+	return retval;
 }
 
 
@@ -658,7 +478,7 @@ static inline debug_context VkMakeDebugContext( VkDevice vkDevice, const VkPhysi
 		.blendCol = VK_FALSE,
 	};
 	dbgCtx.drawAsLines = VkMakeGfxPipeline( vkDevice, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module,
-											&rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, lineDrawPipelineState );
+											&rndCtx.desiredColorFormat, rndCtx.desiredDepthFormat, lineDrawPipelineState, "Pipe_GFX_DbgLines");
 
 	vk_gfx_pipeline_state triDrawPipelineState = {
 		.polyMode = VK_POLYGON_MODE_FILL,
@@ -670,7 +490,7 @@ static inline debug_context VkMakeDebugContext( VkDevice vkDevice, const VkPhysi
 		.blendCol = VK_TRUE,
 	};
 	dbgCtx.drawAsTriangles = VkMakeGfxPipeline( vkDevice, dbgCtx.pipeProg.pipeLayout, vert.module, frag.module,
-												0, rndCtx.desiredDepthFormat, triDrawPipelineState );
+												0, rndCtx.desiredDepthFormat, triDrawPipelineState, "Pipe_GFX_DbgLinesTriangles" );
 
 
 	vkDestroyShaderModule( vkDevice, vert.module, 0 );
@@ -728,14 +548,6 @@ constexpr u64 randSeed = 42;
 constexpr u64 drawCount = 5;
 constexpr u64 lightCount = 100;
 constexpr float sceneRad = 40.0f;
-
-constexpr u64 tileSize = 8u;
-constexpr u64 tileRowSize = ( SCREEN_WIDTH + tileSize - 1 ) / tileSize;
-constexpr u64 tileCount = tileRowSize * ( SCREEN_HEIGHT + tileSize - 1 ) / tileSize;
-constexpr u64 wordsPerTile = ( lightCount + 31 ) / 32;
-
-
-static handle_map<vk_image> textures;
 
 
 enum MMF_OPENFLAGS : u8
@@ -1160,7 +972,13 @@ constexpr VkBufferUsageFlags STORAGE_INDIRECT_DST_BDA = STORAGE_INDIRECT_DST | V
 constexpr VkBufferUsageFlags STORAGE_DST_BDA =
 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
-
+void VkBeginCommandBuffer( VkCommandBuffer hndl )
+{
+	VkCommandBufferBeginInfo cmdBufBegInfo = { 
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT 
+	};
+	vkBeginCommandBuffer( hndl, &cmdBufBegInfo );
+}
 // TODO: 
 struct render_context
 {
@@ -1190,23 +1008,23 @@ struct render_context
 	static constexpr VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 	render_context() = default;
-	explicit render_context( VkDevice vkDevice, const vk_descriptor_manager& descMngr );
+	explicit render_context( const vk_device& vkDc, const vk_descriptor_manager& descMngr );
 };
 
-render_context::render_context( VkDevice vkDevice, const vk_descriptor_manager& descMngr )
+render_context::render_context( const vk_device& vkDc, const vk_descriptor_manager& descMngr )
 {
-	quadMinSampler = VkMakeSampler( vkDevice, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-	pbrSampler = VkMakeSampler( vkDevice, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+	quadMinSampler = VkMakeSampler( vkDc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
+	pbrSampler = VkMakeSampler( vkDc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 
 	{
-		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", vkDevice );
+		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", vkDc.device );
 		gfxZPrepass = VkMakeGfxPipeline(
-			vkDevice, descMngr.globalPipelineLayout, vertZPre.module, 0, 0, desiredDepthFormat, {}, "Pipeline_Gfx_ZPrepass" );
-		vkDestroyShaderModule( vkDevice, vertZPre.module, 0 );
+			vkDc.device, descMngr.globalPipelineLayout, vertZPre.module, 0, 0, desiredDepthFormat, {}, "Pipeline_Gfx_ZPrepass" );
+		vkDestroyShaderModule( vkDc.device, vertZPre.module, 0 );
 	}
 	{
-		vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", vkDevice );
-		vk_shader normalCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", vkDevice );
+		vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", vkDc.device );
+		vk_shader normalCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", vkDc.device );
 
 		vk_gfx_pipeline_state lineDrawPipelineState = {
 			.polyMode = VK_POLYGON_MODE_LINE,
@@ -1218,87 +1036,138 @@ render_context::render_context( VkDevice vkDevice, const vk_descriptor_manager& 
 			.blendCol = VK_FALSE,
 		};
 		dbgDrawProgram = VkMakePipelineProgram(
-			vkDevice, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol }, descMngr.setLayout );
-		gfxDrawIndirDbg = VkMakeGfxPipeline( vkDevice, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module,
+			vkDc.device, vkDc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol }, descMngr.setLayout );
+		gfxDrawIndirDbg = VkMakeGfxPipeline( vkDc.device, dbgDrawProgram.pipeLayout, vertBox.module, normalCol.module,
 											 &desiredColorFormat, desiredDepthFormat, lineDrawPipelineState, "Pipeline_Gfx_DbgDraw");
 
-		vkDestroyShaderModule( vkDevice, vertBox.module, 0 );
-		vkDestroyShaderModule( vkDevice, normalCol.module, 0 );
+		vkDestroyShaderModule( vkDc.device, vertBox.module, 0 );
+		vkDestroyShaderModule( vkDc.device, normalCol.module, 0 );
 	}
 	{
-		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", vkDevice );
+		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", vkDc.device );
 		compPipeline = VkMakeComputePipeline(
-			vkDevice, 0, descMngr.globalPipelineLayout, drawCull.module, { 32u }, "Pipeline_Comp_DrawCull" );
+			vkDc.device, 0, descMngr.globalPipelineLayout, drawCull.module, { 32u }, "Pipeline_Comp_DrawCull" );
 
-		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", vkDevice );
+		vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", vkDc.device );
 		compClusterCullPipe = VkMakeComputePipeline(
-			vkDevice, 0, descMngr.globalPipelineLayout, clusterCull.module, {}, "Pipeline_Comp_ClusterCull" );
+			vkDc.device, 0, descMngr.globalPipelineLayout, clusterCull.module, {}, "Pipeline_Comp_ClusterCull" );
 
-		vk_shader expansionComp = VkLoadShader( "Shaders/c_id_expander.comp.spv", vkDevice );
+		vk_shader expansionComp = VkLoadShader( "Shaders/c_id_expander.comp.spv", vkDc.device );
 		compExpanderPipe = VkMakeComputePipeline( 
-			vkDevice, 0, descMngr.globalPipelineLayout, expansionComp.module, {}, "Pipeline_Comp_iD_Expander" );
+			vkDc.device, 0, descMngr.globalPipelineLayout, expansionComp.module, {}, "Pipeline_Comp_iD_Expander" );
 
-		vk_shader expMerge = VkLoadShader( "Shaders/comp_expand_merge.comp.spv", vkDevice );
-		compExpMergePipe = VkMakeComputePipeline( vkDevice, 0, descMngr.globalPipelineLayout, expMerge.module, {}, "Pipeline_Comp_ExpMerge" );
+		vk_shader expMerge = VkLoadShader( "Shaders/comp_expand_merge.comp.spv", vkDc.device );
+		compExpMergePipe = VkMakeComputePipeline( vkDc.device, 0, descMngr.globalPipelineLayout, expMerge.module, {}, "Pipeline_Comp_ExpMerge" );
 
-		vkDestroyShaderModule( vkDevice, drawCull.module, 0 );
-		vkDestroyShaderModule( vkDevice, expansionComp.module, 0 );
-		vkDestroyShaderModule( vkDevice, clusterCull.module, 0 );
-		vkDestroyShaderModule( vkDevice, expMerge.module, 0 );
+		vkDestroyShaderModule( vkDc.device, drawCull.module, 0 );
+		vkDestroyShaderModule( vkDc.device, expansionComp.module, 0 );
+		vkDestroyShaderModule( vkDc.device, clusterCull.module, 0 );
+		vkDestroyShaderModule( vkDc.device, expMerge.module, 0 );
 	}
 	{
-		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", vkDevice );
-		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", vkDevice );
+		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", vkDc.device );
+		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", vkDc.device );
 		vk_gfx_pipeline_state opaqueState = {};
 
-		gfxMergedPipeline = VkMakeGfxPipeline( vkDevice, descMngr.globalPipelineLayout, vtxMerged.module, fragPBR.module,
+		gfxMergedPipeline = VkMakeGfxPipeline( vkDc.device, descMngr.globalPipelineLayout, vtxMerged.module, fragPBR.module,
 													  &desiredColorFormat, desiredDepthFormat, opaqueState, "Pipeline_Gfx_Merged" );
 
-		vkDestroyShaderModule( vkDevice, vtxMerged.module, 0 );
-		vkDestroyShaderModule( vkDevice, fragPBR.module, 0 );
+		vkDestroyShaderModule( vkDc.device, vtxMerged.module, 0 );
+		vkDestroyShaderModule( vkDc.device, fragPBR.module, 0 );
 	}
 	{
-		vk_shader vertMeshlet = VkLoadShader( "Shaders/meshlet.vert.spv", vkDevice );
-		vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", vkDevice );
+		vk_shader vertMeshlet = VkLoadShader( "Shaders/meshlet.vert.spv", vkDc.device );
+		vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", vkDc.device );
 		vk_gfx_pipeline_state meshletState = {};
 		gfxMeshletProgram = VkMakePipelineProgram(
-			vkDevice, dc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertMeshlet, &fragCol }, descMngr.setLayout );
-		gfxMeshletPipeline = VkMakeGfxPipeline( vkDevice, gfxMeshletProgram.pipeLayout, vertMeshlet.module,
+			vkDc.device, vkDc.gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertMeshlet, &fragCol }, descMngr.setLayout );
+		gfxMeshletPipeline = VkMakeGfxPipeline( vkDc.device, gfxMeshletProgram.pipeLayout, vertMeshlet.module,
 													   fragCol.module, &desiredColorFormat, desiredDepthFormat,
 													   meshletState, "Pipeline_Gfx_MeshletDraw" );
 
-		vkDestroyShaderModule( vkDevice, vertMeshlet.module, 0 );
-		vkDestroyShaderModule( vkDevice, fragCol.module, 0 );
+		vkDestroyShaderModule( vkDc.device, vertMeshlet.module, 0 );
+		vkDestroyShaderModule( vkDc.device, fragCol.module, 0 );
 	}
 	{
-		vk_shader avgLum = VkLoadShader( "Shaders/avg_luminance.comp.spv", vkDevice );
+		vk_shader avgLum = VkLoadShader( "Shaders/avg_luminance.comp.spv", vkDc.device );
 		avgLumCompProgram = VkMakePipelineProgram(
-			vkDevice, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLum }, descMngr.setLayout );
+			vkDc.device, vkDc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &avgLum }, descMngr.setLayout );
 		compAvgLumPipe = VkMakeComputePipeline(
-			vkDevice, 0, avgLumCompProgram.pipeLayout, avgLum.module, { dc.waveSize }, "Pipeline_Comp_AvgLum" );
+			vkDc.device, 0, avgLumCompProgram.pipeLayout, avgLum.module, { vkDc.waveSize }, "Pipeline_Comp_AvgLum" );
 
-		vk_shader toneMapper = VkLoadShader( "Shaders/tonemap_gamma.comp.spv", vkDevice );
+		vk_shader toneMapper = VkLoadShader( "Shaders/tonemap_gamma.comp.spv", vkDc.device );
 		tonemapCompProgram = VkMakePipelineProgram(
-			vkDevice, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &toneMapper }, descMngr.setLayout );
-		compTonemapPipe = VkMakeComputePipeline( vkDevice, 0, tonemapCompProgram.pipeLayout, toneMapper.module, {}, "Pipeline_Comp_Tonemap" );
+			vkDc.device, vkDc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &toneMapper }, descMngr.setLayout );
+		compTonemapPipe = VkMakeComputePipeline( vkDc.device, 0, tonemapCompProgram.pipeLayout, toneMapper.module, {}, "Pipeline_Comp_Tonemap" );
 
-		vkDestroyShaderModule( vkDevice, avgLum.module, 0 );
-		vkDestroyShaderModule( vkDevice, toneMapper.module, 0 );
+		vkDestroyShaderModule( vkDc.device, avgLum.module, 0 );
+		vkDestroyShaderModule( vkDc.device, toneMapper.module, 0 );
 	}
 	{
 		static_assert( multiPassDepthPyramid );
-		vk_shader downsampler = VkLoadShader( "Shaders/pow2_downsampler.comp.spv", vkDevice );
+		vk_shader downsampler = VkLoadShader( "Shaders/pow2_downsampler.comp.spv", vkDc.device );
 		compHiZPipeline = VkMakeComputePipeline( 
-			vkDevice, 0, descMngr.globalPipelineLayout, downsampler.module, {}, "Pipeline_Comp_DepthPyramid" );
+			vkDc.device, 0, descMngr.globalPipelineLayout, downsampler.module, {}, "Pipeline_Comp_DepthPyramid" );
 
-		vkDestroyShaderModule( vkDevice, downsampler.module, 0 );
+		vkDestroyShaderModule( vkDc.device, downsampler.module, 0 );
 	}
 
-	vkDbgCtx = VkMakeDebugContext( vkDevice, dc.gpuProps );
+	vkDbgCtx = VkMakeDebugContext( vkDc.device, vkDc.gpuProps );
 
-	imguiVkCtx = ImguiMakeVkContext( vkDevice, dc.gpuProps, VK_FORMAT_B8G8R8A8_UNORM );
+	imguiVkCtx = ImguiMakeVkContext( vkDc.device, vkDc.gpuProps, VK_FORMAT_B8G8R8A8_UNORM );
 
 }
+
+struct virtual_frame
+{
+	vk_buffer		frameData;
+	vk_gpu_timer frameTimer;
+	VkCommandPool	cmdPool;
+	VkCommandBuffer cmdBuff;
+	VkSemaphore		canGetImgSema;
+	VkSemaphore		canPresentSema;
+	u16 frameDescIdx;
+};
+
+inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32 bufferSize )
+{
+	virtual_frame vrtFrame = {};
+
+	VkCommandPoolCreateInfo cmdPoolInfo = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+		.queueFamilyIndex = vkDevice.gfxQueueIdx
+	};
+	VK_CHECK( vkCreateCommandPool( vkDevice.device, &cmdPoolInfo, 0, &vrtFrame.cmdPool ) );
+
+	VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = vrtFrame.cmdPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+	VK_CHECK( vkAllocateCommandBuffers( vkDevice.device, &cmdBuffAllocInfo, &vrtFrame.cmdBuff ) );
+
+	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+	VK_CHECK( vkCreateSemaphore( vkDevice.device, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
+	VK_CHECK( vkCreateSemaphore( vkDevice.device, &semaInfo, 0, &vrtFrame.canPresentSema ) );
+
+	VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+	vrtFrame.frameData = VkCreateAllocBindBuffer(
+		vkDevice, { .name = "Buff_Frame_Data", .usage = usg, .elemCount = bufferSize, .stride = 1 }, vk_mem_usage::HOST_VISIBLE );
+
+	constexpr u32 queryCount = 2;
+	VkQueryPool queryPool = VkMakeQueryPool( vkDevice.device, queryCount, "VkQueryPool_GPU_timer" );
+	VkBufferUsageFlags usgQuery = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	vk_buffer resultBuff = VkCreateAllocBindBuffer( 
+		vkDevice, 
+		{ .name = "Buff_Timestamp_Queries", .usage = usgQuery, .elemCount = queryCount, .stride = sizeof( u64 ) }, 
+		vk_mem_usage::HOST_VISIBLE );
+	vrtFrame.frameTimer = { resultBuff, queryPool, queryCount, vkDevice.timestampPeriod };
+
+	return vrtFrame;
+}
+
 
 struct vk_backend
 {
@@ -1307,7 +1176,7 @@ struct vk_backend
 	VkDebugUtilsMessengerEXT dbgMsg;
 	VkSurfaceKHR surface;
 
-	vk_device deviceCtx;
+	vk_device pDevice;
 	vk_swapchain swapchain;
 
 	virtual_frame	vrtFrames[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
@@ -1315,36 +1184,44 @@ struct vk_backend
 	u64				vFrameIdx;
 	u8				framesInFlight = VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 
+	const virtual_frame& GetNextFrame( u64 currentFrameIdx ) const
+	{
+		u64 vrtFrameIdx = currentFrameIdx % std::size( vrtFrames );
+		return vrtFrames[ vrtFrameIdx ];
+	}
+
+
 	handle_map<vk_buffer> bufferMap;
 	handle_map<vk_image> imageMap;
 	vk_descriptor_manager descManager;
 
-	vk_buffer drawCountBuff;
-	vk_buffer drawCountDbgBuff;
-	vk_buffer avgLumBuff;
-	vk_buffer shaderGlobalsBuff;
-	vk_buffer shaderGlobalSyncCounterBuff;
-	vk_buffer depthAtomicCounterBuff;
-	vk_buffer atomicCounterBuff;
-	vk_buffer dispatchCmdBuff0;
-	vk_buffer dispatchCmdBuff1;
-	vk_buffer meshletCountBuff;
-	vk_buffer mergedIndexCountBuff;
-	vk_buffer drawMergedCountBuff;
+	hndl64<vk_buffer> hDrawCount;
+	hndl64<vk_buffer> hDrawCountDebug;
+	hndl64<vk_buffer> hAvgLum;
+	hndl64<vk_buffer> hGlobals;
+	hndl64<vk_buffer> hGlobalSyncCounter;
+	hndl64<vk_buffer> hDepthAtomicCounter;
+	hndl64<vk_buffer> hAtomicCounter;
+	hndl64<vk_buffer> hDispatchCmd0;
+	hndl64<vk_buffer> hDispatchCmd1;
+	hndl64<vk_buffer> hMeshletCount;
+	hndl64<vk_buffer> hMergedIdxCount;
+	hndl64<vk_buffer> hMergedDrawCout;
 
 	render_context rndCtx;
 
 	explicit vk_backend();
-};
+	void Terminate();
 
-static vk_backend vk;
+	void HostFrames( const frame_data& frameData, gpu_data& gpuData );
+};
 
 vk_backend::vk_backend()
 {
-	std::tie( dllHandle, inst, dbgMsg ) = VkMakeInstance();
+	std::tie( this->dllHandle, this->inst, this->dbgMsg ) = VkMakeInstance();
 	surface = VkMakeSurface( inst, hInst, hWnd );
 
-	deviceCtx = VkMakeDeviceContext( inst, surface );
+	this->pDevice = VkMakeDeviceContext( inst, surface );
 	swapchain = VkMakeSwapchain( deviceCtx.device, deviceCtx.gpu, surface, deviceCtx.gfxQueueIdx, VK_FORMAT_B8G8R8A8_UNORM );
 
 	descManager = VkMakeDescriptorManager( deviceCtx.device, deviceCtx.gpuProps );
@@ -1392,27 +1269,31 @@ vk_backend::vk_backend()
 			deviceCtx, { .name = "Buff_Draw_Merged_Count", .usage = STORAGE_INDIRECT_DST_BDA, .elemCount = 1, .stride = sizeof( u32 ) } );
 	}
 
-	rndCtx = render_context{ deviceCtx.device, descManager };
+	this->rndCtx = render_context{ deviceCtx, descManager };
 }
+void vk_backend::Terminate()
+{
+	// NOTE: SHOULDN'T need to check if( VkObj ). Can't create -> app fail
+	vkDeviceWaitIdle( this->deviceCtx.device );
+	//for( auto& queued : deviceGlobalDeletionQueue ) queued();
+	//deviceGlobalDeletionQueue.clear();
 
+
+	vkDestroyDevice( this->deviceCtx.device, 0 );
+#ifdef _VK_DEBUG_
+	//vkDestroyDebugUtilsMessengerEXT( vkInst, vkDbgMsg, 0 );
+#endif
+	//vkDestroySurfaceKHR( vkInst, vkSurf, 0 );
+	//vkDestroyInstance( vkInst, 0 );
+
+	//SysDllUnload( VK_DLL );
+}
 
 inline u64 GroupCount( u64 invocationCount, u64 workGroupSize )
 {
 	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
 
-inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
-{
-	VkMemoryBarrier2KHR everythingBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
-	everythingBarrier.srcStageMask = everythingBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
-	everythingBarrier.srcAccessMask = everythingBarrier.dstAccessMask =
-		VK_ACCESS_2_MEMORY_READ_BIT_KHR | VK_ACCESS_2_MEMORY_WRITE_BIT_KHR;
-
-	VkDependencyInfoKHR dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	dependency.memoryBarrierCount = 1;
-	dependency.pMemoryBarriers = &everythingBarrier;
-	vkCmdPipelineBarrier2KHR( cmdBuff, &dependency );
-}
 
 
 inline static void
@@ -1424,8 +1305,6 @@ FrameClearDataPass(
 }
 
 // TODO: reduce the ammount of counter buffers
-// TODO: visibility buffer ( not the VBuffer ) check Aaltonen
-// TODO: revisit triangle culling ?
 // TODO: optimize expansion shader
 inline static void
 CullPass(
@@ -1606,52 +1485,6 @@ CullPass(
 	};
 
 	VkCmdPipelineFlushCacheBarriers( cmdBuff, endCullBarriers );
-}
-
-// TODO: 
-inline static void
-CullRasterizeLightProxy(
-	VkCommandBuffer cmdBuff,
-	const vk_graphics_program& program,
-	VkRenderPass vkRndPass,
-	VkFramebuffer fbo,
-	const DirectX::XMFLOAT4X4A& viewProjMat
-) {
-	assert( 0 );
-	vk_label label = { cmdBuff,"Gfx_Cull_Rast_Lights",{} };
-
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
-
-	VkRenderPassBeginInfo rndPassBegInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-	rndPassBegInfo.renderPass = vkRndPass;
-	rndPassBegInfo.framebuffer = fbo;
-	rndPassBegInfo.renderArea = scissor;
-
-	vkCmdBeginRenderPass( cmdBuff, &rndPassBegInfo, VK_SUBPASS_CONTENTS_INLINE );
-
-	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
-
-
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline );
-
-	u64 tileMaxLightsLog2 = std::log2( lightCount );
-
-	//assert( proxyGeomBuff.devicePointer && lightsBuff.devicePointer && tileBuff.devicePointer );
-
-	struct { mat4 viewProj; u64 geomAddr; u64 lightAddr; } vertPush = {
-		viewProjMat, proxyGeomBuff.devicePointer, lightsBuff.devicePointer };
-	vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( vertPush ), &vertPush );
-
-	//struct { u64 tileBuffAddr; u32 tileSize; u32 tileRowLen; u32 tileWordCount; u32 tileMaxLightsLog2; } fragPush = {
-	//	tileBuff.devicePointer, tileSize, tileRowSize, wordsPerTile, tileMaxLightsLog2 };
-	//vkCmdPushConstants( cmdBuff, program.layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof( vertPush ), sizeof( fragPush ), &fragPush );
-
-
-	vkCmdBindIndexBuffer( cmdBuff, proxyIdxBuff.hndl, 0, VK_INDEX_TYPE_UINT32 );
-	vkCmdDrawIndexed( cmdBuff, proxyIdxBuff.size / sizeof( u32 ), 1, 0, 0, 0 );
-
-
-	vkCmdEndRenderPass( cmdBuff );
 }
 
 
@@ -2214,41 +2047,81 @@ FinalCompositionPass(
 
 
 // TODO: enforce some clearOp ---> clearVals params correctness ?
-inline static VkRenderingAttachmentInfo
-VkMakeAttachemntInfo(
+inline VkRenderingAttachmentInfo 
+VkMakeAttachemntInfo( 
 	VkImageView view,
-	VkAttachmentLoadOp       loadOp,
-	VkAttachmentStoreOp      storeOp,
-	VkClearValue             clearValue
+	VkAttachmentLoadOp loadOp, 
+	VkAttachmentStoreOp storeOp, 
+	VkClearValue clearValue 
 ) {
-	VkRenderingAttachmentInfo info = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR };
-	info.imageView = view;
-	info.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
-	info.loadOp = loadOp;
-	info.storeOp = storeOp;
-	if( info.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR )
-	{
-		info.clearValue = clearValue;
-	}
-	return info;
+	return {
+		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+		.imageView = view,
+		.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+		.loadOp = loadOp,
+		.storeOp = storeOp,
+		.clearValue = ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
+	};
 }
 
-void HostFrames( const frame_data& frameData, gpu_data& gpuData )
+inline void VkWaitSemaphores(
+	VkDevice vkDevice, 
+	std::initializer_list<VkSemaphore> semas, 
+	std::initializer_list<u64> values, 
+	u64 maxWait = UINT64_MAX 
+) {
+	if( std::size( semas ) != std::size( values ) )
+	{
+		assert( false && "Semas must equal values" );
+	}
+	VkSemaphoreWaitInfo waitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+		.semaphoreCount = std::size( semas ),
+		.pSemaphores = std::data( semas ),
+		.pValues = std::data( values )
+	};
+	VkResult waitResult = vkWaitSemaphores( vkDevice, &waitInfo, maxWait );
+	VK_CHECK( VK_INTERNAL_ERROR( waitResult > VK_TIMEOUT ) );
+}
+
+// TODO: use VkSubmitInfo2 ?
+inline VkSubmitInfo VkMakeSubmitInfo(
+	std::initializer_list<VkCommandBuffer> cmdBuffers,
+	std::initializer_list<VkSemaphore> waitSemas,
+	std::initializer_list<VkSemaphore> signalSemas,
+	std::initializer_list<u64> signalValues,
+	VkPipelineStageFlags waitDstStageMsk
+) {
+	VkTimelineSemaphoreSubmitInfo timelineInfo = {
+		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.signalSemaphoreValueCount = std::size( signalValues ),
+		.pSignalSemaphoreValues = std::data( signalValues )
+	};
+
+	VkSubmitInfo submitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = &timelineInfo,
+		.waitSemaphoreCount = std::size( waitSemas ),
+		.pWaitSemaphores = std::data( waitSemas ),
+		.pWaitDstStageMask = &waitDstStageMsk,
+		.commandBufferCount = std::size( cmdBuffers ),
+		.pCommandBuffers = std::data( cmdBuffers ),
+		.signalSemaphoreCount = std::size( signalSemas ),
+		.pSignalSemaphores = std::data( signalSemas )
+	};
+
+	return submitInfo;
+}
+
+void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	using namespace DirectX;
 
-	u64 currentFrameIdx = rndCtx.vFrameIdx++;
-	u64 frameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
-	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ frameBufferedIdx ];
+	u64 currentFrameIdx = this->vFrameIdx++;
+	const virtual_frame& thisVFrame = GetNextFrame( currentFrameIdx );
 
-	VkSemaphoreWaitInfo waitInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-		.semaphoreCount = 1,
-		.pSemaphores = &rndCtx.timelineSema,
-		.pValues = &currentFrameIdx
-	};
-	VK_CHECK( VK_INTERNAL_ERROR( vkWaitSemaphores( dc.device, &waitInfo, UINT64_MAX ) > VK_TIMEOUT ) );
-
+	VkWaitSemaphores( this->pDevice.device, { this->timelineSema }, { currentFrameIdx }, UINT64_MAX );
+	
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
 
 	u32 imgIdx;
@@ -2264,6 +2137,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	};
 	std::memcpy( thisVFrame.frameData.hostVisible, &globs, sizeof( globs ) );
 
+	VkBeginCommandBuffer( thisVFrame.cmdBuff );
+
 	// TODO: 
 	if( currentFrameIdx < VK_MAX_FRAMES_IN_FLIGHT_ALLOWED )
 	{
@@ -2274,11 +2149,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		const_cast< virtual_frame& >( thisVFrame ).frameDescIdx = globalsDescIdx;
 	}
 
-	VkCommandBufferBeginInfo cmdBufBegInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT 
-	};
-	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
-
+	std::vector<VkImageMemoryBarrier2> layoutTransitionBarriers;
 	[[unlikely]]
 	if( !vk.imageMap.isValid( renderPath.hDepthPyramid ) )
 	{
@@ -2296,8 +2167,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			.width = squareDim,
 			.height = squareDim,
 			.layerCount = 1,
-			.mipCount = hiZMipCount },
-			vkAlbumArena, dc.device, dc.gpu ) );
+			.mipCount = hiZMipCount } );
 
 		const vk_image& hiz = vk.imageMap[ renderPath.hDepthPyramid ];
 
@@ -2352,7 +2222,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			//	VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
 			//	VK_IMAGE_ASPECT_COLOR_BIT )
 		};
-		VkCmdPipelineImgLayoutTransitionBarriers( thisVFrame.cmdBuff, initBarriers );
+
+		layoutTransitionBarriers.append_range( initBarriers );
+
+		//VkCmdPipelineImgLayoutTransitionBarriers( thisVFrame.cmdBuff, initBarriers );
 
 
 		u16 depthDescIdx = VkAllocDescriptorIdx(
@@ -2377,14 +2250,16 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		const vk_image& colorTarget = vk.imageMap[ renderPath.hColorTarget ];
 
-		VkImageMemoryBarrier2 initBarrier[] = { VkMakeImageBarrier2(
+		VkImageMemoryBarrier2 initBarriers[] = { VkMakeImageBarrier2(
 			colorTarget.hndl,
 			0, 0,
 			0, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
 			VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
 			VK_IMAGE_ASPECT_COLOR_BIT ) };
-		VkCmdPipelineImgLayoutTransitionBarriers( thisVFrame.cmdBuff, initBarrier );
+
+		layoutTransitionBarriers.append_range( initBarriers );
+		//VkCmdPipelineImgLayoutTransitionBarriers( thisVFrame.cmdBuff, initBarrier );
 
 		u16 colDescIdx = VkAllocDescriptorIdx(
 			dc.device, VkDescriptorImageInfo{ 0,colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
@@ -2395,7 +2270,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		renderPath.pbrSamplerIdx = pbrSamplerIdx;
 	}
 	
-	VkFlushDescriptorUpdates( dc.device, vk.descMngr );
+	this->pDevice.FlushDescriptorUpdates( this->descManager.pendingUpdates );
+	this->descManager.pendingUpdates.resize( 0 );
 
 	const vk_image& depthTarget = vk.imageMap[ renderPath.hDepthTarget ];
 	const vk_image& depthPyramid = vk.imageMap[ renderPath.hDepthPyramid ];
@@ -2414,11 +2290,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		{
 			auto [pixels, width, height] = ImguiGetFontImage();
 			u64 uploadSize = width * height * sizeof( u32 );
-
-			constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
-			constexpr VkImageUsageFlags flags = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-			vk_image fonts = VkCreateAllocBindImage( format, flags, { width,height,1 }, 1, vkAlbumArena, dc.gpu );
-
+			//assert with fontIMg size
 			{
 				VkImageMemoryBarrier2 fontsBarrier[] = { VkMakeImageBarrier2( fonts.hndl, 0, 0,
 														 VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -2486,15 +2358,15 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		initBuffers = 1;
 	}
 
-	VkFlushDescriptorUpdates( dc.device, vk.descMngr );
+	this->pDevice.FlushDescriptorUpdates( this->descManager.pendingUpdates );
+	this->descManager.pendingUpdates.resize( 0 );
 
 	// TODO: must reset somewhere
 	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.frameTimer );
 	vkCmdResetQueryPool( thisVFrame.cmdBuff, thisVFrame.frameTimer.queryPool, 0, thisVFrame.frameTimer.queryCount );
 	{
 		vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.frameTimer.queryPool, 0 };
-
-		VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
+		VkViewport viewport = this->swapchain.GetRenderViewport();
 		vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &viewport );
 
 		VkClearValue clearVals[ 2 ] = {};
@@ -2718,27 +2590,12 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	constexpr VkPipelineStageFlags waitDstStageMsk = 
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;// VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-	VkSemaphore signalSemas[] = { thisVFrame.canPresentSema, rndCtx.timelineSema };
-	u64 signalValues[] = { 0, rndCtx.vFrameIdx };
 
 
-	VkTimelineSemaphoreSubmitInfo timelineInfo = { 
-		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-		.signalSemaphoreValueCount = std::size( signalValues ),
-		.pSignalSemaphoreValues = signalValues
-	};
+	VkSubmitInfo submitInfo = VkMakeSubmitInfo(
+		{ thisVFrame.cmdBuff }, { thisVFrame.canGetImgSema },
+		{ thisVFrame.canPresentSema, rndCtx.timelineSema }, { 0, rndCtx.vFrameIdx }, waitDstStageMsk );
 
-	VkSubmitInfo submitInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.pNext = &timelineInfo,
-		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &thisVFrame.canGetImgSema,
-		.pWaitDstStageMask = &waitDstStageMsk,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &thisVFrame.cmdBuff,
-		.signalSemaphoreCount = std::size( signalSemas ),
-		.pSignalSemaphores = signalSemas
-	};
 	// NOTE: queue submit has implicit host sync for trivial stuff
 	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, 0 ) );
 
@@ -2752,25 +2609,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	};
 	VK_CHECK( vkQueuePresentKHR( dc.gfxQueue, &presentInfo ) );
 
-}
-
-void VkBackendKill()
-{
-	// NOTE: SHOULDN'T need to check if( VkObj ). Can't create -> app fail
-	assert( dc.device );
-	vkDeviceWaitIdle( dc.device );
-	//for( auto& queued : deviceGlobalDeletionQueue ) queued();
-	//deviceGlobalDeletionQueue.clear();
-
-
-	vkDestroyDevice( dc.device, 0 );
-#ifdef _VK_DEBUG_
-	//vkDestroyDebugUtilsMessengerEXT( vkInst, vkDbgMsg, 0 );
-#endif
-	//vkDestroySurfaceKHR( vkInst, vkSurf, 0 );
-	//vkDestroyInstance( vkInst, 0 );
-
-	//SysDllUnload( VK_DLL );
 }
 
 #undef HTVK_NO_SAMPLER_REDUCTION

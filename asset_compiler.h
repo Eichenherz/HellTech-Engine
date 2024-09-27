@@ -2,7 +2,6 @@
 
 #include "core_types.h"
 
-// TODO: remove these includes
 #include <vector>
 #include <span>
 
@@ -58,8 +57,7 @@ struct uuid128
 
 	bool operator==( const uuid128& other ) const
 	{
-		return ( this->dataChunk[ 0 ] == other.dataChunk[ 0 ] ) && 
-			( this->dataChunk[ 1 ] == other.dataChunk[ 1 ] );
+		return ( this->dataChunk[ 0 ] == other.dataChunk[ 0 ] ) && ( this->dataChunk[ 1 ] == other.dataChunk[ 1 ] );
 	}
 };
 

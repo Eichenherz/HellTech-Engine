@@ -69,8 +69,11 @@
     <ClCompile Include="filesystem.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="handles.ixx">
-      <Filter>Header Files</Filter>
+    <ClCompile Include="vk_resources.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_device.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -170,10 +173,19 @@
     <ClInclude Include="math_util.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="r_vk_memory.hpp">
+    <ClInclude Include="vk_descriptors.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_descriptors.hpp">
+    <ClInclude Include="vk_swapchain.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="metaprogramming.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="handles.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_mem_alloc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
