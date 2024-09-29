@@ -9,34 +9,79 @@
 #include "vk_swapchain.hpp"
 #include "vk_descriptors.hpp"
 #include "vk_commands.hpp"
+#include "metaprogramming.hpp"
 
-// TODO: move to some header
-template<typename T>
-using deleter_unique_ptr = std::unique_ptr<T, std::function<void( T& )>>;
-
-// TODO: buffer the pool per frame in flight ?
-// TODO: typed queues ?
+// TODO: buffer VkCommandPool per frame in flight ?
+// TODO: multiple sumbits per queue ?
+template<vk_queue_type QUEUE_TYPE>
 struct vk_queue
 {
-	std::vector<VkCommandBuffer> cmdBuffs;
 	VkQueue			hndl;
 	VkCommandPool   cmdPool;
 	u32				index;
 
-	void AllocateCommandBuffers();
-	void GetCommandBuffer();
-	void Submit( const std::span<VkQueueSubmit2> submits );
-	void Present();
+	void Submit( std::initializer_list<vk_command_buffer<QUEUE_TYPE>> cmdBuffers,
+				 std::initializer_list<VkSemaphore> waitSemas,
+				 std::initializer_list<VkSemaphore> signalSemas,
+				 std::initializer_list<u64> signalValues,
+				 VkPipelineStageFlags waitDstStageMsk );
+	void Present( VkSemaphore renderingCompleteSema, const vk_swapchain& swapchain, u32 swapchainImgIdx )
+		requires ( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
 };
 
 
+template<vk_queue_type QUEUE_TYPE>
+void vk_queue<QUEUE_TYPE>::Submit( 
+	std::initializer_list<vk_command_buffer<QUEUE_TYPE>> cmdBuffers,
+	std::initializer_list<VkSemaphore> waitSemas,
+	std::initializer_list<VkSemaphore> signalSemas,
+	std::initializer_list<u64> signalValues,
+	VkPipelineStageFlags waitDstStageMsk 
+) {
+	VkTimelineSemaphoreSubmitInfo timelineInfo = {
+		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.signalSemaphoreValueCount = std::size( signalValues ),
+		.pSignalSemaphoreValues = std::data( signalValues )
+	};
+
+	VkSubmitInfo submitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = &timelineInfo,
+		.waitSemaphoreCount = ( u32 ) std::size( waitSemas ),
+		.pWaitSemaphores = std::data( waitSemas ),
+		.pWaitDstStageMask = &waitDstStageMsk,
+		.commandBufferCount = ( u32 ) std::size( cmdBuffers ),
+		.pCommandBuffers = std::data( cmdBuffers ),
+		.signalSemaphoreCount = ( u32 ) std::size( signalSemas ),
+		.pSignalSemaphores = std::data( signalSemas )
+	};
+	// NOTE: queue submit has implicit host sync for trivial stuff
+	VK_CHECK( vkQueueSubmit( this->hndl, 1, &submitInfo, 0 ) );
+}
+
+template<vk_queue_type QUEUE_TYPE>
+void vk_queue<QUEUE_TYPE>::Present( VkSemaphore renderingCompleteSema, const vk_swapchain& swapchain, u32 swapchainImgIdx )
+	requires ( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
+{
+	VkPresentInfoKHR presentInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = &renderingCompleteSema,
+		.swapchainCount = 1,
+		.pSwapchains = &swapchain,
+		.pImageIndices = &swapchainImgIdx
+	};
+	VK_CHECK( vkQueuePresentKHR( this->hndl, &presentInfo ) );
+}
 
 // TODO: use handle_map/free list and stable addressing if unique/new is cumbersome
 struct vk_device
 {
-	vk_queue graphicsQueue;
-	vk_queue computeQueue;
-	vk_queue transferQueue;
+	vk_swapchain swapchain;
+
+	vk_queue<vk_queue_type::GRAPHICS> graphicsQueue;
+	vk_queue<vk_queue_type::COMPUTE> computeQueue;
+	vk_queue<vk_queue_type::TRANSFER> transferQueue;
 
 	VmaAllocator allocator;
 
@@ -59,6 +104,45 @@ struct vk_device
 	VkDescriptorSetLayout CreateDescriptorSetLayout( std::span<u32> descriptorCount );
 	VkDescriptorSet CreateDescriptorSet( VkDescriptorPool pool, VkDescriptorSetLayout setLayout );
 	VkPipelineLayout CreatePipelineLayout( VkDescriptorSetLayout setLayout );
+
+	// TODO: sep initial validation form sc creation WHEN RESIZE
+	// TODO: tweak settings/config
+	vk_swapchain CreateSwapchain( VkSurfaceKHR vkSurf, VkFormat	scDesiredFormat, vk_queue_type presentQueueType );
+	u32 AcquireNextSwapcahinImage( VkSemaphore acquireScImgSema, u64 timeout );
+
+	// TODO: do we need a different value for timeline semas ?
+	// TODO: separate the TimelineSemas from normal semas ?
+	VkSemaphore CreateVkSemaphore( bool isTimeline );
+	// TODO: pass {sema, value} pairs ?
+	void WaitSemaphores( std::initializer_list<VkSemaphore> semas, std::initializer_list<u64> values, u64 maxWait );
+
+	// TODO: AddrMode ?
+	VkSampler CreateSampler(
+		VkSamplerReductionMode reductionMode, VkFilter filter, VkSamplerAddressMode addressMode, VkSamplerMipmapMode mipmapMode );
+	VkPipeline CreateGraphicsPipeline(VkShaderModule		vs,
+									   VkShaderModule		fs,
+									   const VkFormat* desiredColorFormat,
+									   VkFormat           desiredDepthFormat,
+									   const vk_gfx_pipeline_state& pipelineState,
+									   const char* name);
+	VkPipeline CreateComputePipeline( VkShaderModule cs, vk_specializations consts, const char* name, const char* entryPointName );
+
+	// TODO: allocate more ?
+	// TODO: allocate VkCmdBuffer and just pass around references ?
+	template<vk_queue_type QUEUE_TYPE>
+	vk_command_buffer<QUEUE_TYPE> AllocateCommandBuffers( const vk_queue<QUEUE_TYPE>& queue )
+	{
+		VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = queue.cmdPool,
+			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1,
+		};
+		VkCommandBuffer cmdBuff;
+		VK_CHECK( vkAllocateCommandBuffers( this->device, &cmdBuffAllocInfo, &cmdBuff ) );
+
+		return { cmdBuff };
+	}
 };
 
 vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf );

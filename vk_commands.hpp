@@ -101,6 +101,7 @@ inline constexpr VkPipelineBindPoint VkGetPSOBindPoint()
 template<vk_queue_type QUEUE_TYPE>
 inline void vk_command_buffer<QUEUE_TYPE>::Begin()
 {
+	//VK_CHECK( vkResetCommandBuffer( this->hndl, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT ) );
 	VkCommandBufferBeginInfo cmdBufBegInfo = { 
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT 
 	};

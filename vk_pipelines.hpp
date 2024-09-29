@@ -8,7 +8,7 @@
 
 #include <vector>
 
-static bool colorBlending = 0;
+static constexpr bool colorBlending = 0;
 
 // TODO: variable entry point
 constexpr char SHADER_ENTRY_POINT[] = "main";
@@ -16,41 +16,38 @@ constexpr char SHADER_ENTRY_POINT[] = "main";
 // TODO: store more stuff ?
 struct vk_gfx_pipeline_state
 {
-	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL;
-	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT;
-	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-	VkBlendFactor       srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-	VkBlendFactor       dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-	VkBlendFactor       srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	VkBlendFactor       dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	float               extraPrimitiveOverestimationSize = 0.0f;
-	bool                conservativeRasterEnable = false;
-	bool				depthWrite = true;
-	bool				depthTestEnable = true;
-	bool				blendCol = colorBlending;
+	VkPolygonMode		polyMode;
+	VkCullModeFlags		cullFlags;
+	VkFrontFace			frontFace;
+	VkPrimitiveTopology primTopology;
+	VkBlendFactor       srcColorBlendFactor;
+	VkBlendFactor       dstColorBlendFactor;
+	VkBlendFactor       srcAlphaBlendFactor;
+	VkBlendFactor       dstAlphaBlendFactor;
+	float               extraPrimitiveOverestimationSize;
+	bool                conservativeRasterEnable;
+	bool				depthWrite;
+	bool				depthTestEnable;
+	bool				blendCol;
 };
 
+static constexpr vk_gfx_pipeline_state DEFAULT_GFX_STATE = {
+	.polyMode = VK_POLYGON_MODE_FILL,
+	.cullFlags = VK_CULL_MODE_BACK_BIT,
+	.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+	.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+	.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+	.dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+	.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+	.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+	.extraPrimitiveOverestimationSize = 0.0f,
+	.conservativeRasterEnable = false,
+	.depthWrite = true,
+	.depthTestEnable = true,
+	.blendCol = colorBlending,
+};
 
 using vk_shader_stage_list = std::initializer_list<VkPipelineShaderStageCreateInfo>;
-using vk_specializations = std::initializer_list<u32>;
-
-inline VkSpecializationInfo VkMakeSpecializationInfo( std::vector<VkSpecializationMapEntry>& specializations, const vk_specializations& consts )
-{
-	specializations.resize( std::size( consts ) );
-	u64 sizeOfASpecConst = sizeof( *std::cbegin( consts ) );
-	for( u64 i = 0; i < std::size( consts ); ++i )
-	{
-		specializations[ i ] = { u32( i ), u32( i * sizeOfASpecConst ), u32( sizeOfASpecConst ) };
-	}
-	
-	return {
-		.mapEntryCount = (u32) std::size( specializations ),
-		.pMapEntries = std::data( specializations ),
-		.dataSize = std::size( consts ) * sizeOfASpecConst,
-		.pData = std::cbegin( consts )
-	};
-}
 
 struct vk_render_attachment
 {
@@ -189,39 +186,4 @@ VkPipeline VkMakeGfxPipeline(
 	VkDbgNameObj( vkGfxPipeline, vkDevice, name );
 
 	return vkGfxPipeline;
-}
-
-
-VkPipeline VkMakeComputePipeline(
-	VkDevice			vkDevice,
-	VkPipelineCache		vkPipelineCache,
-	VkPipelineLayout	vkPipelineLayout,
-	VkShaderModule		cs,
-	vk_specializations	consts,
-	const char* name,
-	const char* pEntryPointName = SHADER_ENTRY_POINT
-) {
-	std::vector<VkSpecializationMapEntry> specializations;
-	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
-
-	VkPipelineShaderStageCreateInfo stage = { 
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-		.stage = VK_SHADER_STAGE_COMPUTE_BIT,
-		.module = cs,
-	    .pName = pEntryPointName,
-	    .pSpecializationInfo = &specInfo,
-	};
-	
-	VkComputePipelineCreateInfo compPipelineInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-		.stage = stage,
-		.layout = vkPipelineLayout
-	};
-
-	VkPipeline pipeline = 0;
-	VK_CHECK( vkCreateComputePipelines( vkDevice, vkPipelineCache, 1, &compPipelineInfo, 0, &pipeline ) );
-
-	VkDbgNameObj( pipeline, vkDevice, name );
-
-	return pipeline;
 }

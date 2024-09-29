@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __METAPROGRAMMING__
+#define __METAPROGRAMMING__
 
 template<std::size_t N>
 struct to_tuple_t;
@@ -19,3 +20,8 @@ auto to_tuple( S&& s )
 {
 	return to_tuple_t<N>{}( std::forward<S>( s ) );
 }
+
+template<typename T>
+using deleter_unique_ptr = std::unique_ptr<T, std::function<void( T& )>>;
+
+#endif

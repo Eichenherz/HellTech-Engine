@@ -175,7 +175,8 @@ inline vk_queue_infos VkSelectDeviceQueues( VkPhysicalDevice vkGpu, VkSurfaceKHR
 	return queueInfos;
 }
 
-vk_queue VkCreateQueue( VkDevice device, u32 queueFamilyIndex )
+template<vk_queue_type QUEUE_TYPE>
+vk_queue<QUEUE_TYPE> VkCreateQueue( VkDevice device, u32 queueFamilyIndex )
 {
 	VkQueue q;
 	vkGetDeviceQueue( device, queueFamilyIndex, 0, &q );
@@ -259,9 +260,9 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 
 	VkLoadDeviceProcs( vkDevice );
 
-	vk_queue gfxQueue = VkCreateQueue( vkDevice, queueInfos.graphics.queueFamilyIndex );
-	vk_queue compQueue = VkCreateQueue( vkDevice, queueInfos.compute.queueFamilyIndex );
-	vk_queue transfQueue = VkCreateQueue( vkDevice, queueInfos.transfer.queueFamilyIndex );
+	vk_queue gfxQueue = VkCreateQueue<vk_queue_type::GRAPHICS>( vkDevice, queueInfos.graphics.queueFamilyIndex );
+	vk_queue compQueue = VkCreateQueue<vk_queue_type::COMPUTE>( vkDevice, queueInfos.compute.queueFamilyIndex );
+	vk_queue transfQueue = VkCreateQueue<vk_queue_type::TRANSFER>( vkDevice, queueInfos.transfer.queueFamilyIndex );
 
 	VmaAllocator vmaAllocator = VmaCreateAllocator( vkInst, vkGpu, vkDevice );
 
@@ -533,8 +534,250 @@ VkPipelineLayout vk_device::CreatePipelineLayout( VkDescriptorSetLayout setLayou
 	return layout;
 }
 
-void vk_device::QueueSubmit( const std::span<VkQueueSubmit2> submits )
+vk_swapchain vk_device::CreateSwapchain( VkSurfaceKHR vkSurf, VkFormat scDesiredFormat, vk_queue_type presentQueueType )
 {
-	// NOTE: queue submit has implicit host sync for trivial stuff
-	VK_CHECK( vkQueueSubmit2( this->gfxQueue, 1, &submitInfo, 0 ) );
+	VkSurfaceCapabilitiesKHR surfaceCaps;
+	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( this->gpu, vkSurf, &surfaceCaps ) );
+
+	VkCompositeAlphaFlagBitsKHR surfaceComposite =
+		( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR )
+		? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+		: ( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR )
+		? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+		: ( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR )
+		? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
+		: VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+
+	VkSurfaceFormatKHR scFormatAndColSpace = {};
+	{
+		u32 formatCount = 0;
+		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( this->gpu, vkSurf, &formatCount, 0 ) );
+		std::vector<VkSurfaceFormatKHR> formats( formatCount );
+		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( this->gpu, vkSurf, &formatCount, std::data( formats ) ) );
+
+		for( const VkSurfaceFormatKHR& surfFormat : formats )
+		{
+			if( surfFormat.format == scDesiredFormat )
+			{
+				scFormatAndColSpace = surfFormat;
+				break;
+			}
+		}
+		VK_CHECK( VK_INTERNAL_ERROR( !scFormatAndColSpace.format ) );
+	}
+
+	VkPresentModeKHR presentMode = VkPresentModeKHR( 0 );
+	{
+		u32 numPresentModes;
+		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( this->gpu, vkSurf, &numPresentModes, 0 ) );
+		std::vector<VkPresentModeKHR> presentModes( numPresentModes );
+		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( this->gpu, vkSurf, &numPresentModes, std::data( presentModes ) ) );
+
+		constexpr VkPresentModeKHR desiredPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+		for( u32 j = 0; j < numPresentModes; ++j )
+		{
+			if( presentModes[ j ] == desiredPresentMode )
+			{
+				presentMode = desiredPresentMode;
+				break;
+			}
+		}
+		VK_CHECK( VK_INTERNAL_ERROR( !presentMode ) );
+	}
+
+
+	u32 scImgCount = VK_SWAPCHAIN_MAX_IMG_ALLOWED;
+	assert( ( scImgCount > surfaceCaps.minImageCount ) && ( scImgCount < surfaceCaps.maxImageCount ) );
+	assert( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
+			( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
+
+	VkImageUsageFlags scImgUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+	VK_CHECK( VK_INTERNAL_ERROR( ( surfaceCaps.supportedUsageFlags & scImgUsage ) != scImgUsage ) );
+
+	assert( surfaceCaps.maxImageArrayLayers >= 1 );
+
+	u32 queueFamIdx = -1;
+	if( presentQueueType == vk_queue_type::GRAPHICS )
+	{
+		queueFamIdx = this->graphicsQueue.index;
+	}
+	else if( presentQueueType == vk_queue_type::COMPUTE )
+	{
+		queueFamIdx = this->computeQueue.index;
+	}
+	else
+	{
+		assert( false && "Wrong queue type" );
+	}
+
+	VkSwapchainCreateInfoKHR scInfo = {
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = vkSurf,
+		.minImageCount = scImgCount,
+		.imageFormat = scFormatAndColSpace.format,
+		.imageColorSpace = scFormatAndColSpace.colorSpace,
+		.imageExtent = surfaceCaps.currentExtent,
+		.imageArrayLayers = 1,
+		.imageUsage = scImgUsage,
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 1,
+		.pQueueFamilyIndices = &queueFamIdx,
+		.preTransform = surfaceCaps.currentTransform,
+		.compositeAlpha = surfaceComposite,
+		.presentMode = presentMode,
+		.clipped = VK_TRUE,
+		.oldSwapchain = 0,
+	};
+
+	VkImageFormatProperties scImageProps = {};
+	VK_CHECK( vkGetPhysicalDeviceImageFormatProperties( this->gpu,
+														scInfo.imageFormat,
+														VK_IMAGE_TYPE_2D,
+														VK_IMAGE_TILING_OPTIMAL,
+														scInfo.imageUsage,
+														scInfo.flags,
+														&scImageProps ) );
+
+
+	vk_swapchain sc = {};
+	VK_CHECK( vkCreateSwapchainKHR( this->device, &scInfo, 0, &sc.hndl ) );
+
+	u32 scImgsNum = 0;
+	VK_CHECK( vkGetSwapchainImagesKHR( this->device, sc.hndl, &scImgsNum, 0 ) );
+	VK_CHECK( VK_INTERNAL_ERROR( !( scImgsNum == scInfo.minImageCount ) ) );
+	VK_CHECK( vkGetSwapchainImagesKHR( this->device, sc.hndl, &scImgsNum, sc.imgs ) );
+
+	for( u64 i = 0; i < scImgsNum; ++i )
+	{
+		sc.imgViews[ i ] = VkMakeImgView( 
+			this->device, sc.imgs[ i ], scInfo.imageFormat, 0, 1, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
+	}
+
+	sc.width = scInfo.imageExtent.width;
+	sc.height = scInfo.imageExtent.height;
+	sc.imgCount = scInfo.minImageCount;
+	sc.imgFormat = scInfo.imageFormat;
+
+	return sc;
+}
+
+u32 vk_device::AcquireNextSwapcahinImage( VkSemaphore acquireScImgSema, u64 timeout = UINT64_MAX )
+{
+	u32 imgIdx;
+	VK_CHECK( vkAcquireNextImageKHR( this->device, this->swapchain.hndl, timeout, acquireScImgSema, 0, &imgIdx ) );
+	return imgIdx;
+}
+
+VkSemaphore vk_device::CreateVkSemaphore( bool isTimeline )
+{
+	constexpr VkSemaphoreTypeCreateInfo timelineInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+		.initialValue = 0
+	};
+	VkSemaphoreCreateInfo semaInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = isTimeline ? &timelineInfo : 0 };
+
+	VkSemaphore sema;
+	VK_CHECK( vkCreateSemaphore( this->device, &semaInfo, 0, &sema ) );
+	return sema;
+}
+
+void vk_device::WaitSemaphores( std::initializer_list<VkSemaphore> semas, std::initializer_list<u64> values, u64 maxWait )
+{
+	if( std::size( semas ) != std::size( values ) )
+	{
+		assert( false && "Semas must equal values" );
+	}
+	VkSemaphoreWaitInfo waitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+		.semaphoreCount = ( u32 ) std::size( semas ),
+		.pSemaphores = std::data( semas ),
+		.pValues = std::data( values )
+	};
+	VkResult waitResult = vkWaitSemaphores( this->device, &waitInfo, maxWait );
+	VK_CHECK( VK_INTERNAL_ERROR( waitResult > VK_TIMEOUT ) );
+}
+
+// TODO: where to move this?
+#define HTVK_NO_SAMPLER_REDUCTION VK_SAMPLER_REDUCTION_MODE_MAX_ENUM
+VkSampler vk_device::CreateSampler(
+	VkSamplerReductionMode	reductionMode = HTVK_NO_SAMPLER_REDUCTION,
+	VkFilter				filter = VK_FILTER_LINEAR,
+	VkSamplerAddressMode	addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+	VkSamplerMipmapMode		mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST
+) {
+	VkSamplerReductionModeCreateInfo reduxInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO, .reductionMode = reductionMode };
+
+	VkSamplerCreateInfo samplerInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, 
+		.pNext = ( reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX_ENUM ) ? 0 : &reduxInfo,
+		.magFilter = filter,
+		.minFilter = filter,
+		.mipmapMode = mipmapMode,
+		.addressModeU = addressMode,
+		.addressModeV = addressMode,
+		.addressModeW = addressMode,
+		.maxAnisotropy = 1.0f,
+		.minLod = 0,
+		.maxLod = VK_LOD_CLAMP_NONE,
+		.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+		.unnormalizedCoordinates = VK_FALSE,
+	};
+
+	VkSampler sampler;
+	VK_CHECK( vkCreateSampler( this->device, &samplerInfo, 0, &sampler ) );
+	return sampler;
+}
+using vk_specializations = std::initializer_list<u32>;
+
+inline VkSpecializationInfo VkMakeSpecializationInfo( 
+	std::vector<VkSpecializationMapEntry>& specializations, 
+	const vk_specializations& consts 
+) {
+	specializations.resize( std::size( consts ) );
+	u64 sizeOfASpecConst = sizeof( *std::cbegin( consts ) );
+	for( u64 i = 0; i < std::size( consts ); ++i )
+	{
+		specializations[ i ] = { u32( i ), u32( i * sizeOfASpecConst ), u32( sizeOfASpecConst ) };
+	}
+
+	return {
+		.mapEntryCount = (u32) std::size( specializations ),
+		.pMapEntries = std::data( specializations ),
+		.dataSize = std::size( consts ) * sizeOfASpecConst,
+		.pData = std::cbegin( consts )
+	};
+}
+
+VkPipeline vk_device::CreateComputePipeline(
+	VkShaderModule cs, 
+	vk_specializations consts, 
+	const char * name, 
+	const char * entryPointName
+) {
+	std::vector<VkSpecializationMapEntry> specializations;
+	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
+
+	VkPipelineShaderStageCreateInfo stage = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		.stage = VK_SHADER_STAGE_COMPUTE_BIT,
+		.module = cs,
+		.pName = entryPointName,
+		.pSpecializationInfo = &specInfo,
+	};
+
+	VkComputePipelineCreateInfo compPipelineInfo = { 
+		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		.stage = stage,
+		.layout = this->de
+	};
+
+	VkPipeline pipeline = 0;
+	VK_CHECK( vkCreateComputePipelines( vkDevice, vkPipelineCache, 1, &compPipelineInfo, 0, &pipeline ) );
+
+	VkDbgNameObj( pipeline, vkDevice, name );
+
+	return pipeline;
 }

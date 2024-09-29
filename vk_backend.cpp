@@ -43,7 +43,6 @@ namespace DXPacked = DirectX::PackedVector;
 #include "vk_instance.hpp"
 #include "vk_device.hpp"
 #include "vk_descriptors.hpp"
-#include "vk_swapchain.hpp"
 
 
 #include "vk_pipelines.hpp"
@@ -91,19 +90,6 @@ inline VkSurfaceKHR VkMakeSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd
 #error Must provide OS specific Surface
 #endif  // VK_USE_PLATFORM_WIN32_KHR
 
-
-// TODO:
-struct vk_renderer_config
-{
-	static constexpr VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	static constexpr VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-	static constexpr VkFormat		desiredSwapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
-	static constexpr u8             MAX_FRAMES_ALLOWED = 2;
-
-	u16             renderWidth;
-	u16             rednerHeight;
-	u8              maxAllowedFramesInFlight = 2;
-};
 
 import r_dxc_compiler;
 
@@ -229,41 +215,6 @@ inline VkImageCreateInfo VkGetImageInfoFromMetadata( const image_metadata& meta,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
-}
-
-
-#define HTVK_NO_SAMPLER_REDUCTION VK_SAMPLER_REDUCTION_MODE_MAX_ENUM
-
-// TODO: AddrMode ?
-inline VkSampler VkMakeSampler(
-	VkDevice				vkDevice,
-	VkSamplerReductionMode	reductionMode = HTVK_NO_SAMPLER_REDUCTION,
-	VkFilter				filter = VK_FILTER_LINEAR,
-	VkSamplerAddressMode	addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-	VkSamplerMipmapMode		mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST
-) {
-	VkSamplerReductionModeCreateInfo reduxInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO, .reductionMode = reductionMode };
-
-	VkSamplerCreateInfo samplerInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, 
-		.pNext = ( reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX_ENUM ) ? 0 : &reduxInfo,
-		.magFilter = filter,
-		.minFilter = filter,
-		.mipmapMode = mipmapMode,
-		.addressModeU = addressMode,
-		.addressModeV = addressMode,
-		.addressModeW = addressMode,
-		.maxAnisotropy = 1.0f,
-		.minLod = 0,
-		.maxLod = VK_LOD_CLAMP_NONE,
-		.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-		.unnormalizedCoordinates = VK_FALSE,
-	};
-
-	VkSampler sampler;
-	VK_CHECK( vkCreateSampler( vkDevice, &samplerInfo, 0, &sampler ) );
-	return sampler;
 }
 
 
@@ -909,9 +860,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 				VK_IMAGE_ASPECT_COLOR_BIT ) );
 
 			hndl64<vk_image> hImg = textures.emplace( img );
-			
-			//u16 imgDescriptor = VkAllocDescriptorIdx( 
-			//	dc.device, VkDescriptorImageInfo{ 0, img.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
 
 			copyCmds.push_back([ & ] () {
 					
@@ -942,7 +890,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	VkCmdPipelineImgLayoutTransitionBarriers( cmdBuff, imageInitBarriers );
 }
 
-// TODO: 
 struct render_context
 {
 	VkPipeline   gfxZPrepass;
@@ -967,9 +914,6 @@ struct render_context
 	VkSampler		quadMinSampler;
 	VkSampler		pbrSampler;
 
-	static constexpr VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	static constexpr VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-
 	render_context() = default;
 	explicit render_context( const vk_device& vkDc, const vk_descriptor_manager& descMngr );
 };
@@ -980,7 +924,7 @@ render_context::render_context( const vk_device& vkDc, const vk_descriptor_manag
 	pbrSampler = VkMakeSampler( vkDc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 
 	{
-		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", vkDc.device );
+		spv_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", vkDc.device );
 		gfxZPrepass = VkMakeGfxPipeline(
 			vkDc.device, descMngr.globalPipelineLayout, vertZPre.module, 0, 0, desiredDepthFormat, {}, "Pipeline_Gfx_ZPrepass" );
 		vkDestroyShaderModule( vkDc.device, vertZPre.module, 0 );
@@ -1086,26 +1030,15 @@ struct virtual_frame
 	vk_buffer		frameData;
 	vk_gpu_timer frameTimer;
 	VkCommandBuffer cmdBuff; // TODO: use vk_command_buffer
-	VkSemaphore		canGetImgSema; // TODO: place somewhere else ?
-	VkSemaphore		canPresentSema;
-	u16 frameDescIdx;
+	VkSemaphore		acquireSwapchainImgSema;
+	VkSemaphore		queueSubmittedSema;
 };
 
 inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32 bufferSize )
 {
 	virtual_frame vrtFrame = {};
 
-	VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = vrtFrame.cmdPool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1,
-	};
-	VK_CHECK( vkAllocateCommandBuffers( vkDevice.device, &cmdBuffAllocInfo, &vrtFrame.cmdBuff ) );
-
-	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-	VK_CHECK( vkCreateSemaphore( vkDevice.device, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
-	VK_CHECK( vkCreateSemaphore( vkDevice.device, &semaInfo, 0, &vrtFrame.canPresentSema ) );
+	
 
 	VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 	vrtFrame.frameData = VkCreateAllocBindBuffer(
@@ -1123,45 +1056,40 @@ inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32
 	return vrtFrame;
 }
 
+struct vk_renderer_config
+{
+	static constexpr VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
+	static constexpr VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+	static constexpr VkFormat		desiredSwapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
+	static constexpr u8             maxAllowedFramesInFlight = 2;
+	static constexpr u8             maxSwapchianImages = 3;
+
+	u16             renderWidth;
+	u16             rednerHeight;
+	u8              framesInFlight = 2;
+};
 
 struct vk_backend
 {
+	static constexpr vk_renderer_config config = {};
+
+	vk_device pDevice;
+	vk_descriptor_manager descManager;
+	virtual_frame	vrtFrames[ config.framesInFlight ];
+
 	u64 dllHandle;
 	VkInstance inst;
 	VkDebugUtilsMessengerEXT dbgMsg;
 	VkSurfaceKHR surface;
 
-	vk_device pDevice;
-	vk_swapchain swapchain;
-
-	virtual_frame	vrtFrames[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 	VkSemaphore     timelineSema;
 	u64				vFrameIdx;
-	u8				framesInFlight = VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 
 	const virtual_frame& GetNextFrame( u64 currentFrameIdx ) const
 	{
 		u64 vrtFrameIdx = currentFrameIdx % std::size( vrtFrames );
 		return vrtFrames[ vrtFrameIdx ];
 	}
-
-
-	handle_map<vk_buffer> bufferMap;
-	handle_map<vk_image> imageMap;
-	vk_descriptor_manager descManager;
-
-	hndl64<vk_buffer> hDrawCount;
-	hndl64<vk_buffer> hDrawCountDebug;
-	hndl64<vk_buffer> hAvgLum;
-	hndl64<vk_buffer> hGlobals;
-	hndl64<vk_buffer> hGlobalSyncCounter;
-	hndl64<vk_buffer> hDepthAtomicCounter;
-	hndl64<vk_buffer> hAtomicCounter;
-	hndl64<vk_buffer> hDispatchCmd0;
-	hndl64<vk_buffer> hDispatchCmd1;
-	hndl64<vk_buffer> hMeshletCount;
-	hndl64<vk_buffer> hMergedIdxCount;
-	hndl64<vk_buffer> hMergedDrawCout;
 
 	render_context rndCtx;
 
@@ -1176,22 +1104,16 @@ vk_backend::vk_backend()
 	std::tie( this->dllHandle, this->inst, this->dbgMsg ) = VkMakeInstance();
 	surface = VkMakeSurface( inst, hInst, hWnd );
 
-	this->pDevice = VkMakeDeviceContext( inst, surface );
-	swapchain = VkMakeSwapchain( deviceCtx.device, deviceCtx.gpu, surface, deviceCtx.gfxQueueIdx, VK_FORMAT_B8G8R8A8_UNORM );
+	pDevice = VkMakeDeviceContext( inst, surface );
+	pDevice.swapchain = pDevice.CreateSwapchain( surface, config.desiredSwapchainFormat, vk_queue_type::GRAPHICS );
+	descManager = pDevice.CreateDescriptorManagerBindless();
+	timelineSema = pDevice.CreateVkSemaphore( true );
 
-	descManager = VkMakeDescriptorManager( deviceCtx.device, deviceCtx.gpuProps );
-
-	for( u64 vfi = 0; vfi < framesInFlight; ++vfi )
+	for( u64 vfi = 0; vfi < config.framesInFlight; ++vfi )
 	{
 		vrtFrames[ vfi ] = VkCreateVirtualFrame( deviceCtx, u32( -1 ) );
 	}
-	VkSemaphoreTypeCreateInfo timelineInfo = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = vFrameIdx = 0
-	};
-	VkSemaphoreCreateInfo timelineSemaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timelineInfo };
-	VK_CHECK( vkCreateSemaphore( deviceCtx.device, &timelineSemaInfo, 0, &timelineSema ) );
+	
 
 	{
 		avgLumBuff = VkCreateAllocBindBuffer(
@@ -2018,55 +1940,6 @@ VkMakeAttachemntInfo(
 	};
 }
 
-inline void VkWaitSemaphores(
-	VkDevice vkDevice, 
-	std::initializer_list<VkSemaphore> semas, 
-	std::initializer_list<u64> values, 
-	u64 maxWait = UINT64_MAX 
-) {
-	if( std::size( semas ) != std::size( values ) )
-	{
-		assert( false && "Semas must equal values" );
-	}
-	VkSemaphoreWaitInfo waitInfo = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-		.semaphoreCount = ( u32 ) std::size( semas ),
-		.pSemaphores = std::data( semas ),
-		.pValues = std::data( values )
-	};
-	VkResult waitResult = vkWaitSemaphores( vkDevice, &waitInfo, maxWait );
-	VK_CHECK( VK_INTERNAL_ERROR( waitResult > VK_TIMEOUT ) );
-}
-
-// TODO: use VkSubmitInfo2 ?
-inline VkSubmitInfo VkMakeSubmitInfo(
-	std::initializer_list<VkCommandBuffer> cmdBuffers,
-	std::initializer_list<VkSemaphore> waitSemas,
-	std::initializer_list<VkSemaphore> signalSemas,
-	std::initializer_list<u64> signalValues,
-	VkPipelineStageFlags waitDstStageMsk
-) {
-	VkTimelineSemaphoreSubmitInfo timelineInfo = {
-		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-		.signalSemaphoreValueCount = std::size( signalValues ),
-		.pSignalSemaphoreValues = std::data( signalValues )
-	};
-
-	VkSubmitInfo submitInfo = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.pNext = &timelineInfo,
-		.waitSemaphoreCount = ( u32 ) std::size( waitSemas ),
-		.pWaitSemaphores = std::data( waitSemas ),
-		.pWaitDstStageMask = &waitDstStageMsk,
-		.commandBufferCount = ( u32 ) std::size( cmdBuffers ),
-		.pCommandBuffers = std::data( cmdBuffers ),
-		.signalSemaphoreCount = ( u32 ) std::size( signalSemas ),
-		.pSignalSemaphores = std::data( signalSemas )
-	};
-
-	return submitInfo;
-}
-
 void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	using namespace DirectX;
@@ -2074,12 +1947,9 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	u64 currentFrameIdx = this->vFrameIdx++;
 	const virtual_frame& thisVFrame = GetNextFrame( currentFrameIdx );
 
-	VkWaitSemaphores( this->pDevice.device, { this->timelineSema }, { currentFrameIdx }, UINT64_MAX );
+	pDevice.WaitSemaphores( { this->timelineSema }, { currentFrameIdx }, UINT64_MAX );
 	
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
-
-	u32 imgIdx;
-	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 
 	// TODO: no copy
 	global_data globs = {
@@ -2352,13 +2222,6 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			frameData.mainProjView,
 			{ 0,boxTrisVertexCount } );
 
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff,
-			VK_PIPELINE_BIND_POINT_COMPUTE,
-			vk.descMngr.globalPipelineLayout,
-			0, 1,
-			&vk.descMngr.set, 0, 0 );
-
 		DepthPyramidMultiPass(
 			thisVFrame.cmdBuff,
 			rndCtx.compHiZPipeline,
@@ -2493,6 +2356,8 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			colorTarget,
 			frameData.elapsedSeconds );
 
+		
+
 		FinalCompositionPass( thisVFrame.cmdBuff,
 							  rndCtx.compTonemapPipe,
 							  colorTarget,
@@ -2544,18 +2409,10 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 
 	VkSubmitInfo submitInfo = VkMakeSubmitInfo(
-		{ thisVFrame.cmdBuff }, { thisVFrame.canGetImgSema },
-		{ thisVFrame.canPresentSema, rndCtx.timelineSema }, { 0, rndCtx.vFrameIdx }, waitDstStageMsk );
+		{ thisVFrame.cmdBuff }, { thisVFrame.acquireSwapchainImgSema },
+		{ thisVFrame.queueSubmittedSema, rndCtx.timelineSema }, { 0, rndCtx.vFrameIdx }, waitDstStageMsk );
 
-	VkPresentInfoKHR presentInfo = { 
-		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &thisVFrame.canPresentSema,
-		.swapchainCount = 1,
-		.pSwapchains = &sc.swapchain,
-		.pImageIndices = &imgIdx
-	};
-	VK_CHECK( vkQueuePresentKHR( dc.gfxQueue, &presentInfo ) );
+	
 
 }
 
