@@ -1,13 +1,6 @@
 #pragma once
 
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
-// TODO: autogen custom vulkan ?
-#include <vulkan.h>
-// TODO: header + .cpp ?
-// TODO: revisit this
+#include "vk_common.hpp"
 #include "vk_procs.h"
 
 #include "sys_os_api.h"
@@ -109,31 +102,11 @@ inline void VkCmdPipelineFlushCacheAndPerformImgLayoutTransitionBarriers(
 	const std::span<VkMemoryBarrier2> memBarriers,
 	const std::span<VkImageMemoryBarrier2> imgBarriers
 ) {
-	VkDependencyInfo dependency = { 
+	VkDependencyInfo dependency = {
 		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.memoryBarrierCount = std::size( memBarriers ),
+		.memoryBarrierCount = ( u32 ) std::size( memBarriers ),
 		.pMemoryBarriers = std::data( memBarriers ),
-		.imageMemoryBarrierCount = std::size( imgBarriers ),
-		.pImageMemoryBarriers = std::data( imgBarriers ),
-	};
-	vkCmdPipelineBarrier2( cmdBuff, &dependency );
-}
-
-inline void VkCmdPipelineFlushCacheBarriers( VkCommandBuffer cmdBuff, const std::span<VkMemoryBarrier2> memBarriers )
-{
-	VkDependencyInfo dependency = { 
-		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.memoryBarrierCount = std::size( memBarriers ),
-		.pMemoryBarriers = std::data( memBarriers ),
-	};
-	vkCmdPipelineBarrier2( cmdBuff, &dependency );
-}
-
-inline void VkCmdPipelineImgLayoutTransitionBarriers( VkCommandBuffer cmdBuff, const std::span<VkImageMemoryBarrier2> imgBarriers)
-{
-	VkDependencyInfo dependency = { 
-		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.imageMemoryBarrierCount = std::size( imgBarriers ),
+		.imageMemoryBarrierCount = ( u32 ) std::size( imgBarriers ),
 		.pImageMemoryBarriers = std::data( imgBarriers ),
 	};
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );

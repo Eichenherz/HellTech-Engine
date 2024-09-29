@@ -1,14 +1,6 @@
 #pragma once
 
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
-// TODO: autogen custom vulkan ?
-#include <vulkan.h>
-// TODO: header + .cpp ?
-// TODO: revisit this
-#include "vk_procs.h"
+#include "vk_common.hpp"
 
 #include "sys_os_api.h"
 
@@ -107,10 +99,10 @@ VkPipeline VkMakeGfxPipeline(
 		.scissorCount = 1
 	};
 
-	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-	VkPipelineDynamicStateCreateInfo dynamicStateInfo = { 
+	constexpr VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkPipelineDynamicStateCreateInfo dynamicStateInfo = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-		.dynamicStateCount = std::size( dynamicStates ),
+		.dynamicStateCount = ( u32 ) std::size( dynamicStates ),
 		.pDynamicStates = dynamicStates
 	};
 
@@ -168,7 +160,7 @@ VkPipeline VkMakeGfxPipeline(
 	
 	VkPipelineRenderingCreateInfo renderingInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-		.colorAttachmentCount = desiredColorFormat ? 1 : 0,
+		.colorAttachmentCount = desiredColorFormat ? 1u : 0u,
 		.pColorAttachmentFormats = desiredColorFormat,
 		.depthAttachmentFormat = desiredDepthFormat
 	};

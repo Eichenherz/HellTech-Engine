@@ -101,8 +101,8 @@ void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vector<u32
 	idxData = { std::begin( triangles ),std::end( triangles ) };
 
 	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * std::exp2( numIters ) );
-	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
-	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
+	idxCache.reserve( size_t( 3u * ICOSAHEDRON_FACE_NUM * exp2( 2u * numIters ) ) );
+	idxData.reserve( size_t( 3u * ICOSAHEDRON_FACE_NUM * exp2( 2u * numIters ) ) );
 
 
 	for( u64 i = 0; i < numIters; ++i )
@@ -121,7 +121,7 @@ void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vector<u32
 			XMStoreFloat3( &m12, XMVector3Normalize( XMVectorAdd( v1, v2 ) ) );
 			XMStoreFloat3( &m20, XMVector3Normalize( XMVectorAdd( v2, v0 ) ) );
 
-			u32 idxOffset = std::size( vtxCache ) - 1;
+			u32 idxOffset = ( u32 ) std::size( vtxCache ) - 1u;
 
 			vtxCache.push_back( m01 );
 			vtxCache.push_back( m12 );

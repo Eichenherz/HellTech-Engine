@@ -1,21 +1,17 @@
 #pragma once
 
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
-// TODO: autogen custom vulkan ?
-#include <vulkan.h>
+#include "vk_common.hpp"
 
 #include "vk_mem_alloc.h"
 
-#include "core_types.h"
-
-#include "vk_utils.hpp"
-
 constexpr u64 MAX_MIP_LEVELS = 12;
 
-// TODO: keep allocation in buffer ?
+constexpr VkBufferUsageFlags STORAGE_INDIRECT = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+constexpr VkBufferUsageFlags STORAGE_INDIRECT_DST = STORAGE_INDIRECT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+constexpr VkBufferUsageFlags STORAGE_INDIRECT_DST_BDA = STORAGE_INDIRECT_DST | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+constexpr VkBufferUsageFlags STORAGE_DST_BDA =
+VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
 struct vk_buffer
 {
 	VkBuffer		hndl;

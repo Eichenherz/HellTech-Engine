@@ -1,11 +1,4 @@
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
-#include <vulkan.h>
-// TODO: header + .cpp ?
-// TODO: revisit this
-#include "vk_procs.h"
+#include "vk_common.hpp"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -36,12 +29,6 @@
 
 #endif
 
-#include "r_vk_resources.hpp"
-#include "vk_utils.hpp"
-#include "r_vk_sync.hpp"
-#include "r_vk_pipelines.hpp"
-#include "r_vk_shaders.hpp"
-
 #include <DirectXPackedVector.h>
 
 namespace DXPacked = DirectX::PackedVector;
@@ -50,19 +37,25 @@ namespace DXPacked = DirectX::PackedVector;
 #include "core_lib_api.h"
 #include "math_util.hpp"
 
+#include "vk_resources.hpp"
+#include "vk_sync.hpp"
+#include "vk_utils.hpp"
 #include "vk_instance.hpp"
 #include "vk_device.hpp"
 #include "vk_descriptors.hpp"
 #include "vk_swapchain.hpp"
 
+
+#include "vk_pipelines.hpp"
+#include "vk_shaders.hpp"
 // TODO: golbal file
 //====================CONSTS====================//
 constexpr u64 VK_MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
-constexpr u32 NOT_USED_IDX = -1;
+constexpr u32 NOT_USED_IDX = -1; // TODO: DUPLIACTE 
 constexpr u32 OBJ_CULL_WORKSIZE = 64;
 constexpr u32 MLET_CULL_WORKSIZE = 256;
-constexpr u32 VK_API_VERSION = VK_API_VERSION_1_3;
-constexpr u32 APP_VERSION = 1;
+
+
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
@@ -72,8 +65,7 @@ constexpr u32 APP_VERSION = 1;
 //==============CONSTEXPR_SWITCH==============//
 constexpr bool multiPassDepthPyramid = 1;
 static_assert( multiPassDepthPyramid );
-// TODO: enable gfx debug outside of VS Debug
-constexpr bool vkValidationLayerFeatures = 1;
+
 //constexpr bool worldLeftHanded = 1;
 
 constexpr bool dbgDraw = true;
@@ -105,10 +97,10 @@ inline VkSurfaceKHR VkMakeSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd
 // TODO:
 struct vk_renderer_config
 {
-	static constexpr u8             MAX_FRAMES_ALLOWED = 2;
 	static constexpr VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
 	static constexpr VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 	static constexpr VkFormat		desiredSwapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
+	static constexpr u8             MAX_FRAMES_ALLOWED = 2;
 
 	u16             renderWidth;
 	u16             rednerHeight;
@@ -326,7 +318,7 @@ inline auto ImguiPreparePipeline( VkDevice vkDevice, VkSampler fontSampler )
 	VkDescriptorSetLayoutCreateInfo descSetInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
-		.bindingCount = std::size( descSetBindings ),
+		.bindingCount = ( u32 ) std::size( descSetBindings ),
 		.pBindings = descSetBindings
 	};
 
@@ -362,7 +354,7 @@ inline auto ImguiPreparePipeline( VkDevice vkDevice, VkSampler fontSampler )
 
 	VkDescriptorUpdateTemplateCreateInfo templateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO,
-		.descriptorUpdateEntryCount = std::size( entries ),
+		.descriptorUpdateEntryCount = ( u32 ) std::size( entries ),
 		.pDescriptorUpdateEntries = std::data( entries ),
 		.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR,
 		.descriptorSetLayout = retval.descSetLayout,
@@ -928,16 +920,7 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 			//	dc.device, VkDescriptorImageInfo{ 0, img.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR }, vk.descMngr );
 
 			copyCmds.push_back([ & ] () {
-					VkBufferImageCopy imgCopyRegion = {
-						.bufferOffset = meta.texBinRange.offset,
-						.imageSubresource = {
-							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
-							.imageOffset = {},
-							.imageExtent = { u32( img.width ), u32( img.height ),1 }
-					};
-
-					vkCmdCopyBufferToImage( 
-						cmdBuff, stagingBuff.hndl, img.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
+					
 				}
 			);
 			
@@ -965,20 +948,6 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	VkCmdPipelineImgLayoutTransitionBarriers( cmdBuff, imageInitBarriers );
 }
 
-// TODO:
-constexpr VkBufferUsageFlags STORAGE_INDIRECT = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-constexpr VkBufferUsageFlags STORAGE_INDIRECT_DST = STORAGE_INDIRECT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-constexpr VkBufferUsageFlags STORAGE_INDIRECT_DST_BDA = STORAGE_INDIRECT_DST | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-constexpr VkBufferUsageFlags STORAGE_DST_BDA =
-VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-
-void VkBeginCommandBuffer( VkCommandBuffer hndl )
-{
-	VkCommandBufferBeginInfo cmdBufBegInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT 
-	};
-	vkBeginCommandBuffer( hndl, &cmdBufBegInfo );
-}
 // TODO: 
 struct render_context
 {
@@ -1123,8 +1092,8 @@ struct virtual_frame
 	vk_buffer		frameData;
 	vk_gpu_timer frameTimer;
 	VkCommandPool	cmdPool;
-	VkCommandBuffer cmdBuff;
-	VkSemaphore		canGetImgSema;
+	VkCommandBuffer cmdBuff; // TODO: use vk_command_buffer
+	VkSemaphore		canGetImgSema; // TODO: place somewhere else ?
 	VkSemaphore		canPresentSema;
 	u16 frameDescIdx;
 };
@@ -1619,7 +1588,6 @@ DebugDrawPass(
 	vkCmdEndRendering( cmdBuff );
 }
 
-// TODO: redesign
 inline static void
 DrawIndexedIndirectPass(
 	VkCommandBuffer			cmdBuff,
@@ -2076,7 +2044,7 @@ inline void VkWaitSemaphores(
 	}
 	VkSemaphoreWaitInfo waitInfo = {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-		.semaphoreCount = std::size( semas ),
+		.semaphoreCount = ( u32 ) std::size( semas ),
 		.pSemaphores = std::data( semas ),
 		.pValues = std::data( values )
 	};
@@ -2101,12 +2069,12 @@ inline VkSubmitInfo VkMakeSubmitInfo(
 	VkSubmitInfo submitInfo = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.pNext = &timelineInfo,
-		.waitSemaphoreCount = std::size( waitSemas ),
+		.waitSemaphoreCount = ( u32 ) std::size( waitSemas ),
 		.pWaitSemaphores = std::data( waitSemas ),
 		.pWaitDstStageMask = &waitDstStageMsk,
-		.commandBufferCount = std::size( cmdBuffers ),
+		.commandBufferCount = ( u32 ) std::size( cmdBuffers ),
 		.pCommandBuffers = std::data( cmdBuffers ),
-		.signalSemaphoreCount = std::size( signalSemas ),
+		.signalSemaphoreCount = ( u32 ) std::size( signalSemas ),
 		.pSignalSemaphores = std::data( signalSemas )
 	};
 
@@ -2614,5 +2582,3 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 #undef HTVK_NO_SAMPLER_REDUCTION
 #undef VK_APPEND_DESTROYER
 #undef VK_CHECK
-
-

@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef __CORE_TYPES__
+#define __CORE_TYPES__
+
 using u8 = unsigned __int8;
 using u16 = unsigned __int16;
 using u32 = unsigned __int32;
@@ -17,3 +20,7 @@ struct range
 };
 
 constexpr u32 INVALID_IDX = -1;
+
+#endif // !__CORE_TYPES__
+
+

@@ -5,7 +5,7 @@
 #include <span>
 // TODO: build system should update it
 #include "vk_mem_alloc.h"
-#include "r_vk_resources.hpp"
+#include "vk_resources.hpp"
 #include "vk_swapchain.hpp"
 #include "vk_descriptors.hpp"
 

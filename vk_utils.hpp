@@ -1,14 +1,9 @@
 #pragma once
 
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
-// TODO: autogen custom vulkan ?
-#include <vulkan.h>
-// TODO: header + .cpp ?
-// TODO: revisit this
-#include "vk_procs.h"
+#ifndef __VK_UTILS__
+#define __VK_UTILS__
+
+#include "vk_common.hpp"
 #include "sys_os_api.h"
 
 #include <assert.h>
@@ -252,8 +247,8 @@ inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& 
 
 	VkMemoryBarrier2 readTimestampsBarrier[] = {
 		VkMakeMemoryBarrier2(
-		VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-		VK_ACCESS_2_HOST_READ_BIT, VK_PIPELINE_STAGE_2_HOST_BIT )
+			VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_HOST_READ_BIT, VK_PIPELINE_STAGE_2_HOST_BIT )
 	};
 
 	VkCmdPipelineFlushCacheBarriers( cmdBuff, readTimestampsBarrier );
@@ -262,8 +257,8 @@ inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& 
 	u64 timestampBeg = pTimestamps[ 0 ];
 	u64 timestampEnd = pTimestamps[ 1 ];
 
-	constexpr float nsToMs = 1e-6;
-	return ( timestampEnd - timestampBeg ) / vkTimer.timestampPeriod * nsToMs;
+	constexpr float NS_TO_MS = 1e-6f;
+	return ( timestampEnd - timestampBeg ) / vkTimer.timestampPeriod * NS_TO_MS;
 }
 
 struct vk_time_section
@@ -326,3 +321,5 @@ VkMakeImgView(
 
 	return view;
 }
+
+#endif // !__VK_UTILS__

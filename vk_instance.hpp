@@ -31,8 +31,8 @@ constexpr const char* LAYERS[] =
 
 struct vk_instance
 {
-	u64 vkDllHandle;
-	VkInstance inst;
+	u64 dll;
+	VkInstance hndl;
 	VkDebugUtilsMessengerEXT dbgMsg;
 };
 
@@ -102,16 +102,16 @@ inline static std::tuple<u64, VkInstance, VkDebugUtilsMessengerEXT> VkMakeInstan
 	VkInstanceCreateInfo instInfo = {
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 		.pApplicationInfo = &appInfo,
-		.enabledLayerCount = std::size( LAYERS ),
+		.enabledLayerCount = ( u32 ) std::size( LAYERS ),
 		.ppEnabledLayerNames = LAYERS,
-		.enabledExtensionCount = std::size( ENABLED_INST_EXTS ),
+		.enabledExtensionCount = ( u32 ) std::size( ENABLED_INST_EXTS ),
 		.ppEnabledExtensionNames = ENABLED_INST_EXTS
 	};
 #ifdef _VK_DEBUG_
 
 	VkValidationFeaturesEXT vkValidationFeatures = {
 		.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
-		.enabledValidationFeatureCount = std::size( enabledValidationFeats ),
+		.enabledValidationFeatureCount = ( u32 ) std::size( enabledValidationFeats ),
 		.pEnabledValidationFeatures = enabledValidationFeats
 	};
 

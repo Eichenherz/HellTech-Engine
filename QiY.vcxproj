@@ -266,7 +266,6 @@
     <ClCompile Include="bcn_compressor.cpp" />
     <ClCompile Include="filesystem.ixx" />
     <ClCompile Include="vk_device.cpp" />
-    <ClCompile Include="vk_resources.cpp" />
     <ClInclude Include="geometry.hpp">
       <FileType>Document</FileType>
     </ClInclude>
@@ -280,7 +279,7 @@
     <ClCompile Include="miniz.c" />
     <ClCompile Include="r_dxc_compiler.ixx" />
     <ClCompile Include="r_dx12_backend.cpp" />
-    <ClCompile Include="r_vk_backend.cpp" />
+    <ClCompile Include="vk_backend.cpp" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
@@ -300,6 +299,7 @@
     <ClInclude Include="hell_log.hpp" />
     <ClInclude Include="math_util.hpp" />
     <ClInclude Include="metaprogramming.hpp" />
+    <ClInclude Include="vk_common.hpp" />
     <ClInclude Include="vk_descriptors.hpp" />
     <ClInclude Include="vk_device.hpp" />
     <ClInclude Include="vk_instance.hpp" />
@@ -316,10 +316,10 @@
     <ClInclude Include="lz4.h" />
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
-    <ClInclude Include="r_vk_pipelines.hpp" />
-    <ClInclude Include="r_vk_resources.hpp" />
-    <ClInclude Include="r_vk_shaders.hpp" />
-    <ClInclude Include="r_vk_sync.hpp" />
+    <ClInclude Include="vk_pipelines.hpp" />
+    <ClInclude Include="vk_resources.hpp" />
+    <ClInclude Include="vk_shaders.hpp" />
+    <ClInclude Include="vk_sync.hpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="r_data.h" />
     <ClInclude Include="spirv_reflect.h" />

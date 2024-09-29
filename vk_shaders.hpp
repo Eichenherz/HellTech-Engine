@@ -1,14 +1,6 @@
 #pragma once
 
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
-// TODO: autogen custom vulkan ?
-#include <vulkan.h>
-// TODO: header + .cpp ?
-// TODO: revisit this
-#include "vk_procs.h"
+#include "vk_common.hpp"
 
 #include <string_view>
 #include <assert.h>
@@ -56,14 +48,18 @@ struct vk_program
 };
 
 
-inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
+inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size, std::string_view name )
 {
-	VkShaderModuleCreateInfo shaderModuleInfo = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
-	shaderModuleInfo.codeSize = size;
-	shaderModuleInfo.pCode = spv;
+	VkShaderModuleCreateInfo shaderModuleInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = size,
+		.pCode = spv
+	};
 
 	VkShaderModule sm = {};
 	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &sm ) );
+
+	VkDbgNameObj( sm, vkDevice, std::data( name ) );
 	return sm;
 }
 
@@ -76,14 +72,14 @@ inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice 
 
 	std::vector<u8> binSpvShader = SysReadFile( shaderPath );
 
-	vk_shader shader = {};
-	shader.spvByteCode = std::move( binSpvShader );
-	shader.module = VkMakeShaderModule( vkDevice, ( const u32* ) std::data( shader.spvByteCode ), std::size( shader.spvByteCode ) );
-
 	std::string_view shaderName = { shaderPath };
 	shaderName.remove_prefix( std::size( shadersFolder ) );
 	shaderName.remove_suffix( std::size( shaderExtension ) - 1 );
-	VkDbgNameObj( shader.module, vkDevice, &shaderName[ 0 ] );
+
+	vk_shader shader = {};
+	shader.spvByteCode = std::move( binSpvShader );
+	shader.module = VkMakeShaderModule( 
+		vkDevice, ( const u32* ) std::data( shader.spvByteCode ), std::size( shader.spvByteCode ), &shaderName[ 0 ] );
 
 	return shader;
 }
@@ -121,7 +117,7 @@ inline static void VkReflectShaderLayout(
 			.binding = descBinding.binding,
 			.descriptorType = VkDescriptorType( descBinding.descriptor_type ),
 			.descriptorCount = descBinding.count,
-			.stageFlags = shaderReflection.shader_stage,
+			.stageFlags = ( VkShaderStageFlags ) shaderReflection.shader_stage,
 		};
 		descSetBindings.push_back( binding );
 	}
@@ -129,7 +125,7 @@ inline static void VkReflectShaderLayout(
 	for( u64 pci = 0; pci < shaderReflection.push_constant_block_count; ++pci )
 	{
 		VkPushConstantRange pushConstRange = {
-			.stageFlags = shaderReflection.shader_stage,
+			.stageFlags = ( VkShaderStageFlags ) shaderReflection.shader_stage,
 			.offset = shaderReflection.push_constant_blocks[ pci ].offset,
 			.size = shaderReflection.push_constant_blocks[ pci ].size,
 		};
@@ -192,10 +188,10 @@ inline static vk_program VkMakePipelineProgram(
 	}
 
 	VkDescriptorSetLayout descSetLayout = {};
-	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { 
+	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
-		.bindingCount = std::size( bindings ),
+		.bindingCount = ( u32 ) std::size( bindings ),
 		.pBindings = std::data( bindings ),
 	};
 	
@@ -205,9 +201,9 @@ inline static vk_program VkMakePipelineProgram(
 
 	VkPipelineLayoutCreateInfo pipeLayoutInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = std::size( setLayouts ),
+		.setLayoutCount = ( u32 ) std::size( setLayouts ),
 		.pSetLayouts = setLayouts,
-		.pushConstantRangeCount = std::size( pushConstRanges ),
+		.pushConstantRangeCount = ( u32 ) std::size( pushConstRanges ),
 		.pPushConstantRanges = std::data( pushConstRanges ),
 	};
 	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &program.pipeLayout ) );
@@ -231,7 +227,7 @@ inline static vk_program VkMakePipelineProgram(
 
 		VkDescriptorUpdateTemplateCreateInfo templateInfo = { 
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO,
-			.descriptorUpdateEntryCount = std::size( entries ),
+			.descriptorUpdateEntryCount = ( u32 ) std::size( entries ),
 			.pDescriptorUpdateEntries = std::data( entries ),
 			.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR,
 			.descriptorSetLayout = descSetLayout,
@@ -249,23 +245,3 @@ inline static vk_program VkMakePipelineProgram(
 
 	return program;
 }
-
-
-// TODO: rename to program 
-// TODO: what about descriptors ?
-// TODO: what about spec consts
-struct vk_graphics_program
-{
-	VkPipeline pipeline;
-	VkPipelineLayout layout;
-	// TODO: store push consts data ?
-};
-
-struct vk_compute_program
-{
-	VkPipeline pipeline;
-	VkPipelineLayout layout;
-	u16 workgrX;
-	u16 workgrY;
-	u16 workgrZ;
-};

@@ -1,18 +1,9 @@
 #pragma once
 
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
-// TODO: autogen custom vulkan ?
-#include <vulkan.h>
-// TODO: header + .cpp ?
-// TODO: revisit this
-#include "vk_procs.h"
+#include "vk_common.hpp"
 
 #include <vector>
 
-#include "core_types.h"
 #include "vk_utils.hpp"
 
 

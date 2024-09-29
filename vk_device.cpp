@@ -1,7 +1,4 @@
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#define __VK
-#include "DEFS_WIN32_NO_BS.h"
+#include "vk_common.hpp"
 
 #ifdef VMA_IMPLEMENTATION
 #error VMA_IMPL should only be defined here
@@ -12,33 +9,35 @@
 #define VMA_IMPLEMENTATION
 #include "vk_device.hpp"
 
+constexpr const char* ENABLED_DEVICE_EXTS[] = {
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+	VK_KHR_PRESENT_ID_EXTENSION_NAME,
+	VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
-inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
+	VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+
+	//VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
+	VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+	//VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME,
+
+	//VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME,
+	VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
+	VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
+	VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
+	VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+	//VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME
+};
+
+inline auto VkSelectPhysicalDevice( VkInstance vkInst )
 {
-	constexpr const char* ENABLED_DEVICE_EXTS[] = {
-		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		VK_KHR_PRESENT_ID_EXTENSION_NAME,
-		VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
-
-		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
-
-		//VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
-		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-		//VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME,
-
-		//VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME,
-		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
-		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
-		VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
-		VK_EXT_SHADER_OBJECT_EXTENSION_NAME
-	};
-
 	u32 numDevices = 0;
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, 0 ) );
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
-	VkPhysicalDeviceShaderObjectPropertiesEXT shaderObjProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_PROPERTIES_EXT };
+	//VkPhysicalDeviceHostImageCopyPropertiesEXT hostImgCpyProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_PROPERTIES_EXT };
+	VkPhysicalDeviceShaderObjectPropertiesEXT shaderObjProps = { 
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_PROPERTIES_EXT };
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &shaderObjProps };
 	VkPhysicalDeviceSubgroupProperties waveProps =
@@ -46,7 +45,9 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VkPhysicalDeviceVulkan13Properties gpuProps13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps13 };
 
-	VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT };
+	//VkPhysicalDeviceHostImageCopyFeaturesEXT hostImgCpyFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES_EXT };
+	VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeatures = { 
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT };
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &shaderObjFeatures };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures =
@@ -71,7 +72,7 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		for( std::string_view requiredExt : ENABLED_DEVICE_EXTS )
 		{
 			bool foundExt = false;
-			for( VkExtensionProperties& availableExt : availableExts )
+			for( const VkExtensionProperties& availableExt : availableExts )
 			{
 				if( requiredExt == availableExt.extensionName )
 				{
@@ -100,7 +101,26 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	gpuFeatures.features.geometryShader = 0;
 	gpuFeatures.features.robustBufferAccess = 0;
 
+	struct
+	{
+		VkPhysicalDeviceProperties2 gpuProps;
+		VkPhysicalDeviceFeatures2 gpuFeatures;
+		VkPhysicalDevice vkGpu;
+	} __retval = { gpuProps2, gpuFeatures, vkGpu };
 
+	return __retval;
+}
+
+struct vk_queue_infos
+{
+	VkDeviceQueueCreateInfo data[ 3 ] = {};
+	VkDeviceQueueCreateInfo& graphics = data[ 0 ];
+	VkDeviceQueueCreateInfo& compute = data[ 1 ];
+	VkDeviceQueueCreateInfo& transfer = data[ 2 ];
+};
+
+inline vk_queue_infos VkSelectDeviceQueues( VkPhysicalDevice vkGpu, VkSurfaceKHR vkSurf )
+{
 	u32 queueFamNum = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties( vkGpu, &queueFamNum, 0 );
 	VK_CHECK( VK_INTERNAL_ERROR( !queueFamNum ) );
@@ -109,8 +129,9 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 
 	constexpr VkQueueFlags transferQueueType = VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT;
 	constexpr VkQueueFlags presentQueueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
+	constexpr float queuePriorities = 1.0f;
 
-	u32 qGfxIdx = -1, qCompIdx = -1, qTransfIdx = -1;
+	vk_queue_infos queueInfos;
 	for( u32 qIdx = 0; qIdx < queueFamNum; ++qIdx )
 	{
 		if( queueFamProps[ qIdx ].queueCount == 0 ) continue;
@@ -122,32 +143,50 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 			vkGetPhysicalDeviceSurfaceSupportKHR( vkGpu, qIdx, vkSurf, &present );
 			VK_CHECK( VK_INTERNAL_ERROR( !present ) );
 		}
-		if( familyFlags & VK_QUEUE_GRAPHICS_BIT ) qGfxIdx = qIdx;
-		else if( familyFlags & VK_QUEUE_COMPUTE_BIT ) qCompIdx = qIdx;
-		else if( !( familyFlags ^ transferQueueType ) ) qTransfIdx = qIdx;
+		if( familyFlags & VK_QUEUE_GRAPHICS_BIT )
+		{
+			queueInfos.graphics = {
+				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+				.queueFamilyIndex = qIdx,
+				.queueCount = 1,
+				.pQueuePriorities = &queuePriorities
+			};
+		}
+		else if( familyFlags & VK_QUEUE_COMPUTE_BIT )
+		{
+			queueInfos.compute = {
+				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+				.queueFamilyIndex = qIdx,
+				.queueCount = 1,
+				.pQueuePriorities = &queuePriorities
+			};
+		}
+		else if( !( familyFlags ^ transferQueueType ) )
+		{
+			queueInfos.transfer = {
+				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+				.queueFamilyIndex = qIdx,
+				.queueCount = 1,
+				.pQueuePriorities = &queuePriorities
+			};
+		}
 	}
 
-	VK_CHECK( VK_INTERNAL_ERROR( ( qGfxIdx == u32( -1 ) ) || ( qCompIdx == u32( -1 ) ) || ( qTransfIdx == u32( -1 ) ) ) );
+	return queueInfos;
+}
 
-	float queuePriorities = 1.0f;
-	VkDeviceQueueCreateInfo queueInfos[ 3 ] = {};
-	for( u32 qi = 0; qi < std::size( queueInfos ); ++qi )
-	{
-		queueInfos[ qi ] = {
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.queueFamilyIndex = qi,
-			.queueCount = 1,
-			.pQueuePriorities = &queuePriorities
-		};
-	}
-
+inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
+{
+	auto[ gpuProps2, gpuFeatures, vkGpu ] = VkSelectPhysicalDevice( vkInst );
+	vk_queue_infos queueInfos = VkSelectDeviceQueues( vkGpu, vkSurf );
+	
 	VkDevice vkDevice;
 	VkDeviceCreateInfo deviceInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &gpuFeatures,
-		.queueCreateInfoCount = std::size( queueInfos ),
-		.pQueueCreateInfos = &queueInfos[ 0 ],
-		.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS ),
+		.queueCreateInfoCount = ( u32 ) std::size( queueInfos.data ),
+		.pQueueCreateInfos = std::data( queueInfos.data ),
+		.enabledExtensionCount = ( u32 ) std::size( ENABLED_DEVICE_EXTS ),
 		.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS
 	};
 	VK_CHECK( vkCreateDevice( vkGpu, &deviceInfo, 0, &vkDevice ) );
@@ -155,9 +194,9 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VkLoadDeviceProcs( vkDevice );
 
 	VkQueue gfxQueue, compQueue, transfQueue;
-	vkGetDeviceQueue( vkDevice, queueInfos[ qGfxIdx ].queueFamilyIndex, 0, &gfxQueue );
-	vkGetDeviceQueue( vkDevice, queueInfos[ qCompIdx ].queueFamilyIndex, 0, &compQueue );
-	vkGetDeviceQueue( vkDevice, queueInfos[ qTransfIdx ].queueFamilyIndex, 0, &transfQueue );
+	vkGetDeviceQueue( vkDevice, queueInfos.graphics.queueFamilyIndex, 0, &gfxQueue );
+	vkGetDeviceQueue( vkDevice, queueInfos.compute.queueFamilyIndex, 0, &compQueue );
+	vkGetDeviceQueue( vkDevice, queueInfos.transfer.queueFamilyIndex, 0, &transfQueue );
 	VK_CHECK( VK_INTERNAL_ERROR( !gfxQueue ) );
 	VK_CHECK( VK_INTERNAL_ERROR( !compQueue ) );
 	VK_CHECK( VK_INTERNAL_ERROR( !transfQueue ) );
@@ -185,19 +224,20 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		.vkBindBufferMemory2KHR = vkBindBufferMemory2KHR,
 		.vkBindImageMemory2KHR = vkBindImageMemory2KHR,
 		.vkGetPhysicalDeviceMemoryProperties2KHR = vkGetPhysicalDeviceMemoryProperties2KHR,
-		.vkGetDeviceBufferMemoryRequirementsKHR = vkGetDeviceBufferMemoryRequirements,
-		.vkGetDeviceImageMemoryRequirementsKHR = vkGetDeviceImageMemoryRequirements
+		.vkGetDeviceBufferMemoryRequirements = vkGetDeviceBufferMemoryRequirements,
+		.vkGetDeviceImageMemoryRequirements = vkGetDeviceImageMemoryRequirements
 	};
 
 	// TODO: which are default, which do we have ?
-	VmaAllocatorCreateInfo allocatorCreateInfo = {};
-	allocatorCreateInfo.flags = VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT | VMA_ALLOCATOR_CREATE_KHR_BIND_MEMORY2_BIT |
-		VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE5_BIT | VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT; 
-	allocatorCreateInfo.vulkanApiVersion = VK_API_VERSION_1_3; // TODO: main file with this
-	allocatorCreateInfo.physicalDevice = vkGpu;
-	allocatorCreateInfo.device = vkDevice;
-	allocatorCreateInfo.instance = vkInst;
-	allocatorCreateInfo.pVulkanFunctions = &vulkanFunctions;
+	VmaAllocatorCreateInfo allocatorCreateInfo = {
+		.flags = VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT | VMA_ALLOCATOR_CREATE_KHR_BIND_MEMORY2_BIT |
+		VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE5_BIT | VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+		.physicalDevice = vkGpu,
+		.device = vkDevice,
+		.pVulkanFunctions = &vulkanFunctions,
+		.instance = vkInst,
+		.vulkanApiVersion = VK_API_VERSION,
+	};
 
 	VmaAllocator vmaAllocator;
 	vmaCreateAllocator(&allocatorCreateInfo, &vmaAllocator);
@@ -210,9 +250,9 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		.compQueue = compQueue,
 		.transfQueue = transfQueue,
 		.gfxQueue = gfxQueue,
-		.gfxQueueIdx = queueInfos[ qGfxIdx ].queueFamilyIndex,
-		.compQueueIdx = queueInfos[ qCompIdx ].queueFamilyIndex,
-		.transfQueueIdx = queueInfos[ qTransfIdx ].queueFamilyIndex
+		.gfxQueueIdx = queueInfos.graphics.queueFamilyIndex,
+		.compQueueIdx = queueInfos.compute.queueFamilyIndex,
+		.transfQueueIdx = queueInfos.transfer.queueFamilyIndex
 	};
 }
 
@@ -260,7 +300,7 @@ deleter_unique_ptr<vk_buffer> vk_device::CreateBuffer( const buffer_info& buffIn
 		VkDbgNameObj( buffData.hndl, this->device, buffInfo.name );
 	}
 	
-	return ( new vk_buffer( buffData ), [ this ]( vk_buffer& buffer ) { this->DestroyBuffer( buffer ); } );
+	return { new vk_buffer( buffData ), [ this ]( vk_buffer& buffer ) { this->DestroyBuffer( buffer ); } };
 }
 
 deleter_unique_ptr<vk_image> vk_device::CreateImage( const image_info& imgInfo ) 
@@ -288,7 +328,11 @@ deleter_unique_ptr<vk_image> vk_device::CreateImage( const image_info& imgInfo )
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
-
+	// TODO: needed ?
+	assert( imageInfo.extent.width <= u16( ~0u ) );
+	assert( imageInfo.extent.height <= u16( ~0u ) );
+	assert( imageInfo.arrayLayers <= u8( ~0u ) );
+	assert( imageInfo.mipLevels <= u8( ~0u ) );
 	
 	VmaAllocationCreateInfo allocCreateInfo = {
 		.usage = VMA_MEMORY_USAGE_AUTO,
@@ -308,13 +352,13 @@ deleter_unique_ptr<vk_image> vk_device::CreateImage( const image_info& imgInfo )
 		.allocation = allocation,
 		.usageFlags = imageInfo.usage,
 		.nativeFormat = imageInfo.format,
-		.width = imageInfo.extent.width,
-		.height = imageInfo.extent.height,
-		.layerCount = imageInfo.arrayLayers,
-		.mipCount = imageInfo.mipLevels
+		.width = ( u16 ) imageInfo.extent.width,
+		.height = ( u16 ) imageInfo.extent.height,
+		.layerCount = ( u8 ) imageInfo.arrayLayers,
+		.mipCount = ( u8 ) imageInfo.mipLevels
 	};
 
-	for( u64 i = 0; i < img.mipCount; ++i )
+	for( u32 i = 0; i < img.mipCount; ++i )
 	{
 		VkImageAspectFlags mipAspectMask =
 			( imageInfo.format == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -326,7 +370,7 @@ deleter_unique_ptr<vk_image> vk_device::CreateImage( const image_info& imgInfo )
 		VkDbgNameObj( img.hndl, this->device, imgInfo.name );
 	}
 
-	return ( new vk_image(img), [ this ]( vk_image& image ) { this->DestroyImage( image ); } );
+	return { new vk_image( img ), [ this ]( vk_image& image ) { this->DestroyImage( image ); } };
 }
 
 void vk_device::DestroyBuffer( vk_buffer& buffer )
@@ -341,7 +385,7 @@ void vk_device::DestroyImage( vk_image& image )
 
 vk_descriptor_manager vk_device::CreateDescriptorManagerBindless()
 {
-	constexpr u32 maxSize = ~u16( 0 );
+	constexpr u32 maxSize = u16( ~0u );
 	constexpr u32 maxSetCount = 1;
 
 	const VkPhysicalDeviceLimits& gpuLimits = this->gpuProps.limits;
@@ -355,7 +399,7 @@ vk_descriptor_manager vk_device::CreateDescriptorManagerBindless()
 	vk_descriptor_manager mngr = {};
 	for( u32 i = 0; i < std::size( mngr.table ); ++i )
 	{
-		mngr.table[ i ] = { .slotsCount = maxSize, .usedSlots = 0 };
+		mngr.table[ i ] = { .slotsCount = (u16)maxSize, .usedSlots = 0 };
 	}
 
 	mngr.pool = this->CreateDescriptorPool( descCount, maxSetCount );
@@ -390,7 +434,7 @@ VkDescriptorPool vk_device::CreateDescriptorPool( std::span<u32> descriptorCount
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 		.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
 		.maxSets = maxSetCount,
-		.poolSizeCount = std::size( poolSizes ),
+		.poolSizeCount = ( u32 ) std::size( poolSizes ),
 		.pPoolSizes = std::data( poolSizes )
 	};
 
@@ -399,7 +443,6 @@ VkDescriptorPool vk_device::CreateDescriptorPool( std::span<u32> descriptorCount
 
 	return pool;
 }
-
 VkDescriptorSetLayout vk_device::CreateDescriptorSetLayout( std::span<u32> descriptorCount )
 {
 	constexpr VkDescriptorBindingFlags flag =
@@ -423,14 +466,14 @@ VkDescriptorSetLayout vk_device::CreateDescriptorSetLayout( std::span<u32> descr
 
 	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFalgs = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-		.bindingCount = std::size( bindingFlags ),
+		.bindingCount = ( u32 ) std::size( bindingFlags ),
 		.pBindingFlags = bindingFlags
 	};
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.pNext = &descSetFalgs,
 		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-		.bindingCount = std::size( descSetLayout ),
+		.bindingCount = ( u32 ) std::size( descSetLayout ),
 		.pBindings = descSetLayout
 	};
 
@@ -439,7 +482,6 @@ VkDescriptorSetLayout vk_device::CreateDescriptorSetLayout( std::span<u32> descr
 
 	return setLayout;
 }
-
 VkDescriptorSet vk_device::CreateDescriptorSet( VkDescriptorPool pool, VkDescriptorSetLayout setLayout )
 {
 	VkDescriptorSetAllocateInfo descSetInfo = {
@@ -471,4 +513,10 @@ VkPipelineLayout vk_device::CreatePipelineLayout( VkDescriptorSetLayout setLayou
 	VkDbgNameObj( layout, this->device, "Vk_Pipeline_Layout_Global" );
 
 	return layout;
+}
+
+void vk_device::QueueSubmit( const std::span<VkQueueSubmit2> submits )
+{
+	// NOTE: queue submit has implicit host sync for trivial stuff
+	VK_CHECK( vkQueueSubmit2( this->gfxQueue, 1, &submitInfo, 0 ) );
 }
