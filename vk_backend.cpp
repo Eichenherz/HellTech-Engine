@@ -92,8 +92,6 @@ inline VkSurfaceKHR VkMakeSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd
 #endif  // VK_USE_PLATFORM_WIN32_KHR
 
 
-
-
 // TODO:
 struct vk_renderer_config
 {
@@ -521,10 +519,6 @@ static vk_buffer lightsBuff;
 
 static vk_buffer intermediateIndexBuff;
 static vk_buffer indirectMergedIndexBuff;
-
-//static vk_buffer visibleInstsBuff;
-//static vk_buffer meshletIdBuff;
-//static vk_buffer visibleMeshletsBuff;
 
 static vk_buffer drawCmdBuff;
 static vk_buffer drawCmdAabbsBuff;
@@ -1091,7 +1085,6 @@ struct virtual_frame
 {
 	vk_buffer		frameData;
 	vk_gpu_timer frameTimer;
-	VkCommandPool	cmdPool;
 	VkCommandBuffer cmdBuff; // TODO: use vk_command_buffer
 	VkSemaphore		canGetImgSema; // TODO: place somewhere else ?
 	VkSemaphore		canPresentSema;
@@ -1101,13 +1094,6 @@ struct virtual_frame
 inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32 bufferSize )
 {
 	virtual_frame vrtFrame = {};
-
-	VkCommandPoolCreateInfo cmdPoolInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-		.queueFamilyIndex = vkDevice.gfxQueueIdx
-	};
-	VK_CHECK( vkCreateCommandPool( vkDevice.device, &cmdPoolInfo, 0, &vrtFrame.cmdPool ) );
 
 	VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -2105,8 +2091,6 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	};
 	std::memcpy( thisVFrame.frameData.hostVisible, &globs, sizeof( globs ) );
 
-	VkBeginCommandBuffer( thisVFrame.cmdBuff );
-
 	// TODO: 
 	if( currentFrameIdx < VK_MAX_FRAMES_IN_FLIGHT_ALLOWED )
 	{
@@ -2554,7 +2538,6 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		VkCmdPipelineImgLayoutTransitionBarriers( thisVFrame.cmdBuff, presentWaitBarrier );
 	}
-	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
 
 	constexpr VkPipelineStageFlags waitDstStageMsk = 
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;// VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -2563,9 +2546,6 @@ void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	VkSubmitInfo submitInfo = VkMakeSubmitInfo(
 		{ thisVFrame.cmdBuff }, { thisVFrame.canGetImgSema },
 		{ thisVFrame.canPresentSema, rndCtx.timelineSema }, { 0, rndCtx.vFrameIdx }, waitDstStageMsk );
-
-	// NOTE: queue submit has implicit host sync for trivial stuff
-	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, 0 ) );
 
 	VkPresentInfoKHR presentInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,

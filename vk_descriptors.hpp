@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __VK_DESCRIPTORS__
+#define __VK_DESCRIPTORS__
 
 #include "vk_common.hpp"
 
@@ -144,3 +145,5 @@ inline u16 vk_descriptor_manager::AllocateDescriptorIndex( const T& rscDescInfo 
 
 	return destIndex;
 }
+
+#endif

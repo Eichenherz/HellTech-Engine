@@ -299,6 +299,7 @@
     <ClInclude Include="hell_log.hpp" />
     <ClInclude Include="math_util.hpp" />
     <ClInclude Include="metaprogramming.hpp" />
+    <ClInclude Include="vk_commands.hpp" />
     <ClInclude Include="vk_common.hpp" />
     <ClInclude Include="vk_descriptors.hpp" />
     <ClInclude Include="vk_device.hpp" />

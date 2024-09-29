@@ -188,6 +188,9 @@
     <ClInclude Include="vk_common.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="vk_commands.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />

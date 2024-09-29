@@ -175,32 +175,28 @@ inline vk_queue_infos VkSelectDeviceQueues( VkPhysicalDevice vkGpu, VkSurfaceKHR
 	return queueInfos;
 }
 
-inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
+vk_queue VkCreateQueue( VkDevice device, u32 queueFamilyIndex )
 {
-	auto[ gpuProps2, gpuFeatures, vkGpu ] = VkSelectPhysicalDevice( vkInst );
-	vk_queue_infos queueInfos = VkSelectDeviceQueues( vkGpu, vkSurf );
-	
-	VkDevice vkDevice;
-	VkDeviceCreateInfo deviceInfo = {
-		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.pNext = &gpuFeatures,
-		.queueCreateInfoCount = ( u32 ) std::size( queueInfos.data ),
-		.pQueueCreateInfos = std::data( queueInfos.data ),
-		.enabledExtensionCount = ( u32 ) std::size( ENABLED_DEVICE_EXTS ),
-		.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS
+	VkQueue q;
+	vkGetDeviceQueue( device, queueFamilyIndex, 0, &q );
+	VK_CHECK( VK_INTERNAL_ERROR( !q ) );
+
+	VkCommandPool cmdPool;
+	VkCommandPoolCreateInfo cmdPoolInfo = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+		.queueFamilyIndex = queueFamilyIndex
 	};
-	VK_CHECK( vkCreateDevice( vkGpu, &deviceInfo, 0, &vkDevice ) );
+	VK_CHECK( vkCreateCommandPool( device, &cmdPoolInfo, 0, &cmdPool ) );
+	return {
+		.hndl = q,
+		.cmdPool = cmdPool,
+		.index = queueFamilyIndex
+	};
+}
 
-	VkLoadDeviceProcs( vkDevice );
-
-	VkQueue gfxQueue, compQueue, transfQueue;
-	vkGetDeviceQueue( vkDevice, queueInfos.graphics.queueFamilyIndex, 0, &gfxQueue );
-	vkGetDeviceQueue( vkDevice, queueInfos.compute.queueFamilyIndex, 0, &compQueue );
-	vkGetDeviceQueue( vkDevice, queueInfos.transfer.queueFamilyIndex, 0, &transfQueue );
-	VK_CHECK( VK_INTERNAL_ERROR( !gfxQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !compQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !transfQueue ) );
-
+VmaAllocator VmaCreateAllocator( VkInstance vkInst, VkPhysicalDevice vkGpu, VkDevice vkDevice )
+{
 	VmaVulkanFunctions vulkanFunctions = {
 		.vkGetPhysicalDeviceProperties = vkGetPhysicalDeviceProperties,
 		.vkGetPhysicalDeviceMemoryProperties = vkGetPhysicalDeviceMemoryProperties,
@@ -242,17 +238,41 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	VmaAllocator vmaAllocator;
 	vmaCreateAllocator(&allocatorCreateInfo, &vmaAllocator);
 
+	return vmaAllocator;
+}
+
+inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
+{
+	auto[ gpuProps2, gpuFeatures, vkGpu ] = VkSelectPhysicalDevice( vkInst );
+	vk_queue_infos queueInfos = VkSelectDeviceQueues( vkGpu, vkSurf );
+	
+	VkDevice vkDevice;
+	VkDeviceCreateInfo deviceInfo = {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.pNext = &gpuFeatures,
+		.queueCreateInfoCount = ( u32 ) std::size( queueInfos.data ),
+		.pQueueCreateInfos = std::data( queueInfos.data ),
+		.enabledExtensionCount = ( u32 ) std::size( ENABLED_DEVICE_EXTS ),
+		.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS
+	};
+	VK_CHECK( vkCreateDevice( vkGpu, &deviceInfo, 0, &vkDevice ) );
+
+	VkLoadDeviceProcs( vkDevice );
+
+	vk_queue gfxQueue = VkCreateQueue( vkDevice, queueInfos.graphics.queueFamilyIndex );
+	vk_queue compQueue = VkCreateQueue( vkDevice, queueInfos.compute.queueFamilyIndex );
+	vk_queue transfQueue = VkCreateQueue( vkDevice, queueInfos.transfer.queueFamilyIndex );
+
+	VmaAllocator vmaAllocator = VmaCreateAllocator( vkInst, vkGpu, vkDevice );
+
 	return {
+		.graphicsQueue = gfxQueue,
+		.computeQueue = compQueue,
+		.transferQueue = transfQueue,
 		.allocator = vmaAllocator,
 		.gpuProps = gpuProps2.properties,
 		.gpu = vkGpu,
 		.device = vkDevice,
-		.compQueue = compQueue,
-		.transfQueue = transfQueue,
-		.gfxQueue = gfxQueue,
-		.gfxQueueIdx = queueInfos.graphics.queueFamilyIndex,
-		.compQueueIdx = queueInfos.compute.queueFamilyIndex,
-		.transfQueueIdx = queueInfos.transfer.queueFamilyIndex
 	};
 }
 
@@ -302,7 +322,6 @@ deleter_unique_ptr<vk_buffer> vk_device::CreateBuffer( const buffer_info& buffIn
 	
 	return { new vk_buffer( buffData ), [ this ]( vk_buffer& buffer ) { this->DestroyBuffer( buffer ); } };
 }
-
 deleter_unique_ptr<vk_image> vk_device::CreateImage( const image_info& imgInfo ) 
 {
 	VkFormatFeatureFlags formatFeatures = 0;
@@ -377,7 +396,6 @@ void vk_device::DestroyBuffer( vk_buffer& buffer )
 {
 	vmaDestroyBuffer( this->allocator, buffer.hndl, buffer.allocation );
 }
-
 void vk_device::DestroyImage( vk_image& image )
 {
 	vmaDestroyImage( this->allocator, image.hndl, image.allocation );
