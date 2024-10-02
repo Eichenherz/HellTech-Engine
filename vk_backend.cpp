@@ -1074,7 +1074,7 @@ struct vk_backend
 	static constexpr vk_renderer_config config = {};
 
 	vk_device pDevice;
-	vk_descriptor_manager descManager;
+	
 	virtual_frame	vrtFrames[ config.framesInFlight ];
 
 	u64 dllHandle;
@@ -1106,7 +1106,7 @@ vk_backend::vk_backend()
 
 	pDevice = VkMakeDeviceContext( inst, surface );
 	pDevice.swapchain = pDevice.CreateSwapchain( surface, config.desiredSwapchainFormat, vk_queue_type::GRAPHICS );
-	descManager = pDevice.CreateDescriptorManagerBindless();
+	
 	timelineSema = pDevice.CreateVkSemaphore( true );
 
 	for( u64 vfi = 0; vfi < config.framesInFlight; ++vfi )

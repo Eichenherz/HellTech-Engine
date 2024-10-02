@@ -1,5 +1,6 @@
 #include <Windows.h>
 #include <vector>
+#include <span>
 #include <dxcapi.h>
 #include <assert.h>
 #include <comdef.h>
@@ -44,16 +45,13 @@ export{
 		IDxcIncludeHandler* pIncludeHandler;
 
 		std::vector<shader_file_keyval> includeHashmap;
+
+		IDxcBlob* CompileShader( 
+			const std::vector<u8>& hlslBlob, LPCWSTR* compileOptions, UINT64 compileOptionsCount, bool compileToSpirv );
 	};
 
 	dxc_context DxcCreateContext();
-	IDxcBlob* DxcCompileShader(
-		const std::vector<u8>& hlslBlob,
-		LPCWSTR* compileOptions,
-		UINT64 compileOptionsCount,
-		bool compileToSpirv,
-		dxc_context& ctx
-	);
+	
 }
 
 
@@ -134,8 +132,7 @@ inline auto DxcLoadHeaderBlob(
 // TODO: better spirv toggle ?
 inline IDxcBlob* DxcCompileShader(
 	const std::vector<u8>& hlslBlob,
-	LPCWSTR* compileOptions,
-	UINT64 compileOptionsCount,
+	std::span<LPCWSTR> compileOptions,
 	bool compileToSpirv,
 	dxc_context& ctx
 ) {
@@ -154,8 +151,7 @@ inline IDxcBlob* DxcCompileShader(
 			return hr;
 		}
 
-		HRESULT STDMETHODCALLTYPE
-			QueryInterface( REFIID riid, _COM_Outptr_ void __RPC_FAR* __RPC_FAR* ppvObject ) override
+		HRESULT STDMETHODCALLTYPE QueryInterface( REFIID riid, _COM_Outptr_ void __RPC_FAR* __RPC_FAR* ppvObject ) override
 		{
 			return ctx.pIncludeHandler->QueryInterface( riid, ppvObject );
 		}
@@ -170,7 +166,7 @@ inline IDxcBlob* DxcCompileShader(
 
 	IDxcResult* pCompileResult;
 	HR_CHECK( ctx.pCompiler->Compile(
-		&hlslFileDesc, compileOptions, compileOptionsCount, &includeHandler, IID_PPV_ARGS( &pCompileResult ) ) );
+		&hlslFileDesc, std::data( compileOptions ), std::szie( compileOptions ), &includeHandler, IID_PPV_ARGS( &pCompileResult ) ) );
 
 	IDxcBlobUtf8* pErrors;
 	HR_CHECK( pCompileResult->GetOutput( DXC_OUT_ERRORS, IID_PPV_ARGS( &pErrors ), 0 ) );

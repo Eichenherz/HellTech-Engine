@@ -283,7 +283,6 @@
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="spng.c" />
     <ClCompile Include="sys_mmaped.cpp" />
     <ClCompile Include="sys_os_win.cpp">
@@ -323,7 +322,6 @@
     <ClInclude Include="vk_sync.hpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="r_data.h" />
-    <ClInclude Include="spirv_reflect.h" />
     <ClInclude Include="spng.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />

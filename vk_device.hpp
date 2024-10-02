@@ -9,6 +9,8 @@
 #include "vk_swapchain.hpp"
 #include "vk_descriptors.hpp"
 #include "vk_commands.hpp"
+#include "vk_shaders.hpp"
+#include "vk_pipelines.hpp"
 #include "metaprogramming.hpp"
 
 // TODO: buffer VkCommandPool per frame in flight ?
@@ -77,12 +79,14 @@ void vk_queue<QUEUE_TYPE>::Present( VkSemaphore renderingCompleteSema, const vk_
 // TODO: use handle_map/free list and stable addressing if unique/new is cumbersome
 struct vk_device
 {
+	vk_descriptor_manager descriptorManager;
+
 	vk_swapchain swapchain;
 
 	vk_queue<vk_queue_type::GRAPHICS> graphicsQueue;
 	vk_queue<vk_queue_type::COMPUTE> computeQueue;
 	vk_queue<vk_queue_type::TRANSFER> transferQueue;
-
+	
 	VmaAllocator allocator;
 
 	VkPhysicalDeviceProperties gpuProps;
@@ -119,13 +123,28 @@ struct vk_device
 	// TODO: AddrMode ?
 	VkSampler CreateSampler(
 		VkSamplerReductionMode reductionMode, VkFilter filter, VkSamplerAddressMode addressMode, VkSamplerMipmapMode mipmapMode );
-	VkPipeline CreateGraphicsPipeline(VkShaderModule		vs,
-									   VkShaderModule		fs,
-									   const VkFormat* desiredColorFormat,
-									   VkFormat           desiredDepthFormat,
-									   const vk_gfx_pipeline_state& pipelineState,
-									   const char* name);
-	VkPipeline CreateComputePipeline( VkShaderModule cs, vk_specializations consts, const char* name, const char* entryPointName );
+	
+	VkPipeline CreateVertexInputInterfacePipelineStage( VkPrimitiveTopology primitiveTopology, const char* name );
+	VkPipeline CreateVertexShaderPipelineStage(
+		std::span<VkDynamicState> dynamicState, 
+		const vk_rasterization_config& rasterCfg, 
+		const vk_shader_metadata& shader,
+		const char* name );
+	// TODO: depth clamp ?
+	VkPipeline CreateFragmentShaderPipelineStage(
+		vk_depth_stencil_config depthStencilCfg,
+		const vk_shader_metadata& shader,
+		const char* name );
+	VkPipeline CreateFragmentOutputInterfacePipelineStage(
+		std::span<VkFormat> colorAttachmentFormats,
+		VkFormat depthAttachmentFormat,
+		const vk_color_blending_config& colorBlendingCfg,
+		bool colorBlendingEnable,
+		const char* name );
+	// TODO: specialization consts ?
+	VkPipeline CreateGraphicsPipeline( std::span<VkPipeline> libaries, const char* name );
+	VkPipeline CreateComputePipeline( 
+		const vk_shader& shader, const std::span<vk_specialization_type> consts, const char* name );
 
 	// TODO: allocate more ?
 	// TODO: allocate VkCmdBuffer and just pass around references ?

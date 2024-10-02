@@ -18,9 +18,6 @@
     <ClCompile Include="sys_os_win.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="spirv_reflect.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -81,9 +78,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DEFS_WIN32_NO_BS.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="spirv_reflect.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="vk_procs.h">

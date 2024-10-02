@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __VK_SHADER__
+#define __VK_SHADER__
 
 #include "vk_common.hpp"
 
@@ -12,43 +13,38 @@
 
 #include "vk_utils.hpp"
 
-// TODO: remove
-#define WIN32
-#include "spirv_reflect.h"
-#undef WIN32
+struct vk_shader_metadata
+{
+	std::vector<u8>	spvByteCode;
+	const char* entryPointName;
+	VkShaderStageFlags stage;
+};
 
-// TODO: rethink 
-// TODO: cache shader ?
+std::vector<vk_specialization_type>	specConsts;
+
 struct vk_shader
 {
-	VkShaderModule	module;
-	std::vector<u8>	spvByteCode;
-	u64				timestamp;
-	char			entryPointName[ 32 ];
+	VkShaderModule hndl;
+	const char* entryPointName;
+	VkShaderStageFlags stage;
 };
 
-struct group_size
+using vk_specialization_type = u32;
+
+inline std::vector<VkSpecializationMapEntry> VkMakeSpecializationMap( const std::span<vk_specialization_type> consts )
 {
-	u32 x : 8;
-	u32 y : 8;
-	u32 z : 8;
-	u32 padding : 8;
-};
+	std::vector<VkSpecializationMapEntry> specializations;
+	specializations.resize( std::size( consts ) );
 
-// TODO: should make obsolete
-// TODO: vk_shader_program ?
-// TODO: put shader module inside ?
-struct vk_program
-{
-	VkPipelineLayout			pipeLayout;
-	VkDescriptorUpdateTemplate	descUpdateTemplate;
-	VkShaderStageFlags			pushConstStages;
-	VkDescriptorSetLayout       descSetLayout;
-	group_size					groupSize;
-};
+	u64 sizeOfASpecConst = sizeof( decltype( consts )::value_type );
+	for( u64 i = 0; i < std::size( consts ); ++i )
+	{
+		specializations[ i ] = { u32( i ), u32( i * sizeOfASpecConst ), sizeOfASpecConst };
+	}
+	return specializations;
+}
 
-
-inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size, std::string_view name )
+inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size, const char* name )
 {
 	VkShaderModuleCreateInfo shaderModuleInfo = { 
 		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -56,10 +52,10 @@ inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* s
 		.pCode = spv
 	};
 
-	VkShaderModule sm = {};
+	VkShaderModule sm;
 	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &sm ) );
 
-	VkDbgNameObj( sm, vkDevice, std::data( name ) );
+	VkDbgNameObj( sm, vkDevice, name );
 	return sm;
 }
 
@@ -84,66 +80,6 @@ inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice 
 	return shader;
 }
 
-inline static void VkReflectShaderLayout(
-	const VkPhysicalDeviceProperties& gpuProps,
-	const std::vector<u8>& spvByteCode,
-	std::vector<VkDescriptorSetLayoutBinding>& descSetBindings,
-	std::vector<VkPushConstantRange>& pushConstRanges,
-	group_size& gs,
-	char* entryPointName,
-	u64											entryPointNameStrLen
-) {
-	SpvReflectShaderModule shaderReflection;
-	VK_CHECK( ( VkResult ) spvReflectCreateShaderModule( 
-		std::size( spvByteCode ) * sizeof( spvByteCode[ 0 ] ), std::data( spvByteCode ), &shaderReflection ) );
-
-	const SpvReflectDescriptorSet& set = shaderReflection.descriptor_sets[ 0 ];
-	for( u64 bindingIdx = 0; bindingIdx < set.binding_count; ++bindingIdx )
-	{
-		if( set.set > 0 ) continue;
-
-		const SpvReflectDescriptorBinding& descBinding = *set.bindings[ bindingIdx ];
-
-		if( bindingIdx < std::size( descSetBindings ) )
-		{
-			// NOTE: if binding matches, assume the same resource will be used in multiple shaders in the same pipeline/program
-			// TODO: should VK_CHECK here ?
-			assert( descSetBindings[ bindingIdx ].descriptorType == VkDescriptorType( descBinding.descriptor_type ) );
-			descSetBindings[ bindingIdx ].stageFlags |= shaderReflection.shader_stage;
-			continue;
-		}
-
-		VkDescriptorSetLayoutBinding binding = {
-			.binding = descBinding.binding,
-			.descriptorType = VkDescriptorType( descBinding.descriptor_type ),
-			.descriptorCount = descBinding.count,
-			.stageFlags = ( VkShaderStageFlags ) shaderReflection.shader_stage,
-		};
-		descSetBindings.push_back( binding );
-	}
-
-	for( u64 pci = 0; pci < shaderReflection.push_constant_block_count; ++pci )
-	{
-		VkPushConstantRange pushConstRange = {
-			.stageFlags = ( VkShaderStageFlags ) shaderReflection.shader_stage,
-			.offset = shaderReflection.push_constant_blocks[ pci ].offset,
-			.size = shaderReflection.push_constant_blocks[ pci ].size,
-		};
-		VK_CHECK( VK_INTERNAL_ERROR( pushConstRange.size > gpuProps.limits.maxPushConstantsSize ) );
-		pushConstRanges.push_back( pushConstRange );
-	}
-
-	assert( shaderReflection.entry_point_count == 1 );
-	const SpvReflectEntryPoint& entryPoint = shaderReflection.entry_points[ 0 ];
-	assert( std::strlen( entryPoint.name ) <= entryPointNameStrLen );
-	std::memcpy( entryPointName, entryPoint.name, entryPointNameStrLen );
-	if( VkShaderStageFlags( shaderReflection.shader_stage ) == VK_SHADER_STAGE_COMPUTE_BIT )
-	{
-		gs = { entryPoint.local_size.x, entryPoint.local_size.y, entryPoint.local_size.z };
-	}
-	spvReflectDestroyShaderModule( &shaderReflection );
-}
-
 struct vk_descriptor_info
 {
 	union
@@ -160,88 +96,6 @@ struct vk_descriptor_info
 	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo } {}
 };
 
-// TODO: map spec consts ?
-using vk_shader_list = std::initializer_list<vk_shader*>;
 using vk_dynamic_states = std::initializer_list<VkDynamicState>;
 
-
-// TODO: bindlessLayout
-inline static vk_program VkMakePipelineProgram(
-	VkDevice							vkDevice,
-	const VkPhysicalDeviceProperties& gpuProps,
-	VkPipelineBindPoint					bindPoint,
-	vk_shader_list						shaders,
-	VkDescriptorSetLayout				bindlessLayout
-) {
-	assert( std::size( shaders ) );
-
-	vk_program program = {};
-
-	std::vector<VkDescriptorSetLayoutBinding> bindings;
-	std::vector<VkPushConstantRange>	pushConstRanges;
-	group_size gs = {};
-
-	for( vk_shader* s : shaders )
-	{
-		VkReflectShaderLayout(
-			gpuProps, s->spvByteCode, bindings, pushConstRanges, gs, s->entryPointName, std::size( s->entryPointName ) );
-	}
-
-	VkDescriptorSetLayout descSetLayout = {};
-	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
-		.bindingCount = ( u32 ) std::size( bindings ),
-		.pBindings = std::data( bindings ),
-	};
-	
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &descSetLayout ) );
-
-	VkDescriptorSetLayout setLayouts[] = { descSetLayout, bindlessLayout };
-
-	VkPipelineLayoutCreateInfo pipeLayoutInfo = { 
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = ( u32 ) std::size( setLayouts ),
-		.pSetLayouts = setLayouts,
-		.pushConstantRangeCount = ( u32 ) std::size( pushConstRanges ),
-		.pPushConstantRanges = std::data( pushConstRanges ),
-	};
-	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &program.pipeLayout ) );
-
-	if( std::size( bindings ) )
-	{
-		std::vector<VkDescriptorUpdateTemplateEntry> entries;
-		entries.reserve( std::size( bindings ) );
-		for( const VkDescriptorSetLayoutBinding& binding : bindings )
-		{
-			VkDescriptorUpdateTemplateEntry entry = {
-				.dstBinding = binding.binding,
-				.dstArrayElement = 0,
-				.descriptorCount = binding.descriptorCount,
-				.descriptorType = binding.descriptorType,
-				.offset = std::size( entries ) * sizeof( vk_descriptor_info ),
-				.stride = sizeof( vk_descriptor_info ),
-			};
-			entries.emplace_back( entry );
-		}
-
-		VkDescriptorUpdateTemplateCreateInfo templateInfo = { 
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO,
-			.descriptorUpdateEntryCount = ( u32 ) std::size( entries ),
-			.pDescriptorUpdateEntries = std::data( entries ),
-			.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR,
-			.descriptorSetLayout = descSetLayout,
-			.pipelineBindPoint = bindPoint,
-			.pipelineLayout = program.pipeLayout,
-			.set = 0,
-		};
-		
-		VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &program.descUpdateTemplate ) );
-	}
-
-	program.descSetLayout = descSetLayout;
-	program.pushConstStages = std::size( pushConstRanges ) ? pushConstRanges[ 0 ].stageFlags : 0;
-	program.groupSize = gs;
-
-	return program;
-}
+#endif // !__VK_SHADER__

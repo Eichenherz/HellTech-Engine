@@ -18,14 +18,14 @@ constexpr const char* ENABLED_DEVICE_EXTS[] = {
 
 	//VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
 	VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+	VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
 	//VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME,
 
 	//VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME,
 	VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 	VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 	VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
-	VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
-	//VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME
+	VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME
 };
 
 inline auto VkSelectPhysicalDevice( VkInstance vkInst )
@@ -35,21 +35,19 @@ inline auto VkSelectPhysicalDevice( VkInstance vkInst )
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
-	//VkPhysicalDeviceHostImageCopyPropertiesEXT hostImgCpyProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_PROPERTIES_EXT };
-	VkPhysicalDeviceShaderObjectPropertiesEXT shaderObjProps = { 
-		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_PROPERTIES_EXT };
+	VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT gfxPipeLibProps = { 
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT };
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &shaderObjProps };
-	VkPhysicalDeviceSubgroupProperties waveProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &gfxPipeLibProps };
+	VkPhysicalDeviceSubgroupProperties waveProps = { 
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
 	VkPhysicalDeviceVulkan13Properties gpuProps13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, &waveProps };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps13 };
 
-	//VkPhysicalDeviceHostImageCopyFeaturesEXT hostImgCpyFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES_EXT };
-	VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjFeatures = { 
-		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT };
+	VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gfxPipeLibFeatures = { 
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT };
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &shaderObjFeatures };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &gfxPipeLibFeatures };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
 	VkPhysicalDeviceIndexTypeUint8FeaturesEXT uint8IdxFeatures =
@@ -265,8 +263,8 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	vk_queue transfQueue = VkCreateQueue<vk_queue_type::TRANSFER>( vkDevice, queueInfos.transfer.queueFamilyIndex );
 
 	VmaAllocator vmaAllocator = VmaCreateAllocator( vkInst, vkGpu, vkDevice );
-
-	return {
+	
+	vk_device device = {
 		.graphicsQueue = gfxQueue,
 		.computeQueue = compQueue,
 		.transferQueue = transfQueue,
@@ -275,6 +273,10 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 		.gpu = vkGpu,
 		.device = vkDevice,
 	};
+
+	device.descriptorManager = device.CreateDescriptorManagerBindless();
+
+	return device;
 }
 
 // TODO: how to host comm ?
@@ -730,54 +732,263 @@ VkSampler vk_device::CreateSampler(
 	VK_CHECK( vkCreateSampler( this->device, &samplerInfo, 0, &sampler ) );
 	return sampler;
 }
-using vk_specializations = std::initializer_list<u32>;
 
-inline VkSpecializationInfo VkMakeSpecializationInfo( 
-	std::vector<VkSpecializationMapEntry>& specializations, 
-	const vk_specializations& consts 
-) {
-	specializations.resize( std::size( consts ) );
-	u64 sizeOfASpecConst = sizeof( *std::cbegin( consts ) );
-	for( u64 i = 0; i < std::size( consts ); ++i )
-	{
-		specializations[ i ] = { u32( i ), u32( i * sizeOfASpecConst ), u32( sizeOfASpecConst ) };
-	}
 
-	return {
-		.mapEntryCount = (u32) std::size( specializations ),
-		.pMapEntries = std::data( specializations ),
-		.dataSize = std::size( consts ) * sizeOfASpecConst,
-		.pData = std::cbegin( consts )
+VkPipeline vk_device::CreateVertexInputInterfacePipelineStage( VkPrimitiveTopology primitiveTopology, const char* name )
+{
+	VkGraphicsPipelineLibraryCreateInfoEXT pipeLibExtInfo = {
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
+		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT
 	};
+
+	// NOTE: never used
+	VkPipelineVertexInputStateCreateInfo vtxInputStateCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	VkPipelineInputAssemblyStateCreateInfo inputAsmStateCreateInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		.topology = primitiveTopology,
+	};
+
+	VkGraphicsPipelineCreateInfo pipelineLibCreateInfo = {
+		.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.pNext               = &pipeLibExtInfo,
+		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
+		.pVertexInputState   = &vtxInputStateCreateInfo,
+		.pInputAssemblyState = &inputAsmStateCreateInfo,
+	};
+
+	VkPipeline vertexInputInterface;
+	VK_CHECK( vkCreateGraphicsPipelines( this->device, 0, 1, &pipelineLibCreateInfo, 0, &vertexInputInterface ) );
+	VkDbgNameObj( vertexInputInterface, this->device, name );
+
+	return vertexInputInterface;
+}
+VkPipeline vk_device::CreateVertexShaderPipelineStage(
+	std::span<VkDynamicState> dynamicState, 
+	const vk_rasterization_config& rasterCfg, 
+	const vk_shader_metadata& shader,
+	const char* name 
+) {
+	VkGraphicsPipelineLibraryCreateInfoEXT pipeLibExtInfo = {
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
+		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT
+	};
+
+	VkPipelineDynamicStateCreateInfo dynamicStateInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+		.dynamicStateCount = ( u32 ) std::size( dynamicState ),
+		.pDynamicStates = std::data( dynamicState )
+	};
+
+	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT,
+		.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT,
+		.extraPrimitiveOverestimationSize = rasterCfg.extraPrimitiveOverestimationSize
+	};
+
+	VkPipelineRasterizationStateCreateInfo rasterInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		.pNext = rasterCfg.conservativeRasterEnable ? &conservativeRasterState : 0,
+		.depthClampEnable = 0,
+		.rasterizerDiscardEnable = 0,
+		.polygonMode = rasterCfg.polygonMode,
+		.cullMode = rasterCfg.cullFlags,
+		.frontFace = rasterCfg.frontFace,
+		.lineWidth = 1.0f
+	};
+
+	VK_CHECK( VK_INTERNAL_ERROR( shader.stage != VK_SHADER_STAGE_VERTEX_BIT ) );
+	VkShaderModuleCreateInfo vtxModuleCreateInfo = {
+		.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = std::size( shader.spvByteCode ),
+		.pCode    = reinterpret_cast<const u32*>( std::data( shader.spvByteCode ) )
+	};
+	
+	VkPipelineShaderStageCreateInfo vtxStageCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		.pNext = &vtxModuleCreateInfo,
+		.stage = VK_SHADER_STAGE_VERTEX_BIT,
+		.pName = shader.entryPointName,
+	};
+
+	VkGraphicsPipelineCreateInfo pipelineLibCreateInfo = {
+		.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.pNext               = &pipeLibExtInfo,
+		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
+		.stageCount = 1u,
+		.pStages = &vtxStageCreateInfo,
+		.pRasterizationState = &rasterInfo,
+		.layout = this->descriptorManager.pipelineLayout
+	};
+
+	VkPipeline vertexShaderStage;
+	VK_CHECK( vkCreateGraphicsPipelines( this->device, 0, 1, &pipelineLibCreateInfo, 0, &vertexShaderStage ) );
+	VkDbgNameObj( vertexShaderStage, this->device, name );
+
+	return vertexShaderStage;
+}
+VkPipeline vk_device::CreateFragmentShaderPipelineStage(
+	vk_depth_stencil_config depthStencilCfg,
+	const vk_shader_metadata& shader,
+	const char* name
+) {
+	VkGraphicsPipelineLibraryCreateInfoEXT pipeLibExtInfo = {
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
+		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT 
+	};
+
+	VkPipelineDepthStencilStateCreateInfo depthStencilState = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, 
+		.depthTestEnable = depthStencilCfg.depthTestEnable,
+		.depthWriteEnable = depthStencilCfg.depthWrite,
+		.depthCompareOp = VK_COMPARE_OP_GREATER,
+		.depthBoundsTestEnable = VK_TRUE,
+		.minDepthBounds = 0.0f,
+		.maxDepthBounds = 1.0f
+	};
+
+	VK_CHECK( VK_INTERNAL_ERROR( shader.stage != VK_SHADER_STAGE_FRAGMENT_BIT ) );
+	VkShaderModuleCreateInfo fragModuleCreateInfo = {
+		.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = std::size( shader.spvByteCode ),
+		.pCode    = reinterpret_cast<const u32*>( std::data( shader.spvByteCode ) )
+	};
+
+	VkPipelineShaderStageCreateInfo fragStageCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		.pNext = &fragModuleCreateInfo,
+		.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+		.pName = shader.entryPointName,
+	};
+
+	VkGraphicsPipelineCreateInfo pipelineLibCreateInfo = {
+		.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.pNext               = &pipeLibExtInfo,
+		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
+		.stageCount = 1u,
+		.pStages = &fragStageCreateInfo,
+		.pDepthStencilState = &depthStencilState,
+		.layout = this->descriptorManager.pipelineLayout
+	};
+
+	VkPipeline fragmentShaderStage;
+	VK_CHECK( vkCreateGraphicsPipelines( this->device, 0, 1, &pipelineLibCreateInfo, 0, &fragmentShaderStage ) );
+	VkDbgNameObj( fragmentShaderStage, this->device, name );
+
+	return fragmentShaderStage;
+}
+VkPipeline vk_device::CreateFragmentOutputInterfacePipelineStage(
+	std::span<VkFormat> colorAttachmentFormats,
+	VkFormat depthAttachmentFormat,
+	const vk_color_blending_config& colorBlendingCfg,
+	bool colorBlendingEnable,
+	const char* name
+) {
+	VkGraphicsPipelineLibraryCreateInfoEXT pipeLibExtInfo = {
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
+		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT 
+	};
+
+	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT
+	};
+
+	constexpr VkColorComponentFlags colWriteMask = 
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	VkPipelineColorBlendAttachmentState blendConfig = {
+		.blendEnable = colorBlendingEnable,
+		.srcColorBlendFactor = colorBlendingCfg.srcColorBlendFactor,
+		.dstColorBlendFactor = colorBlendingCfg.dstColorBlendFactor,
+		.colorBlendOp = VK_BLEND_OP_ADD,
+		.srcAlphaBlendFactor = colorBlendingCfg.srcAlphaBlendFactor,
+		.dstAlphaBlendFactor = colorBlendingCfg.dstAlphaBlendFactor,
+		.alphaBlendOp = VK_BLEND_OP_ADD,
+		.colorWriteMask = colWriteMask
+	};
+
+	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &blendConfig
+	};
+
+	VkPipelineRenderingCreateInfo renderingInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+		.pNext = &pipeLibExtInfo,
+		.colorAttachmentCount = ( u32 ) std::size( colorAttachmentFormats ),
+		.pColorAttachmentFormats = std::data( colorAttachmentFormats ),
+		.depthAttachmentFormat = depthAttachmentFormat
+	};
+
+	VkGraphicsPipelineCreateInfo pipelineLibCreateInfo = {
+		.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.pNext               = &renderingInfo,
+		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
+		.pMultisampleState = &multisamplingInfo,
+		.pColorBlendState = &colorBlendStateInfo,
+	};
+
+	VkPipeline fragmentOutputInterfaceStage;
+	VK_CHECK( vkCreateGraphicsPipelines( this->device, 0, 1, &pipelineLibCreateInfo, 0, &fragmentOutputInterfaceStage ) );
+	VkDbgNameObj( fragmentOutputInterfaceStage, this->device, name );
+
+	return fragmentOutputInterfaceStage;
 }
 
-VkPipeline vk_device::CreateComputePipeline(
-	VkShaderModule cs, 
-	vk_specializations consts, 
-	const char * name, 
-	const char * entryPointName
+VkPipeline vk_device::CreateGraphicsPipeline( std::span<VkPipeline> libaries, const char* name )
+{
+	VkPipelineLibraryCreateInfoKHR linkingInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR,
+		.libraryCount = ( u32 ) std::size( libaries ),
+		.pLibraries = std::data( libaries )
+	};
+
+	VkGraphicsPipelineCreateInfo executablePipelineCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.pNext = &linkingInfo,
+		.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT
+	};
+
+	VkPipeline executable;
+	VK_CHECK( vkCreateGraphicsPipelines( this->device, 0, 1, &executablePipelineCreateInfo, 0, &executable ) );
+	VkDbgNameObj( executable, this->device, name );
+
+	return executable;
+}
+
+VkPipeline vk_device::CreateComputePipeline( 
+	const vk_shader& shader, 
+	const std::span<vk_specialization_type> consts, 
+	const char* name
 ) {
-	std::vector<VkSpecializationMapEntry> specializations;
-	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
+	VK_CHECK( VK_INTERNAL_ERROR( shader.stage != VK_SHADER_STAGE_COMPUTE_BIT ) );
+
+	std::vector<VkSpecializationMapEntry> specializations = VkMakeSpecializationMap( consts );
+	VkSpecializationInfo specInfo = {
+		.mapEntryCount = (u32) std::size( specializations ),
+		.pMapEntries = std::data( specializations ),
+		.dataSize = std::size( consts ) * sizeof( decltype( consts )::value_type ),
+		.pData = std::data( consts )
+	};
 
 	VkPipelineShaderStageCreateInfo stage = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 		.stage = VK_SHADER_STAGE_COMPUTE_BIT,
-		.module = cs,
-		.pName = entryPointName,
+		.module = shader.hndl,
+		.pName = shader.entryPointName,
 		.pSpecializationInfo = &specInfo,
 	};
 
 	VkComputePipelineCreateInfo compPipelineInfo = { 
 		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 		.stage = stage,
-		.layout = this->de
+		.layout = this->descriptorManager.pipelineLayout
 	};
 
 	VkPipeline pipeline = 0;
-	VK_CHECK( vkCreateComputePipelines( vkDevice, vkPipelineCache, 1, &compPipelineInfo, 0, &pipeline ) );
+	VK_CHECK( vkCreateComputePipelines( this->device, 0, 1, &compPipelineInfo, 0, &pipeline ) );
 
-	VkDbgNameObj( pipeline, vkDevice, name );
+	VkDbgNameObj( pipeline, this->device, name );
 
 	return pipeline;
 }
