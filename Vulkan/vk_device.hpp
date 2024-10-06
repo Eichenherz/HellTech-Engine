@@ -11,70 +11,9 @@
 #include "vk_commands.hpp"
 #include "vk_shaders.hpp"
 #include "vk_pipelines.hpp"
+#include "vk_queue.hpp"
 #include "metaprogramming.hpp"
 
-// TODO: buffer VkCommandPool per frame in flight ?
-// TODO: multiple sumbits per queue ?
-template<vk_queue_type QUEUE_TYPE>
-struct vk_queue
-{
-	VkQueue			hndl;
-	VkCommandPool   cmdPool;
-	u32				index;
-
-	void Submit( std::initializer_list<vk_command_buffer<QUEUE_TYPE>> cmdBuffers,
-				 std::initializer_list<VkSemaphore> waitSemas,
-				 std::initializer_list<VkSemaphore> signalSemas,
-				 std::initializer_list<u64> signalValues,
-				 VkPipelineStageFlags waitDstStageMsk );
-	void Present( VkSemaphore renderingCompleteSema, const vk_swapchain& swapchain, u32 swapchainImgIdx )
-		requires ( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
-};
-
-
-template<vk_queue_type QUEUE_TYPE>
-void vk_queue<QUEUE_TYPE>::Submit( 
-	std::initializer_list<vk_command_buffer<QUEUE_TYPE>> cmdBuffers,
-	std::initializer_list<VkSemaphore> waitSemas,
-	std::initializer_list<VkSemaphore> signalSemas,
-	std::initializer_list<u64> signalValues,
-	VkPipelineStageFlags waitDstStageMsk 
-) {
-	VkTimelineSemaphoreSubmitInfo timelineInfo = {
-		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-		.signalSemaphoreValueCount = std::size( signalValues ),
-		.pSignalSemaphoreValues = std::data( signalValues )
-	};
-
-	VkSubmitInfo submitInfo = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.pNext = &timelineInfo,
-		.waitSemaphoreCount = ( u32 ) std::size( waitSemas ),
-		.pWaitSemaphores = std::data( waitSemas ),
-		.pWaitDstStageMask = &waitDstStageMsk,
-		.commandBufferCount = ( u32 ) std::size( cmdBuffers ),
-		.pCommandBuffers = std::data( cmdBuffers ),
-		.signalSemaphoreCount = ( u32 ) std::size( signalSemas ),
-		.pSignalSemaphores = std::data( signalSemas )
-	};
-	// NOTE: queue submit has implicit host sync for trivial stuff
-	VK_CHECK( vkQueueSubmit( this->hndl, 1, &submitInfo, 0 ) );
-}
-
-template<vk_queue_type QUEUE_TYPE>
-void vk_queue<QUEUE_TYPE>::Present( VkSemaphore renderingCompleteSema, const vk_swapchain& swapchain, u32 swapchainImgIdx )
-	requires ( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
-{
-	VkPresentInfoKHR presentInfo = { 
-		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &renderingCompleteSema,
-		.swapchainCount = 1,
-		.pSwapchains = &swapchain,
-		.pImageIndices = &swapchainImgIdx
-	};
-	VK_CHECK( vkQueuePresentKHR( this->hndl, &presentInfo ) );
-}
 
 // TODO: use handle_map/free list and stable addressing if unique/new is cumbersome
 struct vk_device
@@ -94,15 +33,15 @@ struct vk_device
 	VkDevice		device;
 
 
-	deleter_unique_ptr<vk_buffer> CreateBuffer( const buffer_info& buffInfo );
+	deleter_unique_ptr<vk_buffer> CreateBuffer( const buffer_info& buffInfo ) const;
 	deleter_unique_ptr<vk_image> CreateImage( const image_info& imgInfo );
 
-	void DestroyBuffer( vk_buffer& buff );
+	void DestroyBuffer( vk_buffer& buff ) const;
 	void DestroyImage( vk_image& img );
 
 	// NOTE: hardcoded for bindless
 	vk_descriptor_manager CreateDescriptorManagerBindless();
-	void FlushDescriptorUpdates( std::span<VkWriteDescriptorSet> descriptorUpdates );
+	void FlushDescriptorUpdates();
 
 	VkDescriptorPool CreateDescriptorPool( std::span<u32> descriptorCount, u32 maxSetCount );
 	VkDescriptorSetLayout CreateDescriptorSetLayout( std::span<u32> descriptorCount );
@@ -116,7 +55,7 @@ struct vk_device
 
 	// TODO: do we need a different value for timeline semas ?
 	// TODO: separate the TimelineSemas from normal semas ?
-	VkSemaphore CreateVkSemaphore( bool isTimeline );
+	VkSemaphore CreateVkSemaphore( bool isTimeline ) const;
 	// TODO: pass {sema, value} pairs ?
 	void WaitSemaphores( std::initializer_list<VkSemaphore> semas, std::initializer_list<u64> values, u64 maxWait );
 
@@ -146,23 +85,25 @@ struct vk_device
 	VkPipeline CreateComputePipeline( 
 		const vk_shader& shader, const std::span<vk_specialization_type> consts, const char* name );
 
-	// TODO: allocate more ?
 	// TODO: allocate VkCmdBuffer and just pass around references ?
 	template<vk_queue_type QUEUE_TYPE>
-	vk_command_buffer<QUEUE_TYPE> AllocateCommandBuffers( const vk_queue<QUEUE_TYPE>& queue )
+	vk_command_buffer<QUEUE_TYPE> CreateCommandBuffer( const vk_queue<QUEUE_TYPE>& queue ) const
 	{
+		VkCommandBuffer hndl;
 		VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 			.commandPool = queue.cmdPool,
 			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 			.commandBufferCount = 1,
 		};
-		VkCommandBuffer cmdBuff;
-		VK_CHECK( vkAllocateCommandBuffers( this->device, &cmdBuffAllocInfo, &cmdBuff ) );
+		VK_CHECK( vkAllocateCommandBuffers( this->device, &cmdBuffAllocInfo, &hndl ) );
 
-		return { cmdBuff };
+		return { hndl };
 	}
+
+	vk_gpu_timer CreateGpuTimer( u32 queryCount, const char* name ) const;
+
 };
 
-vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf );
+vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, VkFormat scDesiredFormat, vk_queue_type presentQueueType );
 

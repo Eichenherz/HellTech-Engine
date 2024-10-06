@@ -8,13 +8,6 @@
 #include "r_data_structs.h"
 #include "vk_descriptors.hpp"
 
-enum class vk_queue_type
-{
-	GRAPHICS,
-	COMPUTE,
-	TRANSFER
-};
-
 // TODO: don't forget to bind descriptor sets
 
 // TODO: pass push consts differenly
@@ -24,9 +17,9 @@ struct dispatch_command
 	std::span<u8> pushConst;
 	VkPipeline pso;
 	VkPipelineLayout layout;
-	u16 workgrX;
-	u16 workgrY;
-	u16 workgrZ;
+	u16 workgrCountX;
+	u16 workgrCountY;
+	u16 workgrCountZ;
 };
 
 struct render_command
@@ -39,19 +32,43 @@ struct render_command
 	VkPipelineLayout layout;
 };
 
+struct vk_label
+{
+	const VkCommandBuffer& cmdBuff;
+
+	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
+		: cmdBuff{ cmdBuff }
+	{
+		VkDebugUtilsLabelEXT dbgLabel = { 
+			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+			.pLabelName = labelName,
+			.color = { col.r, col.g, col.b, col.a }
+		};
+		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
+	}
+	inline ~vk_label()
+	{
+		vkCmdEndDebugUtilsLabelEXT( cmdBuff );
+	}
+};
+
 template<vk_queue_type QUEUE_TYPE>
 struct vk_command_buffer
 {
 	VkCommandBuffer hndl;
-	void Begin();
-	void End();
+
+	void Begin() const;
+	void End() const;
+	// TODO: revisit
 	// TODO: Execution barriers too ?
-	// NOTE: on PC we don't care about BufferBarriers
 	void FlushMemoryBarriers( const std::span<VkMemoryBarrier2> memBarriers );
 	void ImageLayoutTransitionBarriers( const std::span<VkImageMemoryBarrier2> imgBarriers );
 	void FillBuffer( vk_buffer& buff, u32 val );
 	void CopyBuffer( const vk_buffer& src, const vk_buffer& dest );
 	void CopyBufferToImage( const vk_buffer& src, const vk_image& dest );
+
+	vk_label PutLabel( const char* labelName, DXPacked::XMCOLOR col );
+
 
 	// TODO: Concepts ?
 	template<typename Args_T>
@@ -73,6 +90,7 @@ struct vk_command_buffer
 		const vk_buffer& drawCmds, 
 		const vk_buffer& drawCount, 
 		u32 maxDrawCount ) requires( QUEUE_TYPE == vk_queue_type::GRAPHICS );
+	// TODO: revisit
 	void DrawIndexed( const render_command& args, const vk_buffer& indexBuffer ) requires( QUEUE_TYPE == vk_queue_type::GRAPHICS );
 	void DrawIndexedIndirectCount( 
 		const render_command& args, 
@@ -99,16 +117,15 @@ inline constexpr VkPipelineBindPoint VkGetPSOBindPoint()
 }
 
 template<vk_queue_type QUEUE_TYPE>
-inline void vk_command_buffer<QUEUE_TYPE>::Begin()
+inline void vk_command_buffer<QUEUE_TYPE>::Begin() const
 {
-	//VK_CHECK( vkResetCommandBuffer( this->hndl, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT ) );
 	VkCommandBufferBeginInfo cmdBufBegInfo = { 
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT 
 	};
 	vkBeginCommandBuffer( this->hndl, &cmdBufBegInfo );
 }
 template<vk_queue_type QUEUE_TYPE>
-inline void vk_command_buffer<QUEUE_TYPE>::End()
+inline void vk_command_buffer<QUEUE_TYPE>::End() const
 {
 	VK_CHECK( vkEndCommandBuffer( this->hndl ) );
 }
@@ -160,11 +177,18 @@ inline void vk_command_buffer<QUEUE_TYPE>::CopyBufferToImage( const vk_buffer& s
 	vkCmdCopyBufferToImage( this->hndl, src.hndl, dest.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
 }
 
+template<vk_queue_type QUEUE_TYPE>
+inline vk_label vk_command_buffer<QUEUE_TYPE>::PutLabel( const char* labelName, DXPacked::XMCOLOR col )
+{
+	return { this->hndl, labelName, col };
+}
+
 
 template<vk_queue_type QUEUE_TYPE>
 inline void vk_command_buffer<QUEUE_TYPE>::BindDescriptorSet( const vk_descriptor_manager& descMngr )
 	requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
 {
+	static_assert(false, "We can bind compute in gfx" ) // ?
 	constexpr VkPipelineBindPoint bindPoint = VkGetPSOBindPoint();
 	vkCmdBindDescriptorSets( this->hndl, bindPoint, descMngr.globalPipelineLayout, 0, 1, &descMngr.set, 0, 0 );
 }
@@ -184,7 +208,7 @@ inline void vk_command_buffer<QUEUE_TYPE>::Dispatch( const dispatch_command& arg
 	requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
 {
 	this->BindPSO( args );
-	vkCmdDispatch( this->hndl, args.workgrX, args.workgrY, args.workgrZ );
+	vkCmdDispatch( this->hndl, args.workgrCountX, args.workgrCountY, args.workgrCountZ );
 }
 template<vk_queue_type QUEUE_TYPE>
 inline void vk_command_buffer<QUEUE_TYPE>::DispatchIndirect( const dispatch_command& args, const vk_buffer& dispatchCmdsBuff )

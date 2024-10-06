@@ -16,16 +16,12 @@
 #include <string>
 #include <algorithm>
 
-// TODO: fix build msbuild ? add more stuff ?
-// TODO: use own strchyy buffer/ allocator
-#include "diy_pch.h"
 using namespace std;
 
 #include "sys_os_api.h"
 #include "core_types.h"
 #include "core_lib_api.h"
 
-#include "sys_err.inl"
 
 #include "r_data_structs.h"
 
@@ -132,16 +128,11 @@ inline std::vector<u8> SysReadFile( const char* fileName )
 inline u64 SysGetFileTimestamp( const char* filename )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( filename );
-	FILETIME fileTime = {};
-	WIN_CHECK( !GetFileTime( hfile, 0, 0, &fileTime ) );
-
-	ULARGE_INTEGER timestamp = {};
-	timestamp.LowPart = fileTime.dwLowDateTime;
-	timestamp.HighPart = fileTime.dwHighDateTime;
+	
 
 	CloseHandle( hfile );
 
-	return u64( timestamp.QuadPart );
+	
 }
 // TODO: might not want to crash when file can't be written/read
 inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
@@ -169,38 +160,6 @@ HINSTANCE		hInst = 0;
 HWND			hWnd = 0;
 void*			sysMem = 0;
 
-
-
-enum cvar_type : u8
-{
-	CVAR_INT = 0,
-	CVAR_FLOAT = 1,
-	CVAR_STRING = 2,
-	CVAR_COUNT
-};
-
-enum cvar_usage : u8
-{
-
-};
-
-struct cvar_parameter
-{
-	char		name[ 64 ];
-	char		description[ 128 ];
-	cvar_type	type;
-	cvar_usage	usg;
-	u32			idx;
-};
-
-struct cvar_buffer
-{
-	static constexpr u32 MAX_FLOAT_COUNT = 100;
-	static constexpr u32 MAX_INT_COUNT = 100;
-	static constexpr u32 MAX_STRING_COUNT = 20;
-
-
-};
 
 static bool frustumCullDbg = 0;
 
@@ -542,8 +501,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	"Assets/cyberbaron.drak";
 	static bool loadedPakFile = false;
 
-	win_file dataFile = {};
-	pak_filesystem pakFs = {};
 	// TODO: QUIT immediately ?
 	while( isRunning )
 	{
@@ -553,15 +510,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		//accumulator += elapsedSecs;
 
 		isRunning = SysPumpUserInput( &m, &kbd, 1 );
-
-
-		//if( !loadedPakFile )
-		//{
-		//	dataFile = WinMountMemMappedFile( pakPath );
-		//	pakFs = PakMountFromWinFile( dataFile );
-		//
-		//	loadedPakFile = true;
-		//}
 
 
 		// TODO: smooth camera some more ?

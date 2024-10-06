@@ -41,7 +41,6 @@ enum gltf_sampler_address_mode : u8
 	GLTF_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT = 2
 };
 
-// TODO: compress even more ?
 struct sampler_config
 {
 	gltf_sampler_filter			min;

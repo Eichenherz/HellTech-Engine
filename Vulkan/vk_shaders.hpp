@@ -54,30 +54,7 @@ inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* s
 
 	VkShaderModule sm;
 	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &sm ) );
-
-	VkDbgNameObj( sm, vkDevice, name );
 	return sm;
-}
-
-inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
-{
-	// TODO: 
-	using namespace std;
-	constexpr std::string_view shadersFolder = "Shaders/"sv;
-	constexpr std::string_view shaderExtension = ".spv"sv;
-
-	std::vector<u8> binSpvShader = SysReadFile( shaderPath );
-
-	std::string_view shaderName = { shaderPath };
-	shaderName.remove_prefix( std::size( shadersFolder ) );
-	shaderName.remove_suffix( std::size( shaderExtension ) - 1 );
-
-	vk_shader shader = {};
-	shader.spvByteCode = std::move( binSpvShader );
-	shader.module = VkMakeShaderModule( 
-		vkDevice, ( const u32* ) std::data( shader.spvByteCode ), std::size( shader.spvByteCode ), &shaderName[ 0 ] );
-
-	return shader;
 }
 
 struct vk_descriptor_info

@@ -9,10 +9,10 @@
 
 inline  VkMemoryBarrier2
 VkMakeMemoryBarrier2(
-	VkAccessFlags2KHR			srcAccess,
-	VkPipelineStageFlags2KHR	srcStage,
-	VkAccessFlags2KHR			dstAccess,
-	VkPipelineStageFlags2KHR	dstStage
+	VkAccessFlags2			srcAccess,
+	VkPipelineStageFlags2	srcStage,
+	VkAccessFlags2			dstAccess,
+	VkPipelineStageFlags2	dstStage
 ) {
 	return {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
@@ -26,12 +26,10 @@ VkMakeMemoryBarrier2(
 inline  VkBufferMemoryBarrier2
 VkMakeBufferBarrier2(
 	VkBuffer					hBuff,
-	VkAccessFlags2KHR			srcAccess,
-	VkPipelineStageFlags2KHR	srcStage,
-	VkAccessFlags2KHR			dstAccess,
-	VkPipelineStageFlags2KHR	dstStage,
-	VkDeviceSize				buffOffset = 0,
-	VkDeviceSize				buffSize = VK_WHOLE_SIZE,
+	VkAccessFlags2			srcAccess,
+	VkPipelineStageFlags2	srcStage,
+	VkAccessFlags2			dstAccess,
+	VkPipelineStageFlags2	dstStage,
 	u32							srcQueueFamIdx = VK_QUEUE_FAMILY_IGNORED,
 	u32							dstQueueFamIdx = VK_QUEUE_FAMILY_IGNORED
 ) {
@@ -44,12 +42,12 @@ VkMakeBufferBarrier2(
 		.srcQueueFamilyIndex = srcQueueFamIdx,
 		.dstQueueFamilyIndex = dstQueueFamIdx,
 		.buffer = hBuff,
-		.offset = buffOffset,
-		.size = buffSize,
+		.offset = 0,
+		.size = VK_WHOLE_SIZE,
 	};
 }
 
-inline VkBufferMemoryBarrier2KHR VkReverseBufferBarrier2( const VkBufferMemoryBarrier2& b )
+inline VkBufferMemoryBarrier2 VkReverseBufferBarrier2( const VkBufferMemoryBarrier2& b )
 {
 	VkBufferMemoryBarrier2 barrier = b;
 	std::swap( barrier.srcAccessMask, barrier.dstAccessMask );
@@ -61,10 +59,10 @@ inline VkBufferMemoryBarrier2KHR VkReverseBufferBarrier2( const VkBufferMemoryBa
 inline  VkImageMemoryBarrier2
 VkMakeImageBarrier2(
 	VkImage						hImg,
-	VkAccessFlags2KHR           srcAccessMask,
-	VkPipelineStageFlags2KHR    srcStageMask,
-	VkAccessFlags2KHR           dstAccessMask,
-	VkPipelineStageFlags2KHR	dstStageMask,
+	VkAccessFlags2           srcAccessMask,
+	VkPipelineStageFlags2    srcStageMask,
+	VkAccessFlags2           dstAccessMask,
+	VkPipelineStageFlags2	dstStageMask,
 	VkImageLayout               oldLayout,
 	VkImageLayout               newLayout,
 	VkImageAspectFlags			aspectMask,

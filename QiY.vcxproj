@@ -185,7 +185,7 @@
       <IncludeInUnityFile>true</IncludeInUnityFile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>diy_pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AdditionalOptions>/arch:AVX2 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -225,6 +225,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <AdditionalIncludeDirectories>$(ProjectDir);</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -246,7 +247,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <AdditionalIncludeDirectories>D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -264,12 +265,12 @@
   <ItemGroup>
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
-    <ClCompile Include="filesystem.ixx" />
-    <ClCompile Include="vk_device.cpp" />
+    <ClCompile Include="dxc.cpp" />
+    <ClCompile Include="System\Win32\win32_file.cpp" />
+    <ClCompile Include="Vulkan\vk_device.cpp" />
     <ClInclude Include="geometry.hpp">
       <FileType>Document</FileType>
     </ClInclude>
-    <ClCompile Include="pak_file.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -277,14 +278,15 @@
     <ClCompile Include="imgui\imgui_widgets.cpp" />
     <ClCompile Include="lz4.c" />
     <ClCompile Include="miniz.c" />
-    <ClCompile Include="r_dxc_compiler.ixx" />
+    <ClInclude Include="dxc.hpp">
+      <FileType>Document</FileType>
+    </ClInclude>
     <ClCompile Include="r_dx12_backend.cpp" />
-    <ClCompile Include="vk_backend.cpp" />
+    <ClCompile Include="Vulkan\vk_backend.cpp" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
     <ClCompile Include="spng.c" />
-    <ClCompile Include="sys_mmaped.cpp" />
     <ClCompile Include="sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
     </ClCompile>
@@ -293,17 +295,18 @@
     <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="bcn_compressor.h" />
     <ClInclude Include="cgltf.h" />
-    <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
+    <ClInclude Include="System\sys_file.h" />
     <ClInclude Include="hell_log.hpp" />
     <ClInclude Include="math_util.hpp" />
     <ClInclude Include="metaprogramming.hpp" />
-    <ClInclude Include="vk_commands.hpp" />
-    <ClInclude Include="vk_common.hpp" />
-    <ClInclude Include="vk_descriptors.hpp" />
-    <ClInclude Include="vk_device.hpp" />
-    <ClInclude Include="vk_instance.hpp" />
-    <ClInclude Include="pak_file.h" />
+    <ClInclude Include="System\sys_filesystem.hpp" />
+    <ClInclude Include="System\Win32\win32_utils.hpp" />
+    <ClInclude Include="Vulkan\vk_commands.hpp" />
+    <ClInclude Include="Vulkan\vk_common.hpp" />
+    <ClInclude Include="Vulkan\vk_descriptors.hpp" />
+    <ClInclude Include="Vulkan\vk_device.hpp" />
+    <ClInclude Include="Vulkan\vk_instance.hpp" />
     <ClInclude Include="handles.hpp">
       <FileType>Document</FileType>
     </ClInclude>
@@ -316,19 +319,19 @@
     <ClInclude Include="lz4.h" />
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
-    <ClInclude Include="vk_pipelines.hpp" />
-    <ClInclude Include="vk_resources.hpp" />
-    <ClInclude Include="vk_shaders.hpp" />
-    <ClInclude Include="vk_sync.hpp" />
+    <ClInclude Include="Vulkan\vk_pipelines.hpp" />
+    <ClInclude Include="Vulkan\vk_resources.hpp" />
+    <ClInclude Include="Vulkan\vk_shaders.hpp" />
+    <ClInclude Include="Vulkan\vk_sync.hpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="r_data.h" />
     <ClInclude Include="spng.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
-    <ClInclude Include="vk_mem_alloc.h" />
-    <ClInclude Include="vk_procs.h" />
-    <ClInclude Include="vk_swapchain.hpp" />
-    <ClInclude Include="vk_utils.hpp" />
+    <ClInclude Include="Vulkan\vk_mem_alloc.h" />
+    <ClInclude Include="Vulkan\vk_procs.h" />
+    <ClInclude Include="Vulkan\vk_swapchain.hpp" />
+    <ClInclude Include="Vulkan\vk_utils.hpp" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">
@@ -443,7 +446,6 @@
     <CustomBuild Include="Shaders\meshlet.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <None Include="sys_err.inl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\culling.hlsl">

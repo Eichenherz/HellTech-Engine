@@ -18,5 +18,13 @@ constexpr u32 APP_VERSION = 1;
 // TODO: enable gfx debug outside of VS Debug
 constexpr bool vkValidationLayerFeatures = 1;
 
+enum class vk_queue_type
+{
+	GRAPHICS,
+	COMPUTE,
+	TRANSFER
+};
+
+
 #endif // !__VK_COMMON__
 

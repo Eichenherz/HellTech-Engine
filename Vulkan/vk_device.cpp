@@ -240,8 +240,12 @@ VmaAllocator VmaCreateAllocator( VkInstance vkInst, VkPhysicalDevice vkGpu, VkDe
 	return vmaAllocator;
 }
 
-inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
-{
+inline static vk_device VkMakeDeviceContext( 
+	VkInstance vkInst, 
+	VkSurfaceKHR vkSurf, 
+	VkFormat scDesiredFormat, 
+	vk_queue_type presentQueueType 
+) {
 	auto[ gpuProps2, gpuFeatures, vkGpu ] = VkSelectPhysicalDevice( vkInst );
 	vk_queue_infos queueInfos = VkSelectDeviceQueues( vkGpu, vkSurf );
 	
@@ -275,12 +279,13 @@ inline static vk_device VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkS
 	};
 
 	device.descriptorManager = device.CreateDescriptorManagerBindless();
+	device.swapchain = device.CreateSwapchain( vkSurf, scDesiredFormat, presentQueueType );
 
 	return device;
 }
 
 // TODO: how to host comm ?
-deleter_unique_ptr<vk_buffer> vk_device::CreateBuffer( const buffer_info& buffInfo ) 
+deleter_unique_ptr<vk_buffer> vk_device::CreateBuffer( const buffer_info& buffInfo ) const
 {
 	VkBufferCreateInfo bufferInfo = { 
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, 
@@ -395,7 +400,7 @@ deleter_unique_ptr<vk_image> vk_device::CreateImage( const image_info& imgInfo )
 	return { new vk_image( img ), [ this ]( vk_image& image ) { this->DestroyImage( image ); } };
 }
 
-void vk_device::DestroyBuffer( vk_buffer& buffer )
+void vk_device::DestroyBuffer( vk_buffer& buffer ) const
 {
 	vmaDestroyBuffer( this->allocator, buffer.hndl, buffer.allocation );
 }
@@ -431,15 +436,16 @@ vk_descriptor_manager vk_device::CreateDescriptorManagerBindless()
 	return mngr;
 }
 
-inline void vk_device::FlushDescriptorUpdates( std::span<VkWriteDescriptorSet> descriptorUpdates )
+inline void vk_device::FlushDescriptorUpdates()
 {
-	if( std::size( descriptorUpdates ) == 0 )
+	u64 descriptorUpdates = std::size( this->descriptorManager.pendingUpdates );
+	if( descriptorUpdates == 0 )
 	{
 		return;
 	}
 
-	vkUpdateDescriptorSets( this->device, std::size( descriptorUpdates ), std::data( descriptorUpdates ), 0, 0 );
-	//dealer.pendingUpdates.resize( 0 );
+	vkUpdateDescriptorSets( this->device, descriptorUpdates, std::data( this->descriptorManager.pendingUpdates ), 0, 0 );
+	this->descriptorManager.pendingUpdates.resize( 0 );
 }
 
 VkDescriptorPool vk_device::CreateDescriptorPool( std::span<u32> descriptorCount, u32 maxSetCount )
@@ -670,7 +676,7 @@ u32 vk_device::AcquireNextSwapcahinImage( VkSemaphore acquireScImgSema, u64 time
 	return imgIdx;
 }
 
-VkSemaphore vk_device::CreateVkSemaphore( bool isTimeline )
+VkSemaphore vk_device::CreateVkSemaphore( bool isTimeline ) const
 {
 	constexpr VkSemaphoreTypeCreateInfo timelineInfo = {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
@@ -991,4 +997,29 @@ VkPipeline vk_device::CreateComputePipeline(
 	VkDbgNameObj( pipeline, this->device, name );
 
 	return pipeline;
+}
+
+vk_gpu_timer vk_device::CreateGpuTimer( u32 queryCount, const char* name ) const
+{
+	VkQueryPoolCreateInfo queryPoolInfo = {
+		.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+		.queryType = VK_QUERY_TYPE_TIMESTAMP,
+		.queryCount = queryCount,
+		//.pipelineStatistics
+	};
+
+	VkQueryPool queryPool;
+	VK_CHECK( vkCreateQueryPool( this->device, &queryPoolInfo, 0, &queryPool ) );
+	VkDbgNameObj( queryPool, this->device, name );
+
+	constexpr VkBufferUsageFlags usgQuery = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	auto pBuffer = this->CreateBuffer( 
+		{ .name = "Buff_Timestamp_Queries", .usage = usgQuery, .elemCount = queryCount, .stride = sizeof( u64 ) } );
+
+	return {
+		.resultBuff = std::move( pBuffer ),
+		.queryPool = queryPool,
+		.queryCount = queryCount,
+		.timestampPeriod = this->gpuProps.limits.timestampPeriod
+	};
 }

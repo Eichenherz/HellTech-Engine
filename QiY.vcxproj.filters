@@ -18,7 +18,7 @@
     <ClCompile Include="sys_os_win.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="vk_backend.cpp">
+    <ClCompile Include="Vulkan\vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="asset_compiler.cpp">
@@ -54,19 +54,13 @@
     <ClCompile Include="r_dx12_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="r_dxc_compiler.ixx">
+    <ClCompile Include="Vulkan\vk_device.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="pak_file.cpp">
+    <ClCompile Include="dxc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="sys_mmaped.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="filesystem.ixx">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="vk_device.cpp">
+    <ClCompile Include="System\Win32\win32_file.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -80,13 +74,10 @@
     <ClInclude Include="DEFS_WIN32_NO_BS.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_procs.h">
+    <ClInclude Include="Vulkan\vk_procs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="r_data_structs.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="core_lib_api.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Shaders\glsl_func_lib.h">
@@ -128,19 +119,16 @@
     <ClInclude Include="imgui\imstb_truetype.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_resources.hpp">
+    <ClInclude Include="Vulkan\vk_resources.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_utils.hpp">
+    <ClInclude Include="Vulkan\vk_utils.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_sync.hpp">
+    <ClInclude Include="Vulkan\vk_sync.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_pipelines.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pak_file.h">
+    <ClInclude Include="Vulkan\vk_pipelines.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="r_data.h">
@@ -149,25 +137,25 @@
     <ClInclude Include="geometry.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_shaders.hpp">
+    <ClInclude Include="Vulkan\vk_shaders.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_instance.hpp">
+    <ClInclude Include="Vulkan\vk_instance.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="hell_log.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_device.hpp">
+    <ClInclude Include="Vulkan\vk_device.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="math_util.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_descriptors.hpp">
+    <ClInclude Include="Vulkan\vk_descriptors.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_swapchain.hpp">
+    <ClInclude Include="Vulkan\vk_swapchain.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="metaprogramming.hpp">
@@ -176,13 +164,25 @@
     <ClInclude Include="handles.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_mem_alloc.h">
+    <ClInclude Include="Vulkan\vk_mem_alloc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_common.hpp">
+    <ClInclude Include="Vulkan\vk_common.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_commands.hpp">
+    <ClInclude Include="Vulkan\vk_commands.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="dxc.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\sys_file.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\Win32\win32_utils.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\sys_filesystem.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -213,9 +213,6 @@
   <ItemGroup>
     <None Include="Shaders\imgui_gfx_lib.hlsl" />
     <None Include="packages.config" />
-    <None Include="sys_err.inl">
-      <Filter>Header Files</Filter>
-    </None>
     <None Include="Shaders\culling.hlsl" />
   </ItemGroup>
 </Project>

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <assert.h>
-#include "sys_os_api.h"
 #include "core_types.h"
 
 inline bool IsPowOf2( u64 addr )

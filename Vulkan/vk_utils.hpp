@@ -152,31 +152,6 @@ static const DXPacked::XMCOLOR yellow = { 255u, 255u, 0u, 1 };
 static const DXPacked::XMCOLOR cyan = { 0u, 255u, 255u, 1 };
 static const DXPacked::XMCOLOR magenta = { 255u, 0u, 255u, 1 };
 
-
-struct vk_label
-{
-	const VkCommandBuffer& cmdBuff;
-
-	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
-		: cmdBuff{ cmdBuff }
-	{
-		assert( cmdBuff );
-
-		VkDebugUtilsLabelEXT dbgLabel = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
-		dbgLabel.pLabelName = labelName;
-		dbgLabel.color[ 0 ] = col.r;
-		dbgLabel.color[ 1 ] = col.g;
-		dbgLabel.color[ 2 ] = col.b;
-		dbgLabel.color[ 3 ] = col.a;
-		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
-	}
-	inline ~vk_label()
-	{
-		assert( cmdBuff );
-		vkCmdEndDebugUtilsLabelEXT( cmdBuff );
-	}
-};
-
 #ifdef _VK_DEBUG_
 
 #include <iostream>
@@ -218,31 +193,18 @@ VkDbgUtilsMsgCallback(
 // NOTE: for timestamps we need 2 queries 
 struct vk_gpu_timer
 {
-	vk_buffer resultBuff;
+	deleter_unique_ptr<vk_buffer> resultBuff;
 	VkQueryPool queryPool;
 	u32         queryCount;
 	float       timestampPeriod;
+
+	float ReadGpuTimeInMs( VkCommandBuffer cmdBuff );
 };
 
-inline VkQueryPool VkMakeQueryPool( VkDevice vkDevice, u32 queryCount, const char* name )
-{
-	VkQueryPoolCreateInfo queryPoolInfo = {
-		.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-		.queryType = VK_QUERY_TYPE_TIMESTAMP,
-		.queryCount = queryCount,
-		//.pipelineStatistics
-	};
-
-	VkQueryPool queryPool = {};
-	VK_CHECK( vkCreateQueryPool( vkDevice, &queryPoolInfo, 0, &queryPool ) );
-	VkDbgNameObj( queryPool, vkDevice, name );
-	return queryPool;
-}
-
-inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& vkTimer )
+inline float vk_gpu_timer::ReadGpuTimeInMs( VkCommandBuffer cmdBuff )
 {
 	vkCmdCopyQueryPoolResults(
-		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ),
+		cmdBuff, this->queryPool, 0, this->queryCount, this->resultBuff.hndl, 0, sizeof( u64 ),
 		VK_QUERY_RESULT_64_BIT );// | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT );
 
 	VkMemoryBarrier2 readTimestampsBarrier[] = {
@@ -251,14 +213,14 @@ inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& 
 			VK_ACCESS_2_HOST_READ_BIT, VK_PIPELINE_STAGE_2_HOST_BIT )
 	};
 
-	VkCmdPipelineFlushCacheBarriers( cmdBuff, readTimestampsBarrier );
+	//VkCmdPipelineFlushCacheBarriers( cmdBuff, readTimestampsBarrier );
 
-	const u64* pTimestamps = ( const u64* ) vkTimer.resultBuff.hostVisible;
+	const u64* pTimestamps = ( const u64* ) this->resultBuff.hostVisible;
 	u64 timestampBeg = pTimestamps[ 0 ];
 	u64 timestampEnd = pTimestamps[ 1 ];
 
 	constexpr float NS_TO_MS = 1e-6f;
-	return ( timestampEnd - timestampBeg ) / vkTimer.timestampPeriod * NS_TO_MS;
+	return ( timestampEnd - timestampBeg ) / this->timestampPeriod * NS_TO_MS;
 }
 
 struct vk_time_section
@@ -320,6 +282,48 @@ VkMakeImgView(
 	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
 
 	return view;
+}
+
+inline VkImageCreateInfo
+VkMakeImageInfo(
+	VkFormat			imgFormat,
+	VkImageUsageFlags	usageFlags,
+	VkExtent3D			imgExtent,
+	u32					mipLevels = 1,
+	u32					layerCount = 1,
+	VkImageType			imgType = VK_IMAGE_TYPE_2D
+) {
+	return { 
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = imgType,
+		.format = imgFormat,
+		.extent = imgExtent,
+		.mipLevels = mipLevels,
+		.arrayLayers = layerCount,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = usageFlags,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+}
+
+// TODO: enforce some clearOp ---> clearVals params correctness ?
+inline VkRenderingAttachmentInfo 
+VkMakeAttachemntInfo( 
+	VkImageView view,
+	VkAttachmentLoadOp loadOp, 
+	VkAttachmentStoreOp storeOp, 
+	VkClearValue clearValue 
+) {
+	return {
+		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+		.imageView = view,
+		.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+		.loadOp = loadOp,
+		.storeOp = storeOp,
+		.clearValue = ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
+	};
 }
 
 #endif // !__VK_UTILS__
