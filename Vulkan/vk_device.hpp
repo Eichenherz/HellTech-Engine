@@ -14,7 +14,6 @@
 #include "vk_queue.hpp"
 #include "metaprogramming.hpp"
 
-
 // TODO: use handle_map/free list and stable addressing if unique/new is cumbersome
 struct vk_device
 {
@@ -53,9 +52,7 @@ struct vk_device
 	vk_swapchain CreateSwapchain( VkSurfaceKHR vkSurf, VkFormat	scDesiredFormat, vk_queue_type presentQueueType );
 	u32 AcquireNextSwapcahinImage( VkSemaphore acquireScImgSema, u64 timeout );
 
-	// TODO: do we need a different value for timeline semas ?
-	// TODO: separate the TimelineSemas from normal semas ?
-	VkSemaphore CreateVkSemaphore( bool isTimeline ) const;
+	VkSemaphore CreateVkSemaphore( vk_semaphore_type semaType = vk_semaphore_type::CLASSIC ) const;
 	// TODO: pass {sema, value} pairs ?
 	void WaitSemaphores( std::initializer_list<VkSemaphore> semas, std::initializer_list<u64> values, u64 maxWait );
 

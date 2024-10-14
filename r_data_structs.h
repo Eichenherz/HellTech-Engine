@@ -163,7 +163,7 @@ struct mesh_desc
 	uint8_t		lodCount;
 };
 
-struct dispatch_command
+struct dispatch_indirect
 {
 #if defined( __cplusplus ) && defined( __VK )
 	VkDispatchIndirectCommand cmd;

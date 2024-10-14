@@ -190,6 +190,12 @@ VkDbgUtilsMsgCallback(
 
 #endif
 
+enum class vk_semaphore_type
+{
+	CLASSIC,
+	TIMELINE
+};
+
 // NOTE: for timestamps we need 2 queries 
 struct vk_gpu_timer
 {
@@ -305,24 +311,6 @@ VkMakeImageInfo(
 		.usage = usageFlags,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-	};
-}
-
-// TODO: enforce some clearOp ---> clearVals params correctness ?
-inline VkRenderingAttachmentInfo 
-VkMakeAttachemntInfo( 
-	VkImageView view,
-	VkAttachmentLoadOp loadOp, 
-	VkAttachmentStoreOp storeOp, 
-	VkClearValue clearValue 
-) {
-	return {
-		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-		.imageView = view,
-		.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-		.loadOp = loadOp,
-		.storeOp = storeOp,
-		.clearValue = ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
 	};
 }
 

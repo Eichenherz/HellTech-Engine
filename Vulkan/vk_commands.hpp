@@ -39,10 +39,10 @@ struct vk_label
 	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
 		: cmdBuff{ cmdBuff }
 	{
-		VkDebugUtilsLabelEXT dbgLabel = { 
+		VkDebugUtilsLabelEXT dbgLabel = {
 			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
 			.pLabelName = labelName,
-			.color = { col.r, col.g, col.b, col.a }
+			.color = { ( float ) col.r, ( float ) col.g, ( float ) col.b, ( float ) col.a }
 		};
 		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
 	}
@@ -55,10 +55,22 @@ struct vk_label
 template<vk_queue_type QUEUE_TYPE>
 struct vk_command_buffer
 {
-	VkCommandBuffer hndl;
+	VkCommandBuffer& hndl;
 
+	// TODO: these are internal only 
 	void Begin() const;
 	void End() const;
+
+	// TODO: Concepts ?
+	template<typename Args_T>
+	void BindPSO( const Args_T& args, VkPipelineBindPoint bindPoint ) 
+		requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) );
+	void BindDescriptorSet( const vk_descriptor_manager& descMngr, VkPipelineBindPoint bindPoint )
+		requires( (QUEUE_TYPE == vk_queue_type::GRAPHICS) || (QUEUE_TYPE == vk_queue_type::COMPUTE) );
+
+
+	// TOTO: these are public
+
 	// TODO: revisit
 	// TODO: Execution barriers too ?
 	void FlushMemoryBarriers( const std::span<VkMemoryBarrier2> memBarriers );
@@ -68,14 +80,6 @@ struct vk_command_buffer
 	void CopyBufferToImage( const vk_buffer& src, const vk_image& dest );
 
 	vk_label PutLabel( const char* labelName, DXPacked::XMCOLOR col );
-
-
-	// TODO: Concepts ?
-	template<typename Args_T>
-	void BindPSO( const Args_T& args ) 
-		requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) );
-	void BindDescriptorSet( const vk_descriptor_manager& descMngr )
-		requires( (QUEUE_TYPE == vk_queue_type::GRAPHICS) || (QUEUE_TYPE == vk_queue_type::COMPUTE) );
 
 	void Dispatch( const dispatch_command& args )
 		requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) );
@@ -102,21 +106,6 @@ struct vk_command_buffer
 
 
 template<vk_queue_type QUEUE_TYPE>
-inline constexpr VkPipelineBindPoint VkGetPSOBindPoint()
-{
-	VkPipelineBindPoint bindPoint = VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_MAX_ENUM;
-	if constexpr( QUEUE_TYPE == vk_queue_type::COMPUTE )
-	{
-		bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
-	}
-	else if constexpr( QUEUE_TYPE == vk_queue_type::GRAPHICS )
-	{
-		bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-	}
-	return bindPoint;
-}
-
-template<vk_queue_type QUEUE_TYPE>
 inline void vk_command_buffer<QUEUE_TYPE>::Begin() const
 {
 	VkCommandBufferBeginInfo cmdBufBegInfo = { 
@@ -129,6 +118,7 @@ inline void vk_command_buffer<QUEUE_TYPE>::End() const
 {
 	VK_CHECK( vkEndCommandBuffer( this->hndl ) );
 }
+
 template<vk_queue_type QUEUE_TYPE>
 inline void vk_command_buffer<QUEUE_TYPE>::FlushMemoryBarriers( const std::span<VkMemoryBarrier2> memBarriers )
 {
@@ -185,21 +175,18 @@ inline vk_label vk_command_buffer<QUEUE_TYPE>::PutLabel( const char* labelName, 
 
 
 template<vk_queue_type QUEUE_TYPE>
-inline void vk_command_buffer<QUEUE_TYPE>::BindDescriptorSet( const vk_descriptor_manager& descMngr )
+inline void vk_command_buffer<QUEUE_TYPE>::BindDescriptorSet( const vk_descriptor_manager& descMngr, VkPipelineBindPoint bindPoint )
 	requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
 {
-	static_assert(false, "We can bind compute in gfx" ) // ?
-	constexpr VkPipelineBindPoint bindPoint = VkGetPSOBindPoint();
-	vkCmdBindDescriptorSets( this->hndl, bindPoint, descMngr.globalPipelineLayout, 0, 1, &descMngr.set, 0, 0 );
+	vkCmdBindDescriptorSets( this->hndl, bindPoint, descMngr.pipelineLayout, 0, 1, &descMngr.set, 0, 0 );
 }
 template<vk_queue_type QUEUE_TYPE>
 template<typename Args_T>
-inline void vk_command_buffer<QUEUE_TYPE>::BindPSO( const Args_T& args )
+inline void vk_command_buffer<QUEUE_TYPE>::BindPSO( const Args_T& args, VkPipelineBindPoint bindPoint )
 	requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
 {
-	constexpr VkPipelineBindPoint bindPoint = VkGetPSOBindPoint();
-	vkCmdBindPipeline( cmdBuff, bindPoint, args.pso );
-	vkCmdPushConstants( cmdBuff, args.layout, bindPoint, 0, std::size( args.pushConst ), std::data( args.pushConst ) );
+	vkCmdBindPipeline( this->hndl, bindPoint, args.pso );
+	vkCmdPushConstants( this->hndl, args.layout, bindPoint, 0, std::size( args.pushConst ), std::data( args.pushConst ) );
 }
 
 
@@ -207,14 +194,14 @@ template<vk_queue_type QUEUE_TYPE>
 inline void vk_command_buffer<QUEUE_TYPE>::Dispatch( const dispatch_command& args )
 	requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
 {
-	this->BindPSO( args );
+	this->BindPSO( args, VK_PIPELINE_BIND_POINT_COMPUTE );
 	vkCmdDispatch( this->hndl, args.workgrCountX, args.workgrCountY, args.workgrCountZ );
 }
 template<vk_queue_type QUEUE_TYPE>
 inline void vk_command_buffer<QUEUE_TYPE>::DispatchIndirect( const dispatch_command& args, const vk_buffer& dispatchCmdsBuff )
 	requires( ( QUEUE_TYPE == vk_queue_type::GRAPHICS ) || ( QUEUE_TYPE == vk_queue_type::COMPUTE ) )
 {
-	this->BindPSO( args );
+	this->BindPSO( args, VK_PIPELINE_BIND_POINT_COMPUTE );
 	vkCmdDispatchIndirect( this->hndl, dispatchCmdsBuff.hndl, 0 );
 }
 
@@ -248,7 +235,7 @@ inline void vk_command_buffer<QUEUE_TYPE>::Draw( const render_command& args, u32
 	requires( QUEUE_TYPE == vk_queue_type::GRAPHICS )
 {
 	vk_rendering_cmd beginRenderScope{ this->hndl, args };
-	this->BindPSO( args );
+	this->BindPSO( args, VK_PIPELINE_BIND_POINT_GRAPHICS );
 	vkCmdDraw( this->hndl, vertexCount, 1, firstVertex, 0 );
 }
 template<vk_queue_type QUEUE_TYPE>
@@ -259,7 +246,7 @@ inline void vk_command_buffer<QUEUE_TYPE>::DrawIndirectCount(
 	u32 maxDrawCount 
 ) requires( QUEUE_TYPE == vk_queue_type::GRAPHICS ) {
 	vk_rendering_cmd beginRenderScope{ this->hndl, args };
-	this->BindPSO( args );
+	this->BindPSO( args, VK_PIPELINE_BIND_POINT_GRAPHICS );
 	u32 maxDrawCnt = drawCmds.size / sizeof( draw_indirect );
 	vkCmdDrawIndirectCount(
 		this->hndl, drawCmds.hndl, offsetof( draw_indirect, cmd ), drawCount.hndl, 0, maxDrawCount, sizeof( draw_indirect ) );
@@ -269,7 +256,7 @@ inline void vk_command_buffer<QUEUE_TYPE>::DrawIndexed( const render_command& ar
 	requires( QUEUE_TYPE == vk_queue_type::GRAPHICS )
 {
 	vk_rendering_cmd beginRenderScope{ this->hndl, args };
-	this->BindPSO( args );
+	this->BindPSO( args, VK_PIPELINE_BIND_POINT_GRAPHICS );
 	vkCmdBindIndexBuffer( this->hndl, indexBuffer.hndl, 0, VK_INDEX_TYPE_UINT16 );
 	vkCmdDrawIndexed( this->hndl, pCmd->ElemCount, 1, pCmd->IdxOffset + idxOffset, pCmd->VtxOffset + vtxOffset, 0 );
 }
@@ -282,7 +269,7 @@ inline void vk_command_buffer<QUEUE_TYPE>::DrawIndexedIndirectCount(
 	u32 maxDrawCount
 ) requires( QUEUE_TYPE == vk_queue_type::GRAPHICS ) {
 	vk_rendering_cmd beginRenderScope{ this->hndl, args };
-	this->BindPSO( args );
+	this->BindPSO( args, VK_PIPELINE_BIND_POINT_GRAPHICS );
 	vkCmdBindIndexBuffer( this->hndl, indexBuffer.hndl, 0, VK_INDEX_TYPE_UINT32 );
 	vkCmdDrawIndexedIndirectCount(
 		this->hndl, drawCmds.hndl, offsetof( draw_command, cmd ), drawCount.hndl, 0, maxDrawCount, sizeof( draw_command ) );

@@ -284,7 +284,7 @@ inline static vk_device VkMakeDeviceContext(
 	return device;
 }
 
-// TODO: how to host comm ?
+// TODO: make sure BAR mem works as intended
 deleter_unique_ptr<vk_buffer> vk_device::CreateBuffer( const buffer_info& buffInfo ) const
 {
 	VkBufferCreateInfo bufferInfo = { 
@@ -300,8 +300,10 @@ deleter_unique_ptr<vk_buffer> vk_device::CreateBuffer( const buffer_info& buffIn
 	{
 		allocFlags |= VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
 	}
+
 	VmaAllocationCreateInfo allocCreateInfo = {
 		.usage = VMA_MEMORY_USAGE_AUTO,
+		.requiredFlags = ( VkMemoryPropertyFlags ) buffInfo.memType
 	};
 
 	VkBuffer vkBuff;
@@ -676,7 +678,7 @@ u32 vk_device::AcquireNextSwapcahinImage( VkSemaphore acquireScImgSema, u64 time
 	return imgIdx;
 }
 
-VkSemaphore vk_device::CreateVkSemaphore( bool isTimeline ) const
+VkSemaphore vk_device::CreateVkSemaphore( vk_semaphore_type semaType ) const
 {
 	constexpr VkSemaphoreTypeCreateInfo timelineInfo = {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
@@ -684,7 +686,9 @@ VkSemaphore vk_device::CreateVkSemaphore( bool isTimeline ) const
 		.initialValue = 0
 	};
 	VkSemaphoreCreateInfo semaInfo = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = isTimeline ? &timelineInfo : 0 };
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
+		.pNext = semaType == ( vk_semaphore_type::TIMELINE ) ? &timelineInfo : 0 
+	};
 
 	VkSemaphore sema;
 	VK_CHECK( vkCreateSemaphore( this->device, &semaInfo, 0, &sema ) );

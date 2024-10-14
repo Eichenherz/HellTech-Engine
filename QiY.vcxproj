@@ -267,7 +267,10 @@
     <ClCompile Include="bcn_compressor.cpp" />
     <ClCompile Include="dxc.cpp" />
     <ClCompile Include="System\Win32\win32_file.cpp" />
+    <ClCompile Include="System\Win32\win32_main.cpp" />
+    <ClCompile Include="System\Win32\win32_platform.cpp" />
     <ClCompile Include="Vulkan\vk_device.cpp" />
+    <ClInclude Include="engine.hpp" />
     <ClInclude Include="geometry.hpp">
       <FileType>Document</FileType>
     </ClInclude>
@@ -296,11 +299,13 @@
     <ClInclude Include="bcn_compressor.h" />
     <ClInclude Include="cgltf.h" />
     <ClInclude Include="core_types.h" />
+    <ClInclude Include="helltech_config.hpp" />
     <ClInclude Include="System\sys_file.h" />
     <ClInclude Include="hell_log.hpp" />
     <ClInclude Include="math_util.hpp" />
     <ClInclude Include="metaprogramming.hpp" />
     <ClInclude Include="System\sys_filesystem.hpp" />
+    <ClInclude Include="System\sys_platform.hpp" />
     <ClInclude Include="System\Win32\win32_utils.hpp" />
     <ClInclude Include="Vulkan\vk_commands.hpp" />
     <ClInclude Include="Vulkan\vk_common.hpp" />
@@ -320,6 +325,8 @@
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
     <ClInclude Include="Vulkan\vk_pipelines.hpp" />
+    <ClInclude Include="Vulkan\vk_queue.hpp" />
+    <ClInclude Include="Vulkan\vk_frame_graph.hpp" />
     <ClInclude Include="Vulkan\vk_resources.hpp" />
     <ClInclude Include="Vulkan\vk_shaders.hpp" />
     <ClInclude Include="Vulkan\vk_sync.hpp" />

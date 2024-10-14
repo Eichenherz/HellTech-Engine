@@ -1,5 +1,8 @@
 #pragma once
 
+#include "vk_common.hpp"
+#include <System/sys_platform.hpp>
+
 // NOTE: GPU validation broken
 // NOTE: Sync validation doesn't work with desc indexing ?
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {

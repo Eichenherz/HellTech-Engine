@@ -8,7 +8,6 @@
 #include "hell_log.hpp"
 #include "sys_os_api.h"
 #include "core_types.h"
-#include "core_lib_api.h"
 
 inline void Win32WriteLastErr( LPTSTR lpsLineFile )
 {

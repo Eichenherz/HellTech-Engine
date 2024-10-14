@@ -63,6 +63,12 @@
     <ClCompile Include="System\Win32\win32_file.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="System\Win32\win32_platform.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="System\Win32\win32_main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
@@ -183,6 +189,21 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="System\sys_filesystem.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Vulkan\vk_queue.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Vulkan\vk_frame_graph.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\sys_platform.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="engine.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="helltech_config.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

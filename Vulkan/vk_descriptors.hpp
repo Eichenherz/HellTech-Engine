@@ -7,7 +7,10 @@
 
 #include "vk_utils.hpp"
 
+// TODO: porper handle ?
+using desc_index = u16;
 
+// TODO: revisit
 using vk_binding_list = std::initializer_list<std::pair<u32, u32>>;
 
 constexpr VkDescriptorType bindingToTypeMap[] = {

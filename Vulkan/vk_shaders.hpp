@@ -9,9 +9,10 @@
 
 
 #include "sys_os_api.h"
-#include "core_lib_api.h"
 
 #include "vk_utils.hpp"
+
+using vk_specialization_type = u32;
 
 struct vk_shader_metadata
 {
@@ -20,16 +21,12 @@ struct vk_shader_metadata
 	VkShaderStageFlags stage;
 };
 
-std::vector<vk_specialization_type>	specConsts;
-
 struct vk_shader
 {
 	VkShaderModule hndl;
 	const char* entryPointName;
 	VkShaderStageFlags stage;
 };
-
-using vk_specialization_type = u32;
 
 inline std::vector<VkSpecializationMapEntry> VkMakeSpecializationMap( const std::span<vk_specialization_type> consts )
 {
