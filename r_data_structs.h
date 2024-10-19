@@ -4,18 +4,7 @@
 
 #include "core_types.h"
 
-// TODO: no clang ?
-#ifdef __clang__
-// NOTE: clang-cl on VS issue
-#undef __clang__
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-#define __clang__
-
-#elif _MSC_VER >= 1916
-
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
+#include "directx_math.hpp"
 
 
 struct frame_data
@@ -32,9 +21,6 @@ struct frame_data
 	bool    freezeMainView;
 	bool    dbgDraw;
 };
-
-
-#endif
 
 #define ALIGNAS( x ) __declspec( align( x ) )
 

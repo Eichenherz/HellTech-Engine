@@ -6,7 +6,8 @@
 
 #include <assert.h>
 
-#include <System/sys_file.h>
+#include <System/sys_platform.hpp>
+#include <System/sys_file.hpp>
 #include <System/sys_filesystem.hpp>
 #include <iostream>
 #include <System/Win32/win32_utils.hpp>
@@ -109,7 +110,12 @@ IDxcBlob* dxc_context::CompileShader( const std::vector<u8>& hlslBlob, std::span
 
 	IDxcResult* pCompileResult;
 	HR_CHECK( pCompiler->Compile(
-		&hlslFileDesc, std::data( compileOptions ), std::size( compileOptions ), &includeHandler, IID_PPV_ARGS( &pCompileResult ) ) );
+		&hlslFileDesc,
+		std::data( compileOptions ),
+		( UINT32 ) std::size( compileOptions ),
+		&includeHandler,
+		IID_PPV_ARGS( &pCompileResult ) )
+	);
 
 	IDxcBlobUtf8* pErrors;
 	HR_CHECK( pCompileResult->GetOutput( DXC_OUT_ERRORS, IID_PPV_ARGS( &pErrors ), 0 ) );

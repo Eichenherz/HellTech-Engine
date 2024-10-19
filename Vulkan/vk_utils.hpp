@@ -4,12 +4,14 @@
 #define __VK_UTILS__
 
 #include "vk_common.hpp"
-#include "sys_os_api.h"
+#include <System/sys_platform.hpp>
 
 #include <assert.h>
 #include <string_view>
 
 #include <DirectXPackedVector.h>
+
+#include "macros.hpp"
 
 namespace DXPacked = DirectX::PackedVector;
 

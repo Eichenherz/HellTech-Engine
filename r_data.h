@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "..\core_types.h"
+#include "core_types.h"
 
 #define _XM_NO_XMVECTOR_OVERLOADS_
 #include <DirectXMath.h>

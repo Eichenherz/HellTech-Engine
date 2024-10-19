@@ -2,8 +2,6 @@
 
 #include "vk_common.hpp"
 
-#include "sys_os_api.h"
-
 #include "vk_utils.hpp"
 #include "vk_shaders.hpp"
 

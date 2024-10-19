@@ -177,7 +177,7 @@
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
-      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <DiagnosticsFormat>Classic</DiagnosticsFormat>
       <LlvmTransitionalOption>NextGenSingleDiagnostics</LlvmTransitionalOption>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
@@ -186,8 +186,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>diy_pch.h</PrecompiledHeaderFile>
       <AdditionalIncludeDirectories>$(ProjectDir);D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
       <AdditionalOptions>/arch:AVX2 %(AdditionalOptions)</AdditionalOptions>
+      <CallingConvention>FastCall</CallingConvention>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -226,6 +227,10 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir);</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <CallingConvention>FastCall</CallingConvention>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -245,9 +250,11 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <AdditionalIncludeDirectories>$(ProjectDir);D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <CallingConvention>FastCall</CallingConvention>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -266,11 +273,14 @@
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
     <ClCompile Include="dxc.cpp" />
+    <ClCompile Include="helltech.cpp" />
     <ClCompile Include="System\Win32\win32_file.cpp" />
     <ClCompile Include="System\Win32\win32_main.cpp" />
     <ClCompile Include="System\Win32\win32_platform.cpp" />
+    <ClCompile Include="System\Win32\win32_platfrom.cpp" />
     <ClCompile Include="Vulkan\vk_device.cpp" />
-    <ClInclude Include="engine.hpp" />
+    <ClInclude Include="directx_math.hpp" />
+    <ClInclude Include="helltech.hpp" />
     <ClInclude Include="geometry.hpp">
       <FileType>Document</FileType>
     </ClInclude>
@@ -279,8 +289,8 @@
     <ClCompile Include="imgui\imgui_draw.cpp" />
     <ClCompile Include="imgui\imgui_tables.cpp" />
     <ClCompile Include="imgui\imgui_widgets.cpp" />
-    <ClCompile Include="lz4.c" />
-    <ClCompile Include="miniz.c" />
+    <ClCompile Include="ThirdParty\lz4.c" />
+    <ClCompile Include="ThirdParty\miniz.c" />
     <ClInclude Include="dxc.hpp">
       <FileType>Document</FileType>
     </ClInclude>
@@ -289,24 +299,25 @@
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <ClCompile Include="spng.c" />
-    <ClCompile Include="sys_os_win.cpp">
-      <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
-    </ClCompile>
+    <ClCompile Include="ThirdParty\spng.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="bcn_compressor.h" />
-    <ClInclude Include="cgltf.h" />
+    <ClInclude Include="ThirdParty\cgltf.h" />
     <ClInclude Include="core_types.h" />
     <ClInclude Include="helltech_config.hpp" />
-    <ClInclude Include="System\sys_file.h" />
+    <ClInclude Include="System\sys_file.hpp" />
     <ClInclude Include="hell_log.hpp" />
     <ClInclude Include="math_util.hpp" />
     <ClInclude Include="metaprogramming.hpp" />
     <ClInclude Include="System\sys_filesystem.hpp" />
+    <ClInclude Include="System\sys_input.hpp" />
     <ClInclude Include="System\sys_platform.hpp" />
+    <ClInclude Include="System\Win32\win32_platform.hpp" />
     <ClInclude Include="System\Win32\win32_utils.hpp" />
+    <ClInclude Include="macros.hpp" />
+    <ClInclude Include="Vulkan\vk_backend.hpp" />
     <ClInclude Include="Vulkan\vk_commands.hpp" />
     <ClInclude Include="Vulkan\vk_common.hpp" />
     <ClInclude Include="Vulkan\vk_descriptors.hpp" />
@@ -321,8 +332,8 @@
     <ClInclude Include="imgui\imstb_rectpack.h" />
     <ClInclude Include="imgui\imstb_textedit.h" />
     <ClInclude Include="imgui\imstb_truetype.h" />
-    <ClInclude Include="lz4.h" />
-    <ClInclude Include="miniz.h" />
+    <ClInclude Include="ThirdParty\lz4.h" />
+    <ClInclude Include="ThirdParty\miniz.h" />
     <ClInclude Include="r_data_structs.h" />
     <ClInclude Include="Vulkan\vk_pipelines.hpp" />
     <ClInclude Include="Vulkan\vk_queue.hpp" />
@@ -332,8 +343,7 @@
     <ClInclude Include="Vulkan\vk_sync.hpp" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="r_data.h" />
-    <ClInclude Include="spng.h" />
-    <ClInclude Include="sys_os_api.h" />
+    <ClInclude Include="ThirdParty\spng.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="Vulkan\vk_mem_alloc.h" />
     <ClInclude Include="Vulkan\vk_procs.h" />

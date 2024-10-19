@@ -15,25 +15,22 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="sys_os_win.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="Vulkan\vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="asset_compiler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="miniz.c">
+    <ClCompile Include="ThirdParty\miniz.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="spng.c">
+    <ClCompile Include="ThirdParty\spng.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="bcn_compressor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="lz4.c">
+    <ClCompile Include="ThirdParty\lz4.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="imgui\imgui.cpp">
@@ -69,12 +66,15 @@
     <ClCompile Include="System\Win32\win32_main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="System\Win32\win32_platfrom.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="helltech.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="sys_os_api.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DEFS_WIN32_NO_BS.h">
@@ -89,22 +89,22 @@
     <ClInclude Include="Shaders\glsl_func_lib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="cgltf.h">
+    <ClInclude Include="ThirdParty\cgltf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="asset_compiler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="miniz.h">
+    <ClInclude Include="ThirdParty\miniz.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="spng.h">
+    <ClInclude Include="ThirdParty\spng.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="bcn_compressor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="lz4.h">
+    <ClInclude Include="ThirdParty\lz4.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imconfig.h">
@@ -182,7 +182,7 @@
     <ClInclude Include="dxc.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="System\sys_file.h">
+    <ClInclude Include="System\sys_file.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="System\Win32\win32_utils.hpp">
@@ -200,10 +200,25 @@
     <ClInclude Include="System\sys_platform.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="engine.hpp">
+    <ClInclude Include="helltech.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="helltech_config.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="directx_math.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\sys_input.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\Win32\win32_platform.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Vulkan\vk_backend.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="macros.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

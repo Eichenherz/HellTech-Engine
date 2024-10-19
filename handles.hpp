@@ -5,24 +5,26 @@
 
 #include <vector>
 #include <assert.h>
-#include "sys_os_api.h"
 
 
 template<typename T>
 struct hndl64
 {
-	union
+	// NOTE: order of bitfield is important for sorting prioritized by free, then metaData, then generation, then index
+	u32 index;
+	u16 generation;
+	u16 meta : 15;
+	u16 free : 1;
+
+	inline operator u64() const
 	{
-		// NOTE: order of bitfield is important for sorting prioritized by free, then metaData, then generation, then index
-		struct
-		{
-			u32 index;
-			u16 generation;
-			u16 meta : 15;
-			u16 free : 1;
-		};
-		u64 value;
-	};
+		return *reinterpret_cast<const u64*>( this );
+	}
+
+	inline auto operator <=>( const hndl64<T>& other ) const
+	{
+		return u64( *this ) <=> u64( other );
+	}
 };
 
 template <typename T>
@@ -99,15 +101,6 @@ private:
 	u32	mFreeListEndIdx = u32( -1 ); // last index in the freelist
 	u8		mFragmented = 0; // set to 1 if modified by insert or erase since last complete defragment
 };
-
-template<typename T>
-inline bool operator==( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value == b.value ); }
-template<typename T>
-inline bool operator!=( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value != b.value ); }
-template<typename T>
-inline bool operator< ( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value < b.value ); }
-template<typename T>
-inline bool operator> ( const hndl64<T>& a, const hndl64<T>& b ) { return ( a.value > b.value ); }
 
 
 template <typename T>

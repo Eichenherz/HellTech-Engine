@@ -3,18 +3,19 @@
 // TODO: make into program/dll
 #include <meshoptimizer.h>
 #define CGLTF_IMPLEMENTATION
-#include "cgltf.h"
-#include "spng.h"
-#include "lz4.h"
+#include <ThirdParty/cgltf.h>
+#include <ThirdParty/spng.h>
+#include <ThirdParty/lz4.h>
 
-
+#include "macros.hpp"
 #include "r_data_structs.h"
 #include <cmath>
 #include <vector>
 #include <span>
 #include <string_view>
 
-#include "sys_os_api.h"
+#include <System/sys_platform.hpp>
+
 // TODO: utils file
 #define ACOMPL_ERR( err )															\
 do{																					\
@@ -294,7 +295,7 @@ LoadGlbFile(
 			u64 texDscIdx = u64( pbrBaseCol - data->textures );
 			if( texProcessingCache[ texDscIdx ] == -1 )
 			{
-				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				texProcessingCache[ texDscIdx ] = ( i32 ) std::size( compressedImgs );
 				raw_texture_info raw = CgltfDecodeTexture( *pbrBaseCol, pBin, texBin );
 
 				const u8* imgSrc = std::data( texBin ) + raw.offset;
@@ -316,7 +317,7 @@ LoadGlbFile(
 			u64 texDscIdx = u64( metalRoughMap - data->textures );
 			if( texProcessingCache[ texDscIdx ] == -1 )
 			{
-				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				texProcessingCache[ texDscIdx ] = ( i32 ) std::size( compressedImgs );
 				raw_texture_info raw = CgltfDecodeTexture( *metalRoughMap, pBin, texBin );
 
 				const u8* imgSrc = std::data( texBin ) + raw.offset;
@@ -337,7 +338,7 @@ LoadGlbFile(
 			u64 texDscIdx = u64( normalMap - data->textures );
 			if( texProcessingCache[ texDscIdx ] == -1 )
 			{
-				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				texProcessingCache[ texDscIdx ] = ( i32 ) std::size( compressedImgs );
 				raw_texture_info raw = CgltfDecodeTexture( *normalMap, pBin, texBin );
 
 				const u8* imgSrc = std::data( texBin ) + raw.offset;

@@ -13,36 +13,22 @@
 
 #include "r_data_structs.h"
 #include "geometry.hpp"
-// TODO: use own allocator
-
-// NOTE: clang-cl on VS issue
-#ifdef __clang__
-#undef __clang__
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-#define __clang__
-
-#elif _MSC_VER >= 1916
-
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-
-#endif
+#include "directx_math.hpp"
 
 #include <DirectXPackedVector.h>
 
 namespace DXPacked = DirectX::PackedVector;
 
-#include "sys_os_api.h"
 #include "math_util.hpp"
+
+#include "vk_backend.hpp"
 
 #include "vk_resources.hpp"
 #include "vk_sync.hpp"
 #include "vk_utils.hpp"
 #include "vk_instance.hpp"
-#include "vk_device.hpp"
 #include "vk_descriptors.hpp"
-#include "vk_frame_graph.hpp"
+
 
 
 #include "vk_pipelines.hpp"
@@ -71,14 +57,17 @@ constexpr bool dbgDraw = true;
 #include "metaprogramming.hpp"
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
-// TODO: where to place these ?
-extern HINSTANCE hInst;
-extern HWND hWnd;
 
-inline VkSurfaceKHR VkMakeSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
+#include <System/Win32/win32_platform.hpp>
+
+inline static VkSurfaceKHR VkMakeSurface( VkInstance vkInst, const sys_window* pWnd )
 {
+	const win32_window* pWin32Wnd = dynamic_cast<const win32_window*>( pWnd );
+	VK_CHECK( VK_INTERNAL_ERROR( !pWin32Wnd ) );
 	VkWin32SurfaceCreateInfoKHR surfInfo = { 
-		.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR, .hinstance = hInst, .hwnd = hWnd 
+		.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR, 
+		.hinstance = pWin32Wnd->hinstance, 
+		.hwnd = pWin32Wnd->hwnd 
 	};
 	VkSurfaceKHR vkSurf;
 	VK_CHECK( vkCreateWin32SurfaceKHR( vkInst, &surfInfo, 0, &vkSurf ) );
@@ -822,24 +811,6 @@ render_context::render_context( const vk_device& vkDc, const vk_descriptor_manag
 
 }
 
-struct virtual_frame
-{
-	deleter_unique_ptr<vk_buffer>		frameData;
-	vk_gpu_timer frameTimer;
-	// TODO: add more typed cmd buffers as needed ?
-	vk_command_buffer<vk_queue_type::GRAPHICS> cmdBuff;
-	VkSemaphore		acquireSwapchainImgSema;
-	VkSemaphore		queueSubmittedSema;
-
-	desc_index frameDataIdx;
-
-	const vk_command_buffer<vk_queue_type::GRAPHICS>& GetCmdBuffer() const
-	{
-		VK_CHECK( vkResetCommandBuffer( cmdBuff.hndl, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT ) );
-		cmdBuff.Begin();
-		return cmdBuff;
-	}
-};
 
 inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32 bufferSize, u32 queryCount )
 {
@@ -866,54 +837,12 @@ inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32
 	};
 }
 
-struct vk_renderer_config
-{
-	static constexpr VkFormat		desiredHiZFormat = VK_FORMAT_R32_SFLOAT;
-	static constexpr VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	static constexpr VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-	static constexpr VkFormat		desiredSwapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
-	static constexpr u8             maxAllowedFramesInFlight = 2;
-	static constexpr u8             maxSwapchianImages = 3;
-	static constexpr u8             perFrameQueryCount = 2;
 
-	u16             renderWidth;
-	u16             rednerHeight;
-	u8              framesInFlight = 2;
-};
 
-struct vk_backend
-{
-	static constexpr vk_renderer_config config = {};
-
-	vk_device pDevice;
-	frame_graph frameGraph;
-
-	virtual_frame	vrtFrames[ config.framesInFlight ];
-
-	u64 dllHandle;
-	VkInstance inst;
-	VkDebugUtilsMessengerEXT dbgMsg;
-	VkSurfaceKHR surface;
-	VkSemaphore     timelineSema;
-	u64				vFrameIdx;
-
-	const virtual_frame& GetNextFrame( u64 currentFrameIdx ) const
-	{
-		u64 vrtFrameIdx = currentFrameIdx % std::size( vrtFrames );
-		return vrtFrames[ vrtFrameIdx ];
-	}
-
-	explicit vk_backend();
-	void Terminate();
-
-	void InitResources();
-	void HostFrames( const frame_data& frameData, gpu_data& gpuData );
-};
-
-vk_backend::vk_backend()
+vk_backend::vk_backend( const sys_window* pWnd )
 {
 	std::tie( this->dllHandle, this->inst, this->dbgMsg ) = VkMakeInstance();
-	surface = VkMakeSurface( inst, hInst, hWnd );
+	surface = VkMakeSurface( inst, pWnd );
 
 	pDevice = VkMakeDeviceContext( inst, surface, config.desiredSwapchainFormat, vk_queue_type::GRAPHICS );
 	
@@ -1878,7 +1807,7 @@ FinalCompositionPass(
 }
 
 
-void vk_backend::HostFrames( const frame_data& frameData, gpu_data& gpuData )
+void vk_backend::HostFrames( const frame_data& frameData )
 {
 	using namespace DirectX;
 

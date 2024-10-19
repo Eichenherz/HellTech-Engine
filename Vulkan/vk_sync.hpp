@@ -3,8 +3,6 @@
 #include "vk_common.hpp"
 #include "vk_procs.h"
 
-#include "sys_os_api.h"
-
 #include <utility>
 
 inline  VkMemoryBarrier2

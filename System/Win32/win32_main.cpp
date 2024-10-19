@@ -5,13 +5,13 @@
 #include <io.h>
 #include <shlwapi.h>
 #include <fcntl.h>
-#include "win32_utils.hpp"
 
 #include <memory>
+#include <assert.h>
 
-#include <System/sys_platform.hpp>
-
-#include "helltech_config.hpp"
+#include "win32_utils.hpp"
+#include "win32_platform.hpp"
+#include "helltech.hpp"
 
 // TODO: handle debug func better
 // TODO: all streams to console  
@@ -62,21 +62,136 @@ struct win32_console
 	}
 };
 
+static inline RAWINPUT Win32GetRawInput( LPARAM lParam )
+{
+	RAWINPUT ri = {};
+	u32 rawDataSize = sizeof( ri );
+	// TODO: how to handle GetRawInputData errors ?
+	UINT res = GetRawInputData( ( HRAWINPUT )lParam, RID_INPUT, &ri, &rawDataSize, sizeof( RAWINPUTHEADER ) );
+	WIN_CHECK( res == UINT( -1 ) );
+
+	return ri;
+}
+
 static LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
+	input_manager* pInputManager = reinterpret_cast<input_manager*>( GetWindowLongPtr( hwnd, GWLP_USERDATA ) );
+
 	switch( uMsg )
 	{
 	case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); break;
+	case WM_SETFOCUS:
+		pInputManager->hasFocus = true;
+		break;
+	case WM_KILLFOCUS: 
+	{ // NOTE: reset the keys, but keep the mouse position
+			pInputManager->hasFocus = false;
+			pInputManager->kbd.ClearState();
+			break;
+	}
+	//case WM_QUIT:
+	case WM_INPUT:
+	{
+		if( pInputManager->hasFocus )
+		{
+			const RAWINPUT ri = Win32GetRawInput( lParam );
+			if( ri.header.dwType == RIM_TYPEKEYBOARD )
+			{
+				const RAWKEYBOARD& rawKbd = ri.data.keyboard;
+				const bool isReleased = rawKbd.Flags & RI_KEY_BREAK;
+				//const bool isPressed = rawKbd.Flags & RI_KEY_MAKE; RI_KEY_MAKE == 0 
+
+				const bool isE0 = rawKbd.Flags & RI_KEY_E0;
+				const bool isE1 = rawKbd.Flags & RI_KEY_E1;
+
+				// TODO: how to handle left & right CTRL
+				//if( ri.data.keyboard.VKey == VK_CONTROL && !isE0 ) kbd->lctrl = isPressed;
+				pInputManager->ProcessEvent( keyboard_handler::message{ .vk = ( virtual_key ) rawKbd.VKey, .pressed = !isReleased } );
+
+			}
+			else if( ri.header.dwType == RIM_TYPEMOUSE )
+			{
+				const RAWMOUSE& rawMouse = ri.data.mouse;
+				const bool lmbDown = rawMouse.usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN;
+				const bool lmbUp = rawMouse.usButtonFlags & RI_MOUSE_LEFT_BUTTON_UP;
+				const bool rmbDown = rawMouse.usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN;
+				const bool rmbUp = rawMouse.usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN;
+
+				if( rawMouse.usButtonFlags ) // if pressed/released basically
+				{
+					// NOTE: sanity check
+					assert( lmbDown ^ lmbUp );
+					assert( rmbDown ^ rmbUp );
+				}
+				// TODO: relative positions ?
+				pInputManager->ProcessEvent( mouse_handler::message{ 
+					.dx = ( float ) rawMouse.lLastX, .dy = ( float ) rawMouse.lLastY } );
+			}
+		}
+		break;
+	}
 	}
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }	
 
+
+
+#include "directx_math.hpp"
+#include <algorithm>
+using namespace DirectX;
+
+struct virtual_camera
+{
+	static constexpr DirectX::XMFLOAT3 fwdBasis = { 0, 0, 1 };
+	static constexpr DirectX::XMFLOAT3 upBasis = { 0, 1, 0 };
+
+	DirectX::XMMATRIX projection;
+
+	DirectX::XMFLOAT3 worldPos = { 0,0,0 };
+	// NOTE: pitch must be in [-pi/2,pi/2]
+	float pitch = 0;
+	float yaw = 0;
+
+	float speed = 1.5f;
+
+	inline void Move( DirectX::XMVECTOR camMove, DirectX::XMFLOAT2 dPos, float elapsedSecs )
+	{
+		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( speed, speed, speed );
+		camMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
+
+		XMVECTOR xmCamPos = XMLoadFloat3( &worldPos );
+		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
+
+		// TODO: thresholds
+		//float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
+		XMStoreFloat3( &worldPos, smoothNewCamPos );
+
+		yaw = XMScalarModAngle( yaw + dPos.x * elapsedSecs );
+		pitch = std::clamp( pitch + dPos.y * elapsedSecs, -almostPiDiv2, almostPiDiv2 );
+	}
+	inline DirectX::XMVECTOR LookAt() const
+	{
+		return XMVector3Transform( XMLoadFloat3( &fwdBasis ), XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
+	}
+	inline DirectX::XMMATRIX ViewMatrix() const
+	{
+		auto lookAt = this->LookAt();
+		XMVECTOR xmWorldPos = XMLoadFloat3( &worldPos );
+		XMMatrixLookAtLH( xmWorldPos, XMVectorAdd( xmWorldPos, lookAt ), XMLoadFloat3( &upBasis ) );
+	}
+	inline DirectX::XMMATRIX FrustumMatrix() const
+	{
+		// NOTE: inv( A * B ) = inv B * inv A
+		XMMATRIX invFrustMat = XMMatrixMultiply( ViewMatrix(), projection );
+		XMVECTOR det = XMMatrixDeterminant( invFrustMat );
+		return XMMatrixInverse( &det, invFrustMat );
+	}
+};
+
+static bool frustumCullDbg = 0;
+
 static INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
-	using namespace DirectX;
-
-	WIN_CHECK( !DirectX::XMVerifyCPUSupport() );
-
 	SYSTEM_INFO	sysInfo = {};
 	GetSystemInfo( &sysInfo );
 
@@ -94,10 +209,10 @@ static INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 
 	RECT wr = {
-		.left = 350,
-		.top = 100, 
-		.right = SCREEN_WIDTH + wr.left,
-		.bottom = SCREEN_HEIGHT + wr.top
+		.left = CW_USEDEFAULT,
+		.top = CW_USEDEFAULT,
+		.right = ( LONG ) SCREEN_WIDTH + wr.left,
+		.bottom = ( LONG ) SCREEN_HEIGHT + wr.top
 	};
 	constexpr DWORD windowStyle = WS_CAPTION | WS_MINIMIZEBOX | WS_SYSMENU;
 	AdjustWindowRect( &wr, windowStyle, 0 );
@@ -108,7 +223,7 @@ static INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
 
-	RAWINPUTDEVICE hid[ 2 ] = {
+	RAWINPUTDEVICE hid[] = {
 		{
 			.usUsagePage = HID_USAGE_PAGE_GENERIC,
 			.usUsage = HID_USAGE_GENERIC_MOUSE,
@@ -124,137 +239,30 @@ static INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 			.hwndTarget = hWnd
 		}
 	};
-	WIN_CHECK( !RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
+	WIN_CHECK( !RegisterRawInputDevices( hid, ( UINT ) std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
+	win32_window win32Wnd = { hInst, hWnd };
 
-	mouse m = {};
-	keyboard kbd = {};
+	helltech theHellTechEngine = { &win32Wnd };
+	
+	win32Wnd.SetUserData( reinterpret_cast<uintptr_t>( &theHellTechEngine.pInputManager ) );
+	
+	WIN_CHECK( !DirectX::XMVerifyCPUSupport() );
 
-	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
-	float mouseSensitivity = 0.1f;
-	float camSpeed = 1.5f;
-	float moveThreshold = 0.0001f;
+	
+	virtual_camera mainCam;
 
 	constexpr float zNear = 0.5f;
-	XMMATRIX proj = PerspRevInfFovLH( XMConvertToRadians( 70.0f ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
-	// NOTE: pitch must be in [-pi/2,pi/2]
-	float pitch = 0;
-	float yaw = 0;
-
-	XMVECTOR camFwdBasis = XMVectorSet( 0, 0, 1, 0 );
-	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
-	XMFLOAT3 camWorldPos = { 0,0,0 };
+	constexpr float fovY = 70.0f;
+	mainCam.projection = PerspectiveReverseZInfiniteZFar( 
+		XMConvertToRadians( fovY ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
 
 	gpu_data gpuData = {};
 	frame_data frameData = {};
 
-	VkBackendInit();
+	
 
-	// NOTE: time is a double of seconds
-	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
-	// NOTE: double gives time precision of 1 uS
-	BOOL				isRunning = true;
-	const u64			FREQ = SysGetCpuFreq();
-	//constexpr double	dt = 0.01;
-	//double				t = double( UINT64( 1ULL << 32 ) );
-	//double				accumulator = 0;
-	u64					currentTicks = SysTicks();
-
-	ImGui::CreateContext();
-	ImGui::StyleColorsDark();
-	ImGuiIO& io = ImGui::GetIO();
-	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
-	io.Fonts->AddFontDefault();
-	io.Fonts->Build();
-
-
-	constexpr char pakPath[] = //"Assets/data.pak";
-		"Assets/cyberbaron.drak";
-	static bool loadedPakFile = false;
-
-	// TODO: QUIT immediately ?
-	while( isRunning )
-	{
-		const u64 newTicks = SysTicks();
-		const double elapsedSecs = double( newTicks - currentTicks ) / double( FREQ );
-		currentTicks = newTicks;
-		//accumulator += elapsedSecs;
-
-		isRunning = SysPumpUserInput( &m, &kbd, 1 );
-
-
-		// TODO: smooth camera some more ?
-		// TODO: wtf Newton ?
-		float moveSpeed = camSpeed;// *elapsedSecs;
-
-		XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
-		if( kbd.w ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, 1, 0 ) );
-		if( kbd.a ) camMove = XMVectorAdd( camMove, XMVectorSet( -1, 0, 0, 0 ) );
-		if( kbd.s ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, -1, 0 ) );
-		if( kbd.d ) camMove = XMVectorAdd( camMove, XMVectorSet( 1, 0, 0, 0 ) );
-		if( kbd.space ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
-		if( kbd.c ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
-
-		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed );
-		camMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
-
-		XMVECTOR xmCamPos = XMLoadFloat3( &camWorldPos );
-		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
-
-		// TODO: thresholds
-		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
-		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
-
-		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
-		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
-
-		// TRANSF CAM VIEW
-		XMVECTOR camLookAt = XMVector3Transform( camFwdBasis, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = XMMatrixLookAtLH( smoothNewCamPos, XMVectorAdd( smoothNewCamPos, camLookAt ), camUpBasis );
-
-		XMVECTOR viewDet = XMMatrixDeterminant( view );
-		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
-
-		XMStoreFloat4x4A( &frameData.proj, proj );
-		XMStoreFloat4x4A( &frameData.activeView, view );
-		if( !kbd.f )
-		{
-			XMStoreFloat4x4A( &frameData.mainView, view );
-		}
-		frameData.worldPos = camWorldPos;
-		XMStoreFloat3( &frameData.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
-
-		// NOTE: inv( A * B ) = inv B * inv A
-		XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj );
-		XMVECTOR det = XMMatrixDeterminant( invFrustMat );
-		assert( XMVectorGetX( det ) );
-		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
-		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
-
-		XMStoreFloat4x4A( &frameData.activeProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj ) );
-		XMStoreFloat4x4A( &frameData.mainProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj ) );
-
-		frameData.elapsedSeconds = elapsedSecs;
-		frameData.freezeMainView = kbd.f;
-		frameData.dbgDraw = kbd.o;
-
-		ImGui::NewFrame();
-		// TODO: make own small efficient string
-		std::string wndMsg( std::to_string( gpuData.timeMs ) );
-
-		ImGui::SetNextWindowPos( {} );
-		ImGui::SetNextWindowSize( { std::size( wndMsg ) * ImGui::GetFontSize(),50 } );
-		constexpr ImGuiWindowFlags wndFlag = 
-			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
-		ImGui::Begin( "GPU ms:", 0, wndFlag );
-		ImGui::Text( wndMsg.c_str() );
-		ImGui::End();
-
-		ImGui::Render();
-		ImGui::EndFrame();
-
-		HostFrames( frameData, gpuData );
-	}
+	theHellTechEngine.CoreLoop();
 
 	return 0;
 }

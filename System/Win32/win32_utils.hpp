@@ -4,24 +4,24 @@
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
 #include <strsafe.h>
+#include <stdlib.h>
 
 #include "hell_log.hpp"
-#include "sys_os_api.h"
+#include "macros.hpp"
 #include "core_types.h"
 
 inline void Win32WriteLastErr( LPTSTR lpsLineFile )
 {
-	LPVOID lpMsgBuf;
 	DWORD dw = GetLastError();
 
-	FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-				   0, dw,
-				   MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
-				   ( LPTSTR ) &lpMsgBuf, 0, 0 );
+	LPVOID lpMsgBuf;
+	constexpr DWORD fromatFlags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+	FormatMessageA( fromatFlags, 0, dw, MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ), ( LPTSTR ) &lpMsgBuf, 0, 0 );
 
 	LPVOID lpDisplayBuf =
 		( LPVOID ) LocalAlloc( LMEM_ZEROINIT, ( lstrlen( ( LPCTSTR ) lpMsgBuf ) + lstrlen( ( LPCTSTR ) lpsLineFile ) + 40 ) );
 	StringCchPrintf( ( LPTSTR ) lpDisplayBuf, LocalSize( lpDisplayBuf ), TEXT( "%s code %d: %s" ), lpsLineFile, dw, lpMsgBuf );
+	// TODO: pass parent hwnd
 	MessageBox( 0, ( LPCTSTR ) lpDisplayBuf, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
 
 	LocalFree( lpMsgBuf );

@@ -21,6 +21,8 @@ struct range
 
 constexpr u32 INVALID_IDX = -1;
 
+#include <stddef.h>
+
 #endif // !__CORE_TYPES__
 
 

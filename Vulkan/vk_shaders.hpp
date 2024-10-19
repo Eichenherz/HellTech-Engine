@@ -7,9 +7,6 @@
 #include <assert.h>
 #include <vector>
 
-
-#include "sys_os_api.h"
-
 #include "vk_utils.hpp"
 
 using vk_specialization_type = u32;
