@@ -52,6 +52,12 @@ helltech::helltech( sys_window* pSysWindow )
 	this->pVkBackend = new vk_backend( this->pSysWindow );
 
 	ImGuiInit( { SCREEN_WIDTH, SCREEN_HEIGHT } );
+	assert( !DirectX::XMVerifyCPUSupport() );
+
+	constexpr float zNear = 0.5f;
+	constexpr float fovY = 70.0f;
+	this->mainCam.projection = PerspectiveReverseZInfiniteZFar( 
+		XMConvertToRadians( fovY ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
 }
 
 void helltech::CoreLoop()
@@ -84,27 +90,7 @@ void helltech::CoreLoop()
 		mainCam.Move( camMove, dPos, elapsedSecs );
 
 
-		// TRANSF CAM VIEW
-		XMMATRIX view = mainCam.ViewMatrix();
-
-
-		XMStoreFloat4x4A( &frameData.proj, proj );
-		XMStoreFloat4x4A( &frameData.activeView, view );
-		if( !kbd.f )
-		{
-			XMStoreFloat4x4A( &frameData.mainView, view );
-		}
-		frameData.worldPos = camWorldPos;
-
-		XMVECTOR viewDet = XMMatrixDeterminant( view );
-		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
-		XMStoreFloat3( &frameData.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
-
-
-		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
-
-		XMStoreFloat4x4A( &frameData.activeProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj ) );
-		XMStoreFloat4x4A( &frameData.mainProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj ) );
+		auto camGpuData = mainCam.GetGpuData();
 
 		frameData.elapsedSeconds = elapsedSecs;
 

@@ -4,7 +4,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
 #define __VK
-#include "DEFS_WIN32_NO_BS.h"
+#include <System/Win32/DEFS_WIN32_NO_BS.h>
 #include <vulkan.h>
 // TODO: header + .cpp ?
 // TODO: revisit this

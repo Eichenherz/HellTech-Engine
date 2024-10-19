@@ -279,9 +279,9 @@
     <ClCompile Include="System\Win32\win32_platform.cpp" />
     <ClCompile Include="System\Win32\win32_platfrom.cpp" />
     <ClCompile Include="Vulkan\vk_device.cpp" />
-    <ClInclude Include="directx_math.hpp" />
+    <ClInclude Include="Math\directx_math.hpp" />
     <ClInclude Include="helltech.hpp" />
-    <ClInclude Include="geometry.hpp">
+    <ClInclude Include="Math\geometry.hpp">
       <FileType>Document</FileType>
     </ClInclude>
     <ClCompile Include="imgui\imgui.cpp" />
@@ -309,7 +309,7 @@
     <ClInclude Include="helltech_config.hpp" />
     <ClInclude Include="System\sys_file.hpp" />
     <ClInclude Include="hell_log.hpp" />
-    <ClInclude Include="math_util.hpp" />
+    <ClInclude Include="Math\math_util.hpp" />
     <ClInclude Include="metaprogramming.hpp" />
     <ClInclude Include="System\sys_filesystem.hpp" />
     <ClInclude Include="System\sys_input.hpp" />
@@ -317,6 +317,7 @@
     <ClInclude Include="System\Win32\win32_platform.hpp" />
     <ClInclude Include="System\Win32\win32_utils.hpp" />
     <ClInclude Include="macros.hpp" />
+    <ClInclude Include="virtual_camera.hpp" />
     <ClInclude Include="Vulkan\vk_backend.hpp" />
     <ClInclude Include="Vulkan\vk_commands.hpp" />
     <ClInclude Include="Vulkan\vk_common.hpp" />
@@ -344,7 +345,7 @@
     <ClInclude Include="Shaders\glsl_func_lib.h" />
     <ClInclude Include="r_data.h" />
     <ClInclude Include="ThirdParty\spng.h" />
-    <ClInclude Include="DEFS_WIN32_NO_BS.h" />
+    <ClInclude Include="System\Win32\DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="Vulkan\vk_mem_alloc.h" />
     <ClInclude Include="Vulkan\vk_procs.h" />
     <ClInclude Include="Vulkan\vk_swapchain.hpp" />

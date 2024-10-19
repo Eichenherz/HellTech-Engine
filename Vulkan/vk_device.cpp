@@ -446,7 +446,7 @@ inline void vk_device::FlushDescriptorUpdates()
 		return;
 	}
 
-	vkUpdateDescriptorSets( this->device, descriptorUpdates, std::data( this->descriptorManager.pendingUpdates ), 0, 0 );
+	vkUpdateDescriptorSets( this->device, ( u32 ) descriptorUpdates, std::data( this->descriptorManager.pendingUpdates ), 0, 0 );
 	this->descriptorManager.pendingUpdates.resize( 0 );
 }
 

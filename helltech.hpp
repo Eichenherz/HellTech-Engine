@@ -7,12 +7,14 @@
 #include <System/sys_platform.hpp>
 #include <System/sys_input.hpp>
 
+#include "virtual_camera.hpp"
+
 struct helltech
 {
 	vk_backend* pVkBackend;
 	input_manager* pInputManager;
 	sys_window* pSysWindow;
-	
+	virtual_camera mainCam;
 
 	helltech( sys_window* pSysWindow );
 	~helltech() {}

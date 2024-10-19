@@ -812,7 +812,7 @@ render_context::render_context( const vk_device& vkDc, const vk_descriptor_manag
 }
 
 
-inline static virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32 bufferSize, u32 queryCount )
+inline static vk_backend::virtual_frame VkCreateVirtualFrame( const vk_device& vkDevice, u32 bufferSize, u32 queryCount )
 {
 	constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 	auto pBuff = vkDevice.CreateBuffer( 

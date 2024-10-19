@@ -1,4 +1,4 @@
-#include "DEFS_WIN32_NO_BS.h"
+#include <System/Win32/DEFS_WIN32_NO_BS.h>
 #include <Windows.h>
 #include <comdef.h>
 

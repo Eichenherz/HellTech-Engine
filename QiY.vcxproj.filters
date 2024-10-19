@@ -77,7 +77,7 @@
     <ClInclude Include="core_types.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="DEFS_WIN32_NO_BS.h">
+    <ClInclude Include="System\Win32\DEFS_WIN32_NO_BS.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Vulkan\vk_procs.h">
@@ -140,7 +140,7 @@
     <ClInclude Include="r_data.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="geometry.hpp">
+    <ClInclude Include="Math\geometry.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="Vulkan\vk_shaders.hpp">
@@ -155,7 +155,7 @@
     <ClInclude Include="Vulkan\vk_device.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="math_util.hpp">
+    <ClInclude Include="Math\math_util.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Vulkan\vk_descriptors.hpp">
@@ -206,7 +206,7 @@
     <ClInclude Include="helltech_config.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="directx_math.hpp">
+    <ClInclude Include="Math\directx_math.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="System\sys_input.hpp">
@@ -219,6 +219,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="macros.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="virtual_camera.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

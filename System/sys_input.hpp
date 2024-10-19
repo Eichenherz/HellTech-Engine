@@ -4,7 +4,7 @@
 #include "core_types.h"
 #include <queue>
 #include <bitset>
-#include "directx_math.hpp"
+#include <Math/directx_math.hpp>
 
 using virtual_key = u8;
 

@@ -4,10 +4,9 @@
 
 #include "core_types.h"
 
-#include "directx_math.hpp"
+#include <Math/directx_math.hpp>
 
-
-struct frame_data
+struct camera_data
 {
 	DirectX::XMFLOAT4X4A	proj;
 	DirectX::XMFLOAT4X4A	mainView;
@@ -17,6 +16,11 @@ struct frame_data
 	DirectX::XMFLOAT4X4A    mainProjView;
 	DirectX::XMFLOAT3	worldPos;
 	DirectX::XMFLOAT3	camViewDir;
+};
+
+struct frame_data
+{
+	
 	float   elapsedSeconds;
 	bool    freezeMainView;
 	bool    dbgDraw;
