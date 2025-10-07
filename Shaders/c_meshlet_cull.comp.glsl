@@ -45,7 +45,7 @@ layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer u32_ref{
 layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer dispatch_indirect_ref{
 	dispatch_command dispatchCmd;
 };
-layout( buffer_reference, scalar, buffer_reference_align = 4 ) writeonly buffer draw_cmd_ref{
+layout( buffer_reference, scalar, buffer_reference_align = 8 ) writeonly buffer draw_cmd_ref{
 	draw_indirect dbgBBoxDrawCmd[];
 };
 

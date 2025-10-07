@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -62,7 +62,7 @@
     <CharacterSet>MultiByte</CharacterSet>
     <EnableUnitySupport>false</EnableUnitySupport>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
-    <EnableASAN>false</EnableASAN>
+    <EnableASAN>true</EnableASAN>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -176,7 +176,7 @@
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
-      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <DiagnosticsFormat>Classic</DiagnosticsFormat>
       <LlvmTransitionalOption>NextGenSingleDiagnostics</LlvmTransitionalOption>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
@@ -197,7 +197,7 @@
       <PreventDllBinding>false</PreventDllBinding>
     </Link>
     <CustomBuild>
-      <Command>"$(VULKAN_SDK)\Bin\glslangValidator" "%(FullPath)" -V -g --target-env vulkan1.2 -o Shaders\%(Filename).spv</Command>
+      <Command>"$(VULKAN_SDK)\Bin\glslangValidator" "%(FullPath)" -V -g --target-env vulkan1.4 -o Shaders\%(Filename).spv</Command>
     </CustomBuild>
     <CustomBuild>
       <Message>Compile GLSL to SPV</Message>
@@ -270,7 +270,6 @@
     <ClCompile Include="imgui\imgui_widgets.cpp" />
     <ClCompile Include="lz4.c" />
     <ClCompile Include="miniz.c" />
-    <ClCompile Include="r_dxc_compiler.ixx" />
     <ClCompile Include="r_dx12_backend.cpp" />
     <ClCompile Include="r_vk_backend.cpp" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
@@ -288,6 +287,9 @@
     <ClInclude Include="cgltf.h" />
     <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
+    <ClInclude Include="ht_error.h" />
+    <ClInclude Include="ht_geometry.h" />
+    <ClInclude Include="ht_utils.h" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
@@ -302,7 +304,11 @@
     <ClInclude Include="spng.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
+    <ClInclude Include="vk_error.h" />
+    <ClInclude Include="vk_memory.h" />
     <ClInclude Include="vk_procs.h" />
+    <ClInclude Include="vk_resources.h" />
+    <ClInclude Include="vk_timer.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">

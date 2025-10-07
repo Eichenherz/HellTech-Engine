@@ -17,7 +17,7 @@ layout( push_constant ) uniform block{
 layout( buffer_reference, scalar, buffer_reference_align = 8 ) readonly buffer draw_indir_ref{
 	draw_indirect drawCmd[];
 };
-layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
+layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
 };
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer meshlet_desc_ref{ 

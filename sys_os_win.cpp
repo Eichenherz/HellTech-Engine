@@ -16,9 +16,7 @@
 #include <string>
 #include <algorithm>
 
-// TODO: fix build msbuild ? add more stuff ?
-// TODO: use own strchyy buffer/ allocator
-#include "diy_pch.h"
+
 using namespace std;
 
 #include "sys_os_api.h"
@@ -198,39 +196,6 @@ HINSTANCE		hInst = 0;
 HWND			hWnd = 0;
 void*			sysMem = 0;
 
-
-
-enum cvar_type : u8
-{
-	CVAR_INT = 0,
-	CVAR_FLOAT = 1,
-	CVAR_STRING = 2,
-	CVAR_COUNT
-};
-
-enum cvar_usage : u8
-{
-
-};
-
-struct cvar_parameter
-{
-	char		name[ 64 ];
-	char		description[ 128 ];
-	cvar_type	type;
-	cvar_usage	usg;
-	u32			idx;
-};
-
-struct cvar_buffer
-{
-	static constexpr u32 MAX_FLOAT_COUNT = 100;
-	static constexpr u32 MAX_INT_COUNT = 100;
-	static constexpr u32 MAX_STRING_COUNT = 20;
-
-
-};
-
 static bool frustumCullDbg = 0;
 
 constexpr u16 VK_W = 0x57;
@@ -280,7 +245,6 @@ inline DirectX::XMMATRIX PerspRevInfFovRH( float fovYRads, float aspectRatioWH, 
 
 	return proj;
 }
-
 
 
 struct mouse
@@ -436,7 +400,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	wr.top = 100; 
 	wr.right = SCREEN_WIDTH + wr.left;
 	wr.bottom = SCREEN_HEIGHT + wr.top;
-	DWORD windowStyle = WS_CAPTION | WS_MINIMIZEBOX | WS_SYSMENU;
+	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
 	hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle,
 						 wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0,
@@ -458,7 +422,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	hid[ 1 ].hwndTarget = hWnd;
 	// NOTE: won't pass msgs like PtrSc
 	hid[ 1 ].dwFlags = 0;// RIDEV_NOLEGACY;
-	WIN_CHECK( !RegisterRawInputDevices( hid, POPULATION( hid ), sizeof( RAWINPUTDEVICE ) ) );
+	WIN_CHECK( !RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
 
 	mouse m = {};
@@ -483,9 +447,15 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	gpu_data gpuData = {};
 	frame_data frameData = {};
 
-	Dx12BackendInit();
-
 	VkBackendInit();
+
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGuiIO& io = ImGui::GetIO();
+	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
+	io.Fonts->AddFontDefault();
+	io.Fonts->Build();
+	
 
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
@@ -496,14 +466,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	//double				t = double( UINT64( 1ULL << 32 ) );
 	//double				accumulator = 0;
 	u64					currentTicks = SysTicks();
-
-	ImGui::CreateContext();
-	ImGui::StyleColorsDark();
-	ImGuiIO& io = ImGui::GetIO();
-	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
-	io.Fonts->AddFontDefault();
-	io.Fonts->Build();
-	
 
 	// TODO: QUIT immediately ?
 	while( isRunning )

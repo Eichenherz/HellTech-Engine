@@ -22,7 +22,7 @@ layout( binding = 2 ) buffer avg_luminance
 
 
 // TODO: pre compute
- // NOTE: taken from Lottes 2016, "Advanced Techniques and Optimization of HDR Color Pipelines"
+// NOTE: taken from Lottes 2016, "Advanced Techniques and Optimization of HDR Color Pipelines"
 float TonemapLottesCurve( float hdrLum )
 {
     const float a = 1.6;

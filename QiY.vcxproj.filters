@@ -18,25 +18,13 @@
     <ClCompile Include="sys_os_win.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="spirv_reflect.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="r_vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="asset_compiler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="miniz.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="spng.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="bcn_compressor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="lz4.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="imgui\imgui.cpp">
@@ -57,7 +45,16 @@
     <ClCompile Include="r_dx12_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="r_dxc_compiler.ixx">
+    <ClCompile Include="spirv_reflect.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="spng.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="miniz.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lz4.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -69,9 +66,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DEFS_WIN32_NO_BS.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="spirv_reflect.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="vk_procs.h">
@@ -86,22 +80,10 @@
     <ClInclude Include="Shaders\glsl_func_lib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="cgltf.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="asset_compiler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="miniz.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="spng.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="bcn_compressor.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="lz4.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imconfig.h">
@@ -120,6 +102,42 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imstb_truetype.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="spirv_reflect.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="spng.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="miniz.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="lz4.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cgltf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_timer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_memory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ht_utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_error.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ht_error.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_resources.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ht_geometry.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

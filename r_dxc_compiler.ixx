@@ -38,7 +38,7 @@ export{
 	};
 	struct dxc_context
 	{
-		IDxcCompiler3* pCompiler;
+		IDxcCompiler2* pCompiler;
 		IDxcUtils* pUtils;
 		IDxcValidator* pValidator;
 		IDxcIncludeHandler* pIncludeHandler;
