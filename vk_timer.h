@@ -38,11 +38,9 @@ struct vk_gpu_timer
 	float       timestampPeriod;
 };
 
-inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCount, float tsPeriod, VkPhysicalDevice gpu, vk_mem_arena& arena )
+inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCount, float tsPeriod )
 {
 	u32 queryCount = 2 * timerRegionsCount;
-	vk_buffer resultBuff = VkCreateAllocBindBuffer( queryCount * sizeof( u64 ), VK_BUFFER_USAGE_TRANSFER_DST_BIT, gpu, arena );
-	VkDbgNameObj( resultBuff.hndl, vkDevice, "Buff_Timestamp_Queries" );
 
 	VkQueryPoolCreateInfo queryPoolInfo = { 
 		.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
@@ -55,25 +53,25 @@ inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCount, fl
 	VK_CHECK( vkCreateQueryPool( vkDevice, &queryPoolInfo, 0, &queryPool ) );
 	VkDbgNameObj( queryPool, vkDevice, "VkQueryPool_GPU_timer" );
 
-	return { resultBuff, queryPool, queryCount, tsPeriod };
+	return { .queryPool = queryPool, .queryCount = queryCount, .timestampPeriod = tsPeriod };
 }
 
 inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& vkTimer )
 {
-	vkCmdCopyQueryPoolResults( 
-		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ),
-		VK_QUERY_RESULT_64_BIT );// | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT );
-
 	auto readTimestampsBarrier = VkMakeBufferBarrier2(
 		vkTimer.resultBuff.hndl,
 		VK_ACCESS_2_TRANSFER_WRITE_BIT,
 		VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 		VK_ACCESS_2_HOST_READ_BIT,
 		VK_PIPELINE_STAGE_2_HOST_BIT );
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	VkDependencyInfo dependency = { .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 	dependency.bufferMemoryBarrierCount = 1;
 	dependency.pBufferMemoryBarriers = &readTimestampsBarrier;
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );
+
+	vkCmdCopyQueryPoolResults( 
+		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ),
+		VK_QUERY_RESULT_64_BIT );// | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT );
 
 	const u64* pTimestamps = ( const u64* ) vkTimer.resultBuff.hostVisible;
 	u64 timestampBeg = pTimestamps[ 0 ];

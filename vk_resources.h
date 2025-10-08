@@ -60,8 +60,8 @@ struct buffer_info
 {
 	const char* name;
 	VkBufferUsageFlags usageFlags;
-	u32 elemCount;
-	u32 stride;
+	u64 elemCount;
+	u64 stride;
 	buffer_usage usage;
 };
 

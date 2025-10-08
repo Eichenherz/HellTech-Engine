@@ -73,7 +73,7 @@ do{																					\
 	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";				\
 	VkResult res = vk;																\
 	if( res ){																		\
-		char dbgStr[256] = {};														\
+		char dbgStr[1024] = {};														\
 		strcat_s( dbgStr, sizeof( dbgStr ), DEV_ERR_STR );							\
 		strcat_s( dbgStr, sizeof( dbgStr ), std::data( VkResErrorString( res ) ) );	\
 		SysErrMsgBox( dbgStr );														\

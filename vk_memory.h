@@ -11,7 +11,7 @@
 
 #include <vector>
 
-constexpr u64 VK_MIN_DEVICE_BLOCK_SIZE = 32 * MB;
+constexpr u64 VK_MIN_DEVICE_BLOCK_SIZE = 256 * MB;
 
 inline u32
 VkFindMemTypeIdx(
@@ -168,12 +168,13 @@ VkArenaAlignAlloc(
 		}
 	}
 
-	// Didn't find any block or there's none so we create one
-	if( ( 0 == blockIdx ) || ( blockIdx == std::size( vkArena->memBlocks ) ) )
+	bool arenaIsEmpty = ( 0 == std::size( vkArena->memBlocks ) );
+	bool noBlockCanFit = ( blockIdx == std::size( vkArena->memBlocks ) );
+	if( arenaIsEmpty || noBlockCanFit )
 	{
 		u64 newArenaSize = std::max( size, vkArena->minVkAllocationSize );
 		vk_mem_block memBlock = VkAllocDeviceMemBlock( 
-			vkDevice, newArenaSize, vkArena->memTypeIdx, vkArena->memTypeProperties, allocFlags, 0 );
+			vkDevice, newArenaSize, vkArena->memTypeIdx, allocFlags, vkArena->memTypeProperties, 0 );
 		vkArena->memBlocks.push_back( memBlock );
 		//vkArena->allocated += newArenaSize; // Note keep track
 

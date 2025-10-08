@@ -533,7 +533,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		frameData.dbgDraw = kbd.o;
 
 		ImGui::NewFrame();
-		// TODO: make own small efficient string
 		std::string wndMsg( std::to_string( gpuData.timeMs ) );
 		
 		ImGui::SetNextWindowPos( {} );

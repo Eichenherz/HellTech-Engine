@@ -15,8 +15,7 @@ inline bool IsPowOf2( u64 addr )
 inline u64 FwdAlign( u64 addr, u64 alignment )
 {
 	assert( IsPowOf2( alignment ) );
-	u64 mod = addr & ( alignment - 1 );
-	return mod ? addr + ( alignment - mod ) : addr;
+	return ( addr + ( alignment - 1 ) ) & ~( alignment - 1 );
 }
 // TODO: math_uitl file
 inline u64 FloorPowOf2( u64 size )
