@@ -304,6 +304,7 @@
     <ClInclude Include="spng.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
+    <ClInclude Include="vk_device.h" />
     <ClInclude Include="vk_error.h" />
     <ClInclude Include="vk_memory.h" />
     <ClInclude Include="vk_procs.h" />

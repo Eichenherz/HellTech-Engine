@@ -44,11 +44,13 @@ inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCount, fl
 	vk_buffer resultBuff = VkCreateAllocBindBuffer( queryCount * sizeof( u64 ), VK_BUFFER_USAGE_TRANSFER_DST_BIT, gpu, arena );
 	VkDbgNameObj( resultBuff.hndl, vkDevice, "Buff_Timestamp_Queries" );
 
-	VkQueryPoolCreateInfo queryPoolInfo = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-	queryPoolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-	queryPoolInfo.queryCount = queryCount;
-	queryPoolInfo.pipelineStatistics;
-
+	VkQueryPoolCreateInfo queryPoolInfo = { 
+		.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+		.queryType = VK_QUERY_TYPE_TIMESTAMP,
+		.queryCount = queryCount,
+		//.pipelineStatistics
+	};
+	
 	VkQueryPool queryPool = {};
 	VK_CHECK( vkCreateQueryPool( vkDevice, &queryPoolInfo, 0, &queryPool ) );
 	VkDbgNameObj( queryPool, vkDevice, "VkQueryPool_GPU_timer" );

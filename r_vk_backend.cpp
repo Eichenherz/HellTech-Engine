@@ -13,6 +13,7 @@
 #include <charconv>
 #include <span>
 #include <format>
+#include <memory_resource>
 
 #include "vk_memory.h"
 #include "vk_resources.h"
@@ -63,6 +64,12 @@ constexpr bool vkValidationLayerFeatures = 1;
 constexpr bool dbgDraw = true;
 //==============================================//
 
+struct resource_pool
+{
+	std::pmr::unsynchronized_pool_resource pool;
+
+
+};
 
 
 // TODO: remove ?
@@ -144,8 +151,6 @@ VkDbgUtilsMsgCallback(
 
 #endif
 
-// NOTE: GPU validation broken
-// NOTE: Sync validation doesn't work with desc indexing ?
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
 		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
@@ -278,216 +283,11 @@ inline static vk_instance VkMakeInstance()
 
 static vk_instance vkInst;
 
-
-struct vk_device_ctx
-{
-	VkPhysicalDeviceProperties gpuProps;
-	VkPhysicalDevice gpu;
-	VkDevice		device;
-	VkQueue			gfxQueue;
-	VkQueue			compQueue;
-	VkQueue			transfQueue;
-	u32				gfxQueueIdx;
-	u32				compQueueIdx;
-	u32				transfQueueIdx;
-	float           timestampPeriod;
-	u8				waveSize;
-};
-
-inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
-{
-	constexpr const char* ENABLED_DEVICE_EXTS[] = {
-		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		VK_KHR_PRESENT_ID_EXTENSION_NAME,
-		VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
-
-		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
-
-		//VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME,
-		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-		//VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME,
-
-		//VK_EXT_LOAD_STORE_OP_NONE_EXTENSION_NAME,
-		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
-		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
-		VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME,
-	};
-
-	u32 numDevices = 0;
-	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, 0 ) );
-	std::vector<VkPhysicalDevice> availableDevices( numDevices );
-	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
-
-
-	VkPhysicalDeviceInlineUniformBlockPropertiesEXT inlineBlockProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT };
-	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &inlineBlockProps };
-	VkPhysicalDeviceSubgroupProperties waveProps = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &conservativeRasterProps };
-	VkPhysicalDeviceVulkan14Properties gpuProps14 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_PROPERTIES, &waveProps };
-	VkPhysicalDeviceVulkan13Properties gpuProps13 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, &gpuProps14 };
-	VkPhysicalDeviceVulkan12Properties gpuProps12 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, &gpuProps13 };
-	VkPhysicalDeviceVulkan11Properties gpuProps11 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, &gpuProps12 };
-	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps11 };
-
-	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR };
-	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
-	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &presentIdFeatures };
-	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentsFeature =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT, &extDynamicStateFeatures };
-	VkPhysicalDeviceVulkan14Features gpuFeatures14 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &unusedAttachmentsFeature };
-	VkPhysicalDeviceVulkan13Features gpuFeatures13 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &gpuFeatures14 };
-	VkPhysicalDeviceVulkan12Features gpuFeatures12 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &gpuFeatures13 };
-	VkPhysicalDeviceVulkan11Features gpuFeatures11 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &gpuFeatures12 };
-	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
-
-	// TODO: check for more stuff ?
-	VkPhysicalDevice gpu = 0;
-	for( u64 i = 0; i < numDevices; ++i )
-	{
-		u32 extsNum = 0;
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ i ], 0, &extsNum, 0 ) || !extsNum ) continue;
-		std::vector<VkExtensionProperties> availableExts( extsNum );
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ i ], 0, &extsNum, std::data( availableExts ) ) ) continue;
-
-		for( std::string_view requiredExt : ENABLED_DEVICE_EXTS )
-		{
-			bool foundExt = false;
-			for( VkExtensionProperties& availableExt : availableExts )
-			{
-				if( requiredExt == availableExt.extensionName )
-				{
-					foundExt = true;
-					break;
-				}
-			}
-			if( !foundExt ) goto NEXT_DEVICE;
-		};
-
-		vkGetPhysicalDeviceProperties2( availableDevices[ i ], &gpuProps2 );
-		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_4 ) continue;
-		if( gpuProps2.properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) continue;
-		if( !gpuProps2.properties.limits.timestampComputeAndGraphics ) continue;
-
-		vkGetPhysicalDeviceFeatures2( availableDevices[ i ], &gpuFeatures );
-
-		gpu = availableDevices[ i ];
-
-		break;
-
-	NEXT_DEVICE:;
-	}
-	VK_CHECK( VK_INTERNAL_ERROR( !gpu ) );
-
-	gpuFeatures.features.geometryShader = 0;
-	// NOTE: might help debugging ?
-	gpuFeatures.features.robustBufferAccess = 0;
-
-	u32 queueFamNum = 0;
-	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, 0 );
-	VK_CHECK( VK_INTERNAL_ERROR( !queueFamNum ) );
-	std::vector<VkQueueFamilyProperties>  queueFamProps( queueFamNum );
-	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, std::data( queueFamProps ) );
-
-	constexpr VkQueueFlags careAboutQueueTypes = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
-	constexpr VkQueueFlags presentQueueFlags = careAboutQueueTypes ^ VK_QUEUE_TRANSFER_BIT;
-
-	u32 qGfxIdx = -1, qCompIdx = -1, qTransfIdx = -1;
-
-	for( u32 qIdx = 0; qIdx < queueFamNum; ++qIdx )
-	{
-		if( queueFamProps[ qIdx ].queueCount == 0 ) continue;
-
-		VkQueueFlags familyFlags = queueFamProps[ qIdx ].queueFlags & careAboutQueueTypes;
-		if( familyFlags & presentQueueFlags )
-		{
-			VkBool32 present = 0;
-			vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qIdx, vkSurf, &present );
-			VK_CHECK( VK_INTERNAL_ERROR( !present ) );
-		}
-		if( familyFlags & VK_QUEUE_GRAPHICS_BIT ) qGfxIdx = qIdx;
-		else if( familyFlags & VK_QUEUE_COMPUTE_BIT ) qCompIdx = qIdx;
-		else if( familyFlags & VK_QUEUE_TRANSFER_BIT ) qTransfIdx = qIdx;
-	}
-	
-	VK_CHECK( VK_INTERNAL_ERROR( ( qGfxIdx == u32( -1 ) ) || ( qCompIdx == u32( -1 ) ) || ( qTransfIdx == u32( -1 ) ) ) );
-	
-	float queuePriorities = 1.0f;
-	VkDeviceQueueCreateInfo queueInfos[ 3 ] = {};
-	for( u32 qi = 0; qi < std::size( queueInfos ); ++qi )
-	{
-		queueInfos[ qi ].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queueInfos[ qi ].queueFamilyIndex = qi;
-		queueInfos[ qi ].queueCount = 1;
-		queueInfos[ qi ].pQueuePriorities = &queuePriorities;
-	}
-
-	vk_device_ctx dc = {};
-
-	VkDeviceCreateInfo deviceInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-	deviceInfo.pNext = &gpuFeatures;
-	deviceInfo.queueCreateInfoCount = std::size( queueInfos );
-	deviceInfo.pQueueCreateInfos = &queueInfos[ 0 ];
-	deviceInfo.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS );
-	deviceInfo.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS;
-	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, 0, &dc.device ) );
-
-	
-	VkLoadDeviceProcs( dc.device );
-
-	vkGetDeviceQueue( dc.device, queueInfos[ qGfxIdx ].queueFamilyIndex, 0, &dc.gfxQueue );
-	vkGetDeviceQueue( dc.device, queueInfos[ qCompIdx ].queueFamilyIndex, 0, &dc.compQueue );
-	vkGetDeviceQueue( dc.device, queueInfos[ qTransfIdx ].queueFamilyIndex, 0, &dc.transfQueue );
-	VK_CHECK( VK_INTERNAL_ERROR( !dc.gfxQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !dc.compQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !dc.transfQueue ) );
-
-	dc.gfxQueueIdx = queueInfos[ qGfxIdx ].queueFamilyIndex;
-	dc.compQueueIdx = queueInfos[ qCompIdx ].queueFamilyIndex;
-	dc.transfQueueIdx = queueInfos[ qTransfIdx ].queueFamilyIndex;
-	dc.gpu = gpu;
-	dc.gpuProps = gpuProps2.properties;
-	dc.timestampPeriod = gpuProps2.properties.limits.timestampPeriod;
-	dc.waveSize = waveProps.subgroupSize;
-
-	return dc;
-}
+#include "vk_device.h"
 
 static vk_device_ctx dc;
 
 static vk_mem_arena vkRscArena, vkStagingArena, vkAlbumArena, vkHostComArena, vkDbgArena;
-
-// TODO: move debug stuff out of here ?
-inline static void
-VkStartGfxMemory( VkPhysicalDevice vkPhysicalDevice, VkDevice vkDevice )
-{
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkPhysicalDevice, &memProps );
-
-	vkRscArena = VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vkDevice );
-	vkAlbumArena = VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vkDevice );
-	vkStagingArena = 
-		VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vkDevice );
-	vkHostComArena = VkMakeMemoryArena( memProps,
-										VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-										VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
-										VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-										vkDevice );
-
-	vkDbgArena = VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vkDevice );
-}
 
 
 // TODO: handle concept
@@ -600,7 +400,6 @@ struct virtual_frame
 	VkCommandPool	cmdPool;
 	VkCommandBuffer cmdBuff;
 	VkSemaphore		canGetImgSema;
-	VkSemaphore		canPresentSema;
 	u16 frameDescIdx;
 };
 
@@ -628,7 +427,6 @@ static inline virtual_frame VkCreateVirtualFrame(
 
 	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 	VK_CHECK( vkCreateSemaphore( dc.device, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
-	VK_CHECK( vkCreateSemaphore( dc.device, &semaInfo, 0, &vrtFrame.canPresentSema ) );
 
 	vrtFrame.frameData = VkCreateAllocBindBuffer( 
 		bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, dc.gpu, arena );
@@ -638,11 +436,12 @@ static inline virtual_frame VkCreateVirtualFrame(
 	return vrtFrame;
 }
 
-struct swapchain
+struct vk_swapchain
 {
 	VkSwapchainKHR	swapchain;
 	VkImageView		imgViews[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
 	VkImage			imgs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
+	VkSemaphore		canPresentSemas[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
 	VkFormat		imgFormat;
 	u16				width;
 	u16				height;
@@ -671,18 +470,18 @@ inline static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst,
 #endif // VK_USE_PLATFORM_WIN32_KHR
 }
 // TODO: sep initial validation form sc creation when resize ?
-// TODO: tweak settings/config
-// TODO: present from compute and graphics
-inline static swapchain
+inline static vk_swapchain
 VkMakeSwapchain(
 	VkDevice			vkDevice,
 	VkPhysicalDevice	vkPhysicalDevice,
 	VkSurfaceKHR		vkSurf,
 	u32					queueFamIdx,
-	VkFormat			scDesiredFormat
-){
+	VkFormat			scDesiredFormat,
+	u32                 numImages
+) {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkPhysicalDevice, vkSurf, &surfaceCaps ) );
+	assert( surfaceCaps.maxImageArrayLayers >= 1 );
 
 	VkCompositeAlphaFlagBitsKHR surfaceComposite =
 		( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR )
@@ -701,12 +500,13 @@ VkMakeSwapchain(
 		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, std::data( formats ) ) );
 
 		for( u64 i = 0; i < formatCount; ++i )
+		{
 			if( formats[ i ].format == scDesiredFormat )
 			{
 				scFormatAndColSpace = formats[ i ];
 				break;
 			}
-
+		}
 		VK_CHECK( VK_INTERNAL_ERROR( !scFormatAndColSpace.format ) );
 	}
 
@@ -715,60 +515,57 @@ VkMakeSwapchain(
 		u32 numPresentModes;
 		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( vkPhysicalDevice, vkSurf, &numPresentModes, 0 ) );
 		std::vector<VkPresentModeKHR> presentModes( numPresentModes );
-		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( vkPhysicalDevice, vkSurf, &numPresentModes, std::data( presentModes ) ) );
+		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( 
+			vkPhysicalDevice, vkSurf, &numPresentModes, std::data( presentModes ) ) );
 
 		constexpr VkPresentModeKHR desiredPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 		for( u32 j = 0; j < numPresentModes; ++j )
+		{
 			if( presentModes[ j ] == desiredPresentMode )
 			{
 				presentMode = desiredPresentMode;
 				break;
 			}
+		}
 		VK_CHECK( VK_INTERNAL_ERROR( !presentMode ) );
 	}
 
 
-	u32 scImgCount = VK_SWAPCHAIN_MAX_IMG_ALLOWED;
+	u32 scImgCount = numImages;
 	assert( ( scImgCount > surfaceCaps.minImageCount ) && ( scImgCount < surfaceCaps.maxImageCount ) );
 	assert( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
 			( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
 
 	VkImageUsageFlags scImgUsage =
-		VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-		VK_IMAGE_USAGE_STORAGE_BIT;
+		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
 	VK_CHECK( VK_INTERNAL_ERROR( ( surfaceCaps.supportedUsageFlags & scImgUsage ) != scImgUsage ) );
 
 
-	VkSwapchainCreateInfoKHR scInfo = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
-	scInfo.surface = vkSurf;
-	scInfo.minImageCount = scImgCount;
-	scInfo.imageFormat = scFormatAndColSpace.format;
-	scInfo.imageColorSpace = scFormatAndColSpace.colorSpace;
-	scInfo.imageExtent = surfaceCaps.currentExtent;
-	assert( surfaceCaps.maxImageArrayLayers >= 1 );
-	scInfo.imageArrayLayers = 1;
-	scInfo.imageUsage = scImgUsage;
-	scInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	scInfo.preTransform = surfaceCaps.currentTransform;
-	scInfo.compositeAlpha = surfaceComposite;
-	scInfo.presentMode = presentMode;
-	scInfo.queueFamilyIndexCount = 1;
-	scInfo.pQueueFamilyIndices = &queueFamIdx;
-	scInfo.clipped = VK_TRUE;
-	scInfo.oldSwapchain = 0;
+	VkSwapchainCreateInfoKHR scInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = vkSurf,
+		.minImageCount = scImgCount,
+		.imageFormat = scFormatAndColSpace.format,
+		.imageColorSpace = scFormatAndColSpace.colorSpace,
+		.imageExtent = surfaceCaps.currentExtent,
+		.imageArrayLayers = 1,
+		.imageUsage = scImgUsage,
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 1,
+		.pQueueFamilyIndices = &queueFamIdx,
+		.preTransform = surfaceCaps.currentTransform,
+		.compositeAlpha = surfaceComposite,
+		.presentMode = presentMode,
+		.clipped = VK_TRUE,
+		.oldSwapchain = 0
+	};
 
 	VkImageFormatProperties scImageProps = {};
-	VK_CHECK( vkGetPhysicalDeviceImageFormatProperties( vkPhysicalDevice,
-														scInfo.imageFormat,
-														VK_IMAGE_TYPE_2D,
-														VK_IMAGE_TILING_OPTIMAL,
-														scInfo.imageUsage,
-														scInfo.flags,
-														&scImageProps ) );
+	VK_CHECK( vkGetPhysicalDeviceImageFormatProperties( 
+		vkPhysicalDevice, scInfo.imageFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, scInfo.imageUsage,
+		scInfo.flags, &scImageProps ) );
 
-
-	swapchain sc = {};
+	vk_swapchain sc = {};
 	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &sc.swapchain ) );
 
 	u32 scImgsNum = 0;
@@ -779,6 +576,8 @@ VkMakeSwapchain(
 	for( u64 i = 0; i < scImgsNum; ++i )
 	{
 		sc.imgViews[ i ] = VkMakeImgView( vkDevice, sc.imgs[ i ], scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
+		VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &sc.canPresentSemas[ i ] ) );
 	}
 
 	sc.width = scInfo.imageExtent.width;
@@ -791,7 +590,7 @@ VkMakeSwapchain(
 
 
 static VkSurfaceKHR vkSurf;
-static swapchain sc;
+static vk_swapchain sc;
 
 
 // TODO:
@@ -1587,7 +1386,7 @@ VkPipeline VkMakeGfxPipeline(
 	return vkGfxPipeline;
 }
 
-// TODO: pipeline caputre representations blah blah ?
+
 VkPipeline VkMakeComputePipeline(
 	VkDevice			vkDevice,
 	VkPipelineCache		vkPipelineCache,
@@ -2137,10 +1936,8 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 
 	const drak_file_footer& fileFooter =
 		*( drak_file_footer* ) ( std::data( binaryData ) + std::size( binaryData ) - sizeof( drak_file_footer ) );
-	{
-		using namespace std;
-		assert( "DRK"sv == fileFooter.magik  );
-	}
+	//assert( "DRK" == fileFooter.magik  );
+	
 	const std::span<mesh_desc> meshes = { 
 		(mesh_desc*) ( std::data( binaryData ) + fileFooter.meshesByteRange.offset ),
 		fileFooter.meshesByteRange.size / sizeof( mesh_desc ) };
@@ -2159,19 +1956,14 @@ static inline void VkUploadResources( VkCommandBuffer cmdBuff, entities_data& en
 	{
 		mtrls.push_back( m );
 		material_data& refM = mtrls[ std::size( mtrls ) - 1 ];
-		//refM.baseColIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
-		//refM.normalMapIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
-		//refM.occRoughMetalIdx += std::size( textures.rsc ) + srvManager.slotSizeTable[ VK_GLOBAL_SLOT_SAMPLED_IMAGE ];
 
 		refM.baseColIdx += std::size( textures.rsc );
 		refM.normalMapIdx += std::size( textures.rsc );
 		refM.occRoughMetalIdx += std::size( textures.rsc );
 
-
-
-		//refM.baseColIdx += 3;
-		//refM.normalMapIdx += 3;
-		//refM.occRoughMetalIdx += 3;
+		refM.baseColIdx += 2;
+		refM.normalMapIdx += 2;
+		refM.occRoughMetalIdx += 2;
 	}
 
 	std::srand( randSeed );
@@ -2724,7 +2516,7 @@ void VkBackendInit()
 
 	VkStartGfxMemory( dc.gpu, dc.device );
 
-	sc = VkMakeSwapchain( dc.device, dc.gpu, vkSurf, dc.gfxQueueIdx, renderCfg.desiredSwapchainFormat );
+	sc = VkMakeSwapchain( dc.device, dc.gpu, vkSurf, dc.gfxQueueIdx, renderCfg.desiredSwapchainFormat, 3 );
 
 	VkInitInternalBuffers();
 
@@ -4498,14 +4290,16 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
 
 
-	VkSemaphore signalSemas[] = { thisVFrame.canPresentSema, rndCtx.timelineSema };
+	VkSemaphore signalSemas[] = { sc.canPresentSemas[ imgIdx ], rndCtx.timelineSema };
 	u64 signalValues[] = { 0, rndCtx.vFrameIdx }; // NOTE: this is the next frame val
 	
-	VkTimelineSemaphoreSubmitInfo timelineInfo = { VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
-	timelineInfo.signalSemaphoreValueCount = std::size( signalValues );
-	timelineInfo.pSignalSemaphoreValues = signalValues;
+	VkTimelineSemaphoreSubmitInfo timelineInfo = { 
+		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.signalSemaphoreValueCount = std::size( signalValues ),
+		.pSignalSemaphoreValues = signalValues,
+	};
 
-	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	VkSubmitInfo submitInfo = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	submitInfo.pNext = &timelineInfo;
 	submitInfo.waitSemaphoreCount = 1;
 	submitInfo.pWaitSemaphores = &thisVFrame.canGetImgSema;
@@ -4518,12 +4312,14 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	// NOTE: queue submit has implicit host sync for trivial stuff
 	VK_CHECK( vkQueueSubmit( dc.gfxQueue, 1, &submitInfo, 0 ) );
 
-	VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
-	presentInfo.waitSemaphoreCount = 1;
-	presentInfo.pWaitSemaphores = &thisVFrame.canPresentSema;
-	presentInfo.swapchainCount = 1;
-	presentInfo.pSwapchains = &sc.swapchain;
-	presentInfo.pImageIndices = &imgIdx;
+	VkPresentInfoKHR presentInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = &sc.canPresentSemas[ imgIdx ],
+		.swapchainCount = 1,
+		.pSwapchains = &sc.swapchain,
+		.pImageIndices = &imgIdx
+	};
 	VK_CHECK( vkQueuePresentKHR( dc.gfxQueue, &presentInfo ) );
 }
 

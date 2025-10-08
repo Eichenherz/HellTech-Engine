@@ -9,21 +9,18 @@
 #include "vk_procs.h"
 
 #include "vk_error.h"
-#include "vk_memory.h"
 #include "core_types.h"
 #include "sys_os_api.h"
 #include <type_traits>
 
 constexpr u64 MAX_MIP_LEVELS = 12;
 
-// TODO: keep memory in buffer ?
-// TODO: keep devicePointer here ?
 struct vk_buffer
 {
+	vk_allocation   mem;
 	VkBuffer		hndl;
-	VkDeviceMemory	mem;
-	u64				size;
-	u8*             hostVisible;
+	u64				size; // TODO: store elem count ?
+	u8*             hostVisible; // TODO: remove ?
 	u64				devicePointer;
 	VkBufferUsageFlags usgFlags;
 	u32             stride;
@@ -35,16 +32,10 @@ inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
 	return VkDescriptorBufferInfo{ b.hndl,0,b.size };
 }
 
-// TODO: use a texture_desc struct
-// TODO: add more data ?
-// TODO: VkDescriptorImageInfo 
-// TODO: rsc don't directly store the memory, rsc manager refrences it ?
 struct vk_image
 {
+	vk_allocation   mem;
 	VkImage			hndl;
-	VkImageView		view;
-	VkImageView     optionalViews[ MAX_MIP_LEVELS ];
-	VkDeviceMemory	mem;
 	VkImageUsageFlags usageFlags;
 	VkFormat		nativeFormat;
 	u16				width;
@@ -58,46 +49,20 @@ struct vk_image
 	}
 };
 
-// TODO: pass aspect mask ? ?
-inline static VkImageView
-VkMakeImgView(
-	VkDevice		vkDevice,
-	VkImage			vkImg,
-	VkFormat		imgFormat,
-	u32				mipLevel,
-	u32				levelCount,
-	VkImageViewType imgViewType = VK_IMAGE_VIEW_TYPE_2D,
-	u32				arrayLayer = 0,
-	u32				layerCount = 1
-){
-	VkImageAspectFlags aspectMask =
-		( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-	VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
-	viewInfo.viewType = imgViewType;
-	viewInfo.format = imgFormat;
-	viewInfo.subresourceRange.aspectMask = aspectMask;
-	viewInfo.subresourceRange.baseMipLevel = mipLevel;
-	viewInfo.subresourceRange.levelCount = levelCount;
-	viewInfo.subresourceRange.baseArrayLayer = arrayLayer;
-	viewInfo.subresourceRange.layerCount = layerCount;
-	viewInfo.image = vkImg;
-
-	VkImageView view;
-	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
-
-	return view;
-}
-
-// TODO: pass device for rsc creation, and stuff
-// TODO: re-think resource creation and management
+enum class buffer_usage : u8
+{
+	GPU_ONLY,
+	STAGING,
+	HOST_VISIBLE
+};
 
 struct buffer_info
 {
 	const char* name;
-	VkBufferUsageFlags usage;
+	VkBufferUsageFlags usageFlags;
 	u32 elemCount;
 	u32 stride;
+	buffer_usage usage;
 };
 
 struct image_info
@@ -121,429 +86,43 @@ inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
 	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
 }
 
-static vk_buffer
-VkCreateAllocBindBuffer(
-	const buffer_info& buffInfo,
-	VkDevice vkDevice,
-	VkPhysicalDevice vkGpu,
-	vk_mem_arena& vkArena
-) {
-	vk_buffer buffData = {};
 
-	VkBufferCreateInfo bufferInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-	//bufferInfo.flags = ( usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ) ? 
-	//	VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT : 0;
-	bufferInfo.size = buffInfo.elemCount * buffInfo.stride;
-	bufferInfo.usage = buffInfo.usage;
-	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	VK_CHECK( vkCreateBuffer( vkDevice, &bufferInfo, 0, &buffData.hndl ) );
-
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	VkBufferMemoryRequirementsInfo2 buffMemReqs2 = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2 };
-	buffMemReqs2.buffer = buffData.hndl;
-	vkGetBufferMemoryRequirements2( vkDevice, &buffMemReqs2, &memReqs2 );
-
-#ifdef _VK_DEBUG_
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkGpu, &memProps );
-	i32 memTypeIdx = VkFindMemTypeIdx( &memProps, vkArena.memTypeProperties, memReqs2.memoryRequirements.memoryTypeBits );
-	VK_CHECK( VK_INTERNAL_ERROR( !( memTypeIdx == vkArena.memTypeIdx ) ) );
-	assert( memTypeIdx == vkArena.memTypeIdx );
-#endif
-
-	VkMemoryAllocateFlags allocFlags =
-		( bufferInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ) ? VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT : 0;
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
-	dedicatedAllocateInfo.buffer = buffMemReqs2.buffer;
-
-	bool dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation; //|| dedicatedReqs.prefersDedicatedAllocation;
-
-	vk_allocation bufferMem = VkArenaAlignAlloc( &vkArena,
-												 memReqs2.memoryRequirements.size,
-												 memReqs2.memoryRequirements.alignment,
-												 vkArena.memTypeIdx,
-												 allocFlags,
-												 dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
-
-	buffData.mem = bufferMem.deviceMem;
-	buffData.hostVisible = ( bufferMem.hostVisible ) ? ( bufferMem.hostVisible + bufferMem.dataOffset ) : 0;
-	buffData.size = bufferInfo.size;
-	buffData.stride = buffInfo.stride;
-
-	VK_CHECK( vkBindBufferMemory( vkDevice, buffData.hndl, buffData.mem, bufferMem.dataOffset ) );
-
-	if( allocFlags == VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT )
-	{
-		buffData.devicePointer = VkGetBufferDeviceAddress( vkArena.device, buffData.hndl );
-		assert( buffData.devicePointer );
-	}
-
-	buffData.usgFlags = bufferInfo.usage = bufferInfo.usage;
-
-	if( buffInfo.name ) VkDbgNameObj( buffData.hndl, vkDevice, buffInfo.name );
-
-	return buffData;
+inline VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
+{
+	return ( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
-static vk_image
-VkCreateAllocBindImage(
-	const image_info& imgInfo,
-	vk_mem_arena& vkArena,
-	VkDevice            vkDevice,
-	VkPhysicalDevice	gpu
-) {
-	VkFormatFeatureFlags formatFeatures = 0;
-	if( imgInfo.usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-	if( imgInfo.usg & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-	if( imgInfo.usg & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-	if( imgInfo.usg & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-
-	VkFormatProperties formatProps;
-	vkGetPhysicalDeviceFormatProperties( gpu, imgInfo.format, &formatProps );
-	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
-
-
-	vk_image img = {};
-
-	VkImageCreateInfo imageInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
-	imageInfo.imageType = VK_IMAGE_TYPE_2D;
-	imageInfo.format = img.nativeFormat = imgInfo.format;
-	imageInfo.extent = { img.width = imgInfo.width, img.height = imgInfo.height, 1};
-	imageInfo.mipLevels = img.mipCount = imgInfo.mipCount;
-	imageInfo.arrayLayers = img.layerCount = 1;
-	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-	imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-	imageInfo.usage = img.usageFlags = imgInfo.usg;
-	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	VK_CHECK( vkCreateImage( vkDevice, &imageInfo, 0, &img.hndl ) );
-
-	VkImageMemoryRequirementsInfo2 imgReqs2 = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 };
-	imgReqs2.image = img.hndl;
-
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	vkGetImageMemoryRequirements2( vkDevice, &imgReqs2, &memReqs2 );
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
-	dedicatedAllocateInfo.image = imgReqs2.image;
-
-	bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
-
-#ifdef _VK_DEBUG_
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( gpu, &memProps );
-	i32 memTypeIdx = VkFindMemTypeIdx( &memProps, vkArena.memTypeProperties, memReqs2.memoryRequirements.memoryTypeBits );
-	//VK_CHECK( VK_INTERNAL_ERROR( memTypeIdx == vkArena->memTypeIdx ) );
-	assert( memTypeIdx == vkArena.memTypeIdx );
-#endif
-
-	vk_allocation imgMem = VkArenaAlignAlloc(
-		//vkDevice,
-		&vkArena,
-		memReqs2.memoryRequirements.size,
-		memReqs2.memoryRequirements.alignment,
-		vkArena.memTypeIdx,
-		0,
-		dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
-
-	img.mem = imgMem.deviceMem;
-
-	VK_CHECK( vkBindImageMemory( vkDevice, img.hndl, img.mem, imgMem.dataOffset ) );
-
-	img.view = VkMakeImgView(
-		vkDevice, img.hndl, imgInfo.format, 0, imageInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
-
-	if( imgInfo.name ) VkDbgNameObj( img.hndl, vkDevice, imgInfo.name );
-
-	return img;
-}
-
-// TODO: Pass BuffCreateInfo
-static vk_buffer
-VkCreateAllocBindBuffer(
-	u64					sizeInBytes,
-	VkBufferUsageFlags	usage,
-	VkPhysicalDevice	vkGpu,
-	vk_mem_arena& vkArena
+inline static VkImageView
+VkMakeImgView(
+	VkDevice		vkDevice,
+	VkImage			vkImg,
+	VkImageAspectFlags aspectMask,
+	VkFormat		imgFormat,
+	u32				mipLevel,
+	u32				levelCount,
+	VkImageViewType imgViewType = VK_IMAGE_VIEW_TYPE_2D,
+	u32				arrayLayer = 0,
+	u32				layerCount = 1
 ){
-	vk_buffer buffData = {};
-
-	VkBufferCreateInfo bufferInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-	//bufferInfo.flags = ( usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ) ? 
-	//	VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT : 0;
-	bufferInfo.size = sizeInBytes;
-	bufferInfo.usage = usage;
-	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	VK_CHECK( vkCreateBuffer( vkArena.device, &bufferInfo, 0, &buffData.hndl ) );
-
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	VkBufferMemoryRequirementsInfo2 buffMemReqs2 = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2 };
-	buffMemReqs2.buffer = buffData.hndl;
-	vkGetBufferMemoryRequirements2( vkArena.device, &buffMemReqs2, &memReqs2 );
-
-#ifdef _VK_DEBUG_
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkGpu, &memProps );
-	i32 memTypeIdx = VkFindMemTypeIdx( &memProps, vkArena.memTypeProperties, memReqs2.memoryRequirements.memoryTypeBits );
-	VK_CHECK( VK_INTERNAL_ERROR( !( memTypeIdx == vkArena.memTypeIdx ) ) );
-	assert( memTypeIdx == vkArena.memTypeIdx );
-#endif
-
-	VkMemoryAllocateFlags allocFlags =
-		( usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ) ? VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT : 0;
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
-	dedicatedAllocateInfo.buffer = buffMemReqs2.buffer;
-
-	bool dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation; //|| dedicatedReqs.prefersDedicatedAllocation;
-
-	vk_allocation bufferMem = VkArenaAlignAlloc( &vkArena,
-												 memReqs2.memoryRequirements.size,
-												 memReqs2.memoryRequirements.alignment,
-												 vkArena.memTypeIdx,
-												 allocFlags,
-												 dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
-
-	buffData.mem = bufferMem.deviceMem;
-	buffData.hostVisible = ( bufferMem.hostVisible ) ? ( bufferMem.hostVisible + bufferMem.dataOffset ) : 0;
-	buffData.size = sizeInBytes;
-
-	VK_CHECK( vkBindBufferMemory( vkArena.device, buffData.hndl, buffData.mem, bufferMem.dataOffset ) );
-
-	if( allocFlags == VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT )
-	{
-		buffData.devicePointer = VkGetBufferDeviceAddress( vkArena.device, buffData.hndl );
-		assert( buffData.devicePointer );
-	}
-
-	buffData.usgFlags = bufferInfo.usage = usage;
-
-	return buffData;
-}
-
-static vk_image
-VkCreateAllocBindImage(
-	const VkImageCreateInfo& imgInfo,
-	vk_mem_arena& vkArena,
-	VkPhysicalDevice			vkGpu
-){
-	VkFormatFeatureFlags formatFeatures = 0;
-	if( imgInfo.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-	if( imgInfo.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-	if( imgInfo.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-	if( imgInfo.usage & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-
-	VkFormatProperties formatProps;
-	vkGetPhysicalDeviceFormatProperties( vkGpu, imgInfo.format, &formatProps );
-	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
-
-	vk_image img = {};
-	img.nativeFormat = imgInfo.format;
-	img.width = imgInfo.extent.width;
-	img.height = imgInfo.extent.height;
-	img.mipCount = imgInfo.mipLevels;
-	img.layerCount = imgInfo.arrayLayers;
-	VK_CHECK( vkCreateImage( vkArena.device, &imgInfo, 0, &img.hndl ) );
-
-	VkImageMemoryRequirementsInfo2 imgReqs2 = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 };
-	imgReqs2.image = img.hndl;
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	vkGetImageMemoryRequirements2( vkArena.device, &imgReqs2, &memReqs2 );
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
-	dedicatedAllocateInfo.image = imgReqs2.image;
-
-	bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
-
-#ifdef _VK_DEBUG_
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkGpu, &memProps );
-	i32 memTypeIdx = VkFindMemTypeIdx( &memProps, vkArena.memTypeProperties, memReqs2.memoryRequirements.memoryTypeBits );
-	VK_CHECK( VK_INTERNAL_ERROR( !( memTypeIdx == vkArena.memTypeIdx ) ) );
-#endif
-
-	vk_allocation imgMem = VkArenaAlignAlloc( &vkArena,
-											  memReqs2.memoryRequirements.size,
-											  memReqs2.memoryRequirements.alignment,
-											  vkArena.memTypeIdx,
-											  0,
-											  dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
-
-	img.mem = imgMem.deviceMem;
-
-	VK_CHECK( vkBindImageMemory( vkArena.device, img.hndl, img.mem, imgMem.dataOffset ) );
-
-	VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
-	switch( imgInfo.imageType )
-	{
-	case VK_IMAGE_TYPE_1D: viewType = VK_IMAGE_VIEW_TYPE_1D; break;
-	case VK_IMAGE_TYPE_2D: viewType = VK_IMAGE_VIEW_TYPE_2D; break;
-	case VK_IMAGE_TYPE_3D: viewType = VK_IMAGE_VIEW_TYPE_3D; break;
-	default: VK_CHECK( VK_INTERNAL_ERROR( "Uknown vk_image type !" ) ); break;
+	VkImageViewCreateInfo viewInfo = { 
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = vkImg,
+		.viewType = imgViewType,
+		.format = imgFormat,
+		.subresourceRange = {
+			.aspectMask = aspectMask,
+			.baseMipLevel = mipLevel,
+			.levelCount = levelCount,
+			.baseArrayLayer = arrayLayer,
+			.layerCount = layerCount,
+	},
 	};
-	img.view = VkMakeImgView( vkArena.device, img.hndl, imgInfo.format, 0, imgInfo.mipLevels, viewType, 0, imgInfo.arrayLayers );
 
-	return img;
+	VkImageView view;
+	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
+
+	return view;
 }
-
-static vk_image
-VkCreateAllocBindImage(
-	VkFormat			format,
-	VkImageUsageFlags	usageFlags,
-	VkExtent3D			extent,
-	u32					mipCount,
-	vk_mem_arena& vkArena,
-	VkDevice            vkDevice,
-	VkPhysicalDevice	gpu
-) {
-	VkFormatFeatureFlags formatFeatures = 0;
-	if( usageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-	if( usageFlags & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-	if( usageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-	if( usageFlags & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-
-	VkFormatProperties formatProps;
-	vkGetPhysicalDeviceFormatProperties( gpu, format, &formatProps );
-	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
-
-
-	vk_image img = {};
-
-	VkImageCreateInfo imgInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
-	imgInfo.imageType = VK_IMAGE_TYPE_2D;
-	imgInfo.format = img.nativeFormat = format;
-	img.width = extent.width;
-	img.height = extent.height;
-	imgInfo.extent = extent;
-	imgInfo.mipLevels = img.mipCount = mipCount;
-	imgInfo.arrayLayers = img.layerCount = 1;
-	imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-	imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-	imgInfo.usage = img.usageFlags = usageFlags;
-	imgInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	VK_CHECK( vkCreateImage( vkDevice, &imgInfo, 0, &img.hndl ) );
-
-	VkImageMemoryRequirementsInfo2 imgReqs2 = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 };
-	imgReqs2.image = img.hndl;
-
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	vkGetImageMemoryRequirements2( vkDevice, &imgReqs2, &memReqs2 );
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
-	dedicatedAllocateInfo.image = imgReqs2.image;
-
-	bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
-
-#ifdef _VK_DEBUG_
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( gpu, &memProps );
-	i32 memTypeIdx = VkFindMemTypeIdx( &memProps, vkArena.memTypeProperties, memReqs2.memoryRequirements.memoryTypeBits );
-	//VK_CHECK( VK_INTERNAL_ERROR( memTypeIdx == vkArena->memTypeIdx ) );
-	assert( memTypeIdx == vkArena.memTypeIdx );
-#endif
-
-	vk_allocation imgMem = VkArenaAlignAlloc(
-		//vkDevice,
-		&vkArena,
-		memReqs2.memoryRequirements.size,
-		memReqs2.memoryRequirements.alignment,
-		vkArena.memTypeIdx,
-		0,
-		dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
-
-	img.mem = imgMem.deviceMem;
-
-	VK_CHECK( vkBindImageMemory( vkDevice, img.hndl, img.mem, imgMem.dataOffset ) );
-
-	img.view = VkMakeImgView( 
-		vkDevice, img.hndl, imgInfo.format, 0, imgInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imgInfo.arrayLayers );
-
-	return img;
-}
-
-// TODO: fomralize vk_image creation even more ?
-static vk_image
-VkCreateAllocBindImage(
-	VkFormat			format,
-	VkImageUsageFlags	usageFlags,
-	VkExtent3D			extent,
-	u32					mipCount,
-	vk_mem_arena&		vkArena,
-	VkPhysicalDevice	vkGpu
-){
-	VkFormatFeatureFlags formatFeatures = 0;
-	if( usageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-	if( usageFlags & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-	if( usageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-	if( usageFlags & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-
-	VkFormatProperties formatProps;
-	vkGetPhysicalDeviceFormatProperties( vkGpu, format, &formatProps );
-	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
-
-
-	vk_image img = {};
-
-	VkImageCreateInfo imgInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
-	imgInfo.imageType = VK_IMAGE_TYPE_2D;
-	imgInfo.format = img.nativeFormat = format;
-	img.width = extent.width;
-	img.height = extent.height;
-	imgInfo.extent = extent;
-	imgInfo.mipLevels = img.mipCount = mipCount;
-	imgInfo.arrayLayers = img.layerCount = 1;
-	imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-	imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-	imgInfo.usage = usageFlags;
-	imgInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	VK_CHECK( vkCreateImage( vkArena.device, &imgInfo, 0, &img.hndl ) );
-
-	VkImageMemoryRequirementsInfo2 imgReqs2 = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 };
-	imgReqs2.image = img.hndl;
-
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	vkGetImageMemoryRequirements2( vkArena.device, &imgReqs2, &memReqs2 );
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
-	dedicatedAllocateInfo.image = imgReqs2.image;
-
-	bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
-
-#ifdef _VK_DEBUG_
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkGpu, &memProps );
-	i32 memTypeIdx = VkFindMemTypeIdx( &memProps, vkArena.memTypeProperties, memReqs2.memoryRequirements.memoryTypeBits );
-	//VK_CHECK( VK_INTERNAL_ERROR( memTypeIdx == vkArena->memTypeIdx ) );
-	assert( memTypeIdx == vkArena.memTypeIdx );
-#endif
-
-	vk_allocation imgMem = VkArenaAlignAlloc( &vkArena,
-											  memReqs2.memoryRequirements.size,
-											  memReqs2.memoryRequirements.alignment,
-											  vkArena.memTypeIdx,
-											  0,
-											  dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
-
-	img.mem = imgMem.deviceMem;
-
-	VK_CHECK( vkBindImageMemory( vkArena.device, img.hndl, img.mem, imgMem.dataOffset ) );
-
-	img.view = VkMakeImgView( 
-		vkArena.device, img.hndl, imgInfo.format, 0, imgInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imgInfo.arrayLayers );
-
-	return img;
-}
-
-
 
 inline VkImageMemoryBarrier
 VkMakeImgBarrier(

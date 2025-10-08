@@ -140,6 +140,9 @@
     <ClInclude Include="ht_geometry.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="vk_device.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />

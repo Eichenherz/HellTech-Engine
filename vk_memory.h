@@ -11,23 +11,37 @@
 
 #include <vector>
 
-constexpr u64 VK_MIN_DEVICE_BLOCK_SIZE = 256 * MB;
+constexpr u64 VK_MIN_DEVICE_BLOCK_SIZE = 32 * MB;
 
-// TODO: make this part of the device ?
-// TODO: move to memory section
-// TODO: pass VkPhysicalDevice differently
-// TODO: multi gpu ?
-// TODO: multi threaded
-// TODO: better alloc strategy ?
-// TODO: alloc vector for debug only ?
-// TODO: check alloc num ?
-// TODO: recycle memory ?
-// TODO: redesign ?
-// TODO: per mem-block flags
-struct vk_mem_view
+inline u32
+VkFindMemTypeIdx(
+	const VkPhysicalDeviceMemoryProperties& pVkMemProps,
+	VkMemoryPropertyFlags				requiredProps,
+	u32									memTypeBitsRequirement
+){
+	for( u32 memIdx = 0; memIdx < pVkMemProps.memoryTypeCount; ++memIdx )
+	{
+		u32 memTypeBits = ( 1 << memIdx );
+		bool isRequiredMemType = memTypeBitsRequirement & memTypeBits;
+
+		VkMemoryPropertyFlags props = pVkMemProps.memoryTypes[ memIdx ].propertyFlags;
+		bool hasRequiredProps = ( props & requiredProps ) == requiredProps;
+		if( isRequiredMemType && hasRequiredProps )
+		{
+			return memIdx;
+		}
+	}
+
+	return u32( -1 );
+}
+
+struct vk_mem_block
 {
-	VkDeviceMemory	device;
-	void*			host = 0;
+	VkDeviceMemory mem;
+	void* hostMapped;
+	VkDeviceSize size; 
+	VkDeviceSize offset;
+	bool dedicated;
 };
 
 struct vk_allocation
@@ -39,75 +53,17 @@ struct vk_allocation
 
 struct vk_mem_arena
 {
-	std::vector<vk_mem_view>	mem;
-	std::vector<vk_mem_view>	dedicatedAllocs;
-	u64							maxParentHeapSize;
-	u64							minVkAllocationSize = VK_MIN_DEVICE_BLOCK_SIZE;
-	u64							size;
+	std::vector<vk_mem_block>	memBlocks;
+	u64							minVkAllocationSize;
 	u64							allocated;
-	VkDevice					device;
 	VkMemoryPropertyFlags		memTypeProperties;
-	u32							memTypeIdx;
+	u8							memTypeIdx;
 };
-
-// TODO: integrate into rsc creation
-inline i32
-VkFindMemTypeIdx(
-	const VkPhysicalDeviceMemoryProperties* pVkMemProps,
-	VkMemoryPropertyFlags				requiredProps,
-	u32									memTypeBitsRequirement
-){
-	for( u64 memIdx = 0; memIdx < pVkMemProps->memoryTypeCount; ++memIdx )
-	{
-		u32 memTypeBits = ( 1 << memIdx );
-		bool isRequiredMemType = memTypeBitsRequirement & memTypeBits;
-
-		VkMemoryPropertyFlags props = pVkMemProps->memoryTypes[ memIdx ].propertyFlags;
-		bool hasRequiredProps = ( props & requiredProps ) == requiredProps;
-		if( isRequiredMemType && hasRequiredProps ) return (i32) memIdx;
-	}
-
-	VK_CHECK( VK_INTERNAL_ERROR( "Memory type unmatch !" ) );
-
-	return -1;
-}
-
-// TODO: move alloc flags ?
-// NOTE: NV driver bug not allow HOST_VISIBLE + VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT for uniforms
-inline static VkDeviceMemory
-VkTryAllocDeviceMem(
-	VkDevice								vkDevice,
-	u64										size,
-	u32										memTypeIdx,
-	VkMemoryAllocateFlags					allocFlags,
-	const VkMemoryDedicatedAllocateInfo*	dedicated
-){
-	VkMemoryAllocateFlagsInfo allocFlagsInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
-	allocFlagsInfo.pNext = dedicated;
-	allocFlagsInfo.flags = // allocFlags;
-		//VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT |
-		VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-
-	VkMemoryAllocateInfo memoryAllocateInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-#if 1
-	memoryAllocateInfo.pNext = ( memTypeIdx == 0xA ) ? 0 : &allocFlagsInfo;
-#else
-	memoryAllocateInfo.pNext = &allocFlagsInfo;
-#endif
-	memoryAllocateInfo.allocationSize = size;
-	memoryAllocateInfo.memoryTypeIndex = memTypeIdx;
-
-	VkDeviceMemory mem;
-	VK_CHECK( vkAllocateMemory( vkDevice, &memoryAllocateInfo, 0, &mem ) );
-
-	return mem;
-}
 
 inline static vk_mem_arena
 VkMakeMemoryArena(
 	const VkPhysicalDeviceMemoryProperties& memProps,
-	VkMemoryPropertyFlags				memType,
-	VkDevice							vkDevice
+	VkMemoryPropertyFlags				memType
 ){
 	i32 i = 0;
 	for( ; i < memProps.memoryTypeCount; ++i )
@@ -118,82 +74,130 @@ VkMakeMemoryArena(
 	VK_CHECK( VK_INTERNAL_ERROR( i == memProps.memoryTypeCount ) );
 
 	VkMemoryHeap backingHeap = memProps.memoryHeaps[ memProps.memoryTypes[ i ].heapIndex ];
+	u64 minVkAllocationSize = ( backingHeap.size < VK_MIN_DEVICE_BLOCK_SIZE ) ? 
+		( backingHeap.size / 2 ) : VK_MIN_DEVICE_BLOCK_SIZE;
 
-	vk_mem_arena vkArena = {};
-	vkArena.allocated = 0;
-	vkArena.size = 0;
-	vkArena.memTypeIdx = i;
-	vkArena.memTypeProperties = memProps.memoryTypes[ i ].propertyFlags;
-	vkArena.maxParentHeapSize = backingHeap.size;
-	vkArena.minVkAllocationSize = ( backingHeap.size < VK_MIN_DEVICE_BLOCK_SIZE ) ? ( 1 * MB ) : VK_MIN_DEVICE_BLOCK_SIZE;
-	vkArena.device = vkDevice;
+	VkMemoryPropertyFlags memTypeProperties = memProps.memoryTypes[ i ].propertyFlags;
 
-	return vkArena;
+	return {
+		.minVkAllocationSize = minVkAllocationSize,
+		.allocated = 0,
+		.memTypeProperties = memTypeProperties,
+		.memTypeIdx = (u8)i,
+	};
 }
 
-// TODO: offset the global, persistently mapped hostVisible pointer when sub-allocating
-// TODO: assert vs VK_CHECK vs default + warning
-// TODO: must alloc in block with BUFFER_ADDR
-inline vk_allocation
-VkArenaAlignAlloc(
-	vk_mem_arena* vkArena,
-	u64										size,
-	u64										align,
+
+// NOTE: NV driver bug not allow HOST_VISIBLE + VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT for uniforms
+inline vk_mem_block
+VkAllocDeviceMemBlock(
+	VkDevice								vkDevice,
+	VkDeviceSize							size,
 	u32										memTypeIdx,
 	VkMemoryAllocateFlags					allocFlags,
-	const VkMemoryDedicatedAllocateInfo* dedicated
-){
-	assert( size <= vkArena->maxParentHeapSize );
+	VkMemoryPropertyFlags				    memTypeProperties,
+	const VkMemoryDedicatedAllocateInfo*	dedicated
+) {
+	VkMemoryAllocateFlagsInfo allocFlagsInfo = { 
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+		.pNext = dedicated,
+		.flags = // allocFlags;
+		//VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT |
+		VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+	};
 
-	u64 allocatedWithOffset = FwdAlign( vkArena->allocated, align );
-	vkArena->allocated = allocatedWithOffset;
+	VkMemoryAllocateInfo memoryAllocateInfo = { 
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+#if 1
+		.pNext = ( memTypeIdx == 0xA ) ? 0 : &allocFlagsInfo,
+#else
+		.pNext = &allocFlagsInfo,
+#endif
+	    .allocationSize = size,
+	    .memoryTypeIndex = memTypeIdx,
+	};
 
+	VkDeviceMemory deviceMem;
+	VK_CHECK( vkAllocateMemory( vkDevice, &memoryAllocateInfo, 0, &deviceMem ) );
+
+	void* hostVisible = 0;
+	if( memTypeProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
+	{
+		VK_CHECK( vkMapMemory( vkDevice, deviceMem, 0, VK_WHOLE_SIZE, 0, &hostVisible ) );
+	}
+
+	return { .mem = deviceMem, .hostMapped = hostVisible, .size = size, .offset = 0, .dedicated = ( bool )dedicated };
+}
+
+
+
+inline vk_allocation
+VkArenaAlignAlloc(
+	VkDevice vkDevice,
+	vk_mem_arena* vkArena,
+	VkDeviceSize size,
+	VkDeviceSize align,
+	VkMemoryAllocateFlags				allocFlags,
+	const VkMemoryDedicatedAllocateInfo*	dedicated
+) {
 	if( dedicated )
 	{
-		VkDeviceMemory deviceMem = VkTryAllocDeviceMem( vkArena->device, size, memTypeIdx, allocFlags, dedicated );
-		void* hostVisible = 0;
-		if( vkArena->memTypeProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
-		{
-			VK_CHECK( vkMapMemory( vkArena->device, deviceMem, 0, VK_WHOLE_SIZE, 0, &hostVisible ) );
-		}
-		vk_mem_view lastDedicated = { deviceMem,hostVisible };
-		vkArena->dedicatedAllocs.push_back( lastDedicated );
-		return { lastDedicated.device, (u8*) lastDedicated.host, 0 };
+		vk_mem_block memBlock = VkAllocDeviceMemBlock( 
+			vkDevice, size, vkArena->memTypeIdx, vkArena->memTypeProperties, allocFlags, dedicated );
+		vkArena->memBlocks.push_back( memBlock );
+		return {
+			.deviceMem = memBlock.mem,
+			.hostVisible = ( u8* ) memBlock.hostMapped,
+			.dataOffset = memBlock.offset
+		};
 	}
 
-	if( ( vkArena->allocated + size ) > vkArena->size )
+	u64 blockIdx = 0;
+	for( ; blockIdx < std::size( vkArena->memBlocks ); ++blockIdx )
+	{
+		vk_mem_block& currMemBlock = vkArena->memBlocks[ blockIdx ];
+		if( currMemBlock.dedicated )
+		{
+			continue;
+		}
+		u64 alignedOffset = FwdAlign( currMemBlock.offset, align );
+		if( alignedOffset + size <= currMemBlock.size )
+		{
+			currMemBlock.offset = alignedOffset;
+			break; // Found a block that can hold our alloc
+		}
+	}
+
+	// Didn't find any block or there's none so we create one
+	if( ( 0 == blockIdx ) || ( blockIdx == std::size( vkArena->memBlocks ) ) )
 	{
 		u64 newArenaSize = std::max( size, vkArena->minVkAllocationSize );
-		VkDeviceMemory deviceMem = VkTryAllocDeviceMem( vkArena->device, newArenaSize, memTypeIdx, allocFlags, 0 );
-		void* hostVisible = 0;
-		if( vkArena->memTypeProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
-		{
-			VK_CHECK( vkMapMemory( vkArena->device, deviceMem, 0, VK_WHOLE_SIZE, 0, &hostVisible ) );
-		}
-		vkArena->mem.push_back( { deviceMem,hostVisible } );
-		vkArena->size = newArenaSize;
-		vkArena->allocated = 0;
+		vk_mem_block memBlock = VkAllocDeviceMemBlock( 
+			vkDevice, newArenaSize, vkArena->memTypeIdx, vkArena->memTypeProperties, allocFlags, 0 );
+		vkArena->memBlocks.push_back( memBlock );
+		//vkArena->allocated += newArenaSize; // Note keep track
+
+		blockIdx = std::size( vkArena->memBlocks ) - 1;
 	}
 
-	assert( ( vkArena->allocated + size ) <= vkArena->size );
-	assert( vkArena->allocated % align == 0 );
+	vk_mem_block& validBlock = vkArena->memBlocks[ blockIdx ];
+	assert( validBlock.offset % align == 0 );
 
-	vk_mem_view lastBlock = vkArena->mem[ std::size( vkArena->mem ) - 1 ];
-	vk_allocation allocId = { lastBlock.device, (u8*) lastBlock.host, vkArena->allocated };
-	vkArena->allocated += size;
+	vk_allocation alloc = { validBlock.mem, (u8*) validBlock.hostMapped, validBlock.offset };
+	validBlock.offset += size;
 
-	return allocId;
+	return alloc;
 }
 
 // TODO: revisit
-inline void
-VkArenaTerimate( vk_mem_arena* vkArena )
-{
-	for( u64 i = 0; i < std::size( vkArena->mem ); ++i )
-		vkFreeMemory( vkArena->device, vkArena->mem[ i ].device, 0 );
-	for( u64 i = 0; i < std::size( vkArena->dedicatedAllocs ); ++i )
-		vkFreeMemory( vkArena->device, vkArena->dedicatedAllocs[ i ].device, 0 );
-}
+//inline void
+//VkArenaTerimate( vk_mem_arena* vkArena )
+//{
+//	for( u64 i = 0; i < std::size( vkArena->memBlocks ); ++i )
+//		vkFreeMemory( vkArena->device, vkArena->memBlocks[ i ].device, 0 );
+//	for( u64 i = 0; i < std::size( vkArena->dedicatedAllocs ); ++i )
+//		vkFreeMemory( vkArena->device, vkArena->dedicatedAllocs[ i ].device, 0 );
+//}
 
 
 
