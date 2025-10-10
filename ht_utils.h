@@ -1,6 +1,8 @@
 #ifndef __HT_UTILS_H__
 #define __HT_UTILS_H__
 
+#include <algorithm>
+
 #include "core_types.h"
 #include "assert.h"
 

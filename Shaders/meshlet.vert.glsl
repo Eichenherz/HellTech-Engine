@@ -4,7 +4,7 @@
 #extension GL_ARB_shader_draw_parameters : require
 #extension GL_GOOGLE_include_directive: require
 
-#define GLOBAL_RESOURCES
+//#define GLOBAL_RESOURCES
 
 #include "..\r_data_structs.h"
 

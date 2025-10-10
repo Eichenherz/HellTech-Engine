@@ -87,12 +87,11 @@ struct vk_label
 	{
 		assert( cmdBuff );
 
-		VkDebugUtilsLabelEXT dbgLabel = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
-		dbgLabel.pLabelName = labelName;
-		dbgLabel.color[ 0 ] = col.r;
-		dbgLabel.color[ 1 ] = col.g;
-		dbgLabel.color[ 2 ] = col.b;
-		dbgLabel.color[ 3 ] = col.a;
+		VkDebugUtilsLabelEXT dbgLabel = {
+			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+			.pLabelName = labelName,
+			.color = { ( float ) col.r, ( float ) col.g, ( float ) col.b, ( float ) col.a },
+		};
 		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
 	}
 	inline ~vk_label()
@@ -102,8 +101,6 @@ struct vk_label
 	}
 };
 
-#ifdef _VK_DEBUG_
-
 #include <iostream>
 
 VKAPI_ATTR VkBool32 VKAPI_CALL
@@ -112,10 +109,9 @@ VkDbgUtilsMsgCallback(
 	VkDebugUtilsMessageTypeFlagsEXT				msgType,
 	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
 	void* userData
-){
+) {
 	// NOTE: validation layer bug
 	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
-
 
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
 	{
@@ -124,8 +120,6 @@ VkDbgUtilsMsgCallback(
 
 		return VK_FALSE;
 	}
-
-	
 
 	auto formattedMsg = std::format( "{}\n{}\n", callbackData->pMessageIdName, callbackData->pMessage );
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
@@ -142,7 +136,6 @@ VkDbgUtilsMsgCallback(
 	return VK_FALSE;
 }
 
-#endif
 
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 		//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
@@ -155,7 +148,7 @@ constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 struct vk_instance
 {
 	u64 dll;
-	VkInstance inst;
+	VkInstance hndl;
 	VkDebugUtilsMessengerEXT dbgMsg;
 };
 
@@ -271,10 +264,8 @@ inline static vk_instance VkMakeInstance()
 	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, 0, &vkDbgUtilsMsgExt ) );
 #endif
 
-	return { .dll = VK_DLL, .inst = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
+	return { .dll = VK_DLL, .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
 }
-
-static vk_instance vkInst;
 
 #include "vk_device.h"
 
@@ -370,6 +361,7 @@ inline static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst,
 #error Must provide OS specific Surface
 #endif // VK_USE_PLATFORM_WIN32_KHR
 }
+
 // TODO: sep initial validation form sc creation when resize ?
 inline static vk_swapchain
 VkMakeSwapchain(
@@ -491,10 +483,10 @@ VkMakeSwapchain(
 	return sc;
 }
 
-
-static VkSurfaceKHR vkSurf;
 static vk_swapchain sc;
 
+
+#include "r_data_structs.h"
 
 // TODO:
 struct renderer_config
@@ -509,62 +501,115 @@ struct renderer_config
 	u16             rednerHeight;
 	u8              maxAllowedFramesInFlight = 2;
 };
-// TODO: remake
-struct render_context
-{
-	VkPipeline		gfxPipeline;
-	VkPipeline		gfxMeshletPipeline;
-	VkPipeline		gfxMergedPipeline;
-	VkPipeline		compPipeline;
-	VkPipeline		compHiZPipeline;
-	
-	VkPipeline		compAvgLumPipe;
-	VkPipeline		compTonemapPipe;
-	VkPipeline      compExpanderPipe;
-	VkPipeline      compClusterCullPipe;
-	VkPipeline      compExpMergePipe;
-
-	VkSampler		quadMinSampler;
-	VkSampler		pbrTexSampler;
-
-	virtual_frame	vrtFrames[ renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED ];
-	VkSemaphore     timelineSema;
-	u64				vFrameIdx = 0;
-	u8				framesInFlight;
-};
-
-static render_context rndCtx;
-
 static renderer_config renderCfg = {};
 
-#include "r_data_structs.h"
 
+#include <SPIRV-Reflect/spirv_reflect.h>
 
-// TODO: tewak ? make own ?
-// TODO: provide with own allocators
-#define WIN32
-#include "spirv_reflect.h"
-#undef WIN32
+inline spv_reflect::ShaderModule SpvMakeReflectedShaderModule( const std::span<u8> spvByteCode )
+{
+	spv_reflect::ShaderModule reflInfo = { 
+		std::size( spvByteCode ), std::data( spvByteCode ), SPV_REFLECT_MODULE_FLAG_NO_COPY };
+	VK_CHECK( ( VkResult ) reflInfo.GetResult() );
+	assert( 1 == reflInfo.GetEntryPointCount() );
+	return reflInfo;
+}
+
 // TODO: variable entry point
 constexpr char SHADER_ENTRY_POINT[] = "main";
 
-// TODO: rethink 
-// TODO: cache shader ?
+inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
+{
+	VkShaderModuleCreateInfo shaderModuleInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = size,
+		.pCode = spv,
+	};
+
+	VkShaderModule sm;
+	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &sm ) );
+	return sm;
+}
+
+struct vk_shader2
+{
+	VkShaderModule        shaderModule;
+	char                  entryPoint[ 128 ];
+	VkShaderStageFlagBits stage;
+
+	~vk_shader2()
+	{
+		vkDestroyShaderModule( dc.device, shaderModule, 0 );
+	}
+};
+
+inline static vk_shader2 VkLoadShader2( const char* shaderPath, VkDevice vkDevice )
+{
+	std::vector<u8> spvByteCode = SysReadFile( shaderPath );
+
+	spv_reflect::ShaderModule reflInfo = SpvMakeReflectedShaderModule( spvByteCode );
+	const char* pEntryPointName = reflInfo.GetEntryPointName();
+	VkShaderStageFlagBits shaderStage = ( VkShaderStageFlagBits ) reflInfo.GetShaderStage();
+
+	VkShaderModule sm = VkMakeShaderModule( vkDevice, ( const u32* ) std::data( spvByteCode ), std::size( spvByteCode ) );
+
+	vk_shader2 shader = { .shaderModule = sm, .stage = shaderStage };
+
+	assert( sizeof( shader.entryPoint ) >= std::strlen( pEntryPointName + 1 ) );
+	strcpy_s( shader.entryPoint, sizeof( shader.entryPoint ), pEntryPointName );
+	assert( std::strlen( shader.entryPoint ) == std::strlen( pEntryPointName ) );
+
+	return shader;
+}
+
+inline VkPipelineShaderStageCreateInfo VkMakePipelineShaderInfo( const vk_shader2& shader )
+{
+	return {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		.stage = shader.stage,
+		.module = shader.shaderModule,
+		.pName = shader.entryPoint,
+	};
+}
+
 struct vk_shader
 {
-	VkShaderModule	module;
 	std::vector<u8>	spvByteCode;
+	VkShaderModule	module;
+
+	// TODO: remove
 	u64				timestamp;
 	char			entryPointName[ 32 ];
 };
 
-// TODO: where to place this ?
 struct group_size
 {
-	u32 x;
-	u32 y;
-	u32 z;
+	u32 x : 8;
+	u32 y : 8;
+	u32 z : 8;
 };
+
+
+inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
+{
+	constexpr std::string_view shadersFolder = "Shaders/";
+	constexpr std::string_view shaderExtension = ".spv";
+
+	std::vector<u8> binSpvShader = SysReadFile( shaderPath );
+
+	vk_shader shader = {};
+	shader.spvByteCode = std::move( binSpvShader );
+	shader.module = VkMakeShaderModule( vkDevice, 
+										(const u32*) std::data( shader.spvByteCode ), 
+										std::size( shader.spvByteCode ) );
+
+	std::string_view shaderName = { shaderPath };
+	shaderName.remove_prefix( std::size( shadersFolder ) );
+	shaderName.remove_suffix( std::size( shaderExtension ) - 1 );
+	VkDbgNameObj( shader.module, vkDevice, &shaderName[ 0 ] );
+
+	return shader;
+}
 
 // TODO: should make obsolete
 // TODO: vk_shader_program ?
@@ -671,7 +716,6 @@ struct vk_descriptor_manager
 	VkDescriptorSet set;
 };
 
-
 inline vk_descriptor_manager VkMakeDescriptorManager( VkDevice vkDevice, const VkPhysicalDeviceProperties& gpuProps )
 {
 	constexpr u32 maxSize = u16( -1 );
@@ -757,7 +801,6 @@ inline vk_descriptor_manager VkMakeDescriptorManager( VkDevice vkDevice, const V
 	return manager;
 }
 
-
 inline u16 VkAllocDescriptorIdx( vk_descriptor_manager& manager, const vk_descriptor_info& rscDescInfo )
 {
 	u32 bindingSlotIdx = VkDescTypeToBinding( rscDescInfo.descriptorType );
@@ -830,43 +873,6 @@ inline void VkDescriptorManagerFlushUpdates( vk_descriptor_manager& manager, VkD
 
 //using dxc_options = std::initializer_list<LPCWSTR>;
 
-
-
-
-inline static VkShaderModule VkMakeShaderModule( VkDevice vkDevice, const u32* spv, u64 size )
-{
-	VkShaderModuleCreateInfo shaderModuleInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = size,
-		.pCode = spv,
-	};
-
-	VkShaderModule sm = {};
-	VK_CHECK( vkCreateShaderModule( vkDevice, &shaderModuleInfo, 0, &sm ) );
-	return sm;
-}
-
-inline static vk_shader VkLoadShader( const char* shaderPath, VkDevice vkDevice )
-{
-	constexpr std::string_view shadersFolder = "Shaders/";
-	constexpr std::string_view shaderExtension = ".spv";
-
-	std::vector<u8> binSpvShader = SysReadFile( shaderPath );
-
-	vk_shader shader = {};
-	shader.spvByteCode = std::move( binSpvShader );
-	shader.module = VkMakeShaderModule( vkDevice, 
-										  (const u32*) std::data( shader.spvByteCode ), 
-										  std::size( shader.spvByteCode ) );
-	
-	std::string_view shaderName = { shaderPath };
-	shaderName.remove_prefix( std::size( shadersFolder ) );
-	shaderName.remove_suffix( std::size( shaderExtension ) - 1 );
-	VkDbgNameObj( shader.module, vkDevice, &shaderName[ 0 ] );
-
-	return shader;
-}
-
 inline static void VkReflectShaderLayout(
 	const VkPhysicalDeviceProperties&			gpuProps,
 	const std::vector<u8>&						spvByteCode,
@@ -932,7 +938,6 @@ using vk_shader_list = std::initializer_list<vk_shader*>;
 using vk_specializations = std::initializer_list<u32>;
 using vk_dynamic_states = std::initializer_list<VkDynamicState>;
 
-// TODO: bindlessLayout only for the shaders that use it ?
 inline static vk_program VkMakePipelineProgram(
 	VkDevice							vkDevice,
 	const VkPhysicalDeviceProperties&	gpuProps,
@@ -1006,7 +1011,6 @@ inline static vk_program VkMakePipelineProgram(
 	return program;
 }
 
-// TODO: 
 inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
 {}
 
@@ -1050,6 +1054,115 @@ struct vk_gfx_pipeline_state
 
 using vk_shader_stage_list = std::initializer_list<VkPipelineShaderStageCreateInfo>;
 
+// VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+VkPipeline VkMakeGfxPipeline(
+	VkDevice			                       vkDevice,
+	std::span<VkPipelineShaderStageCreateInfo> shaderStagesInfo,
+	std::span<VkDynamicState>                  dynamicStates,
+	const VkFormat*                            pColorAttachmentFormats,
+	u32                                        colorAttachmentCount,
+	VkFormat                                   depthAttachmentFormat,
+	VkPipelineLayout	                       vkPipelineLayout,
+	const vk_gfx_pipeline_state&               pipelineState
+) {
+	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		.topology = pipelineState.primTopology,
+	};
+
+	VkPipelineViewportStateCreateInfo viewportInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+		.viewportCount = 1,
+		.scissorCount = 1,
+	};
+
+	VkPipelineDynamicStateCreateInfo dynamicStateInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+		.dynamicStateCount = ( u32 ) std::size( dynamicStates ),
+		.pDynamicStates = std::data( dynamicStates ),
+	};
+
+	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT,
+		.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT,
+		.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize,
+	};
+
+	VkPipelineRasterizationStateCreateInfo rasterInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0,
+		.depthClampEnable = 0,
+		.rasterizerDiscardEnable = 0,
+		.polygonMode = pipelineState.polyMode,
+		.cullMode = pipelineState.cullFlags,
+		.frontFace = pipelineState.frontFace,
+		.lineWidth = 1.0f
+	};
+
+	VkPipelineDepthStencilStateCreateInfo depthStencilState = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		.depthTestEnable = pipelineState.depthTestEnable,
+		.depthWriteEnable = pipelineState.depthWrite,
+		.depthCompareOp = VK_COMPARE_OP_GREATER,
+		.depthBoundsTestEnable = VK_TRUE,
+		.minDepthBounds = 0,
+		.maxDepthBounds = 1.0f
+	};
+
+	VkPipelineColorBlendAttachmentState blendConfig = {
+		.blendEnable = pipelineState.blendCol,
+		.srcColorBlendFactor = pipelineState.srcColorBlendFactor,
+		.dstColorBlendFactor = pipelineState.dstColorBlendFactor,
+		.colorBlendOp = VK_BLEND_OP_ADD,
+		.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor,
+		.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor,
+		.alphaBlendOp = VK_BLEND_OP_ADD,
+		.colorWriteMask =
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+	};
+
+	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &blendConfig,
+	};
+	
+	VkPipelineMultisampleStateCreateInfo multisamplingInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+	};
+
+	VkPipelineRenderingCreateInfo renderingInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+		.colorAttachmentCount = colorAttachmentCount,
+		.pColorAttachmentFormats = pColorAttachmentFormats,
+		.depthAttachmentFormat = depthAttachmentFormat,
+	};
+
+	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	VkGraphicsPipelineCreateInfo pipelineInfo = {
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.pNext = &renderingInfo,
+		.stageCount = ( u32 ) std::size( shaderStagesInfo ),
+		.pStages = std::data( shaderStagesInfo ),
+		.pVertexInputState = &vtxInCreateInfo,
+		.pInputAssemblyState = &inAsmStateInfo,
+		.pViewportState = &viewportInfo,
+		.pRasterizationState = &rasterInfo,
+		.pMultisampleState = &multisamplingInfo,
+		.pDepthStencilState = &depthStencilState,
+		.pColorBlendState = &colorBlendStateInfo,
+		.pDynamicState = &dynamicStateInfo,
+		.layout = vkPipelineLayout,
+		.basePipelineIndex = -1
+	};
+
+	VkPipeline vkGfxPipeline;
+	VK_CHECK( vkCreateGraphicsPipelines( vkDevice, 0, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
+
+	return vkGfxPipeline;
+}
+
 // TODO: shader stages more general
 // TODO: specialization for gfx ?
 // TODO: depth clamp ?
@@ -1064,7 +1177,7 @@ VkPipeline VkMakeGfxPipeline(
 	u32 colorAttachmentCount,
 	VkFormat depthAttachmentFormat,
 	const vk_gfx_pipeline_state& pipelineState
-){
+) {
 	VkPipelineShaderStageCreateInfo shaderStagesInfo[ 2 ] = {};
 	shaderStagesInfo[ 0 ].sType = shaderStagesInfo[ 1 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 
@@ -1103,33 +1216,38 @@ VkPipeline VkMakeGfxPipeline(
 		.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize,
 	};
 	
-	VkPipelineRasterizationStateCreateInfo rasterInfo = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
-	rasterInfo.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0;
-	rasterInfo.depthClampEnable = 0;
-	rasterInfo.rasterizerDiscardEnable = 0;
-	rasterInfo.polygonMode = pipelineState.polyMode;
-	rasterInfo.cullMode = pipelineState.cullFlags;
-	rasterInfo.frontFace = pipelineState.frontFace;
-	rasterInfo.lineWidth = 1.0f;
+	VkPipelineRasterizationStateCreateInfo rasterInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0,
+		.depthClampEnable = 0,
+		.rasterizerDiscardEnable = 0,
+		.polygonMode = pipelineState.polyMode,
+		.cullMode = pipelineState.cullFlags,
+		.frontFace = pipelineState.frontFace,
+		.lineWidth = 1.0f
+	};
+	
+	VkPipelineDepthStencilStateCreateInfo depthStencilState = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		.depthTestEnable = pipelineState.depthTestEnable,
+		.depthWriteEnable = pipelineState.depthWrite,
+		.depthCompareOp = VK_COMPARE_OP_GREATER,
+		.depthBoundsTestEnable = VK_TRUE,
+		.minDepthBounds = 0,
+		.maxDepthBounds = 1.0f
+	};
 
-	VkPipelineDepthStencilStateCreateInfo depthStencilState = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-	depthStencilState.depthTestEnable = pipelineState.depthTestEnable;
-	depthStencilState.depthWriteEnable = pipelineState.depthWrite;
-	depthStencilState.depthCompareOp = VK_COMPARE_OP_GREATER;
-	depthStencilState.depthBoundsTestEnable = VK_TRUE;
-	depthStencilState.minDepthBounds = 0;
-	depthStencilState.maxDepthBounds = 1.0f;
-
-	VkPipelineColorBlendAttachmentState blendConfig = {};
-	blendConfig.blendEnable = pipelineState.blendCol;
-	blendConfig.srcColorBlendFactor = pipelineState.srcColorBlendFactor;
-	blendConfig.dstColorBlendFactor = pipelineState.dstColorBlendFactor;
-	blendConfig.colorBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor;
-	blendConfig.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor;
-	blendConfig.alphaBlendOp = VK_BLEND_OP_ADD;
-	blendConfig.colorWriteMask =
-		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	VkPipelineColorBlendAttachmentState blendConfig = {
+		.blendEnable = pipelineState.blendCol,
+		.srcColorBlendFactor = pipelineState.srcColorBlendFactor,
+		.dstColorBlendFactor = pipelineState.dstColorBlendFactor,
+		.colorBlendOp = VK_BLEND_OP_ADD,
+		.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor,
+		.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor,
+		.alphaBlendOp = VK_BLEND_OP_ADD,
+		.colorWriteMask =
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+	};
 
 	VkPipelineColorBlendStateCreateInfo colorBlendStateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
@@ -1149,22 +1267,24 @@ VkPipeline VkMakeGfxPipeline(
 		.depthAttachmentFormat = depthAttachmentFormat,
 	};
 
-	VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-	pipelineInfo.pNext = &renderingInfo;
-	pipelineInfo.stageCount = shaderStagesCount;// std::size( shaderStagesInfo );
-	pipelineInfo.pStages = shaderStagesInfo;
 	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-	pipelineInfo.pVertexInputState = &vtxInCreateInfo;
-	pipelineInfo.pInputAssemblyState = &inAsmStateInfo;
-	pipelineInfo.pViewportState = &viewportInfo;
-	pipelineInfo.pRasterizationState = &rasterInfo;
-	pipelineInfo.pMultisampleState = &multisamplingInfo;
-	pipelineInfo.pDepthStencilState = &depthStencilState;
-	pipelineInfo.pColorBlendState = &colorBlendStateInfo;
-	pipelineInfo.pDynamicState = &dynamicStateInfo;
-	pipelineInfo.layout = vkPipelineLayout;
-	pipelineInfo.basePipelineIndex = -1;
-
+	VkGraphicsPipelineCreateInfo pipelineInfo = { 
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.pNext = &renderingInfo,
+		.stageCount = shaderStagesCount,// std::size( shaderStagesInfo ),
+		.pStages = shaderStagesInfo,
+		.pVertexInputState = &vtxInCreateInfo,
+		.pInputAssemblyState = &inAsmStateInfo,
+		.pViewportState = &viewportInfo,
+		.pRasterizationState = &rasterInfo,
+		.pMultisampleState = &multisamplingInfo,
+		.pDepthStencilState = &depthStencilState,
+		.pColorBlendState = &colorBlendStateInfo,
+		.pDynamicState = &dynamicStateInfo,
+		.layout = vkPipelineLayout,
+		.basePipelineIndex = -1
+	};
+	
 	VkPipeline vkGfxPipeline;
 	VK_CHECK( vkCreateGraphicsPipelines( vkDevice, vkPipelineCache, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
 
@@ -1202,12 +1322,10 @@ VkPipeline VkMakeComputePipeline(
 // TODO: rename to program 
 // TODO: what about descriptors ?
 // TODO: what about spec consts
-// TODO: where to store the fbo ?
 struct vk_graphics_program
 {
 	VkPipeline pipeline;
 	VkPipelineLayout layout;
-	//VkFramebuffer fbo;
 	// TODO: store push consts data ?
 };
 
@@ -1290,39 +1408,16 @@ inline VkSamplerAddressMode VkGetAddressModeFromGltf( gltf_sampler_address_mode 
 inline VkSamplerCreateInfo VkMakeSamplerInfo( sampler_config config )
 {
 	assert( 0 );
-	VkSamplerCreateInfo vkSamplerInfo = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-	vkSamplerInfo.minFilter = VkGetFilterTypeFromGltf( config.min );
-	vkSamplerInfo.magFilter = VkGetFilterTypeFromGltf( config.mag );
-	vkSamplerInfo.mipmapMode =  VkGetMipmapTypeFromGltf( config.min );
-	vkSamplerInfo.addressModeU = VkGetAddressModeFromGltf( config.addrU );
-	vkSamplerInfo.addressModeV = VkGetAddressModeFromGltf( config.addrV );
-	//vkSamplerInfo.addressModeW = 
+	VkSamplerCreateInfo vkSamplerInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.magFilter = VkGetFilterTypeFromGltf( config.mag ),
+		.minFilter = VkGetFilterTypeFromGltf( config.min ),
+		.mipmapMode =  VkGetMipmapTypeFromGltf( config.min ),
+		.addressModeU = VkGetAddressModeFromGltf( config.addrU ),
+		.addressModeV = VkGetAddressModeFromGltf( config.addrV )
+	};
 
 	return vkSamplerInfo;
-}
-
-inline VkImageCreateInfo
-VkMakeImageInfo(
-	VkFormat			imgFormat,
-	VkImageUsageFlags	usageFlags,
-	VkExtent3D			imgExtent,
-	u32					mipLevels = 1,
-	u32					layerCount = 1,
-	VkImageType			imgType = VK_IMAGE_TYPE_2D
-){
-	VkImageCreateInfo imgInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
-	imgInfo.imageType = imgType;
-	imgInfo.format = imgFormat;
-	imgInfo.extent = imgExtent;
-	imgInfo.mipLevels = mipLevels;
-	imgInfo.arrayLayers = layerCount;
-	imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-	imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-	imgInfo.usage = usageFlags;
-	imgInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-	return imgInfo;
 }
 
 inline image_info GetImageInfoFromMetadata( const image_metadata& meta, VkImageUsageFlags usageFlags )
@@ -1346,24 +1441,28 @@ inline VkSampler VkMakeSampler(
 	VkFilter				filter = VK_FILTER_LINEAR,
 	VkSamplerAddressMode	addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
 	VkSamplerMipmapMode		mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST
-){
-	VkSamplerReductionModeCreateInfo reduxInfo = { VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO };
-	reduxInfo.reductionMode = reductionMode;
+) {
+	VkSamplerReductionModeCreateInfo reduxInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
+		.reductionMode = reductionMode,
+	};
 
-	VkSamplerCreateInfo samplerInfo = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-	samplerInfo.pNext = ( reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX_ENUM ) ? 0 : &reduxInfo;
-	samplerInfo.magFilter = filter;
-	samplerInfo.minFilter = filter;
-	samplerInfo.mipmapMode = mipmapMode;
-	samplerInfo.addressModeU = addressMode;
-	samplerInfo.addressModeV = addressMode;
-	samplerInfo.addressModeW = addressMode;
-	samplerInfo.minLod = 0;
-	samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
-	samplerInfo.maxAnisotropy = 1.0f;
-	samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-	samplerInfo.unnormalizedCoordinates = VK_FALSE;
-
+	VkSamplerCreateInfo samplerInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.pNext = ( reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX_ENUM ) ? 0 : &reduxInfo,
+		.magFilter = filter,
+		.minFilter = filter,
+		.mipmapMode = mipmapMode,
+		.addressModeU = addressMode,
+		.addressModeV = addressMode,
+		.addressModeW = addressMode,
+		.maxAnisotropy = 1.0f,
+		.minLod = 0,
+		.maxLod = VK_LOD_CLAMP_NONE,
+		.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+		.unnormalizedCoordinates = VK_FALSE,
+	};
+	
 	VkSampler sampler;
 	VK_CHECK( vkCreateSampler( vkDevice, &samplerInfo, 0, &sampler ) );
 	return sampler;
@@ -1379,15 +1478,17 @@ inline VkSampler VkMakeSampler(
 // TODO: move spv shaders into exe folder
 struct imgui_vk_context
 {
-	vk_buffer                 vtxBuffs[ 2 ];
-	vk_buffer                 idxBuffs[ 2 ];
-	vk_image                       fontsImg;
-	VkImageView fontsView;
+	vk_buffer                   vtxBuffs[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	vk_buffer                   idxBuffs[ VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	vk_image                    fontsImg;
+	VkImageView                 fontsView;
+	VkSampler                   fontSampler;
+
 	VkDescriptorSetLayout       descSetLayout;
 	VkPipelineLayout            pipelineLayout;
 	VkDescriptorUpdateTemplate  descTemplate = {};
 	VkPipeline	                pipeline;
-	VkSampler                   fontSampler;
+	
 };
 
 static imgui_vk_context imguiVkCtx;
@@ -1450,8 +1551,8 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	VkDescriptorUpdateTemplate descTemplate = {};
 	VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &descTemplate ) );
 
-	vk_shader vert = VkLoadShader( "Shaders/shader_imgui.vert.spv", vkDevice );
-	vk_shader frag = VkLoadShader( "Shaders/shader_imgui.frag.spv", vkDevice );
+	vk_shader2 vert = VkLoadShader2( "bin/SpirV/imgui_gfx_VsMain.spv", vkDevice );
+	vk_shader2 frag = VkLoadShader2( "bin/SpirV/imgui_gfx_PsMain.spv", vkDevice );
 
 	vk_gfx_pipeline_state guiState = {};
 	guiState.blendCol = VK_TRUE; 
@@ -1465,11 +1566,13 @@ static inline imgui_vk_context ImguiMakeVkContext(
 	guiState.polyMode = VK_POLYGON_MODE_FILL;
 	guiState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	guiState.cullFlags = VK_CULL_MODE_NONE;
-	VkPipeline pipeline = VkMakeGfxPipeline( 
-		vkDevice, 0, pipelineLayout, 
-		vert.module, frag.module, 
-		&renderCfg.desiredSwapchainFormat, 1, VK_FORMAT_UNDEFINED,
-		guiState );
+
+	VkPipelineShaderStageCreateInfo shaderStages[] = { VkMakePipelineShaderInfo( vert ), VkMakePipelineShaderInfo( frag ) };
+	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+	VkPipeline pipeline = VkMakeGfxPipeline(
+		vkDevice, shaderStages, dynamicStates, 
+		&renderCfg.desiredSwapchainFormat, 1, VK_FORMAT_UNDEFINED, pipelineLayout, guiState );
 
 
 	imgui_vk_context ctx = {};
@@ -1802,14 +1905,13 @@ inline static void VkInitInternalBuffers()
 }
 
 // TODO: move out of global/static
-static vk_program gfxMergedProgram = {};
+static vk_program   gfxMergedProgram = {};
 static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
 static vk_program	cullCompProgram = {};
 static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
 static vk_program	tonemapCompProgram = {};
-static vk_program	depthPyramidMultiProgram = {};
 
 static vk_program   dbgDrawProgram = {};
 static VkPipeline   gfxDrawIndirDbg = {};
@@ -1820,13 +1922,64 @@ static VkRenderPass depthReadRndPass = {};
 
 static vk_graphics_program  lighCullProgam = {};
 
-// TODO: delete
-static VkDescriptorPool vkDescPool = {};
-static VkDescriptorSet frameDesc[ 3 ] = {};
+
+// TODO: remake
+struct render_context
+{
+	VkPipeline		gfxPipeline;
+	VkPipeline		gfxMeshletPipeline;
+	VkPipeline		gfxMergedPipeline;
+	VkPipeline		compPipeline;
+	VkPipeline		compHiZPipeline;
+
+	VkPipeline		compAvgLumPipe;
+	VkPipeline		compTonemapPipe;
+	VkPipeline      compExpanderPipe;
+	VkPipeline      compClusterCullPipe;
+	VkPipeline      compExpMergePipe;
+
+	VkSampler		quadMinSampler;
+	VkSampler		pbrTexSampler;
+
+	virtual_frame	vrtFrames[ renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	VkSemaphore     timelineSema;
+	u64				vFrameIdx = 0;
+	u8				framesInFlight;
+};
+
+struct render_path
+{
+	std::shared_ptr<vk_image> pColorTarget;
+	std::shared_ptr<vk_image> pDepthTarget;
+	std::shared_ptr<vk_image> pHiZTarget;
+
+	VkImageView colorView;
+	VkImageView depthView;
+	VkImageView hiZView;
+	VkImageView hiZMipViews[ MAX_MIP_LEVELS ];
+
+	VkSampler quadMinSampler;
+	VkSampler pbrSampler;
+
+	u16 depthSrv = INVALID_IDX;
+	u16 hizSrv = INVALID_IDX;
+	u16 colSrv = INVALID_IDX;
+	u16 hizMipUavs[ MAX_MIP_LEVELS ];
+	u16 quadMinSamplerIdx;
+	u16 pbrSamplerIdx;
+};
+
+static render_path renderPath;
+
+static render_context rndCtx;
+
+
 
 struct vk_backend
 {
 	vk_descriptor_manager descManager;
+	vk_instance inst;
+	VkSurfaceKHR surf;
 	VkPipelineLayout globalLayout;
 };
 
@@ -1852,12 +2005,12 @@ inline VkPipelineLayout VkMakeGlobalPipelineLayout(
 
 void VkBackendInit()
 {
-	vkInst = VkMakeInstance();
+	vk.inst = VkMakeInstance();
 
-	vkSurf = VkMakeWinSurface( vkInst.inst, hInst, hWnd );
-	dc = VkMakeDeviceContext( vkInst.inst, vkSurf );
+	vk.surf = VkMakeWinSurface( vk.inst.hndl, hInst, hWnd );
+	dc = VkMakeDeviceContext( vk.inst.hndl, vk.surf );
 
-	sc = VkMakeSwapchain( dc.device, dc.gpu, vkSurf, dc.gfxQueueIdx, renderCfg.desiredSwapchainFormat, 3 );
+	sc = VkMakeSwapchain( dc.device, dc.gpu, vk.surf, dc.gfxQueueIdx, renderCfg.desiredSwapchainFormat, 3 );
 
 	VkInitInternalBuffers();
 
@@ -1873,12 +2026,6 @@ void VkBackendInit()
 	};
 	VkSemaphoreCreateInfo timelineSemaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timelineInfo };
 	VK_CHECK( vkCreateSemaphore( dc.device, &timelineSemaInfo, 0, &rndCtx.timelineSema ) );
-
-
-	rndCtx.quadMinSampler =
-		VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
-	rndCtx.pbrTexSampler = VkMakeSampler( 
-		dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 
 	vk.descManager = VkMakeDescriptorManager( dc.device, dc.gpuProps );
 	vk.globalLayout = VkMakeGlobalPipelineLayout( dc.device, dc.gpuProps, vk.descManager );
@@ -1956,7 +2103,7 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, vtxMerged.module, 0 );
 		vkDestroyShaderModule( dc.device, fragPBR.module, 0 );
 	}
-	{
+	if(0){
 		vk_shader vertMeshlet = VkLoadShader( "Shaders/meshlet.vert.spv", dc.device );
 		vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
 		vk_gfx_pipeline_state meshletState = {};
@@ -1990,12 +2137,9 @@ void VkBackendInit()
 		vkDestroyShaderModule( dc.device, toneMapper.module, 0 );
 	}
 	{
-		static_assert( multiPassDepthPyramid );
 		vk_shader downsampler = VkLoadShader( "Shaders/pow2_downsampler.comp.spv", dc.device );
-		depthPyramidMultiProgram = VkMakePipelineProgram( 
-			dc.device, dc.gpuProps, VK_PIPELINE_BIND_POINT_COMPUTE, { &downsampler }, vk.descManager.setLayout );
-		rndCtx.compHiZPipeline = VkMakeComputePipeline( dc.device, 0, depthPyramidMultiProgram.pipeLayout, downsampler.module, {} );
-		VkDbgNameObj( rndCtx.compHiZPipeline, dc.device, "Pipeline_Comp_DepthPyr" );
+		rndCtx.compHiZPipeline = VkMakeComputePipeline( dc.device, 0, vk.globalLayout, downsampler.module, {} );
+		VkDbgNameObj( rndCtx.compHiZPipeline, dc.device, "Pipeline_Comp_HiZ" );
 
 		vkDestroyShaderModule( dc.device, downsampler.module, 0 );
 	}
@@ -2621,17 +2765,19 @@ DepthPyramidPass(
 }
 #endif
 
-// TODO: bindless
 inline static void
 DepthPyramidMultiPass(
 	VkCommandBuffer			cmdBuff,
 	VkPipeline				vkPipeline,
 	VkSampler				pointMinSampler,
 	const vk_image&			depthTarget,
-	VkImageView             depthView,
+	u16                     depthIdx,
 	const vk_image&			depthPyramid,
-	VkImageView*            hiZMipViews,
-	const vk_program&		program 
+	u16                     hiZReadIdx,
+	const u16*              hiZMipWriteIndices,
+	u16                     samplerIdx,
+	VkPipelineLayout        pipelineLayout,
+	group_size              grSz
 ){
 	vk_label label = { cmdBuff,"HiZ Multi Pass",{} };
 
@@ -2656,7 +2802,7 @@ DepthPyramidMultiPass(
 			VK_IMAGE_ASPECT_COLOR_BIT )
 	};
 
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 	dependency.imageMemoryBarrierCount = std::size( hizBeginBarriers );
 	dependency.pImageMemoryBarriers = hizBeginBarriers;
 	vkCmdPipelineBarrier2( cmdBuff, &dependency );
@@ -2664,39 +2810,46 @@ DepthPyramidMultiPass(
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 
-	VkDescriptorImageInfo sourceDepth = { pointMinSampler, depthView, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR };
+	VkMemoryBarrier2 executionBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+	executionBarrier.srcStageMask = executionBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+	executionBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT;
+	executionBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
 
-
-
-	VkMemoryBarrier2KHR executionBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
-	executionBarrier.srcStageMask = executionBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR;
-	executionBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR;
-	executionBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
-
-	
+	uint mipLevel = 0;
+	uint srcImg = depthIdx;
 	for( u64 i = 0; i < depthPyramid.mipCount; ++i )
 	{
-		if( i != 0 ) sourceDepth = { pointMinSampler, hiZMipViews[ i - 1 ], VK_IMAGE_LAYOUT_GENERAL };
-
-		VkDescriptorImageInfo destDepth = { 0, hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL };
-		vk_descriptor_info descriptors[] = { destDepth, sourceDepth };
-
-		vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
+		if( i > 0 )
+		{
+			mipLevel = i - 1;
+			srcImg = hiZReadIdx;
+		}
+		uint dstImg = hiZMipWriteIndices[ i ];
 
 		u32 levelWidth = std::max( 1u, u32( depthPyramid.width ) >> i );
 		u32 levelHeight = std::max( 1u, u32( depthPyramid.height ) >> i );
 
-		vec2 reduceData = {};
-		reduceData.x = levelWidth;
-		reduceData.y = levelHeight;
+		vec2 reduceData{ ( float ) levelWidth, ( float ) levelHeight };
 
-		vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( reduceData ), &reduceData );
+		struct push_const
+		{
+			vec2 reduce;
+			uint samplerIdx;
+			uint srcImgIdx;
+			uint mipLevel;
+			uint dstImgIdx;
 
-		u32 dispatchX = GroupCount( levelWidth, program.groupSize.x );
-		u32 dispatchY = GroupCount( levelHeight, program.groupSize.y );
+			push_const(vec2 r, uint s, uint src, uint mip, uint dst)
+				: reduce(r), samplerIdx(s), srcImgIdx(src), mipLevel(mip), dstImgIdx(dst) {}
+		};
+		push_const pushConst{ vec2{(float)levelWidth, (float)levelHeight}, samplerIdx, srcImg, mipLevel, dstImg };
+		vkCmdPushConstants( cmdBuff, pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
+
+		u32 dispatchX = GroupCount( levelWidth, grSz.x );
+		u32 dispatchY = GroupCount( levelHeight, grSz.y );
 		vkCmdDispatch( cmdBuff, dispatchX, dispatchY, 1 );
 
-		VkDependencyInfo passDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		VkDependencyInfo passDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 		passDependency.memoryBarrierCount = 1;
 		passDependency.pMemoryBarriers = &executionBarrier;
 		vkCmdPipelineBarrier2( cmdBuff, &passDependency );
@@ -2706,12 +2859,12 @@ DepthPyramidMultiPass(
 	VkImageMemoryBarrier2 hizEndBarriers[] = {
 		VkMakeImageBarrier2(
 			depthTarget.hndl,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT_KHR | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT_KHR,
-			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
-			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			VK_ACCESS_2_SHADER_READ_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 			VK_IMAGE_ASPECT_DEPTH_BIT ),
 
 		VkMakeImageBarrier2(
@@ -2853,31 +3006,6 @@ FinalCompositionPass(
 
 }
 
-
-struct render_path
-{
-	std::shared_ptr<vk_image> pColorTarget;
-	std::shared_ptr<vk_image> pDepthTarget;
-	std::shared_ptr<vk_image> pHiZTarget;
-	
-	VkImageView colorView;
-	VkImageView depthView;
-	VkImageView hiZView;
-	VkImageView hiZMipViews[ MAX_MIP_LEVELS ];
-
-	VkSampler quadMinSampler;
-	VkSampler pbrSampler;
-
-	u16 depthSrv = INVALID_IDX;
-	u16 hizSrv = INVALID_IDX;
-	u16 colSrv = INVALID_IDX;
-	u16 hizMipUavs[ MAX_MIP_LEVELS ];
-	u16 quadMinSamplerIdx;
-	u16 pbrSamplerIdx;
-};
-
-static render_path renderPath;
-
 // TODO: must bind textures !!!
 
 // TODO: enforce some clearOp ---> clearVals params correctness ?
@@ -2886,7 +3014,7 @@ inline static VkRenderingAttachmentInfo VkMakeAttachemntInfo(
 	VkAttachmentLoadOp       loadOp,
 	VkAttachmentStoreOp      storeOp,
 	VkClearValue             clearValue
-){
+) {
 	return {
 		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
 		.imageView = view,
@@ -3673,18 +3801,29 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			frameData.mainProjView,
 			{ 0,boxTrisVertexCount } );
 
+		vkCmdBindDescriptorSets(
+			thisVFrame.cmdBuff, 
+			VK_PIPELINE_BIND_POINT_COMPUTE, 
+			vk.globalLayout,
+			0, 1, 
+			&vk.descManager.set, 0, 0 );
+
 		DepthPyramidMultiPass(
 			thisVFrame.cmdBuff,
 			rndCtx.compHiZPipeline,
 			rndCtx.quadMinSampler,
 			depthTarget,
-			renderPath.depthView,
+			renderPath.depthSrv,
 			depthPyramid,
-			renderPath.hiZMipViews,
-			depthPyramidMultiProgram );
+			renderPath.hizSrv,
+			renderPath.hizMipUavs,
+			renderPath.quadMinSamplerIdx,
+			vk.globalLayout,
+			{32,31,1}
+		 );
 
 
-		VkBufferMemoryBarrier2KHR clearDrawCountBarrier = VkMakeBufferBarrier2(
+		VkBufferMemoryBarrier2 clearDrawCountBarrier = VkMakeBufferBarrier2(
 			//drawCountBuff.hndl,
 			drawMergedCountBuff.hndl,
 			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
@@ -3696,13 +3835,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		dependencyClear.bufferMemoryBarrierCount = 1;
 		dependencyClear.pBufferMemoryBarriers = &clearDrawCountBarrier;
 		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependencyClear );
-
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, 
-			VK_PIPELINE_BIND_POINT_COMPUTE, 
-			vk.globalLayout,
-			0, 1, 
-			&vk.descManager.set, 0, 0 );
 
 		// TODO: Aaltonen double pass
 		CullPass( 
@@ -3761,9 +3893,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 					 lightsBuff.devicePointer,
 					 renderPath.pbrSamplerIdx
 		};
-
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.globalLayout, 0, 1, &vk.descManager.set, 0, 0 );
 
 		DrawIndexedIndirectMerged(
 			thisVFrame.cmdBuff,
@@ -3875,14 +4004,14 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		VkImageMemoryBarrier2 presentWaitBarrier = VkMakeImageBarrier2(
 			sc.imgs[ imgIdx ],
-			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
+			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 			0, 0,
-			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 			VK_IMAGE_ASPECT_COLOR_BIT );
 
-		VkDependencyInfo dependencyPresent = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
+		VkDependencyInfo dependencyPresent = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 		dependencyPresent.imageMemoryBarrierCount = 1;
 		dependencyPresent.pImageMemoryBarriers = &presentWaitBarrier;
 		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependencyPresent );
@@ -3939,12 +4068,12 @@ void VkBackendKill()
 
 	vkDestroyDevice( dc.device, 0 );
 #ifdef _VK_DEBUG_
-	vkDestroyDebugUtilsMessengerEXT( vkInst.inst, vkInst.dbgMsg, 0 );
+	vkDestroyDebugUtilsMessengerEXT( vk.inst.hndl, vk.inst.dbgMsg, 0 );
 #endif
-	vkDestroySurfaceKHR( vkInst.inst, vkSurf, 0 );
-	vkDestroyInstance( vkInst.inst, 0 );
+	vkDestroySurfaceKHR( vk.inst.hndl, vk.surf, 0 );
+	vkDestroyInstance( vk.inst.hndl, 0 );
 
-	SysDllUnload( vkInst.dll );
+	SysDllUnload( vk.inst.dll );
 }
 
 #undef HTVK_NO_SAMPLER_REDUCTION

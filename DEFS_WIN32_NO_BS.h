@@ -14,7 +14,7 @@
 #define NOCTLMGR
 #define NODRAWTEXT
 #define NOKERNEL
-#define NONLS
+//#define NONLS // DXC will error wiht CP_ACP missing with this 
 #define NOMEMMGR
 #define NOMETAFILE
 #define NOMINMAX

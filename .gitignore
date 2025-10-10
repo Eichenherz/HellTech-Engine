@@ -35,11 +35,7 @@ README.md
 
 bcn_compressor.cpp
 
-nuklear.h
-
-nuklear.cpp
-
-stb_truetype.h
-
 imgui/
 Shader.hlsl
+
+bin/*

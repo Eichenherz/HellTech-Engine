@@ -1,6 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.props')" />
+  <Import Project="..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.props" Condition="Exists('..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.props')" />
+  <Import Project="..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -112,11 +113,12 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
+    <IncludePath>$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
     <CustomBuildBeforeTargets>
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
     <CustomBuildAfterTargets>ClCompile</CustomBuildAfterTargets>
+    <SourcePath>$(SourcePath)</SourcePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
@@ -183,8 +185,9 @@
       <CustomUnityFile>true</CustomUnityFile>
       <IncludeInUnityFile>true</IncludeInUnityFile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <PrecompiledHeaderFile>diy_pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(ProjectDir);D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AdditionalOptions>/arch:AVX2 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -261,8 +264,10 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\..\VulkanSDK\1.4.328.0\Source\SPIRV-Reflect\spirv_reflect.c" />
     <ClCompile Include="asset_compiler.cpp" />
     <ClCompile Include="bcn_compressor.cpp" />
+    <ClCompile Include="dxc.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -275,8 +280,8 @@
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="spng.c" />
+    <ClCompile Include="System\Win32\win32_file.cpp" />
     <ClCompile Include="sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
     </ClCompile>
@@ -287,6 +292,7 @@
     <ClInclude Include="cgltf.h" />
     <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
+    <ClInclude Include="dxc.h" />
     <ClInclude Include="ht_error.h" />
     <ClInclude Include="ht_geometry.h" />
     <ClInclude Include="ht_utils.h" />
@@ -300,8 +306,10 @@
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
-    <ClInclude Include="spirv_reflect.h" />
     <ClInclude Include="spng.h" />
+    <ClInclude Include="System\sys_file.h" />
+    <ClInclude Include="System\sys_filesystem.h" />
+    <ClInclude Include="System\Win32\win32_utils.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="vk_device.h" />
@@ -405,8 +413,10 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
+    <None Include="dxc_compile_shaders.py" />
     <None Include="packages.config" />
-    <None Include="Shaders\imgui_gfx_lib.hlsl">
+    <None Include="run_dxc_compile.bat" />
+    <None Include="Shaders\imgui_gfx.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Compute</ShaderType>
@@ -424,13 +434,16 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.targets" Condition="Exists('..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.targets')" />
+    <Import Project="..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.targets" Condition="Exists('..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.targets')" />
+    <Import Project="..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.targets" Condition="Exists('..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.props'))" />
-    <Error Condition="!Exists('..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\Microsoft.Direct3D.D3D12.targets'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.props'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Direct3D.D3D12.1.618.1\build\native\Microsoft.Direct3D.D3D12.targets'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.props'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Direct3D.DXC.1.8.2505.32\build\native\Microsoft.Direct3D.DXC.targets'))" />
   </Target>
 </Project>

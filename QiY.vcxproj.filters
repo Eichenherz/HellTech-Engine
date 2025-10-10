@@ -45,9 +45,6 @@
     <ClCompile Include="r_dx12_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="spirv_reflect.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="spng.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -55,6 +52,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="lz4.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="dxc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="System\Win32\win32_file.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\VulkanSDK\1.4.328.0\Source\SPIRV-Reflect\spirv_reflect.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -104,9 +110,6 @@
     <ClInclude Include="imgui\imstb_truetype.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="spirv_reflect.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="spng.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -143,6 +146,18 @@
     <ClInclude Include="vk_device.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="dxc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\sys_file.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\sys_filesystem.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="System\Win32\win32_utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
@@ -168,7 +183,11 @@
     <CustomBuild Include="imgui\shader_imgui.frag.glsl" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\imgui_gfx_lib.hlsl" />
+    <None Include="Shaders\imgui_gfx.hlsl" />
     <None Include="packages.config" />
+    <None Include="dxc_compile_shaders.py" />
+    <None Include="run_dxc_compile.bat">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
