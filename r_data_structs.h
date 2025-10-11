@@ -1,6 +1,7 @@
-#ifdef __cplusplus
+#ifndef __R_DATA_STRUCTS_H__
+#define __R_DATA_STRUCTS_H__
 
-#pragma once
+#ifdef __cplusplus
 
 #include "core_types.h"
 
@@ -26,11 +27,11 @@ struct frame_data
 	DirectX::XMFLOAT4X4A    frustTransf;
 	DirectX::XMFLOAT4X4A    activeProjView;
 	DirectX::XMFLOAT4X4A    mainProjView;
-	DirectX::XMFLOAT3	worldPos;
-	DirectX::XMFLOAT3	camViewDir;
-	float   elapsedSeconds;
-	bool    freezeMainView;
-	bool    dbgDraw;
+	DirectX::XMFLOAT3	    worldPos;
+	DirectX::XMFLOAT3	    camViewDir;
+	float                   elapsedSeconds;
+	bool                    freezeMainView;
+	bool                    dbgDraw;
 };
 
 
@@ -49,6 +50,7 @@ using uint = u32;
 
 #else
 
+#ifndef __HLSL__
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_shader_8bit_storage : require
 #extension GL_EXT_shader_explicit_arithmetic_types : require
@@ -63,6 +65,7 @@ const float invPi = 0.31830988618;
 const float PI = 3.14159265359;
 
 #define ALIGNAS( x )
+#endif
 
 #endif
 
@@ -250,23 +253,7 @@ layout( binding = 3 ) uniform texture2D sampledImages[];
 
 #endif
 
-#ifdef GLOBAL_RESOURCES
-
-layout( set = VK_FRAME_DESC_SET, binding = 0, std430 ) uniform global{ global_data g; } globalsCam[];
-
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer vtx_buff{ vertex data[]; } buff0[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer inst_buff{ instance_desc data[]; } buff1[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer mlet_buff{ meshlet data[]; } buff2[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_BUFFER ) readonly buffer global{ global_data g; } glob[];
-
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLED_IMAGE ) uniform texture2D sampledImages[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_SAMPLER ) uniform sampler samplers[];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, rgba8 ) writeonly uniform coherent image2D swapchainViews[3];
-layout( set = VK_GLOBAL_DESC_SET, binding = VK_GLOBAL_SLOT_STORAGE_IMAGE, r32f ) writeonly uniform coherent image2D depthViews[];
-
-
-global_data cam = globalsCam[ 0 ].g;
-
-#endif
-
 #endif // !__cplusplus
+
+
+#endif // !__R_DATA_STRUCTS_H__

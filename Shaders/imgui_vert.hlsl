@@ -13,15 +13,6 @@ struct imgui_vertex
 };
 
 [[vk::binding( 0 )]] StructuredBuffer<imgui_vertex> uiVtxBuff;
-[[vk::binding( 1 )]] Texture2D fontAtals;
-[[vk::binding( 1 )]] SamplerState fontSampler;
-
-
-///struct vs_out
-///{
-///[[vk::location( 0 )]] float4 col : COLOR0;
-///[[vk::location( 1 )]] float2 uv : TEXCOORD0;
-///};
 
 float4 UnpackU8U32( uint packedRGBA )
 {
@@ -34,7 +25,7 @@ float4 UnpackU8U32( uint packedRGBA )
 }
 
 [ shader( "vertex" ) ]
-void VsMain( 
+void ImGuiVsMain( 
 	in uint		vtxID : SV_VertexID,
 	out float4	pos : SV_Position,
 	[[vk::location( 0 )]] 
@@ -47,15 +38,4 @@ void VsMain(
 	pos = float4( float2( uiVtxAttrs.x, uiVtxAttrs.y ) * pushBlock.scale + pushBlock.translate, 0.0f, 1.0f );
 	col = UnpackU8U32( uiVtxAttrs.rgba8Unorm ).rgba;
 	uv = float2( uiVtxAttrs.u, uiVtxAttrs.v );
-}
-
-[ shader( "pixel" ) ]
-float4 PsMain( 
-	[[vk::location( 0 )]] 
-	in float4 col : COLOR0,
-	[[vk::location( 1 )]] 
-	in float2 uv : TEXCOORD0
-) : SV_Target
-{
-	return col * fontAtals.Sample( fontSampler, uv );
 }

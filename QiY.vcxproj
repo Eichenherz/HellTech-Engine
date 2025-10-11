@@ -316,6 +316,7 @@
     <ClInclude Include="vk_error.h" />
     <ClInclude Include="vk_memory.h" />
     <ClInclude Include="vk_procs.h" />
+    <ClInclude Include="vk_pso.h" />
     <ClInclude Include="vk_resources.h" />
     <ClInclude Include="vk_timer.h" />
   </ItemGroup>
@@ -333,12 +334,6 @@
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl">
-      <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\pow2_downsampler.comp.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
@@ -416,7 +411,8 @@
     <None Include="dxc_compile_shaders.py" />
     <None Include="packages.config" />
     <None Include="run_dxc_compile.bat" />
-    <None Include="Shaders\imgui_gfx.hlsl">
+    <None Include="Shaders\bindless.hlsli" />
+    <None Include="Shaders\imgui_vert.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Compute</ShaderType>
@@ -429,6 +425,19 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">4.0</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">Compute</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='VK_Debug|Win32'">4.0</ShaderModel>
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\c_pow2_downsampler.hlsl">
+      <FileType>Document</FileType>
+    </None>
+    <None Include="Shaders\imgui_frag.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\c_tonemapping_gamma.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

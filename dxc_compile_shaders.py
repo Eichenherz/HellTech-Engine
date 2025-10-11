@@ -11,7 +11,7 @@ import time
 parser = argparse.ArgumentParser(description="Compile HLSL shaders to SPIR-V")
 parser.add_argument("--src", type=str, default="Shaders", help="Source folder with HLSL files")
 parser.add_argument("--out", type=str, default="bin/SpirV", help="Output folder for SPIR-V")
-parser.add_argument("--sm", type=str, default="6_7", help="Shader Model suffix (default 6_7)")
+parser.add_argument("--sm", type=str, default="6_8", help="Shader Model suffix (default 6_8)")
 parser.add_argument("--dbg", action="store_true", help="Enable debug info")
 parser.add_argument("--opt", type=str, default=None, help="Optimization level (O0, O1, O2, O3). If not set, no optimization flag is used")
 parser.add_argument("--vk", type=str, default="vulkan1.3", help="Vulkan target environment (default vulkan1.4)")
@@ -24,9 +24,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # -------------------
 # Shader detection
 # -------------------
-ENTRY_PATTERN = re.compile(
-    r'\[\s*shader\s*\(\s*"?(\w+)"?\s*\)\s*\]\s*[\w\s\*:<>]+\s+(\w+)\s*\('
-)
+STAGE_REGEX = re.compile(r'\[\s*shader\s*\(\s*"(\w+)"\s*\)\s*\]')
+ENTRY_POINT_REGEX = re.compile(r'\b(\w*Main\w*)\s*\(')
+
 
 STAGE_TO_TARGET_PREFIX = {
     "vertex": "vs",
@@ -42,7 +42,11 @@ STAGE_TO_TARGET_PREFIX = {
 }
 
 DXC = os.environ.get("DXC")
+if not DXC:
+    raise RuntimeError("DXC environment variable not set")
+
 print("Using DXC executable:", DXC)
+subprocess.run([DXC, "--version"], capture_output=False, text=True)
 
 # -------------------
 # Compilation
@@ -52,42 +56,54 @@ compiled_count = 0
 
 for shader_path in SRC_DIR.glob("*.hlsl"):
     code = shader_path.read_text()
-    for stage, entry in ENTRY_PATTERN.findall(code):
-        prefix = STAGE_TO_TARGET_PREFIX.get(stage.lower())
-        if not prefix:
-            print(f"Skipping unknown stage '{stage}' in {shader_path}")
-            continue
+    stage_matches = STAGE_REGEX.findall(code)
+    entry_matches = ENTRY_POINT_REGEX.findall(code)
 
-        target = f"{prefix}_{args.sm}"
-        out_file = OUT_DIR / f"{shader_path.stem}_{entry}.spv"
+    # Check there is exactly one match for each
+    if len(stage_matches) != 1:
+        raise RuntimeError(f"Expected exactly one [shader(...)] attribute, found {len(stage_matches)}")
 
-        cmd = [
-            DXC,
-            "-spirv",
-            f"-fspv-target-env={args.vk}",
-            "-fvk-use-dx-layout",
-            "-fvk-use-scalar-layout",
-            "-E", entry,
-            "-T", target,
-            str(shader_path),
-            "-Fo", str(out_file)
-        ]
+    if len(entry_matches) != 1:
+        raise RuntimeError(f"Expected exactly one entry function matching *Main*, found {len(entry_matches)}")
 
-        if args.dbg:
-            cmd += ["-Zi"]
-        if args.opt:
-            cmd += [f"-{args.opt}"]
+    stage = stage_matches[0]
+    entry = entry_matches[0]
 
-        print(f"\nCompiling {shader_path} [{entry}] ...")
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.stdout.strip():
-                print(f"[stdout]\n{result.stdout}")
-            if result.stderr.strip():
-                print(f"[stderr]\n{result.stderr}")
-            compiled_count += 1
-        except Exception as e:
-            print(f"Exception running DXC on {shader_path} [{entry}]: {e}")
+    prefix = STAGE_TO_TARGET_PREFIX.get(stage)
+    if not prefix:
+        print(f"Skipping unknown stage '{stage}' in {shader_path}")
+        continue
+
+    target = f"{prefix}_{args.sm}"
+    out_file = OUT_DIR / f"{stage}_{entry}.spv"
+
+    cmd = [
+        DXC,
+        "-spirv",
+        f"-fspv-target-env={args.vk}",
+        "-fvk-use-dx-layout",
+        "-fvk-use-scalar-layout",
+        "-E", entry,
+        "-T", target,
+        str(shader_path),
+        "-Fo", str(out_file)
+    ]
+
+    if args.dbg:
+        cmd += ["-Zi"]
+    if args.opt:
+        cmd += [f"-{args.opt}"]
+
+    print(f"\nCompiling {shader_path} [{entry}] ...")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.stdout.strip():
+            print(f"[stdout]\n{result.stdout}")
+        if result.stderr.strip():
+            print(f"[stderr]\n{result.stderr}")
+        compiled_count += 1
+    except Exception as e:
+        print(f"Exception running DXC on {shader_path} [{entry}]: {e}")
 
 end_time = time.time()
 duration = end_time - start_time

@@ -158,11 +158,13 @@
     <ClInclude Include="System\Win32\win32_utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="vk_pso.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl" />
-    <CustomBuild Include="Shaders\pow2_downsampler.comp.glsl" />
     <CustomBuild Include="Shaders\tonemap_gamma.comp.glsl" />
     <CustomBuild Include="Shaders\f_pass_col.frag.glsl" />
     <CustomBuild Include="Shaders\avg_luminance.comp.glsl" />
@@ -183,11 +185,15 @@
     <CustomBuild Include="imgui\shader_imgui.frag.glsl" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\imgui_gfx.hlsl" />
+    <None Include="Shaders\imgui_vert.hlsl" />
     <None Include="packages.config" />
     <None Include="dxc_compile_shaders.py" />
     <None Include="run_dxc_compile.bat">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="Shaders\bindless.hlsli" />
+    <None Include="Shaders\imgui_frag.hlsl" />
+    <None Include="Shaders\c_pow2_downsampler.hlsl" />
+    <None Include="Shaders\c_tonemapping_gamma.hlsl" />
   </ItemGroup>
 </Project>
