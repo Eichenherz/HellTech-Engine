@@ -14,7 +14,7 @@ parser.add_argument("--out", type=str, default="bin/SpirV", help="Output folder 
 parser.add_argument("--sm", type=str, default="6_8", help="Shader Model suffix (default 6_8)")
 parser.add_argument("--dbg", action="store_true", help="Enable debug info")
 parser.add_argument("--opt", type=str, default=None, help="Optimization level (O0, O1, O2, O3). If not set, no optimization flag is used")
-parser.add_argument("--vk", type=str, default="vulkan1.3", help="Vulkan target environment (default vulkan1.4)")
+parser.add_argument("--vk", type=str, default="vulkan1.3", help="Vulkan target environment (default vulkan1.3)")
 args = parser.parse_args()
 
 SRC_DIR = Path(args.src)
@@ -83,6 +83,7 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
         f"-fspv-target-env={args.vk}",
         "-fvk-use-dx-layout",
         "-fvk-use-scalar-layout",
+        "-enable-16bit-types",
         "-E", entry,
         "-T", target,
         str(shader_path),

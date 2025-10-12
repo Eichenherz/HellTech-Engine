@@ -11,13 +11,15 @@
 // TODO: extend ?
 struct vk_time_section
 {
-	const VkCommandBuffer& cmdBuff;
-	const VkQueryPool& queryPool;
+	VkCommandBuffer cmdBuff;
+	VkQueryPool queryPool;
 	const u32 queryIdx;
 
-	inline vk_time_section( const VkCommandBuffer& _cmdBuff, const VkQueryPool& _queryPool, u32 _queryIdx ) 
-		: cmdBuff{ _cmdBuff }, queryPool{ _queryPool }, queryIdx{ _queryIdx }
+	inline vk_time_section( VkCommandBuffer _cmdBuff, VkQueryPool _queryPool, u32 _queryIdx ) 
+		: queryIdx{ _queryIdx }
 	{
+		this->cmdBuff = _cmdBuff;
+		this->queryPool = _queryPool;
 		vkCmdWriteTimestamp2( cmdBuff, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, queryPool, queryIdx );
 	}
 

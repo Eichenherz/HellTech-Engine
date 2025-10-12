@@ -78,15 +78,14 @@ static const DXPacked::XMCOLOR cyan = { 0u, 255u, 255u, 1 };
 static const DXPacked::XMCOLOR magenta = { 255u, 0u, 255u, 1 };
 
 
-struct vk_label
+struct vk_scoped_label
 {
-	const VkCommandBuffer& cmdBuff;
+	VkCommandBuffer cmdBuff;
 
-	inline vk_label( const VkCommandBuffer& cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
-		: cmdBuff{ cmdBuff }
+	inline vk_scoped_label( VkCommandBuffer _cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
 	{
-		assert( cmdBuff );
-
+		this->cmdBuff = _cmdBuff;
+		
 		VkDebugUtilsLabelEXT dbgLabel = {
 			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
 			.pLabelName = labelName,
@@ -94,9 +93,8 @@ struct vk_label
 		};
 		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
 	}
-	inline ~vk_label()
+	inline ~vk_scoped_label()
 	{
-		assert( cmdBuff );
 		vkCmdEndDebugUtilsLabelEXT( cmdBuff );
 	}
 };
@@ -487,8 +485,6 @@ VkMakeSwapchain(
 	return sc;
 }
 
-static vk_swapchain sc;
-
 
 #include "r_data_structs.h"
 
@@ -511,8 +507,6 @@ static renderer_config renderCfg = {};
 
 
 // TODO: should make obsolete
-// TODO: vk_shader_program ?
-// TODO: put shader module inside ?
 struct vk_program
 {
 	VkPipelineLayout			pipeLayout;
@@ -768,9 +762,6 @@ inline void VkDescriptorManagerFlushUpdates( vk_descriptor_manager& manager, VkD
 	}
 }
 
-//import r_dxc_compiler;
-
-//using dxc_options = std::initializer_list<LPCWSTR>;
 
 inline static void VkReflectShaderLayout(
 	const VkPhysicalDeviceProperties&			gpuProps,
@@ -831,7 +822,6 @@ inline static void VkReflectShaderLayout(
 
 	spvReflectDestroyShaderModule( &shaderReflection );
 }
-
 
 inline static vk_program VkMakePipelineProgram(
 	VkDevice							vkDevice,
@@ -906,8 +896,6 @@ inline static vk_program VkMakePipelineProgram(
 	return program;
 }
 
-inline void VkKillPipelineProgram( VkDevice vkDevice, vk_program* program )
-{}
 
 #include "asset_compiler.h"
 
@@ -1257,7 +1245,7 @@ static inline debug_context VkMakeDebugContext(
 	dbgCtx.dbgLinesBuff = VkCreateAllocBindBuffer( &dc, { 
 		.name = "Buff_DbgLines",
 		.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
-		.elemCount = 512 * KB, 
+		.elemCount = 128 * KB, 
 		.stride = 1, 
 		.usage = buffer_usage::HOST_VISIBLE } );
 	dbgCtx.dbgTrisBuff = VkCreateAllocBindBuffer(  &dc, { 
@@ -1467,26 +1455,17 @@ inline static void VkInitInternalBuffers()
 }
 
 // TODO: move out of global/static
-static vk_program   gfxMergedProgram = {};
-static vk_program	gfxOpaqueProgram = {};
 static vk_program	gfxMeshletProgram = {};
-static vk_program	cullCompProgram = {};
-static vk_program	depthPyramidCompProgram = {};
 static vk_program	avgLumCompProgram = {};
 
 static vk_program   dbgDrawProgram = {};
 static VkPipeline   gfxDrawIndirDbg = {};
 
-static VkPipeline   gfxZPrepass = {};
-static VkRenderPass zRndPass = {};
-static VkRenderPass depthReadRndPass = {};
-
-static vk_graphics_program  lighCullProgam = {};
-
 
 // TODO: remake
 struct render_context
 {
+	VkPipeline      gfxZPrepass;
 	VkPipeline		gfxPipeline;
 	VkPipeline		gfxMeshletPipeline;
 	VkPipeline		gfxMergedPipeline;
@@ -1536,10 +1515,10 @@ static render_path renderPath;
 static render_context rndCtx;
 
 
-
 struct vk_backend
 {
 	vk_descriptor_manager descManager;
+	vk_swapchain sc;
 	vk_instance inst;
 	VkSurfaceKHR surf;
 	VkPipelineLayout globalLayout;
@@ -1572,7 +1551,7 @@ void VkBackendInit()
 	vk.surf = VkMakeWinSurface( vk.inst.hndl, hInst, hWnd );
 	dc = VkMakeDeviceContext( vk.inst.hndl, vk.surf );
 
-	sc = VkMakeSwapchain( dc.device, dc.gpu, vk.surf, dc.gfxQueueIdx, renderCfg.desiredSwapchainFormat, 3 );
+	vk.sc = VkMakeSwapchain( dc.device, dc.gpu, vk.surf, dc.gfxQueueIdx, renderCfg.desiredSwapchainFormat, 3 );
 
 	VkInitInternalBuffers();
 
@@ -1595,7 +1574,7 @@ void VkBackendInit()
 
 	{
 		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", dc.device );
-		gfxZPrepass = VkMakeGfxPipeline( 
+		rndCtx.gfxZPrepass = VkMakeGfxPipeline( 
 			dc.device, 0, vk.globalLayout, vertZPre.module, 0, 0, 0, renderCfg.desiredDepthFormat, {} );
 
 		vkDestroyShaderModule( dc.device, vertZPre.module, 0 );
@@ -1627,7 +1606,6 @@ void VkBackendInit()
 	}
 	{
 		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", dc.device );
-		cullCompProgram.groupSize = { 32,1,1 };
 		rndCtx.compPipeline = VkMakeComputePipeline( dc.device, 0, vk.globalLayout, drawCull.module, { 32u } );
 		VkDbgNameObj( rndCtx.compPipeline, dc.device, "Pipeline_Comp_DrawCull" );
 		
@@ -1706,6 +1684,142 @@ void VkBackendInit()
 	imguiVkCtx = ImguiMakeVkContext( dc.device, renderCfg.desiredSwapchainFormat );
 }
 
+// TODO: add dynamic state params too 
+struct vk_dynamic_scoped_render_pass
+{
+	VkCommandBuffer cmdBuff;
+
+	vk_dynamic_scoped_render_pass( VkCommandBuffer _cmdBuff, const VkRenderingInfo& renderInfo ) 
+	{
+		this->cmdBuff = _cmdBuff;
+		vkCmdBeginRendering( cmdBuff, &renderInfo );
+	}
+	~vk_dynamic_scoped_render_pass()
+	{
+		vkCmdEndRendering( cmdBuff );
+	}
+};
+
+struct vk_command_buffer
+{
+	VkCommandBuffer hndl;
+	VkPipelineLayout bindlessPipelineLayout;
+	VkDescriptorSet bindlessDescriptorSet;
+
+	vk_command_buffer( VkCommandBuffer cmdBuff, VkPipelineLayout pipelineLayout, VkDescriptorSet descriptorSet )
+	{
+		this->hndl = cmdBuff;
+		this->bindlessPipelineLayout = pipelineLayout;
+		this->bindlessDescriptorSet = descriptorSet;
+
+		VkCommandBufferBeginInfo cmdBufBegInfo = { 
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		};
+		vkBeginCommandBuffer( hndl, &cmdBufBegInfo );
+	}
+
+	vk_scoped_label CmdIssueScopedLabel( const char* labelName, DXPacked::XMCOLOR col = {} )
+	{
+		return { hndl, labelName, col };
+	}
+
+	vk_dynamic_scoped_render_pass CmdIssueDynamicScopedRenderPass(
+		const VkRenderingAttachmentInfo* pColInfos,
+		u32 colAttachmentCount,
+		const VkRenderingAttachmentInfo* pDepthInfo,
+		const VkRect2D& renderArea,
+		u32 layerCount = 1
+	) {
+		VkRenderingInfo renderInfo = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+			.renderArea = renderArea,
+			.layerCount = layerCount,
+			.colorAttachmentCount = colAttachmentCount,
+			.pColorAttachments = pColInfos,
+			.pDepthAttachment = pDepthInfo
+		};
+		return { hndl, renderInfo };
+	}
+
+	void CmdBindBindlessDescriptorSet( VkPipelineBindPoint bindPoint )
+	{
+		vkCmdBindDescriptorSets( hndl, bindPoint, bindlessPipelineLayout,0, 1, &bindlessDescriptorSet, 0, 0 );
+	}
+
+	void CmdPushConstants( const void* pData, u32 size )
+	{
+		VkPushConstantsInfo pushConstInfo = {
+			.sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
+			.layout = bindlessPipelineLayout,
+			.stageFlags = VK_SHADER_STAGE_ALL,
+			.offset = 0,
+			.size = size,
+			.pValues = pData
+		};
+		vkCmdPushConstants2( hndl, &pushConstInfo );
+	}
+
+	void CmdPipelineBarriers( 
+		std::span<VkBufferMemoryBarrier2> buffBarriers, 
+		std::span<VkImageMemoryBarrier2> imgBarriers 
+	) {
+		VkDependencyInfo dependency = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.bufferMemoryBarrierCount = ( u32 ) std::size( buffBarriers ),
+			.pBufferMemoryBarriers = std::data( buffBarriers ),
+			.imageMemoryBarrierCount = ( u32 ) std::size( imgBarriers ),
+			.pImageMemoryBarriers = std::data( imgBarriers ),
+		};
+		vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+
+	void CmdPipelineMemoryBarriers( std::span<VkMemoryBarrier2> memBarriers ) 
+	{
+		VkDependencyInfo dependency = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.memoryBarrierCount = ( u32 ) std::size( memBarriers ),
+			.pMemoryBarriers = std::data( memBarriers ),
+		};
+		vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+
+	void CmdPipelineBufferBarriers( std::span<VkBufferMemoryBarrier2> buffBarriers ) 
+	{
+		VkDependencyInfo dependency = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.bufferMemoryBarrierCount = ( u32 ) std::size( buffBarriers ),
+			.pBufferMemoryBarriers = std::data( buffBarriers ),
+		};
+		vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+
+	void CmdPipelineImageBarriers( std::span<VkImageMemoryBarrier2> imgBarriers ) 
+	{
+		VkDependencyInfo dependency = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount = ( u32 ) std::size( imgBarriers ),
+			.pImageMemoryBarriers = std::data( imgBarriers ),
+		};
+		vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+
+	void CmdFillVkBuffer( const vk_buffer& vkBuffer, u32 fillValue )
+	{
+		vkCmdFillBuffer( hndl, vkBuffer.hndl, 0, vkBuffer.size, fillValue );
+	}
+
+	void CmdEndCmbBuffer()
+	{
+		VK_CHECK( vkEndCommandBuffer( hndl ) );
+	}
+
+	//~vk_command_buffer()
+	//{
+	//	VK_CHECK( vkEndCommandBuffer( cmdBuff ) );
+	//}
+};
+
 inline void VkCmdBeginRendering(
 	VkCommandBuffer		cmdBuff,
 	const VkRenderingAttachmentInfo* pColInfos,
@@ -1730,19 +1844,6 @@ inline u64 GroupCount( u64 invocationCount, u64 workGroupSize )
 	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
 
-inline void VkDebugSyncBarrierEverything( VkCommandBuffer cmdBuff )
-{
-	VkMemoryBarrier2 everythingBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-	everythingBarrier.srcStageMask = everythingBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-	everythingBarrier.srcAccessMask = everythingBarrier.dstAccessMask = 
-		VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-	
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	dependency.memoryBarrierCount = 1;
-	dependency.pMemoryBarriers = &everythingBarrier;
-	vkCmdPipelineBarrier2( cmdBuff, &dependency );
-}
-
 
 inline static void
 FrameClearDataPass(
@@ -1755,13 +1856,12 @@ FrameClearDataPass(
 // TODO: alloc buffers here ?
 // TODO: reduce the ammount of counter buffers
 // TODO: visibility buffer ( not the VBuffer ) check Aaltonen
-// TODO: revisit triangle culling ?
 // TODO: optimize expansion shader
 inline static void 
 CullPass( 
-	VkCommandBuffer			cmdBuff, 
+	vk_command_buffer&  cmdBuff, 
 	VkPipeline				vkPipeline, 
-	const vk_program&		program,
+	group_size		        grSz,
 	const vk_image&			depthPyramid,
 	const VkSampler&		minQuadSampler,
 	u16 _camIdx,
@@ -1769,42 +1869,40 @@ CullPass(
 	u16 samplerIdx
 ){
 	// NOTE: wtf Vulkan ?
-	constexpr u64 VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR;
+	constexpr u64 VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
 
+	vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Cull Pass",{} );
 
-	vk_label label = { cmdBuff,"Cull Pass",{} };
+	cmdBuff.CmdFillVkBuffer( drawCountBuff, 0u );
+	cmdBuff.CmdFillVkBuffer( drawCountDbgBuff, 0u );
+	cmdBuff.CmdFillVkBuffer( meshletCountBuff, 0u );
+	cmdBuff.CmdFillVkBuffer( mergedIndexCountBuff, 0u );
+	cmdBuff.CmdFillVkBuffer( drawMergedCountBuff, 0u );
+	cmdBuff.CmdFillVkBuffer( dispatchCmdBuff0, 0u );
+	cmdBuff.CmdFillVkBuffer( dispatchCmdBuff1, 0u );
+	// TODO: rename 
+	cmdBuff.CmdFillVkBuffer( atomicCounterBuff, 0u );
 
-	vkCmdFillBuffer( cmdBuff, drawCountBuff.hndl, 0, drawCountBuff.size, 0u );
-
-	vkCmdFillBuffer( cmdBuff, drawCountDbgBuff.hndl, 0, drawCountDbgBuff.size, 0u );
-	vkCmdFillBuffer( cmdBuff, meshletCountBuff.hndl, 0, meshletCountBuff.size, 0u );
-
-	vkCmdFillBuffer( cmdBuff, mergedIndexCountBuff.hndl, 0, mergedIndexCountBuff.size, 0u );
-	vkCmdFillBuffer( cmdBuff, drawMergedCountBuff.hndl, 0, drawMergedCountBuff.size, 0u );
-
-	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff0.hndl, 0, dispatchCmdBuff0.size, 0u );
-	vkCmdFillBuffer( cmdBuff, dispatchCmdBuff1.hndl, 0, dispatchCmdBuff1.size, 0u );
-	
-	VkBufferMemoryBarrier2KHR beginCullBarriers[] = {
+	VkBufferMemoryBarrier2 beginCullBarriers[] = {
 		VkMakeBufferBarrier2( 
 			drawCmdBuff.hndl,
-			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR,
-			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
+			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+			VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
 		VkMakeBufferBarrier2( 
 			drawCountBuff.hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
 
 	    VkMakeBufferBarrier2( 
 			meshletCountBuff.hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
 		VkMakeBufferBarrier2( 
 			drawCountDbgBuff.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -1819,17 +1917,17 @@ CullPass(
 			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
 		VkMakeBufferBarrier2( 
 			drawMergedCountBuff.hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
 
 		VkMakeBufferBarrier2( 
 			dispatchCmdBuff0.hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ),
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
 		VkMakeBufferBarrier2( 
 			dispatchCmdBuff1.hndl,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
@@ -1840,30 +1938,40 @@ CullPass(
 		VkMakeBufferBarrier2(
 			indirectMergedIndexBuff.hndl,
 			VK_ACCESS_2_INDEX_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR,
-			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR )
+			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+			VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
+		VkMakeBufferBarrier2( 
+			atomicCounterBuff.hndl,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
 	};
 
-	VkImageMemoryBarrier2 hiZReadBarrier = VkMakeImageBarrier2(
+	VkImageMemoryBarrier2 hiZReadBarrier[] = { VkMakeImageBarrier2(
 		depthPyramid.hndl,
-		VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-		VK_ACCESS_2_SHADER_READ_BIT_KHR,
-		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-		VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
-		VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR,
-		VK_IMAGE_ASPECT_COLOR_BIT );
+		VK_ACCESS_2_SHADER_WRITE_BIT,
+		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+		VK_ACCESS_2_SHADER_READ_BIT,
+		VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+		VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+		VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+		VK_IMAGE_ASPECT_COLOR_BIT ) };
 
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	dependency.bufferMemoryBarrierCount = std::size( beginCullBarriers );
-	dependency.pBufferMemoryBarriers = beginCullBarriers;
-	dependency.imageMemoryBarrierCount = 1;
-	dependency.pImageMemoryBarriers = &hiZReadBarrier;
-	vkCmdPipelineBarrier2( cmdBuff, &dependency );
+	cmdBuff.CmdPipelineBarriers( beginCullBarriers, hiZReadBarrier );
+
+	VkMemoryBarrier2 computeToComputeExecDependency[] = { 
+		VkMemoryBarrier2{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+			.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+			.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT,
+		},
+	};
 
 	u32 instCount = instDescBuff.size / sizeof( instance_desc );
-
 	{
 		
 		struct { 
@@ -1879,32 +1987,21 @@ CullPass(
 			u32 camIdx = _camIdx;
 		} pushConst = {};
 
-		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
-		vkCmdDispatch( cmdBuff, GroupCount( instCount, program.groupSize.x ), 1, 1 );
+		vkCmdBindPipeline( cmdBuff.hndl, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
+		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
+		vkCmdDispatch( cmdBuff.hndl, GroupCount( instCount, grSz.x ), 1, 1 );
 	}
 	
 	{
-		VkBufferMemoryBarrier2KHR dispatchBarrier =
+		VkBufferMemoryBarrier2 readCmdIndirect[] = {
 			VkMakeBufferBarrier2( dispatchCmdBuff0.hndl,
-								  VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH );
-
-		
-		VkMemoryBarrier2KHR writeToReadWriteBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
-		writeToReadWriteBarrier.srcStageMask = writeToReadWriteBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR;
-		writeToReadWriteBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
-		writeToReadWriteBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
-
-		VkDependencyInfo execDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-		execDependency.bufferMemoryBarrierCount = 1;
-		execDependency.pBufferMemoryBarriers = &dispatchBarrier;
-		execDependency.memoryBarrierCount = 1;
-		execDependency.pMemoryBarriers = &writeToReadWriteBarrier;
-		vkCmdPipelineBarrier2( cmdBuff, &execDependency );
-
+								  VK_ACCESS_2_SHADER_WRITE_BIT,
+								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH )
+		};
+		cmdBuff.CmdPipelineBufferBarriers( readCmdIndirect );
+		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
 
 		struct
 		{
@@ -1916,31 +2013,21 @@ CullPass(
 			u64 dispatchCmdAddr = dispatchCmdBuff1.devicePointer;
 		} pushConst = {};
 
-		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpanderPipe );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
-		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff0.hndl, 0 );
+		vkCmdBindPipeline( cmdBuff.hndl, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpanderPipe );
+		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
+		vkCmdDispatchIndirect( cmdBuff.hndl, dispatchCmdBuff0.hndl, 0 );
 	}
 	
 	{
-		VkBufferMemoryBarrier2KHR dispatchBarrier =
+		VkBufferMemoryBarrier2 readCmdIndirect[] = {
 			VkMakeBufferBarrier2( dispatchCmdBuff1.hndl,
-								  VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH );
-
-		// TODO: write to read and write to write separately ?
-		VkMemoryBarrier2KHR writeToReadWriteBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
-		writeToReadWriteBarrier.srcStageMask = writeToReadWriteBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR;
-		writeToReadWriteBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
-		writeToReadWriteBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
-
-		VkDependencyInfo execCullDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-		execCullDependency.bufferMemoryBarrierCount = 1;
-		execCullDependency.pBufferMemoryBarriers = &dispatchBarrier;
-		execCullDependency.memoryBarrierCount = 1;
-		execCullDependency.pMemoryBarriers = &writeToReadWriteBarrier;
-		vkCmdPipelineBarrier2( cmdBuff, &execCullDependency );
+								  VK_ACCESS_2_SHADER_WRITE_BIT,
+								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH )
+		};
+		cmdBuff.CmdPipelineBufferBarriers( readCmdIndirect );
+		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
 
 		struct { 
 			u64 instDescAddr = instDescBuff.devicePointer;
@@ -1957,31 +2044,21 @@ CullPass(
 			u32 camIdx = _camIdx;
 		} pushConst = {};
 
-		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
-		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff1.hndl, 0 );
+		vkCmdBindPipeline( cmdBuff.hndl, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compClusterCullPipe );
+		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
+		vkCmdDispatchIndirect( cmdBuff.hndl, dispatchCmdBuff1.hndl, 0 );
 	}
 	
 	{
-		VkBufferMemoryBarrier2KHR dispatchBarrier =
+		VkBufferMemoryBarrier2 readCmdIndirect[] = {
 			VkMakeBufferBarrier2( dispatchCmdBuff0.hndl,
-								  VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH );
-
-		// TODO: write to read and write to write separately ?
-		VkMemoryBarrier2KHR writeToReadWriteBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR };
-		writeToReadWriteBarrier.srcStageMask = writeToReadWriteBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR;
-		writeToReadWriteBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
-		writeToReadWriteBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT_KHR;
-
-		VkDependencyInfo execTriExpDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-		execTriExpDependency.bufferMemoryBarrierCount = 1;
-		execTriExpDependency.pBufferMemoryBarriers = &dispatchBarrier;
-		execTriExpDependency.memoryBarrierCount = 1;
-		execTriExpDependency.pMemoryBarriers = &writeToReadWriteBarrier;
-		vkCmdPipelineBarrier2( cmdBuff, &execTriExpDependency );
+								  VK_ACCESS_2_SHADER_WRITE_BIT,
+								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+								  VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+								  VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH )
+		};
+		cmdBuff.CmdPipelineBufferBarriers( readCmdIndirect );
+		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
 
 		struct { 
 			u64 meshletDataAddr = meshletDataBuff.devicePointer;
@@ -1994,31 +2071,31 @@ CullPass(
 			u64 atomicWorkgrCounterAddr = atomicCounterBuff.devicePointer;
 		} pushConst = {};
 
-		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpMergePipe );
-		vkCmdPushConstants( cmdBuff, vk.globalLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
-		vkCmdDispatchIndirect( cmdBuff, dispatchCmdBuff0.hndl, 0 );
+		vkCmdBindPipeline( cmdBuff.hndl, VK_PIPELINE_BIND_POINT_COMPUTE, rndCtx.compExpMergePipe );
+		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
+		vkCmdDispatchIndirect( cmdBuff.hndl, dispatchCmdBuff0.hndl, 0 );
 	}
 
 
-	VkBufferMemoryBarrier2KHR endCullBarriers[] = {
+	VkBufferMemoryBarrier2 endCullBarriers[] = {
 		VkMakeBufferBarrier2( 
 			drawCmdBuff.hndl,
-			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ),
+			VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
+			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ),
 		VkMakeBufferBarrier2( 
 			drawCountBuff.hndl,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR,//VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR ),
+			VK_ACCESS_2_SHADER_READ_BIT,//VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT ),
 		VkMakeBufferBarrier2( 
 			drawCmdDbgBuff.hndl,
-			VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR,
-			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT_KHR | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ),
+			VK_ACCESS_2_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT,
+			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ),
 		VkMakeBufferBarrier2( 
 			drawCountDbgBuff.hndl,
 			VK_ACCESS_2_SHADER_READ_BIT_KHR,//VK_ACCESS_2_SHADER_WRITE_BIT_KHR,
@@ -2051,20 +2128,17 @@ CullPass(
 			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ),
 	};
 
-	VkDependencyInfo dependencyEnd = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR };
-	dependencyEnd.bufferMemoryBarrierCount = std::size( endCullBarriers );
-	dependencyEnd.pBufferMemoryBarriers = endCullBarriers;
-	vkCmdPipelineBarrier2( cmdBuff, &dependencyEnd );
+	cmdBuff.CmdPipelineBufferBarriers( endCullBarriers );
 }
 
 
 // TODO: overdraw more efficiently 
-// TODO: no imgui dependency
 static inline void ImguiDrawUiPass(
 	const imgui_vk_context& ctx,
 	VkCommandBuffer cmdBuff,
 	const VkRenderingAttachmentInfo* pColInfo,
 	const VkRenderingAttachmentInfo* pDepthInfo,
+	const VkRect2D& scissor,
 	u64 frameIdx
 ) {
 	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
@@ -2096,9 +2170,8 @@ static inline void ImguiDrawUiPass(
 	XMFLOAT4 pushConst = { scale[ 0 ],scale[ 1 ],move[ 0 ],move[ 1 ] };
 
 
-	vk_label label = { cmdBuff,"Draw Imgui Pass",{} };
+	vk_scoped_label label = { cmdBuff,"Draw Imgui Pass",{} };
 
-	VkRect2D scissor = { 0,0,sc.width,sc.height };
 	VkCmdBeginRendering( cmdBuff, pColInfo, pColInfo ? 1 : 0, pDepthInfo, scissor, 1 );
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline );
 
@@ -2129,7 +2202,8 @@ static inline void ImguiDrawUiPass(
 
 			// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
 			clipMin = { std::max( clipMin.x, 0.0f ), std::max( clipMin.y, 0.0f ) };
-			clipMax = { std::min( clipMax.x, ( float ) sc.width ), std::min( clipMax.y, ( float ) sc.height ) };
+			clipMax = { std::min( clipMax.x, ( float ) scissor.extent.width ), 
+				std::min( clipMax.y, ( float ) scissor.extent.height ) };
 
 			if( clipMax.x < clipMin.x || clipMax.y < clipMin.y ) continue;
 
@@ -2156,12 +2230,11 @@ DebugDrawPass(
 	const VkRenderingAttachmentInfo* pDepthInfo,
 	const vk_buffer& drawBuff,
 	const vk_program& program,
+	const VkRect2D& scissor,
 	const mat4& projView,
 	range		        drawRange
 ) {
-	vk_label label = { cmdBuff,"Dbg Draw Pass",{} };
-
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+	vk_scoped_label label = { cmdBuff,"Dbg Draw Pass",{} };
 
 	VkCmdBeginRendering( cmdBuff, pColInfo, pColInfo ? 1 : 0, pDepthInfo, scissor, 1 );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
@@ -2185,21 +2258,16 @@ DrawIndirectPass(
 	const vk_buffer&      drawCmds,
 	VkBuffer				drawCmdCount,
 	const vk_program&       program,
-	const mat4&             viewProjMat
+	const mat4&             viewProjMat,
+	const VkRect2D& scissor
 ){
-	vk_label label = { cmdBuff,"Draw Indirect Pass",{} };
-
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
+	vk_scoped_label label = { cmdBuff,"Draw Indirect Pass",{} };
 
 	VkCmdBeginRendering( cmdBuff, pColInfo, pColInfo ? 1 : 0, pDepthInfo, scissor, 1 );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline );
 
-	//vk_descriptor_info descriptors[] = { Descriptor( drawCmds ), Descriptor( instDescBuff ), Descriptor( meshletBuff ) };
-	//vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, program.descUpdateTemplate, program.pipeLayout, 0, descriptors );
-
-	//struct { mat4 viewProj; vec4 color; } push = { viewProjMat, { 255,0,0,0 } };
 	struct { mat4 viewProj; vec4 color; u64 cmdAddr; u64 transfAddr; u64 meshletAddr; } push = {
 		viewProjMat, { 255,0,0,0 }, drawCmds.devicePointer, instDescBuff.devicePointer, meshletBuff.devicePointer };
 	vkCmdPushConstants( cmdBuff, program.pipeLayout, program.pushConstStages, 0, sizeof( push ), &push );
@@ -2225,13 +2293,12 @@ DrawIndexedIndirectMerged(
 	const vk_buffer&      drawCmds,
 	const vk_buffer&      drawCount,
 	const void* pPushData,
-	u64 pushDataSize
+	u64 pushDataSize,
+	const VkRect2D& scissor
 ){
-	vk_label label = { cmdBuff,"Draw Indexed Indirect Merged Pass",{} };
+	vk_scoped_label label = { cmdBuff,"Draw Indexed Indirect Merged Pass",{} };
 
 	constexpr u32 maxDrawCount = 1;
-
-	VkRect2D scissor = { { 0, 0 }, { sc.width, sc.height } };
 
 	VkCmdBeginRendering( cmdBuff, pColInfo, pColInfo ? 1 : 0, pDepthInfo, scissor, 1 );
 	vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
@@ -2324,9 +2391,8 @@ DepthPyramidPass(
 
 inline static void
 DepthPyramidMultiPass(
-	VkCommandBuffer			cmdBuff,
+	vk_command_buffer		cmdBuff,
 	VkPipeline				vkPipeline,
-	VkSampler				pointMinSampler,
 	const vk_image&			depthTarget,
 	u16                     depthIdx,
 	const vk_image&			depthPyramid,
@@ -2336,7 +2402,7 @@ DepthPyramidMultiPass(
 	VkPipelineLayout        pipelineLayout,
 	group_size              grSz
 ) {
-	vk_label label = { cmdBuff, "HiZ Multi Pass", {} };
+	vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "HiZ Multi Pass", {} );
 
 	VkImageMemoryBarrier2 hizBeginBarriers[] = {
 		VkMakeImageBarrier2(
@@ -2359,18 +2425,18 @@ DepthPyramidMultiPass(
 			VK_IMAGE_ASPECT_COLOR_BIT )
 	};
 
-	VkDependencyInfo dependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	dependency.imageMemoryBarrierCount = std::size( hizBeginBarriers );
-	dependency.pImageMemoryBarriers = hizBeginBarriers;
-	vkCmdPipelineBarrier2( cmdBuff, &dependency );
+	cmdBuff.CmdPipelineImageBarriers( hizBeginBarriers );
 
 
-	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
+	vkCmdBindPipeline( cmdBuff.hndl, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline );
 
-	VkMemoryBarrier2 executionBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-	executionBarrier.srcStageMask = executionBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-	executionBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT;
-	executionBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+	VkMemoryBarrier2 executionBarrier[] = { {
+			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+			.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			//.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT,
+			.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			//.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+	} };
 
 	uint mipLevel = 0;
 	uint srcImg = depthIdx;
@@ -2400,16 +2466,13 @@ DepthPyramidMultiPass(
 				: reduce(r), samplerIdx(s), srcImgIdx(src), mipLevel(mip), dstImgIdx(dst) {}
 		};
 		push_const pushConst{ vec2{(float)levelWidth, (float)levelHeight}, samplerIdx, srcImg, mipLevel, dstImg };
-		vkCmdPushConstants( cmdBuff, pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof( pushConst ), &pushConst );
-
+		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
+		
 		u32 dispatchX = GroupCount( levelWidth, grSz.x );
 		u32 dispatchY = GroupCount( levelHeight, grSz.y );
-		vkCmdDispatch( cmdBuff, dispatchX, dispatchY, 1 );
+		vkCmdDispatch( cmdBuff.hndl, dispatchX, dispatchY, 1 );
 
-		VkDependencyInfo passDependency = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-		passDependency.memoryBarrierCount = 1;
-		passDependency.pMemoryBarriers = &executionBarrier;
-		vkCmdPipelineBarrier2( cmdBuff, &passDependency );
+		cmdBuff.CmdPipelineMemoryBarriers( executionBarrier );
 	}
 
 	// TODO: do we need ?
@@ -2423,22 +2486,18 @@ DepthPyramidMultiPass(
 			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 			VK_IMAGE_ASPECT_DEPTH_BIT ),
-
-		VkMakeImageBarrier2(
-			depthPyramid.hndl,
-			VK_ACCESS_2_SHADER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-			VK_IMAGE_LAYOUT_GENERAL,
-			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
-			VK_IMAGE_ASPECT_COLOR_BIT )
+			//VkMakeImageBarrier2(
+			//	depthPyramid.hndl,
+			//	VK_ACCESS_2_SHADER_WRITE_BIT,
+			//	VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			//	VK_ACCESS_2_SHADER_READ_BIT,
+			//	VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			//	VK_IMAGE_LAYOUT_GENERAL,
+			//	VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+			//	VK_IMAGE_ASPECT_COLOR_BIT )
 	};
 
-	VkDependencyInfo dependencyEnd = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	dependencyEnd.imageMemoryBarrierCount = std::size( hizEndBarriers );
-	dependencyEnd.pImageMemoryBarriers = hizEndBarriers;
-	vkCmdPipelineBarrier2( cmdBuff, &dependencyEnd );
+	cmdBuff.CmdPipelineImageBarriers( hizEndBarriers );
 }
 
 // TODO: optimize
@@ -2451,8 +2510,8 @@ AverageLuminancePass(
 	const vk_image&     fboHdrColTrg,
 	VkImageView         fboHdrColView,
 	float				dt
-){
-	vk_label label = { cmdBuff,"Averge Lum Pass",{} };
+) {
+	vk_scoped_label label = { cmdBuff,"Averge Lum Pass",{} };
 	// NOTE: inspired by http://www.alextardif.com/HistogramLuminance.html
 	avg_luminance_info avgLumInfo = {
 		.minLogLum = -10.0f,
@@ -2491,7 +2550,7 @@ TonemappingGammaPass(
 	const vk_image&		fboHdrColTrg,
 	group_size          groupSize
 ) {
-	vk_label label = { cmdBuff,"Tonemapping Gamma Pass",{} };
+	vk_scoped_label label = { cmdBuff,"Tonemapping Gamma Pass",{} };
 	
 	vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, tonePipe );
 	
@@ -2528,27 +2587,7 @@ inline static VkRenderingAttachmentInfo VkMakeAttachemntInfo(
 	};
 }
 
-struct vk_command_buffer_proxy
-{
-	VkCommandBuffer cmdBuff;
-	vk_command_buffer_proxy( VkCommandBuffer _cmdBuff )
-	{
-		this->cmdBuff = _cmdBuff;
-
-		VkCommandBufferBeginInfo cmdBufBegInfo = { 
-			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-		};
-		vkBeginCommandBuffer( cmdBuff, &cmdBufBegInfo );
-	}
-
-	~vk_command_buffer_proxy()
-	{
-		VK_CHECK( vkEndCommandBuffer( cmdBuff ) );
-	}
-};
-
-void InitResources( render_path& rndPath, std::vector<vk_descriptor_write>& vkDescUpdateCache )
+void InitResources( render_path& rndPath, vk_swapchain& sc, std::vector<vk_descriptor_write>& vkDescUpdateCache )
 {
 	if( rndPath.pHiZTarget == nullptr )
 	{
@@ -2739,10 +2778,10 @@ static inline void VkUploadResources(
 
 		buffBarriers.push_back( VkMakeBufferBarrier2( 
 			globVertexBuff.hndl, 
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT_KHR ) );
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_SHADER_READ_BIT,
+			VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ) );
 	}
 	{
 		const std::span<u8> idxSpan = { std::data( binaryData ) + fileFooter.idxByteRange.offset, fileFooter.idxByteRange.size };
@@ -2760,10 +2799,10 @@ static inline void VkUploadResources(
 
 		buffBarriers.push_back( VkMakeBufferBarrier2( 
 			indexBuff.hndl, 
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_INDEX_READ_BIT_KHR, 
-			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT_KHR ) );
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_INDEX_READ_BIT, 
+			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT ) );
 	}
 	{
 		meshBuff = VkCreateAllocBindBuffer( &dc, {
@@ -2864,10 +2903,10 @@ static inline void VkUploadResources(
 
 		buffBarriers.push_back( VkMakeBufferBarrier2(
 			meshletDataBuff.hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-			VK_ACCESS_2_SHADER_READ_BIT_KHR,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR ) );
+			VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_SHADER_READ_BIT,
+			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ) );
 	}
 
 
@@ -3048,8 +3087,8 @@ static inline void VkUploadResources(
 void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	u64 currentFrameIdx = rndCtx.vFrameIdx++;
-	u64 frameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
-	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ frameBufferedIdx ];
+	u64 currentFrameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
+	const virtual_frame& thisVFrame = rndCtx.vrtFrames[ currentFrameBufferedIdx ];
 
 	VkSemaphoreWaitInfo waitInfo = { 
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
@@ -3060,10 +3099,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	VK_CHECK( VK_INTERNAL_ERROR( vkWaitSemaphores( dc.device, &waitInfo, UINT64_MAX ) > VK_TIMEOUT ) );
 
 	VK_CHECK( vkResetCommandPool( dc.device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
-
-	// TODO: don't wait on this ? place somewhere else ?
-	u32 imgIdx;
-	VK_CHECK( vkAcquireNextImageKHR( dc.device, sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
 
 	// TODO: no copy
 	global_data globs = {
@@ -3102,11 +3137,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rscCpy = true;
 	}
 	
-	VkCommandBufferBeginInfo cmdBufBegInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	};
-	vkBeginCommandBuffer( thisVFrame.cmdBuff, &cmdBufBegInfo );
+	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, vk.globalLayout, vk.descManager.set };
 	
 	// TODO: 
 	if( currentFrameIdx < VK_MAX_FRAMES_IN_FLIGHT_ALLOWED )
@@ -3124,7 +3155,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	static bool initResources = false;
 	if( !initResources )
 	{
-		InitResources( renderPath, vkDescUpdateCache );
+		InitResources( renderPath, vk.sc, vkDescUpdateCache );
 
 		if( !imguiVkCtx.fontsImg.hndl )
 		{
@@ -3150,17 +3181,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		}
 
-		vkCmdFillBuffer( thisVFrame.cmdBuff, depthAtomicCounterBuff.hndl, 0, depthAtomicCounterBuff.size, 0u );
-		// TODO: rename 
-		vkCmdFillBuffer( thisVFrame.cmdBuff, atomicCounterBuff.hndl, 0, atomicCounterBuff.size, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( depthAtomicCounterBuff, 0u );
 
 		VkBufferMemoryBarrier2 initBuffersBarriers[] = {
 			VkMakeBufferBarrier2( depthAtomicCounterBuff.hndl,
-								  VK_ACCESS_2_TRANSFER_WRITE_BIT,
-								  VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-								  VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
-								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ),
-			VkMakeBufferBarrier2( atomicCounterBuff.hndl,
 								  VK_ACCESS_2_TRANSFER_WRITE_BIT,
 								  VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 								  VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
@@ -3177,14 +3201,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				VK_IMAGE_ASPECT_COLOR_BIT )
 		};
 
-		VkDependencyInfo dependency = { 
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.bufferMemoryBarrierCount = std::size( initBuffersBarriers ),
-			.pBufferMemoryBarriers = initBuffersBarriers,
-			.imageMemoryBarrierCount = std::size( initBarriers ),
-			.pImageMemoryBarriers = initBarriers,
-		};
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependency );
+		thisFrameCmdBuffer.CmdPipelineBarriers( initBuffersBarriers, initBarriers );
 		initResources = true;
 	}
 	
@@ -3214,20 +3231,16 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			thisVFrame.cmdBuff, upload.hndl, imguiVkCtx.fontsImg.hndl,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
 
-		auto fontsBarrier = VkMakeImageBarrier2( imguiVkCtx.fontsImg.hndl,
+		VkImageMemoryBarrier2 fontsBarrier[] = { VkMakeImageBarrier2( imguiVkCtx.fontsImg.hndl,
 												 VK_ACCESS_2_TRANSFER_WRITE_BIT,
 												 VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 												 VK_ACCESS_2_SHADER_READ_BIT,
 												 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
 												 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 												 VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
-												 VK_IMAGE_ASPECT_COLOR_BIT );
-		VkDependencyInfo dependency = { 
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.imageMemoryBarrierCount = 1,
-			.pImageMemoryBarriers = &fontsBarrier
-		};
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependency );
+												 VK_IMAGE_ASPECT_COLOR_BIT ) };
+
+		thisFrameCmdBuffer.CmdPipelineBarriers( {}, fontsBarrier );
 
 		VkUploadResources( thisVFrame.cmdBuff, entities, currentFrameIdx );
 		rescUploaded = 1;
@@ -3244,19 +3257,15 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	auto colorWrite = VkMakeAttachemntInfo( renderPath.colorView, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
 	auto colorRead = VkMakeAttachemntInfo( renderPath.colorView, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 
+	u32 imgIdx;
 	{
 		vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
 
-		VkViewport viewport = { 0, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0, 1.0f };
+		VkViewport viewport = { 0.0f, ( float ) vk.sc.height, ( float ) vk.sc.width, -( float ) vk.sc.height, 0.0f, 1.0f };
 		vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &viewport );
+		VkRect2D scissor = { { 0, 0 }, { vk.sc.width, vk.sc.height } };
 
-		VkClearValue clearVals[ 2 ] = {};
-
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, 
-			VK_PIPELINE_BIND_POINT_GRAPHICS, 
-			vk.globalLayout,
-			0, 1, &vk.descManager.set, 0, 0 );
+		thisFrameCmdBuffer.CmdBindBindlessDescriptorSet( VK_PIPELINE_BIND_POINT_GRAPHICS );
 
 		VkImageMemoryBarrier2 acquireDepthBarriers[] = {
 			VkMakeImageBarrier2(
@@ -3268,10 +3277,24 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 				VK_IMAGE_ASPECT_DEPTH_BIT ),
 		};
-		VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-		dep.imageMemoryBarrierCount = std::size( acquireDepthBarriers );
-		dep.pImageMemoryBarriers = acquireDepthBarriers;
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dep );
+		thisFrameCmdBuffer.CmdPipelineBarriers( {}, acquireDepthBarriers );
+
+		struct { u64 vtxAddr, transfAddr, camIdx; } zPrepassPush = { 
+			globVertexBuff.devicePointer, instDescBuff.devicePointer, thisVFrame.frameDescIdx };
+
+		DrawIndexedIndirectMerged(
+			thisVFrame.cmdBuff,
+			rndCtx.gfxZPrepass,
+			0,
+			&depthWrite,
+			vk.globalLayout,
+			indirectMergedIndexBuff,
+			drawMergedCmd,
+			drawMergedCountBuff,
+			&zPrepassPush,
+			sizeof(zPrepassPush),
+			scissor
+		);
 
 		VkImageMemoryBarrier2 acquireColBarriers[] = {
 			VkMakeImageBarrier2(
@@ -3284,28 +3307,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 				VK_IMAGE_ASPECT_COLOR_BIT ),
 		};
-		VkDependencyInfo depCol = { 
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.imageMemoryBarrierCount = std::size( acquireColBarriers ),
-			.pImageMemoryBarriers = acquireColBarriers
-		};
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &depCol );
-
-		struct { u64 vtxAddr, transfAddr, camIdx; } zPrepassPush = { 
-			globVertexBuff.devicePointer, instDescBuff.devicePointer, thisVFrame.frameDescIdx };
-
-		DrawIndexedIndirectMerged(
-			thisVFrame.cmdBuff,
-			gfxZPrepass,
-			0,
-			&depthWrite,
-			vk.globalLayout,
-			indirectMergedIndexBuff,
-			drawMergedCmd,
-			drawMergedCountBuff,
-			&zPrepassPush,
-			sizeof(zPrepassPush)
-		);
+		thisFrameCmdBuffer.CmdPipelineBarriers( {}, acquireColBarriers );
 
 		DebugDrawPass(
 			thisVFrame.cmdBuff,
@@ -3314,20 +3316,15 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			&depthRead,
 			vkDbgCtx.dbgTrisBuff,
 			vkDbgCtx.pipeProg,
+			scissor,
 			frameData.mainProjView,
 			{ 0,boxTrisVertexCount } );
 
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff, 
-			VK_PIPELINE_BIND_POINT_COMPUTE, 
-			vk.globalLayout,
-			0, 1, 
-			&vk.descManager.set, 0, 0 );
+		thisFrameCmdBuffer.CmdBindBindlessDescriptorSet( VK_PIPELINE_BIND_POINT_COMPUTE );
 
 		DepthPyramidMultiPass(
-			thisVFrame.cmdBuff,
+			thisFrameCmdBuffer,
 			rndCtx.compHiZPipeline,
-			renderPath.quadMinSampler,
 			depthTarget,
 			renderPath.depthSrv,
 			depthPyramid,
@@ -3339,24 +3336,21 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		 );
 
 
-		VkBufferMemoryBarrier2 clearDrawCountBarrier = VkMakeBufferBarrier2(
+		VkBufferMemoryBarrier2 clearDrawCountBarrier[] = { VkMakeBufferBarrier2(
 			//drawCountBuff.hndl,
 			drawMergedCountBuff.hndl,
 			VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
 			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT );
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT ) };
 
-		VkDependencyInfo dependencyClear = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-		dependencyClear.bufferMemoryBarrierCount = 1;
-		dependencyClear.pBufferMemoryBarriers = &clearDrawCountBarrier;
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependencyClear );
+		thisFrameCmdBuffer.CmdPipelineBarriers( clearDrawCountBarrier, {} );
 
 		// TODO: Aaltonen double pass
 		CullPass( 
-			thisVFrame.cmdBuff, 
+			thisFrameCmdBuffer, 
 			rndCtx.compPipeline, 
-			cullCompProgram, 
+			{32, 1, 1},
 			depthPyramid, 
 			renderPath.quadMinSampler,
 			thisVFrame.frameDescIdx,
@@ -3365,11 +3359,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		);
 
 
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff,
-			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			vk.globalLayout,
-			0, 1, &vk.descManager.set, 0, 0 );
+		thisFrameCmdBuffer.CmdBindBindlessDescriptorSet( VK_PIPELINE_BIND_POINT_GRAPHICS );
 
 		//DrawIndexedIndirectMerged(
 		//	thisVFrame.cmdBuff,
@@ -3405,7 +3395,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			drawMergedCmd,
 			drawMergedCountBuff,
 			&shadingPush,
-			sizeof(shadingPush)
+			sizeof(shadingPush),
+			scissor
 		);
 
 		DebugDrawPass(
@@ -3415,6 +3406,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			&depthRead,
 			vkDbgCtx.dbgTrisBuff,
 			vkDbgCtx.pipeProg,
+			scissor,
 			frameData.activeProjView,
 			{ 0,boxTrisVertexCount } );
 
@@ -3434,6 +3426,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 						   0,
 						   vkDbgCtx.dbgLinesBuff,
 						   vkDbgCtx.pipeProg,
+						   scissor,
 						   frameData.activeProjView,
 						   drawRange );
 
@@ -3446,13 +3439,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 								  drawCmdAabbsBuff,
 								  drawCountDbgBuff.hndl,
 								  dbgDrawProgram,
-								  frameData.activeProjView );
+								  frameData.activeProjView, scissor );
 			}
 
 		}
 
-		vkCmdFillBuffer( thisVFrame.cmdBuff, shaderGlobalsBuff.hndl, 0, shaderGlobalsBuff.size, 0u );
-		vkCmdFillBuffer( thisVFrame.cmdBuff, shaderGlobalSyncCounterBuff.hndl, 0, shaderGlobalSyncCounterBuff.size, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( shaderGlobalsBuff, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( shaderGlobalSyncCounterBuff, 0u );
 
 		VkBufferMemoryBarrier2 zeroInitGlobals[] = {
 			VkMakeBufferBarrier2( shaderGlobalsBuff.hndl,
@@ -3466,21 +3459,16 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 														VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
 														VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT )
 		};
-		VkImageMemoryBarrier2 hrdColTargetAcquire = VkMakeImageBarrier2( colorTarget.hndl,
+		VkImageMemoryBarrier2 hrdColTargetAcquire[] = { VkMakeImageBarrier2( colorTarget.hndl,
 																		 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
 																		 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 																		 VK_ACCESS_2_SHADER_READ_BIT,
 																		 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 																		 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 																		 VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
-																		 VK_IMAGE_ASPECT_COLOR_BIT );
+																		 VK_IMAGE_ASPECT_COLOR_BIT ) };
 
-		VkDependencyInfo dependencyAcquire = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-		dependencyAcquire.imageMemoryBarrierCount = 1;
-		dependencyAcquire.pImageMemoryBarriers = &hrdColTargetAcquire;
-		dependencyAcquire.bufferMemoryBarrierCount = std::size( zeroInitGlobals );
-		dependencyAcquire.pBufferMemoryBarriers = zeroInitGlobals;
-		vkCmdPipelineBarrier2(  thisVFrame.cmdBuff, &dependencyAcquire );
+		thisFrameCmdBuffer.CmdPipelineBarriers( zeroInitGlobals, hrdColTargetAcquire );
 
 		AverageLuminancePass(
 			thisVFrame.cmdBuff,
@@ -3491,39 +3479,31 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			renderPath.colorView,
 			frameData.elapsedSeconds );
 
+		
+		VK_CHECK( vkAcquireNextImageKHR( dc.device, vk.sc.swapchain, UINT64_MAX, thisVFrame.canGetImgSema, 0, &imgIdx ) );
+
 		// NOTE: we need exec dependency from acquireImgKHR ( col out + compute shader ) to compute shader
-		VkImageMemoryBarrier2 scWriteBarrier =
-			VkMakeImageBarrier2( sc.imgs[ imgIdx ],
+		VkImageMemoryBarrier2 scWriteBarrier[] =
+		{ VkMakeImageBarrier2( vk.sc.imgs[ imgIdx ],
 								 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 								 0,
 								 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 								 VK_IMAGE_LAYOUT_UNDEFINED,
 								 VK_IMAGE_LAYOUT_GENERAL,
-								 VK_IMAGE_ASPECT_COLOR_BIT );
+								 VK_IMAGE_ASPECT_COLOR_BIT ) };
 
-		VkBufferMemoryBarrier2 avgLumReadBarrier =
-			VkMakeBufferBarrier2( renderPath.pAvgLumBuff->hndl,
-								  VK_ACCESS_2_SHADER_WRITE_BIT, 
+		VkBufferMemoryBarrier2 avgLumReadBarrier[] =
+		{ VkMakeBufferBarrier2( renderPath.pAvgLumBuff->hndl,
+								  VK_ACCESS_2_SHADER_WRITE_BIT,
 								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-								  VK_ACCESS_2_SHADER_READ_BIT, 
-								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT );
+								  VK_ACCESS_2_SHADER_READ_BIT,
+								  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ) };
 
-		VkDependencyInfo dependency2 = { 
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.bufferMemoryBarrierCount = 1,
-			.pBufferMemoryBarriers = &avgLumReadBarrier,
-			.imageMemoryBarrierCount = 1,
-			.pImageMemoryBarriers = &scWriteBarrier
-		};
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependency2 );
+		thisFrameCmdBuffer.CmdPipelineBarriers( avgLumReadBarrier, scWriteBarrier );
 
-		vkCmdBindDescriptorSets(
-			thisVFrame.cmdBuff,
-			VK_PIPELINE_BIND_POINT_COMPUTE,
-			vk.globalLayout,
-			0, 1, &vk.descManager.set, 0, 0 );
+		thisFrameCmdBuffer.CmdBindBindlessDescriptorSet( VK_PIPELINE_BIND_POINT_COMPUTE );
 
-		VK_CHECK( VK_INTERNAL_ERROR( ( colorTarget.width != sc.width ) || ( colorTarget.height != sc.height ) ) );
+		VK_CHECK( VK_INTERNAL_ERROR( ( colorTarget.width != vk.sc.width ) || ( colorTarget.height != vk.sc.height ) ) );
 		TonemappingGammaPass( thisVFrame.cmdBuff,
 							  rndCtx.compTonemapPipe,
 							  renderPath.colSrv,
@@ -3541,7 +3521,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 								 VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
 								 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 								 VK_IMAGE_ASPECT_COLOR_BIT ),
-			VkMakeImageBarrier2( sc.imgs[ imgIdx ],
+			VkMakeImageBarrier2( vk.sc.imgs[ imgIdx ],
 								 VK_ACCESS_2_SHADER_WRITE_BIT,
 								 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 								 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
@@ -3550,47 +3530,41 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 								 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 								 VK_IMAGE_ASPECT_COLOR_BIT ) };
 
-		VkDependencyInfo dependency3 = { 
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.imageMemoryBarrierCount = std::size( compositionEndBarriers ),
-			.pImageMemoryBarriers = compositionEndBarriers
-		};
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependency3 );
+		thisFrameCmdBuffer.CmdPipelineBarriers( {}, compositionEndBarriers );
 
-		VkViewport uiViewport = { 0, 0, ( float ) sc.width, ( float ) sc.height, 0, 1.0f };
+		VkViewport uiViewport = { 0, 0, ( float ) vk.sc.width, ( float ) vk.sc.height, 0, 1.0f };
 		vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &uiViewport );
 
 		auto swapchainUIRW = VkMakeAttachemntInfo( 
-			sc.imgViews[ imgIdx ], VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
+			vk.sc.imgViews[ imgIdx ], VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 		ImguiDrawUiPass( 
 			imguiVkCtx, 
 			thisVFrame.cmdBuff, 
 			&swapchainUIRW,
 			0,
+			scissor,
 			currentFrameIdx );
 
 
-		VkImageMemoryBarrier2 presentWaitBarrier = VkMakeImageBarrier2(
-			sc.imgs[ imgIdx ],
+		VkImageMemoryBarrier2 presentWaitBarrier[] = { VkMakeImageBarrier2(
+			vk.sc.imgs[ imgIdx ],
 			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
 			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 			0, 0,
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-			VK_IMAGE_ASPECT_COLOR_BIT );
+			VK_IMAGE_ASPECT_COLOR_BIT ) };
 
-		VkDependencyInfo dependencyPresent = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-		dependencyPresent.imageMemoryBarrierCount = 1;
-		dependencyPresent.pImageMemoryBarriers = &presentWaitBarrier;
-		vkCmdPipelineBarrier2( thisVFrame.cmdBuff, &dependencyPresent );
+		thisFrameCmdBuffer.CmdPipelineBarriers( {}, presentWaitBarrier );
 	}
 
 	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
 	VkResetGpuTimer( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
-	VK_CHECK( vkEndCommandBuffer( thisVFrame.cmdBuff ) );
+
+	thisFrameCmdBuffer.CmdEndCmbBuffer();
 
 
-	VkSemaphore signalSemas[] = { sc.canPresentSemas[ imgIdx ], rndCtx.timelineSema };
+	VkSemaphore signalSemas[] = { vk.sc.canPresentSemas[ imgIdx ], rndCtx.timelineSema };
 	u64 signalValues[] = { 0, rndCtx.vFrameIdx }; // NOTE: this is the next frame val
 	
 	VkTimelineSemaphoreSubmitInfo timelineInfo = { 
@@ -3617,9 +3591,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	VkPresentInfoKHR presentInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &sc.canPresentSemas[ imgIdx ],
+		.pWaitSemaphores = &vk.sc.canPresentSemas[ imgIdx ],
 		.swapchainCount = 1,
-		.pSwapchains = &sc.swapchain,
+		.pSwapchains = &vk.sc.swapchain,
 		.pImageIndices = &imgIdx
 	};
 	VK_CHECK( vkQueuePresentKHR( dc.gfxQueue, &presentInfo ) );
@@ -3647,5 +3621,3 @@ void VkBackendKill()
 #undef HTVK_NO_SAMPLER_REDUCTION
 #undef VK_APPEND_DESTROYER
 #undef VK_CHECK
-
-

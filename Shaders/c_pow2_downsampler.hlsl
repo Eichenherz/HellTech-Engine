@@ -1,9 +1,7 @@
-#define __HLSL__
-#include "bindless.hlsli"
+#include "r_data_structs2.h"
 
 [[vk::push_constant]]
-struct 
-{
+struct {
 	float2 imgSize;
 	uint samplerIdx;
 	uint inImgIdx;
@@ -16,12 +14,12 @@ struct
 void Pow2DownsamplerCsMain( uint3 globalThreadDispatchID : SV_DispatchThreadID )
 {
 	uint2 pos = globalThreadDispatchID.xy;
-	float2 uv = (float2(pos) + 0.5f) / pushBlock.imgSize;
+	float2 uv = ( float2( pos ) + 0.5f ) / pushBlock.imgSize;
 	
-	Texture2D<float> srcLevelTex = gTexture2D_float[pushBlock.inImgIdx];
-	SamplerState quadMinSampler = samplers[pushBlock.samplerIdx];
-	float depth = srcLevelTex.SampleLevel(quadMinSampler, uv, pushBlock.inImgLod);
+	Texture2D<float> srcLevelTex = gTexture2D_float[ pushBlock.inImgIdx ];
+	SamplerState quadMinSampler = samplers[ pushBlock.samplerIdx ];
+	float depth = srcLevelTex.SampleLevel( quadMinSampler, uv, pushBlock.inImgLod );
 	
-	RWTexture2D<float> dstLevelTex = gRWTexture2D_float[pushBlock.outImgIdx];
+	RWTexture2D<float> dstLevelTex = gRWTexture2D_float[ pushBlock.outImgIdx ];
 	dstLevelTex[ pos ] = depth;
 }

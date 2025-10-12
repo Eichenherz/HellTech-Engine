@@ -1,4 +1,4 @@
-#include "bindless.hlsli"
+#include "r_data_structs2.h"
 
 // NOTE: taken from Lottes 2016, "Advanced Techniques and Optimization of HDR Color Pipelines"
 float TonemapLottesCurve( float hdrLum )

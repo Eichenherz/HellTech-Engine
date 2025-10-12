@@ -63,7 +63,7 @@
     <CharacterSet>MultiByte</CharacterSet>
     <EnableUnitySupport>false</EnableUnitySupport>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
-    <EnableASAN>true</EnableASAN>
+    <EnableASAN>false</EnableASAN>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -306,6 +306,7 @@
     <ClInclude Include="miniz.h" />
     <ClInclude Include="r_data_structs.h" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
+    <ClInclude Include="Shaders\r_data_structs2.h" />
     <ClInclude Include="spng.h" />
     <ClInclude Include="System\sys_file.h" />
     <ClInclude Include="System\sys_filesystem.h" />
@@ -329,10 +330,6 @@
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
-    <CustomBuild Include="Shaders\shdr.vert.glsl">
-      <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
-    </CustomBuild>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
@@ -340,18 +337,6 @@
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\avg_luminance.comp.glsl">
-      <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\tonemap_gamma.comp.glsl">
-      <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\f_pass_col.frag.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
@@ -388,16 +373,6 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\v_light_cull.vert.glsl">
-      <FileType>Document</FileType>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\f_light_cull.frag.glsl">
-      <FileType>Document</FileType>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
     <CustomBuild Include="imgui\shader_imgui.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
@@ -411,7 +386,7 @@
     <None Include="dxc_compile_shaders.py" />
     <None Include="packages.config" />
     <None Include="run_dxc_compile.bat" />
-    <None Include="Shaders\bindless.hlsli" />
+    <None Include="Shaders\f_pass_col.frag.glsl" />
     <None Include="Shaders\imgui_vert.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
@@ -438,6 +413,21 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\c_tonemapping_gamma.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\v_z_prepass.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\v_debug_draw.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\f_col_pass.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

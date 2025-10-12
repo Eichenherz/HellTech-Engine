@@ -161,16 +161,16 @@
     <ClInclude Include="vk_pso.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Shaders\r_data_structs2.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl" />
-    <CustomBuild Include="Shaders\tonemap_gamma.comp.glsl" />
-    <CustomBuild Include="Shaders\f_pass_col.frag.glsl" />
     <CustomBuild Include="Shaders\avg_luminance.comp.glsl" />
     <CustomBuild Include="Shaders\v_cpu_dbg_draw.vert.glsl" />
     <CustomBuild Include="Shaders\pbr.frag.glsl" />
-    <CustomBuild Include="Shaders\shdr.vert.glsl" />
     <CustomBuild Include="Shaders\c_id_expander.comp.glsl" />
     <CustomBuild Include="Shaders\c_meshlet_cull.comp.glsl" />
     <CustomBuild Include="Shaders\box_meshlet_draw.vert.glsl" />
@@ -179,8 +179,6 @@
     </CustomBuild>
     <CustomBuild Include="Shaders\comp_expand_merge.comp.glsl" />
     <CustomBuild Include="Shaders\v_z_prepass.vert.glsl" />
-    <CustomBuild Include="Shaders\v_light_cull.vert.glsl" />
-    <CustomBuild Include="Shaders\f_light_cull.frag.glsl" />
     <CustomBuild Include="imgui\shader_imgui.vert.glsl" />
     <CustomBuild Include="imgui\shader_imgui.frag.glsl" />
   </ItemGroup>
@@ -191,9 +189,12 @@
     <None Include="run_dxc_compile.bat">
       <Filter>Source Files</Filter>
     </None>
-    <None Include="Shaders\bindless.hlsli" />
     <None Include="Shaders\imgui_frag.hlsl" />
     <None Include="Shaders\c_pow2_downsampler.hlsl" />
     <None Include="Shaders\c_tonemapping_gamma.hlsl" />
+    <None Include="Shaders\f_pass_col.frag.glsl" />
+    <None Include="Shaders\v_z_prepass.hlsl" />
+    <None Include="Shaders\v_debug_draw.hlsl" />
+    <None Include="Shaders\f_col_pass.hlsl" />
   </ItemGroup>
 </Project>
