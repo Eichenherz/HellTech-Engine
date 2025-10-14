@@ -19,17 +19,16 @@ struct vk_buffer
 {
 	vk_allocation   mem;
 	VkBuffer		hndl;
-	u64				size; // TODO: store elem count ?
-	u8*             hostVisible; // TODO: remove ?
+	u64				sizeInBytes; 
+	u8*             hostVisible;
 	u64				devicePointer;
 	VkBufferUsageFlags usgFlags;
-	u32             stride;
 };
 
 inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
 {
 	//return VkDescriptorBufferInfo{ hndl,offset,size };
-	return VkDescriptorBufferInfo{ b.hndl,0,b.size };
+	return VkDescriptorBufferInfo{ b.hndl,0,b.sizeInBytes };
 }
 
 struct vk_image
@@ -96,7 +95,6 @@ inline static VkImageView
 VkMakeImgView(
 	VkDevice		vkDevice,
 	VkImage			vkImg,
-	VkImageAspectFlags aspectMask,
 	VkFormat		imgFormat,
 	u32				mipLevel,
 	u32				levelCount,
@@ -104,13 +102,14 @@ VkMakeImgView(
 	u32				arrayLayer = 0,
 	u32				layerCount = 1
 ){
+	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( imgFormat );
 	VkImageViewCreateInfo viewInfo = { 
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = vkImg,
 		.viewType = imgViewType,
 		.format = imgFormat,
 		.subresourceRange = {
-			.aspectMask = aspectMask,
+			.aspectMask = aspectFlags,
 			.baseMipLevel = mipLevel,
 			.levelCount = levelCount,
 			.baseArrayLayer = arrayLayer,

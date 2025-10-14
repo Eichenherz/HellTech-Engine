@@ -149,8 +149,6 @@ void GenerateNext4Mips( uint x, uint y, uint mipIdx, ivec2 workGroupID )
 
 void main()
 {
-	// TODO: reset globalCounter in shader ?
-	//if( ( gl_GlobalInvocationID.x == 0 ) && ( gl_GlobalInvocationID.y == 0 ) ) globalAtomicCounter = 0;
 	// NOTE: map 64x1 to 8x8 for all texture chunks
 	uint localInvMod = gl_LocalInvocationIndex % 64;
 	

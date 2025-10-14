@@ -164,6 +164,12 @@
     <ClInclude Include="Shaders\r_data_structs2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="vk_descriptor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_swapchain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
@@ -193,8 +199,9 @@
     <None Include="Shaders\c_pow2_downsampler.hlsl" />
     <None Include="Shaders\c_tonemapping_gamma.hlsl" />
     <None Include="Shaders\f_pass_col.frag.glsl" />
-    <None Include="Shaders\v_z_prepass.hlsl" />
-    <None Include="Shaders\v_debug_draw.hlsl" />
+    <None Include="Shaders\v_z_prepass.hlsl.null" />
+    <None Include="Shaders\v_debug_draw.hlsl.null" />
     <None Include="Shaders\f_col_pass.hlsl" />
+    <None Include="Shaders\c_avg_luminance.hlsl" />
   </ItemGroup>
 </Project>

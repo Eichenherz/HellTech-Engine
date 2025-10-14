@@ -47,7 +47,7 @@ struct vk_shader2
 
 	~vk_shader2()
 	{
-		vkDestroyShaderModule( dc.device, shaderModule, 0 );
+		//vkDestroyShaderModule( vk.pDc->device, shaderModule, 0 );
 	}
 };
 
@@ -58,7 +58,6 @@ inline static vk_shader2 VkLoadShader2( const char* shaderPath, VkDevice vkDevic
 	spv_reflect::ShaderModule reflInfo = SpvMakeReflectedShaderModule( spvByteCode );
 	const char* pEntryPointName = reflInfo.GetEntryPointName();
 	VkShaderStageFlagBits shaderStage = ( VkShaderStageFlagBits ) reflInfo.GetShaderStage();
-
 	VkShaderModule sm = VkMakeShaderModule( vkDevice, ( const u32* ) std::data( spvByteCode ), std::size( spvByteCode ) );
 
 	vk_shader2 shader = { .shaderModule = sm, .stage = shaderStage };
@@ -409,14 +408,21 @@ VkPipeline VkMakeComputePipeline(
 	VkPipelineLayout	vkPipelineLayout,
 	VkShaderModule		cs,
 	vk_specializations	consts,
+	u32                 waveLaneCount,
 	const char*			pEntryPointName = SHADER_ENTRY_POINT,
 	const char*         pName = ""
 ){
 	std::vector<VkSpecializationMapEntry> specializations;
 	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
 
+	VkPipelineShaderStageRequiredSubgroupSizeCreateInfo subgroupSizeInfo = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+		.requiredSubgroupSize = waveLaneCount
+	};
+
 	VkPipelineShaderStageCreateInfo stage = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		.pNext = &subgroupSizeInfo,
 		.stage = VK_SHADER_STAGE_COMPUTE_BIT,
 		.module = cs,
 		.pName = pEntryPointName,

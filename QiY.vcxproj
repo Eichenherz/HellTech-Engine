@@ -313,12 +313,14 @@
     <ClInclude Include="System\Win32\win32_utils.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
+    <ClInclude Include="vk_descriptor.h" />
     <ClInclude Include="vk_device.h" />
     <ClInclude Include="vk_error.h" />
     <ClInclude Include="vk_memory.h" />
     <ClInclude Include="vk_procs.h" />
     <ClInclude Include="vk_pso.h" />
     <ClInclude Include="vk_resources.h" />
+    <ClInclude Include="vk_swapchain.h" />
     <ClInclude Include="vk_timer.h" />
   </ItemGroup>
   <ItemGroup>
@@ -417,17 +419,22 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\v_z_prepass.hlsl">
+    <None Include="Shaders\v_z_prepass.hlsl.null">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\v_debug_draw.hlsl">
+    <None Include="Shaders\v_debug_draw.hlsl.null">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\f_col_pass.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\c_avg_luminance.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

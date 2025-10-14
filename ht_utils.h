@@ -1,10 +1,11 @@
 #ifndef __HT_UTILS_H__
 #define __HT_UTILS_H__
 
+#include <span>
 #include <algorithm>
 
 #include "core_types.h"
-#include "assert.h"
+#include <assert.h>
 
 #define GB (u64)( 1 << 30 )
 #define MB (u64)( 1 << 20 )
@@ -44,5 +45,11 @@ inline u64 GetImgMipCount( u64 width, u64 height, u64 mipLevels )
 	u64 maxDim = std::max( width, height );
 
 	return std::min( (u64) floor( log2( maxDim ) ), mipLevels );
+}
+
+template <typename T>
+inline std::span<const u8> CastSpanAsU8ReadOnly( std::span<T> span )
+{
+	return { ( const uint8_t* )( std::data( span ) ), span.size_bytes() };
 }
 #endif // !__HT_UTILS_H__

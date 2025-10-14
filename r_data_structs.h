@@ -247,7 +247,7 @@ const uint VK_GLOBAL_DESC_SET = 1;
 #ifdef BINDLESS
 
 layout( binding = 0 ) uniform sampler samplers[];
-layout( binding = 1 ) readonly buffer global { global_data g; } ssbos[];
+layout( binding = 1 ) buffer global { global_data g; } ssbos[];
 layout( binding = 2 ) writeonly uniform coherent image2D storageImages[];
 layout( binding = 3 ) uniform texture2D sampledImages[];
 

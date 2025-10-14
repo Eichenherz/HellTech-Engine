@@ -15,6 +15,101 @@
 #include "sys_os_api.h"
 #include <type_traits>
 
+struct vk_queue
+{
+	VkQueue	hndl;
+	u32	index;
+	VkQueueFlags familyFlags;
+	bool canPresent;
+};
+
+void VkMakeCreateQueueInfoWithProperties( 
+	std::span<VkQueueFamilyProperties> queueFamProps, 
+	VkQueueFlags desiredProps, 
+	bool canPresent,
+	VkPhysicalDevice gpu,
+	VkSurfaceKHR vkSurf,
+	const float* pQueuePriorities,
+	VkDeviceQueueCreateInfo& outCreateInfo,
+	VkQueueFlags& outQueueFlags
+) {
+	u32 desiredQueueIdx = -1;
+	VkQueueFlags queueFlags;
+
+	for( u32 qIdx = 0; qIdx < std::size( queueFamProps ); ++qIdx )
+	{
+		if( queueFamProps[ qIdx ].queueCount == 0 ) continue;
+
+		VkQueueFlags familyFlags = queueFamProps[ qIdx ].queueFlags; 
+		if( ( familyFlags & desiredProps ) == desiredProps )
+		{
+			if( canPresent )
+			{
+				VkBool32 present = 0;
+				vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qIdx, vkSurf, &present );
+				VK_CHECK( VK_INTERNAL_ERROR( !present ) );
+			}
+			desiredQueueIdx = qIdx;
+			queueFlags = familyFlags;
+			break;
+		}
+	}
+
+	VK_CHECK( VK_INTERNAL_ERROR( ( desiredQueueIdx == u32( -1 ) ) ) );
+	VkDeviceQueueCreateInfo createInfo = {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = desiredQueueIdx,
+		.queueCount = 1,
+		.pQueuePriorities = pQueuePriorities
+	};
+
+	outCreateInfo = createInfo;
+	outQueueFlags = queueFlags;
+}
+
+vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex, VkQueueFlags desiredProps, bool canPresent )
+{
+	VkQueue	hndl;
+	vkGetDeviceQueue( vkDevice, queueFamilyIndex, 0, &hndl );
+	VK_CHECK( VK_INTERNAL_ERROR( !hndl ) );
+
+	return {
+		.hndl = hndl,
+		.index = queueFamilyIndex,
+		.familyFlags = desiredProps,
+		.canPresent = canPresent
+	};
+}
+
+void VkQueueSubmit( 
+	vk_queue* vkQueue, 
+	std::span<VkSemaphore> waitSemas,
+	std::span<VkCommandBuffer> cmdBuffs,
+	std::span<VkSemaphore> signalSemas,
+	std::span<u64> signalValues,
+	VkPipelineStageFlags waitDstStageMsk 
+) {
+	VkTimelineSemaphoreSubmitInfo timelineInfo = { 
+		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.signalSemaphoreValueCount = (u32) std::size( signalValues ),
+		.pSignalSemaphoreValues = std::data( signalValues ),
+	};
+
+	VkSubmitInfo submitInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = &timelineInfo,
+		.waitSemaphoreCount = (u32) std::size( waitSemas ),
+		.pWaitSemaphores = std::data( waitSemas ),
+		.pWaitDstStageMask = &waitDstStageMsk,
+		.commandBufferCount = (u32) std::size( cmdBuffs ),
+		.pCommandBuffers = std::data( cmdBuffs ),
+		.signalSemaphoreCount = (u32) std::size( signalSemas ),
+		.pSignalSemaphores = std::data( signalSemas ),
+	};
+	// NOTE: queue submit has implicit host sync for trivial stuff so in theroy we shouldn't worry about memcpy
+	VK_CHECK( vkQueueSubmit( vkQueue->hndl, 1, &submitInfo, 0 ) );
+}
+
 struct vk_device_ctx
 {
 	vk_mem_arena deviceLocalArena;
@@ -22,15 +117,12 @@ struct vk_device_ctx
 	vk_mem_arena stagingArena;
 	vk_mem_arena imgArena;
 
+	vk_queue		gfxQueue;
+
 	VkPhysicalDeviceProperties gpuProps;
 	VkPhysicalDevice gpu;
 	VkDevice		device;
-	VkQueue			gfxQueue;
-	VkQueue			compQueue;
-	VkQueue			transfQueue;
-	u32				gfxQueueIdx;
-	u32				compQueueIdx;
-	u32				transfQueueIdx;
+	
 	float           timestampPeriod;
 	u8				waveSize;
 };
@@ -52,6 +144,7 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 		VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 		VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME,
+		//VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME,
 		//VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
 	};
 
@@ -137,51 +230,23 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	u32 queueFamNum = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, 0 );
 	VK_CHECK( VK_INTERNAL_ERROR( !queueFamNum ) );
-	std::vector<VkQueueFamilyProperties>  queueFamProps( queueFamNum );
+	std::vector<VkQueueFamilyProperties> queueFamProps( queueFamNum );
 	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, std::data( queueFamProps ) );
 
 	constexpr VkQueueFlags careAboutQueueTypes = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
-	constexpr VkQueueFlags presentQueueFlags = careAboutQueueTypes ^ VK_QUEUE_TRANSFER_BIT;
 
-	u32 qGfxIdx = -1, qCompIdx = -1, qTransfIdx = -1;
-
-	for( u32 qIdx = 0; qIdx < queueFamNum; ++qIdx )
-	{
-		if( queueFamProps[ qIdx ].queueCount == 0 ) continue;
-
-		VkQueueFlags familyFlags = queueFamProps[ qIdx ].queueFlags & careAboutQueueTypes;
-		if( familyFlags & presentQueueFlags )
-		{
-			VkBool32 present = 0;
-			vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qIdx, vkSurf, &present );
-			VK_CHECK( VK_INTERNAL_ERROR( !present ) );
-		}
-		if( familyFlags & VK_QUEUE_GRAPHICS_BIT ) qGfxIdx = qIdx;
-		else if( familyFlags & VK_QUEUE_COMPUTE_BIT ) qCompIdx = qIdx;
-		else if( familyFlags & VK_QUEUE_TRANSFER_BIT ) qTransfIdx = qIdx;
-	}
-
-	VK_CHECK( VK_INTERNAL_ERROR( ( qGfxIdx == u32( -1 ) ) || ( qCompIdx == u32( -1 ) ) || ( qTransfIdx == u32( -1 ) ) ) );
-
-	u32 queueFamIndices[] = { qGfxIdx, qCompIdx, qTransfIdx };
 	float queuePriorities = 1.0f;
-	VkDeviceQueueCreateInfo queueInfos[ 3 ] = {};
-	for( u32 qi = 0; qi < std::size( queueInfos ); ++qi )
-	{
-		queueInfos[ qi ] = {
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.queueFamilyIndex = queueFamIndices[ qi ],
-			.queueCount = 1,
-			.pQueuePriorities = &queuePriorities,
-		};
-	}
+	VkDeviceQueueCreateInfo queueCreateInfos[1] = {};
+	VkQueueFlags queueFlags;
+	VkMakeCreateQueueInfoWithProperties(
+		queueFamProps, careAboutQueueTypes, true, gpu, vkSurf, &queuePriorities, queueCreateInfos[ 0 ], queueFlags );
 
 	VkDevice vkDevice;
 	VkDeviceCreateInfo deviceInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &gpuFeatures,
-		.queueCreateInfoCount = std::size( queueInfos ),
-		.pQueueCreateInfos = &queueInfos[ 0 ],
+		.queueCreateInfoCount = std::size( queueCreateInfos ),
+		.pQueueCreateInfos = &queueCreateInfos[ 0 ],
 		.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS ),
 		.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS,
 	};
@@ -191,17 +256,9 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 
 	VkLoadDeviceProcs( vkDevice );
 
-	vkGetDeviceQueue( vkDevice, queueInfos[ 0 ].queueFamilyIndex, 0, &vkDc.gfxQueue );
-	vkGetDeviceQueue( vkDevice, queueInfos[ 1 ].queueFamilyIndex, 0, &vkDc.compQueue );
-	vkGetDeviceQueue( vkDevice, queueInfos[ 2 ].queueFamilyIndex, 0, &vkDc.transfQueue );
-	VK_CHECK( VK_INTERNAL_ERROR( !vkDc.gfxQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !vkDc.compQueue ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !vkDc.transfQueue ) );
+	vkDc.gfxQueue = VkCreateQueue( vkDevice, queueCreateInfos[0].queueFamilyIndex, queueFlags, true );
 
 	vkDc.device = vkDevice;
-	vkDc.gfxQueueIdx = queueInfos[ qGfxIdx ].queueFamilyIndex;
-	vkDc.compQueueIdx = queueInfos[ qCompIdx ].queueFamilyIndex;
-	vkDc.transfQueueIdx = queueInfos[ qTransfIdx ].queueFamilyIndex;
 	vkDc.gpu = gpu;
 	vkDc.gpuProps = gpuProps2.properties;
 	vkDc.timestampPeriod = gpuProps2.properties.limits.timestampPeriod;
@@ -294,11 +351,10 @@ static vk_buffer VkCreateAllocBindBuffer( vk_device_ctx* vkDc, const buffer_info
 	return {
 		.mem = bufferMem,
 		.hndl = vkBuffer,
-		.size = bufferInfo.size,
+		.sizeInBytes = bufferInfo.size,
 		.hostVisible = hostVisible,
 		.devicePointer = devicePointer,
-		.usgFlags = bufferInfo.usage,
-		.stride = (u32) buffInfo.stride,
+		.usgFlags = bufferInfo.usage
 	};
 }
 

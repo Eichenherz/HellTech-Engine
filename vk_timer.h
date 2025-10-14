@@ -25,8 +25,7 @@ struct vk_time_section
 
 	inline ~vk_time_section()
 	{
-		// VK_PIPELINE_STAGE_2_NONE
-		vkCmdWriteTimestamp2( cmdBuff, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, queryPool, queryIdx + 1 );
+		vkCmdWriteTimestamp2( cmdBuff, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, queryPool, queryIdx + 1 );
 	}
 };
 
@@ -73,14 +72,14 @@ inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& 
 
 	vkCmdCopyQueryPoolResults( 
 		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ),
-		VK_QUERY_RESULT_64_BIT );// | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT );
+		VK_QUERY_RESULT_64_BIT );
 
 	const u64* pTimestamps = ( const u64* ) vkTimer.resultBuff.hostVisible;
 	u64 timestampBeg = pTimestamps[ 0 ];
 	u64 timestampEnd = pTimestamps[ 1 ];
 
 	constexpr float nsToMs = 1e-6;
-	return ( timestampEnd - timestampBeg ) / vkTimer.timestampPeriod * nsToMs;
+	return float( timestampEnd - timestampBeg ) * vkTimer.timestampPeriod * nsToMs;
 }
 
 inline void VkResetGpuTimer( VkCommandBuffer cmdBuff, const vk_gpu_timer& timer )

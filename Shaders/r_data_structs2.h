@@ -220,8 +220,26 @@ struct imgui_vertex
 	uint  rgba8Unorm;
 };
 
+struct luminance_histogram
+{
+	uint finalLumSum;
+	uint finalTailValsCount;
+};
 
 #ifndef __cplusplus
+
+#define NUMTHREADS( x, y, z ) \
+    static const uint3 GROUP_SIZE = uint3( x, y, z ); \
+    [numthreads( x, y, z )]
+
+[[vk::ext_builtin_input(/* NumWorkgroups */ 24)]]
+static const uint3 WORK_GROUP_COUNT; // gl_NumWorkGroups
+
+[[vk::ext_builtin_input(/* SubgroupId */ 40)]]
+static const uint WAVE_ID_WITHIN_WG; // gl_SubgroupID
+
+[[vk::ext_builtin_input(/* NumSubgroups */ 38)]]
+static const uint WAVE_COUNT_PER_WG; // gl_NumSubgroups
 
 #define MAX_DESCRIPTOR_COUNT 0xFFFF
 
@@ -247,14 +265,44 @@ struct imgui_vertex
    ITERATE_TEXTURE_TYPES(TEXURE_TYPE_SLOT_GENERATOR, texture_type, slot)
 
 [[vk::binding( 0 )]] SamplerState samplers[MAX_DESCRIPTOR_COUNT];
-[[vk::binding( 1 )]] ByteAddressBuffer storageBuffers[MAX_DESCRIPTOR_COUNT];
+//[[vk::binding( 1 )]] ByteAddressBuffer storageBuffers[MAX_DESCRIPTOR_COUNT];
+[[vk::binding( 1 )]] RWByteAddressBuffer storageBuffers[MAX_DESCRIPTOR_COUNT];
 DEFINE_TEXTURE_TYPES_AND_FORMAT_SLOTS( RWTexture2D, 2 ) 
 DEFINE_TEXTURE_TYPES_AND_FORMAT_SLOTS( Texture2D, 3 ) 
 
 template<typename T>
-T BufferProxy( uint buffIdx, uint idx, uint offset = 0 )
+T BufferLoad( uint buffIdx, uint idx = 0, uint offsetInBytes = 0 )
 {
-	return storageBuffers[ buffIdx ].template Load<T>( ( idx + offset ) * sizeof( T ) );
+	return storageBuffers[ buffIdx ].template Load<T>( idx * sizeof( T ) + offsetInBytes );
+}
+
+template<typename T>
+void BufferStore( uint buffIdx, T value, uint idx = 0, uint offsetInBytes = 0 )
+{
+	storageBuffers[ buffIdx ].Store<T>( idx * sizeof( T ) + offsetInBytes, value );
+}
+
+template<typename T>
+T BufferAtomicAdd( uint buffIdx, T newValue, uint idx = 0, uint offsetInBytes = 0 )
+{
+	T oldValue;
+	//if( is_same<T, uint>() || is_same<T, int>() )
+	//{
+		storageBuffers[ buffIdx ].InterlockedAdd( idx * sizeof( T ) + offsetInBytes, newValue, oldValue );
+	//}
+	//else if( is_same<T, uint64_t>() || is_same<T, int64_t>() )
+	//{
+		//storageBuffersRW[ buffIdx ].InterlockedAdd64( ( idx + offset ) * sizeof( T ), newValue, oldValue );
+	//}
+	//else if( is_same<T, float>() )
+	//{
+		//storageBuffersRW[ buffIdx ].InterlockedAddFloat( ( idx + offset ) * sizeof( T ), newValue, oldValue );
+	//}
+	//else
+	//{
+	//	static_assert(false, "Unsupported atomic type");
+	//}
+	return oldValue;
 }
 
 #endif // !__cplusplus

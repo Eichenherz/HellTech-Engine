@@ -11,8 +11,8 @@ import time
 parser = argparse.ArgumentParser(description="Compile HLSL shaders to SPIR-V")
 parser.add_argument("--src", type=str, default="Shaders", help="Source folder with HLSL files")
 parser.add_argument("--out", type=str, default="bin/SpirV", help="Output folder for SPIR-V")
-parser.add_argument("--sm", type=str, default="6_8", help="Shader Model suffix (default 6_8)")
-parser.add_argument("--dbg", action="store_true", help="Enable debug info")
+parser.add_argument("--sm", type=str, default="6_9", help="Shader Model suffix (default 6_9)")
+parser.add_argument("--dbg", type=bool, default=True, help="Enable debug info")
 parser.add_argument("--opt", type=str, default=None, help="Optimization level (O0, O1, O2, O3). If not set, no optimization flag is used")
 parser.add_argument("--vk", type=str, default="vulkan1.3", help="Vulkan target environment (default vulkan1.3)")
 args = parser.parse_args()
@@ -75,23 +75,24 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
         continue
 
     target = f"{prefix}_{args.sm}"
-    out_file = OUT_DIR / f"{stage}_{entry}.spv"
+    out_file = OUT_DIR / f"{stage}_{entry}"
 
     cmd = [
         DXC,
         "-spirv",
         f"-fspv-target-env={args.vk}",
-        "-fvk-use-dx-layout",
+        "-fspv-use-vulkan-memory-model",
+        #"-fvk-use-dx-layout",
         "-fvk-use-scalar-layout",
         "-enable-16bit-types",
         "-E", entry,
         "-T", target,
         str(shader_path),
-        "-Fo", str(out_file)
+        "-Fo", f"{str(out_file)}.spirv"
     ]
 
     if args.dbg:
-        cmd += ["-Zi"]
+        cmd += ["-Zi", "-Qembed_debug", "-fspv-debug=vulkan-with-source"]
     if args.opt:
         cmd += [f"-{args.opt}"]
 
