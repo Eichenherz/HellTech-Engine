@@ -23,15 +23,9 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer i
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer meshlet_desc_ref{ 
 	meshlet meshlets[]; 
 };
-//layout( binding = 0, scalar ) readonly buffer draw_indir{
-//	draw_indirect drawCmd[];
-//};
-//layout( binding = 1, std430 ) readonly buffer inst_desc{
-//	instance_desc instDescs[];
-//};
-//layout( binding = 2, scalar ) readonly buffer meshlet_desc{ 
-//	meshlet meshlets[]; 
-//};
+layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer compacted_args_ref{
+	compacted_draw_args compactedDrawArgs[];
+};
 
 
 const vec4 BOX_TRIANGLES[] = {

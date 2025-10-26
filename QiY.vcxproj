@@ -290,7 +290,6 @@
     <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="bcn_compressor.h" />
     <ClInclude Include="cgltf.h" />
-    <ClInclude Include="core_lib_api.h" />
     <ClInclude Include="core_types.h" />
     <ClInclude Include="dxc.h" />
     <ClInclude Include="ht_error.h" />
@@ -310,7 +309,7 @@
     <ClInclude Include="spng.h" />
     <ClInclude Include="System\sys_file.h" />
     <ClInclude Include="System\sys_filesystem.h" />
-    <ClInclude Include="System\Win32\win32_utils.h" />
+    <ClInclude Include="System\Win32\win32_err.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="vk_descriptor.h" />

@@ -19,8 +19,11 @@
 #include <DirectXMath.h>
 
 
+struct view_data;
+
 struct frame_data
 {
+	std::vector<view_data> views;
 	DirectX::XMFLOAT4X4A	proj;
 	DirectX::XMFLOAT4X4A	mainView;
 	DirectX::XMFLOAT4X4A	activeView;
@@ -72,7 +75,16 @@ const float PI = 3.14159265359;
 
 #endif
 
-// TODO: use mat4x3
+struct view_data
+{
+	mat4	mainViewProj;
+	mat4	prevViewProj;
+	vec3	worldPos;
+	float	pad0;
+	vec3	camViewDir;
+	float	pad1;
+};
+
 struct global_data
 {
 	mat4	proj;
@@ -229,12 +241,13 @@ struct avg_luminance_info
 	float dt;
 };
 
-ALIGNAS( 16 ) struct dbg_vertex
+struct dbg_vertex
 {
-	vec4 pos;
-	vec4 col;
+	vec3 pos;
+	uint color;
 };
 
+// TODO: uv to u16 or smth
 struct imgui_vertex
 {
 	float x, y;
@@ -258,6 +271,7 @@ const uint VK_GLOBAL_DESC_SET = 1;
 
 layout( binding = 0 ) uniform sampler samplers[];
 layout( binding = 1 ) buffer global { global_data g; } ssbos[];
+//layout( binding = 1 ) buffer global { view_data views[]; } ssbos[];
 layout( binding = 2 ) writeonly uniform coherent image2D storageImages[];
 layout( binding = 3 ) uniform texture2D sampledImages[];
 

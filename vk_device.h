@@ -146,6 +146,8 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 		VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME,
 		//VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME,
 		//VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
+
+		VK_EXT_MULTI_DRAW_EXTENSION_NAME
 	};
 
 	u32 numDevices = 0;
@@ -153,9 +155,9 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
-
+	VkPhysicalDeviceMultiDrawPropertiesEXT multiDrawExt = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_PROPERTIES_EXT };
 	VkPhysicalDeviceInlineUniformBlockPropertiesEXT inlineBlockProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT, &multiDrawExt };
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &inlineBlockProps };
 	VkPhysicalDeviceSubgroupProperties waveProps = 
@@ -174,8 +176,10 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
+	VkPhysicalDeviceMultiDrawFeaturesEXT multiDrawFeasturesExt = 
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT, &presentIdFeatures };
 	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &presentIdFeatures };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &multiDrawFeasturesExt };
 	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentsFeature =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT, &extDynamicStateFeatures };
 	VkPhysicalDeviceVulkan14Features gpuFeatures14 = 

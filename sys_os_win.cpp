@@ -21,42 +21,10 @@ using namespace std;
 
 #include "sys_os_api.h"
 #include "core_types.h"
-#include "core_lib_api.h"
 
 #include "r_data_structs.h"
 
-inline void Win32WriteLastErr( LPTSTR lpsLineFile )
-{
-	LPVOID lpMsgBuf;
-	LPVOID lpDisplayBuf;
-	DWORD dw = GetLastError();
-
-	FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-				   0, dw,
-				   MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
-				   (LPTSTR) &lpMsgBuf, 0, 0 );
-
-	lpDisplayBuf = 
-		(LPVOID) LocalAlloc( LMEM_ZEROINIT, ( lstrlen( (LPCTSTR) lpMsgBuf ) + lstrlen( (LPCTSTR) lpsLineFile ) + 40 ) );
-	StringCchPrintf( (LPTSTR) lpDisplayBuf,
-					 LocalSize( lpDisplayBuf ),
-					 TEXT( "%s code %d: %s" ),
-					 lpsLineFile, dw, lpMsgBuf );
-	MessageBox( 0, (LPCTSTR) lpDisplayBuf, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
-
-	LocalFree( lpMsgBuf );
-	LocalFree( lpDisplayBuf );
-}
-
-#define WIN_CHECK( win )													\
-do{																			\
-	constexpr char WIN_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";		\
-	if( win )																\
-	{																		\
-		Win32WriteLastErr( ( LPSTR ) WIN_ERR_STR );							\
-		abort();															\
-	}																		\
-}while( 0 )	
+#include <System/Win32/win32_err.h>
 
 // TODO: handle debug func better
 // TODO: all streams to console  
@@ -191,10 +159,8 @@ inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInByte
 constexpr char	ENGINE_NAME[] = "helltech_engine";
 constexpr char	WINDOW_TITLE[] = "HellTech Engine";
 
-SYSTEM_INFO		sysInfo = {};
 HINSTANCE		hInst = 0;
 HWND			hWnd = 0;
-void*			sysMem = 0;
 
 static bool frustumCullDbg = 0;
 
@@ -206,6 +172,85 @@ constexpr u16 VK_C = 0x43;
 constexpr u16 VK_F = 0x46;
 constexpr u16 VK_O = 0x4F;
 
+constexpr float ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
+
+struct virtual_camera
+{
+	DirectX::XMFLOAT4X4A projection;
+	DirectX::XMFLOAT4X4A prevViewProj = {};
+
+	DirectX::XMFLOAT3 worldPos = { 0.0f, 0.0f, 0.0f };
+
+	static constexpr DirectX::XMFLOAT3 fwdBasis = { 0.0f, 0.0f, 1.0f };
+	static constexpr DirectX::XMFLOAT3 upBasis = { 0.0f, 1.0f, 0.0f };
+	// NOTE: pitch must be in [-pi/2,pi/2]
+	float pitch = 0.0f;
+	float yaw = 0.0f;
+
+	float speed = 1.5f;
+
+	inline virtual_camera( DirectX::XMMATRIX proj )
+	{
+		DirectX::XMStoreFloat4x4A( &projection, proj );
+	}
+
+	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, DirectX::XMFLOAT2 dRot, float elapsedSecs )
+	{
+		using namespace DirectX;
+
+		yaw = XMScalarModAngle( yaw + dRot.x * elapsedSecs );
+		pitch = std::clamp( pitch + dRot.y * elapsedSecs, -ALMOST_HALF_PI, ALMOST_HALF_PI );
+
+		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( speed, speed, speed );
+		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
+
+		XMVECTOR xmCamPos = XMLoadFloat3( &worldPos );
+		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, xmCamMove ), 0.18f * elapsedSecs / 0.0166f );
+
+		// TODO: thresholds
+		//float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
+		XMStoreFloat3( &worldPos, smoothNewCamPos );
+	}
+
+	inline view_data GetViewData() const
+	{
+		using namespace DirectX;
+
+		XMVECTOR xmFwd = XMLoadFloat3( &fwdBasis );
+		XMVECTOR xmUp = XMLoadFloat3( &upBasis );
+		XMVECTOR xmWorldPos = XMLoadFloat3( &worldPos );
+
+		XMVECTOR camLookAt = XMVector3Transform( xmFwd, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
+		XMMATRIX view = XMMatrixLookAtLH( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ), xmUp );
+
+		XMVECTOR viewDet = XMMatrixDeterminant( view );
+		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
+		XMVECTOR viewDir = XMVectorNegate( invView.r[ 2 ] );
+
+		XMMATRIX xmProj = XMLoadFloat4x4A( &projection );
+
+		view_data viewData = {};
+		XMStoreFloat4x4A( &viewData.mainViewProj, XMMatrixMultiply( view, xmProj ) );
+		viewData.prevViewProj = prevViewProj;
+		viewData.worldPos = worldPos;
+		XMStoreFloat3( &viewData.camViewDir, viewDir );
+
+		return viewData;
+	}
+};
+
+// NOTE: this is useful when we want to draw the frozen frustum
+inline DirectX::XMMATRIX XM_CALLCONV FrustumMatrixFromViewProj( DirectX::XMMATRIX view, DirectX::XMMATRIX proj )
+{
+	using namespace DirectX;
+
+	// NOTE: inv( A * B ) = inv B * inv A
+	XMMATRIX invFrustMat = XMMatrixMultiply( view, proj );
+	XMVECTOR det = XMMatrixDeterminant( invFrustMat );
+	assert( XMVectorGetX( det ) );
+	XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
+	return frustMat;
+}
 
 // TODO: templates ? 
 // TODO: fromalize world coord
@@ -352,35 +397,34 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
 
-	WIN_CHECK( !XMVerifyCPUSupport() );
+	WIN_CHECK( !DirectX::XMVerifyCPUSupport() );
 
 	SysOsCreateConsole();
+
+	SYSTEM_INFO	sysInfo = {};
 	GetSystemInfo( &sysInfo );
 
-	//sysMem = VirtualAlloc( 0, SYS_MEM_BYTES, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
-	//if( !sysMem ) quick_exit( EXIT_FAILURE );
-	//if( !MemSysInit( (u8*) sysMem, SYS_MEM_BYTES ) ) quick_exit( EXIT_FAILURE );
-
 	hInst = hInstance;
-	WNDCLASSEX wc = {};
-	wc.cbSize = sizeof( WNDCLASSEX );
-	wc.lpfnWndProc = MainWndProc;
-	wc.hInstance = hInst;
-	wc.hCursor = LoadCursor( 0, IDC_ARROW );
-	wc.lpszClassName = ENGINE_NAME;
+	WNDCLASSEX wc = {
+		.cbSize = sizeof( WNDCLASSEX ),
+		.lpfnWndProc = MainWndProc,
+		.hInstance = hInst,
+		.hCursor = LoadCursor( 0, IDC_ARROW ),
+		.lpszClassName = ENGINE_NAME
+	};
 	WIN_CHECK( !RegisterClassEx( &wc ) );
 	
 
-	RECT wr = {};
-	wr.left = 350;
-	wr.top = 100; 
-	wr.right = SCREEN_WIDTH + wr.left;
-	wr.bottom = SCREEN_HEIGHT + wr.top;
-	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
+	RECT wr = {
+		.left = 350,
+		.top = 100,
+		.right = ( LONG ) SCREEN_WIDTH + wr.left,
+		.bottom = ( LONG ) SCREEN_HEIGHT + wr.top
+	};
+	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
-	hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle,
-						 wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0,
-						 hInst, 0 );
+	hWnd = CreateWindow( 
+		wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, 0 );
 	WIN_CHECK(  !hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
@@ -411,17 +455,26 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 	constexpr float zNear = 0.5f;
 	XMMATRIX proj = PerspRevInfFovLH( XMConvertToRadians( 70.0f ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
+
+	virtual_camera mainActiveCam = { proj };
+	virtual_camera debugCam = { proj };
+
 	// NOTE: pitch must be in [-pi/2,pi/2]
 	float pitch = 0;
 	float yaw = 0;
 
 	// TODO: use store/load ?
+	XMFLOAT4X4A prevView = {};
 	XMVECTOR camFwdBasis = XMVectorSet( 0, 0, 1, 0 );
 	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
 	XMFLOAT3 camWorldPos = { 0,0,0 };
 	
 	gpu_data gpuData = {};
 	frame_data frameData = {};
+
+	frameData.views.resize( 2 );
+	u16 mainViewIdx = 0;
+	u16 dbgViewIdx = 1;
 
 	VkBackendInit();
 
@@ -465,6 +518,12 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		if( kbd.space ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
 		if( kbd.c ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
 
+		mainActiveCam.Move( camMove, { m.dx, m.dy }, elapsedSecs );
+		debugCam.Move( camMove, { m.dx, m.dy }, elapsedSecs );
+
+		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
+		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
+
 		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed );
 		camMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
 									  
@@ -475,8 +534,13 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
 		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
 
-		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
-		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
+		view_data mainViewData = mainActiveCam.GetViewData();
+		mainActiveCam.prevViewProj = mainViewData.mainViewProj;
+
+		view_data dbgViewData = debugCam.GetViewData();
+
+		frameData.views[ mainViewIdx ] = mainViewData;
+		frameData.views[ dbgViewIdx ] = dbgViewData;
 
 		// TRANSF CAM VIEW
 		XMVECTOR camLookAt = XMVector3Transform( camFwdBasis, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
@@ -484,6 +548,9 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
+		XMVECTOR viewDir = XMVectorNegate( invView.r[ 2 ] );
+
+		XMMATRIX frustMat = FrustumMatrixFromViewProj( view, proj );
 
 		XMStoreFloat4x4A( &frameData.proj, proj );
 		XMStoreFloat4x4A( &frameData.activeView, view );
@@ -492,13 +559,9 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 			XMStoreFloat4x4A( &frameData.mainView, view );
 		}
 		frameData.worldPos = camWorldPos;
-		XMStoreFloat3( &frameData.camViewDir, XMVectorNegate( invView.r[ 2 ] ) );
+		XMStoreFloat3( &frameData.camViewDir, viewDir );
 
-		// NOTE: inv( A * B ) = inv B * inv A
-		XMMATRIX invFrustMat = XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj );
-		XMVECTOR det = XMMatrixDeterminant( invFrustMat );
-		assert( XMVectorGetX( det ) );
-		XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
+		
 		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
 
 		XMStoreFloat4x4A( &frameData.activeProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj ) );
@@ -526,7 +589,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	}
 
 	VkBackendKill();
-	VirtualFree( sysMem, 0, MEM_RELEASE );
 	SysOsKillConsole();
 
 	return 0;

@@ -1,5 +1,5 @@
-#ifndef __WIN32_UTILS_H__
-#define __WIN32_UTILS_H__
+#ifndef __WIN32_ERR_H__
+#define __WIN32_ERR_H__
 
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
@@ -7,7 +7,6 @@
 
 #include "sys_os_api.h"
 #include "core_types.h"
-#include "core_lib_api.h"
 
 inline void Win32WriteLastErr( LPTSTR lpsLineFile )
 {
@@ -38,5 +37,5 @@ do{																			\
 	}																		\
 }while( 0 )	
 
-#endif // !__WIN32_UTILS_H__
+#endif // !__WIN32_ERR_H__
 

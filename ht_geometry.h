@@ -3,6 +3,7 @@
 
 #include "core_types.h"
 #include <vector>
+#include <array>
 #include <span>
 
 #include "r_data_structs.h"
@@ -20,6 +21,8 @@
 #include <DirectXMath.h>
 
 #endif
+
+#include <DirectXPackedVector.h>
 
 constexpr bool worldLeftHanded = true;
 
@@ -237,6 +240,66 @@ constexpr u8 boxTrisIndices[] = {
 	2, 7, 6,
 };
 
+constexpr DirectX::XMFLOAT3 BOX_MIN = {-0.5f, -0.5f, -0.5f };
+constexpr DirectX::XMFLOAT3 BOX_MAX = { 0.5f,  0.5f,  0.5f };
+
+constexpr std::array<DirectX::XMFLOAT3, 8u> 
+GenerateBoxWithBounds( DirectX::XMFLOAT3 boxMin, DirectX::XMFLOAT3 boxMax )
+{
+	std::array<DirectX::XMFLOAT3,8u> boxCorners = {};
+	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z };
+	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z };
+	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z };
+	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z };
+	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z };
+	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z };
+	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z };
+	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z };
+
+	return boxCorners;
+}
+
+inline std::array<DirectX::XMFLOAT3,8u> XM_CALLCONV 
+GenerateTransformedBox( DirectX::XMMATRIX transf, DirectX::XMFLOAT3	boxMin, DirectX::XMFLOAT3 boxMax )
+{
+	using namespace DirectX;
+
+	std::array<DirectX::XMFLOAT3, 8u> boxCorners = GenerateBoxWithBounds( boxMin, boxMax );
+
+	for( XMFLOAT3& thisCorner : boxCorners )
+	{
+		XMVECTOR trnasformedCorner = XMVector4Transform( XMVectorSet( thisCorner.x, thisCorner.y, thisCorner.z, 1.0f ), transf );
+		XMStoreFloat3( &thisCorner, trnasformedCorner );
+	}
+
+	return boxCorners;
+}
+
+constexpr std::array<DirectX::XMFLOAT3, std::size( boxLineIndices )> 
+BoxVerticesAsLines( const std::array<DirectX::XMFLOAT3, 8u>& boxVertices )
+{
+	std::array<DirectX::XMFLOAT3, std::size( boxLineIndices )> out;
+	for( u64 i = 0; i < std::size( boxLineIndices ); ++i )
+	{
+		out[ i ] = boxVertices[ boxLineIndices[ i ] ];
+	}
+
+	return out;
+}
+
+constexpr std::array<DirectX::XMFLOAT3, std::size( boxTrisIndices )> 
+BoxVerticesAsTriangles( const std::array<DirectX::XMFLOAT3, 8u>& boxVertices )
+{
+	std::array<DirectX::XMFLOAT3, std::size( boxTrisIndices )> out;
+	for( u64 i = 0; i < std::size( boxTrisIndices ); ++i )
+	{
+		out[ i ] = boxVertices[ boxTrisIndices[ i ] ];
+	}
+
+	return out;
+}
+
+
 inline void XM_CALLCONV 
 TrnasformBoxVertices(
 	DirectX::XMMATRIX		transf,
@@ -275,28 +338,12 @@ struct entities_data
 	std::vector<box_bounds> instAabbs;
 };
 
-inline void WriteBoundingBoxLines(
-	const DirectX::XMFLOAT4X4A& mat, 
-	const DirectX::XMFLOAT3& min, 
-	const DirectX::XMFLOAT3& max,
-	const DirectX::XMFLOAT4& col,
-	dbg_vertex* thisLineRange
-){
-	using namespace DirectX;
-
-	XMFLOAT4 boxVertices[ 8 ] = {};
-	TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), min, max, boxVertices );
-
-	for( u64 ii = 0; ii < boxLineVertexCount; ++ii )
-	{
-		thisLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
-	}
-}
-
 inline std::vector<dbg_vertex>
 ComputeSceneDebugBoundingBoxes(
 	DirectX::XMMATRIX frustDrawMat,
-	const entities_data& entities
+	const entities_data& entities,
+	DirectX::PackedVector::XMCOLOR boxCol,
+	DirectX::PackedVector::XMCOLOR frustCol
 ){
 	using namespace DirectX;
 
@@ -313,24 +360,20 @@ ComputeSceneDebugBoundingBoxes(
 		const box_bounds& aabb = entities.instAabbs[ i ];
 		const XMFLOAT4X4A& mat = entities.transforms[ i ];
 
-		XMFLOAT4 boxVertices[ 8 ] = {};
-		TrnasformBoxVertices( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max, boxVertices );
+		auto boxVertices = GenerateTransformedBox( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max );
 
 		dbg_vertex* boxLineRange = std::data( dbgGeom ) + i * boxLineVertexCount;
-		constexpr XMFLOAT4 col = { 255.0f,255.0f,0.0f,1.0f };
 		for( u64 ii = 0; ii < boxLineVertexCount; ++ii )
 		{
-			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],col };
+			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],boxCol };
 		}
 	}
 
 	u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
 
-	XMFLOAT4 boxVertices[ 8 ] = {};
-	TrnasformBoxVertices( frustDrawMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f }, boxVertices );
+	auto boxVertices = GenerateTransformedBox( frustDrawMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f } );
 
 	dbg_vertex* boxLineRange = std::data( dbgGeom ) + frustBoxOffset;
-	constexpr XMFLOAT4 frustCol = { 0.0f, 255.0f, 255.0f, 1.0f };
 	for( u64 i = 0; i < boxLineVertexCount; ++i )
 	{
 		boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],frustCol };
