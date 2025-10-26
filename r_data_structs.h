@@ -1,5 +1,5 @@
-#ifndef __R_DATA_STRUCTS_H__
-#define __R_DATA_STRUCTS_H__
+#ifndef _R_DATA_STRUCTS_H_
+#define _R_DATA_STRUCTS_H_
 
 #ifdef __cplusplus
 
@@ -50,7 +50,11 @@ using uint = u32;
 
 #else
 
-#ifndef __HLSL__
+#extension GL_KHR_shader_subgroup_basic: require
+#extension GL_KHR_shader_subgroup_arithmetic: require
+#extension GL_KHR_shader_subgroup_ballot: require
+#extension GL_KHR_shader_subgroup_shuffle: require
+
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_shader_8bit_storage : require
 #extension GL_EXT_shader_explicit_arithmetic_types : require
@@ -65,7 +69,6 @@ const float invPi = 0.31830988618;
 const float PI = 3.14159265359;
 
 #define ALIGNAS( x )
-#endif
 
 #endif
 
@@ -177,20 +180,27 @@ struct dispatch_command
 #endif
 };
 
+struct compacted_draw_args
+{
+	uint nodeIdx;
+	uint materialIdx;
+	uint meshletIdx;
+};
+
+#if defined( __cplusplus ) && defined( __VK )
+using draw_command = VkDrawIndexedIndirectCommand;
+#else
 // TODO: rename
 struct draw_command
 {
-	uint	drawIdx;
-#if defined( __cplusplus ) && defined( __VK )
-	VkDrawIndexedIndirectCommand cmd;
-#else
 	uint    indexCount;
 	uint    instanceCount;
 	uint    firstIndex;
-	uint    vertexOffset;
+	int    vertexOffset;
 	uint    firstInstance;
-#endif
+
 };
+#endif
 
 struct draw_indirect
 {
@@ -256,4 +266,4 @@ layout( binding = 3 ) uniform texture2D sampledImages[];
 #endif // !__cplusplus
 
 
-#endif // !__R_DATA_STRUCTS_H__
+#endif // !_R_DATA_STRUCTS_H_

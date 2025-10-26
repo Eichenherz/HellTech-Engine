@@ -25,6 +25,17 @@ struct vk_swapchain
 	u8				imgCount;
 };
 
+// TODO: more params ??
+inline VkViewport VkGetSwapchainViewport( const vk_swapchain& sc )
+{
+	return { 0.0f, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0.0f, 1.0f };
+}
+
+inline VkRect2D VkGetSwapchianScissor( const vk_swapchain& sc )
+{
+	return { { 0, 0 }, { sc.width, sc.height } };
+}
+
 // TODO: sep initial validation form sc creation when resize ?
 inline vk_swapchain
 VkMakeSwapchain(

@@ -16,10 +16,9 @@ layout( push_constant, scalar ) uniform block{
 	uint64_t	meshletsAddr;
 	uint64_t	inMeshletsIdAddr;
 	uint64_t	inMeshletsCountAddr;
-	uint64_t	outMeshletsIdAddr;
-	uint64_t	outMeshletsCountAddr;
-	uint64_t	atomicWorkgrCounterAddr;
-	uint64_t	dispatchCmdAddr;
+	uint64_t	compactedDrawAddr;
+	uint64_t	drawCmdsAddr;
+	uint64_t	drawCountAddr;
 	uint64_t	dbgDrawCmdsAddr;
 	uint	    hizBuffIdx;
 	uint	    hizSamplerIdx;
@@ -42,24 +41,16 @@ layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer u32_ref{
 	uint totalMeshletCount; 
 };
 
-layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer dispatch_indirect_ref{
-	dispatch_command dispatchCmd;
+layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer compacted_args_ref{
+	compacted_draw_args compactedDrawArgs[];
 };
-layout( buffer_reference, scalar, buffer_reference_align = 8 ) writeonly buffer draw_cmd_ref{
+layout( buffer_reference, scalar, buffer_reference_align = 8 ) writeonly buffer draw_ref{
 	draw_indirect dbgBBoxDrawCmd[];
 };
+layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer draw_cmd_ref{
+	draw_command drawCmds[];
+};
 
-// TODO: pack into u64
-struct meshlet_info
-{
-	uint dataOffset;
-	uint16_t instId;
-	uint8_t vtxCount;
-	uint8_t triCount;
-};
-layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer mlet_info_ref{ 
-	meshlet_info visibleMeshlets[];
-};
 layout( buffer_reference, buffer_reference_align = 4 ) coherent buffer coherent_counter_ref{
 	uint coherentCounter;
 };
@@ -71,8 +62,6 @@ const uint meshletsPerWorkgr = 32;
 
 // NOTE: meshlet occlusion culling bug
 // NOTE: hack fix: workgr == 32 ( and in id_expander dstWorkGrSize )
-// NOTE: idiot fix: disable occlusion
-// TODO: investigate further
 layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
@@ -113,8 +102,7 @@ void main()
 		float minW = dot( mix( boxMax, boxMin, greaterThanEqual( trsMvp[ 3 ].xyz, vec3( 0.0f ) ) ), trsMvp[ 3 ].xyz ) + trsMvp[ 3 ].w;
 		bool intersectsNearZ = minW <= 0.0f;
 
-		if( visible && !intersectsNearZ )
-		//{}if( false )
+		if( false && visible && !intersectsNearZ )
 		{
 			vec3 boxSize = boxMax - boxMin;
  			
@@ -157,53 +145,37 @@ void main()
 				textureLod( sampler2D( sampledImages[ hizBuffIdx ], samplers[ hizSamplerIdx ] ), ( maxXY + minXY ) * 0.5f, mipLevel ).x;
 			visible = visible && ( sampledDepth <= maxZ );	
 		}
-		//visible = true;
 		uvec4 ballotVisible = subgroupBallot( visible );
 		uint subgrActiveInvocationsCount = subgroupBallotBitCount( ballotVisible );
 		if( subgrActiveInvocationsCount > 0 ) 
 		{
 			// TODO: shared atomics + global atomics ?
-			//uint subgrSlotOffset = subgroupElect() ? atomicAdd( drawCallCount, subgrActiveInvocationsCount ) : 0;
 			uint subgrSlotOffset = subgroupElect() ? 
-				atomicAdd( coherent_counter_ref( outMeshletsCountAddr ).coherentCounter, subgrActiveInvocationsCount ) : 0;
+				atomicAdd( coherent_counter_ref( drawCountAddr ).coherentCounter, subgrActiveInvocationsCount ) : 0;
 			uint subgrActiveIdx = subgroupBallotExclusiveBitCount( ballotVisible );
 			uint slotIdx = subgroupBroadcastFirst( subgrSlotOffset  ) + subgrActiveIdx;
 
 			if( visible )
-			{
-				//uint slotIdx = atomicAdd( drawCallCount, 1 );
-				
-				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].dataOffset = thisMeshlet.dataOffset;
-				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].instId = uint16_t( parentInstId );
-				// NOTE: want all the indices
-				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].vtxCount = thisMeshlet.vertexCount;
-				mlet_info_ref( outMeshletsIdAddr ).visibleMeshlets[ slotIdx ].triCount = thisMeshlet.triangleCount;
+			{	
+				compacted_args_ref( compactedDrawAddr ).compactedDrawArgs[ slotIdx ].nodeIdx = parentInstId; 
+				// NOTE: will add more as we progress
+				compacted_args_ref( drawCmdsAddr ).compactedDrawArgs[ slotIdx ].meshletIdx = uint(mid); 
 
-				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].drawIdx = mid;
-				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].firstVertex = 0;
-				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].vertexCount = 24;
-				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].instanceCount = 1;
-				draw_cmd_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].firstInstance = 0;
+				uint vtxOffset = thisMeshlet.dataOffset;
+				uint firstIdx = vtxOffset + uint( thisMeshlet.vertexCount );
+
+				draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].indexCount = thisMeshlet.triangleCount; 
+				draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].instanceCount = 1;
+				draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].firstIndex = firstIdx;
+				draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].vertexOffset = int( vtxOffset );
+				draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].firstInstance = 0;
+
+				draw_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].drawIdx = mid;
+				draw_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].firstVertex = 0;
+				draw_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].vertexCount = 24;
+				draw_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].instanceCount = 1;
+				draw_ref( dbgDrawCmdsAddr ).dbgBBoxDrawCmd[ slotIdx ].firstInstance = 0;
 			}
 		}
-	}
-
-	//if( gl_LocalInvocationID.x == 0 ) workgrAtomicCounterShared = atomicAdd( workgrAtomicCounter, 1 );
-	if( gl_LocalInvocationID.x == 0 ) 
-		workgrAtomicCounterShared = atomicAdd( coherent_counter_ref( atomicWorkgrCounterAddr ).coherentCounter, 1 );
-
-	barrier();
-	memoryBarrier();
-	if( ( gl_LocalInvocationID.x == 0 ) && ( workgrAtomicCounterShared == gl_NumWorkGroups.x - 1 ) )
-	{
-		// TODO: pass as spec consts or push consts ? 
-		//uint trisExpDispatch = ( drawCallCount + meshletsPerWorkgr - 1 ) / meshletsPerWorkgr;
-		uint trisExpDispatch = 
-			( coherent_counter_ref( outMeshletsCountAddr ).coherentCounter + meshletsPerWorkgr - 1 ) / meshletsPerWorkgr;
-
-		dispatch_indirect_ref( dispatchCmdAddr ).dispatchCmd = dispatch_command( trisExpDispatch, 1, 1 );
-		
-		//workgrAtomicCounter = 0;
-		coherent_counter_ref( atomicWorkgrCounterAddr ).coherentCounter = 0;
 	}
 }

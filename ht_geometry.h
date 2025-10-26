@@ -428,7 +428,7 @@ inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float s
 }
 
 constexpr u64 randSeed = 42;
-constexpr u64 drawCount = 5;
+constexpr u64 drawCount = 64;
 constexpr u64 lightCount = 100;
 constexpr float sceneRad = 40.0f;
 

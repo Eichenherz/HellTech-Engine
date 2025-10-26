@@ -183,10 +183,10 @@
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <Filter>Source Files</Filter>
     </CustomBuild>
-    <CustomBuild Include="Shaders\comp_expand_merge.comp.glsl" />
     <CustomBuild Include="Shaders\v_z_prepass.vert.glsl" />
     <CustomBuild Include="imgui\shader_imgui.vert.glsl" />
     <CustomBuild Include="imgui\shader_imgui.frag.glsl" />
+    <CustomBuild Include="Shaders\meshlet.vert.glsl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\imgui_vert.hlsl" />

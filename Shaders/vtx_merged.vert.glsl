@@ -9,15 +9,15 @@
 
 #include "glsl_func_lib.h"
 
-layout( push_constant ) uniform block{
+layout( push_constant, scalar ) uniform block {
 	uint64_t vtxAddr;
 	uint64_t transfAddr;
-	//uint64_t drawCmdAddr;
+	uint64_t compactedDrawsAddr;
 	//uint64_t camDataAddr;
-	uint64_t camIdx;
 	uint64_t mtrlsAddr;
 	uint64_t lightsAddr;
-	uint64_t samplerIdx;
+	uint camIdx;
+	uint samplerIdx;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
@@ -25,6 +25,10 @@ layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer v
 };
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
+};
+
+layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer compacted_args_ref{
+	compacted_draw_args compactedDrawArgs[];
 };
 //layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer cam_data_ref{
 //	global_data camera;
@@ -75,21 +79,16 @@ struct vs_out
 layout( location = 0 ) out vs_out vsOut;
 layout( location = 4 ) out flat uint oMtlIdx;
 void main() 
-{
-	// TODO: spec const variations 
-	uint instId = uint( gl_VertexIndex & uint16_t( -1 ) );
-	uint vertexId = uint( gl_VertexIndex >> 16 );
-
-	//instance_desc inst = inst_desc_ref( bdas.instDescAddr ).instDescs[ instId ];
-	instance_desc inst = inst_desc_ref( transfAddr ).instDescs[ instId ];
-	//global_data cam = cam_data_ref( camDataAddr ).camera;
-	//vertex vtx = vtx_ref( bdas.vtxAddr ).vertices[ vertexId ];
-	vertex vtx = vtx_ref( vtxAddr ).vertices[ vertexId ];
+{	
+	uint instID = compacted_args_ref( compactedDrawsAddr ).compactedDrawArgs[ gl_DrawIDARB ].nodeIdx;
+	instance_desc inst = inst_desc_ref( transfAddr ).instDescs[ instID ];
+	
+	vertex vtx = vtx_ref( vtxAddr ).vertices[ gl_VertexIndex ];
 	
 	vec3 worldPos = RotateQuat( vec3( vtx.px, vtx.py, vtx.pz ) * inst.scale, inst.rot ) + inst.pos;
-	//vec3 worldPos = ( inst.localToWorld * vec4( pos, 1 ) ).xyz;
 
-	global_data cam = ssbos[uint(camIdx)].g;
+	//global_data cam = cam_data_ref( camDataAddr ).camera;
+	global_data cam = ssbos[ camIdx ].g;
 
 	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
 

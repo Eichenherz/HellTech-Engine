@@ -365,11 +365,6 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\comp_expand_merge.comp.glsl">
-      <FileType>Document</FileType>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
     <CustomBuild Include="Shaders\v_z_prepass.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
@@ -419,6 +414,9 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <CustomBuild Include="Shaders\meshlet.vert.glsl">
+      <FileType>Document</FileType>
+    </CustomBuild>
     <None Include="Shaders\v_z_prepass.hlsl.null">
       <FileType>Document</FileType>
     </None>
