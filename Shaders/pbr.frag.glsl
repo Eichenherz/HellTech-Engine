@@ -12,7 +12,7 @@ layout( push_constant, scalar ) uniform block {
 	//uint64_t camDataAddr;
 	uint64_t mtrlsAddr;
 	uint64_t lightsAddr;
-	uint camIdx;
+	uint viewDataIdx;
 	uint samplerIdx;
 };
 
@@ -123,7 +123,7 @@ layout( location = 0 ) out vec4 oCol;
 layout( early_fragment_tests ) in;
 void main()
 {
-	global_data cam = ssbos[ camIdx ].g;
+	view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
 
 	material_data mtl = mtl_ref( mtrlsAddr ).materials[ mtlIdx ];
 
@@ -152,7 +152,7 @@ void main()
 	float surfRoughness = orm.r * mtl.roughnessFactor;
 	float surfMetalness = orm.g * mtl.metallicFactor;
 
-	vec3 viewDir = normalize( cam.worldPos - vsOut.worldPos );
+	vec3 viewDir = normalize( view.worldPos - vsOut.worldPos );
 
 	vec3 baseReflectivity = mix( vec3( 0.04f ), baseCol.rgb, surfMetalness );
 	vec3 diffCol = baseCol.rgb * ( 1.0f - surfMetalness );

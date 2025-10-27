@@ -464,7 +464,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	float yaw = 0;
 
 	// TODO: use store/load ?
-	XMFLOAT4X4A prevView = {};
 	XMVECTOR camFwdBasis = XMVectorSet( 0, 0, 1, 0 );
 	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
 	XMFLOAT3 camWorldPos = { 0,0,0 };

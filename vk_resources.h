@@ -13,11 +13,13 @@
 #include "sys_os_api.h"
 #include <type_traits>
 
+#include <3rdParty/vk_mem_alloc.h>
+
 constexpr u64 MAX_MIP_LEVELS = 12;
 
 struct vk_buffer
 {
-	vk_allocation   mem;
+	VmaAllocation   mem;
 	VkBuffer		hndl;
 	u64				sizeInBytes; 
 	u8*             hostVisible;
@@ -33,10 +35,10 @@ inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
 
 struct vk_image
 {
-	vk_allocation   mem;
+	VmaAllocation   mem;
 	VkImage			hndl;
 	VkImageUsageFlags usageFlags;
-	VkFormat		nativeFormat;
+	VkFormat		format;
 	u16				width;
 	u16				height;
 	u8				layerCount;

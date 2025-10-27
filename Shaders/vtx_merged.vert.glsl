@@ -16,7 +16,7 @@ layout( push_constant, scalar ) uniform block {
 	//uint64_t camDataAddr;
 	uint64_t mtrlsAddr;
 	uint64_t lightsAddr;
-	uint camIdx;
+	uint viewDataIdx;
 	uint samplerIdx;
 };
 
@@ -88,9 +88,9 @@ void main()
 	vec3 worldPos = RotateQuat( vec3( vtx.px, vtx.py, vtx.pz ) * inst.scale, inst.rot ) + inst.pos;
 
 	//global_data cam = cam_data_ref( camDataAddr ).camera;
-	global_data cam = ssbos[ camIdx ].g;
+	view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
 
-	gl_Position = cam.proj * cam.activeView * vec4( worldPos, 1 );
+	gl_Position = view.mainViewProj * vec4( worldPos, 1 );
 
 	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
 	vec3 n = DecodeOctaNormal( encodedTanFame.xy );

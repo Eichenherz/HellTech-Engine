@@ -85,17 +85,6 @@ struct view_data
 	float	pad1;
 };
 
-struct global_data
-{
-	mat4	proj;
-	mat4	mainView;
-	mat4	activeView;
-	vec3	worldPos;
-	float	pad0;
-	vec3	camViewDir;
-	float	pad1;
-};
-
 // TODO: compressed coords u8, u16
 struct vertex
 {
@@ -270,8 +259,7 @@ const uint VK_GLOBAL_DESC_SET = 1;
 #ifdef BINDLESS
 
 layout( binding = 0 ) uniform sampler samplers[];
-layout( binding = 1 ) buffer global { global_data g; } ssbos[];
-//layout( binding = 1 ) buffer global { view_data views[]; } ssbos[];
+layout( binding = 1 ) buffer views { view_data views[]; } ssbos[];
 layout( binding = 2 ) writeonly uniform coherent image2D storageImages[];
 layout( binding = 3 ) uniform texture2D sampledImages[];
 

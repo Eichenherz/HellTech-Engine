@@ -7,11 +7,11 @@
 
 layout( push_constant, scalar ) uniform block {
 	uint64_t vtxAddr;
-	uint64_t viewAddr;
+	uint viewDataIdx;
 	uint viewIdx;
 };
 
-layout( buffer_reference, scalar ) readonly buffer dbg_vtx_ref{
+layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer dbg_vtx_ref{
 	dbg_vertex dbgVertices[];
 };
 
@@ -32,7 +32,8 @@ void main()
 {
 	dbg_vertex v = dbg_vtx_ref( vtxAddr ).dbgVertices[ gl_VertexIndex ];
 
-	view_data viewData = view_ref( viewAddr ).views[ viewIdx ];
+	//view_data viewData = view_ref( viewAddr ).views[ viewIdx ];
+	view_data viewData = ssbos[ viewDataIdx ].views[ viewIdx ];
 
 	gl_Position = viewData.mainViewProj * vec4( v.pos, 1.0f );
 	oCol = unpackUnorm4x8( v.color ).xyz;

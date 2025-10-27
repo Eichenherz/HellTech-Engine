@@ -21,7 +21,7 @@ layout( push_constant, scalar ) uniform block {
 	uint	    hizBuffIdx;
 	uint	    hizSamplerIdx;
 	uint		instCount;
-	uint		camIdx;
+	uint		viewDataIdx;
 	bool		latePass;
 };
 
@@ -193,9 +193,9 @@ bool FirstPass( uint globalIdx )
 		vec3 boxMin = center - extent;
 		vec3 boxMax = center + extent;
 		
-		global_data cam = ssbos[ camIdx ].g;
+		view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
 		
-		mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
+		mat4 mvp = view.mainViewProj * currentInst.localToWorld;
 		
 		frustum_culling_result frustumCullingResult = FrustumCulling( boxMin, boxMax, mvp );
 		visible = frustumCullingResult.visible;
@@ -215,9 +215,9 @@ bool SecondPass( uint globalIdx )
 	vec3 boxMin = center - extent;
 	vec3 boxMax = center + extent;
 	
-	global_data cam = ssbos[ camIdx ].g;
-	
-	mat4 mvp = cam.proj * cam.mainView * currentInst.localToWorld;
+	view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
+		
+	mat4 mvp = view.mainViewProj * currentInst.localToWorld;
 	
 	frustum_culling_result frustumCullingResult = FrustumCulling( boxMin, boxMax, mvp );
 	bool visible = frustumCullingResult.visible;

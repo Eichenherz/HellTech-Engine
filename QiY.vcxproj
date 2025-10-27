@@ -287,6 +287,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="3rdParty\vk_mem_alloc.h" />
     <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="bcn_compressor.h" />
     <ClInclude Include="cgltf.h" />
@@ -315,7 +316,6 @@
     <ClInclude Include="vk_descriptor.h" />
     <ClInclude Include="vk_device.h" />
     <ClInclude Include="vk_error.h" />
-    <ClInclude Include="vk_memory.h" />
     <ClInclude Include="vk_procs.h" />
     <ClInclude Include="vk_pso.h" />
     <ClInclude Include="vk_resources.h" />
@@ -346,16 +346,6 @@
     <CustomBuild Include="Shaders\v_cpu_dbg_draw.vert.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\c_id_expander.comp.glsl">
-      <FileType>Document</FileType>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\c_meshlet_cull.comp.glsl">
-      <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>

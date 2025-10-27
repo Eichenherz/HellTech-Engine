@@ -8,8 +8,9 @@
 #include <vulkan.h>
 #include "vk_procs.h"
 
+#include <3rdParty/vk_mem_alloc.h>
+
 #include "vk_error.h"
-#include "vk_memory.h"
 #include "vk_resources.h"
 #include "core_types.h"
 #include "sys_os_api.h"
@@ -112,10 +113,7 @@ void VkQueueSubmit(
 
 struct vk_device_ctx
 {
-	vk_mem_arena deviceLocalArena;
-	vk_mem_arena hostVisibleArena;
-	vk_mem_arena stagingArena;
-	vk_mem_arena imgArena;
+	VmaAllocator allocator;
 
 	vk_queue		gfxQueue;
 
@@ -123,9 +121,161 @@ struct vk_device_ctx
 	VkPhysicalDevice gpu;
 	VkDevice		device;
 	
+	u32             deviceMask;
 	float           timestampPeriod;
 	u8				waveSize;
+
+	vk_buffer CreateBuffer( const buffer_info& buffInfo );
+	vk_image CreateImage( const image_info& imgInfo );
 };
+
+inline VkMemoryPropertyFlags VkChooseMemoryProperitesOnUsage( buffer_usage usage )
+{
+	using enum buffer_usage;
+	switch( usage )
+	{
+	case GPU_ONLY: return VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+	case HOST_VISIBLE: return 
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	case STAGING: return VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	default: assert( 0 && "Uknown memory type" );
+	}
+	return 0;
+}
+
+vk_buffer vk_device_ctx::CreateBuffer( const buffer_info& buffInfo )
+{
+	VkBufferCreateInfo bufferCreateInfo = { 
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = buffInfo.elemCount * buffInfo.stride,
+		.usage = buffInfo.usageFlags,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+
+	VkMemoryPropertyFlags memPropFlags = VkChooseMemoryProperitesOnUsage( buffInfo.usage );
+
+	VmaAllocationCreateFlags allocFlags = 
+		VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT;
+	if( memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
+	{
+		allocFlags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
+	}
+	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT )
+	{
+		allocFlags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+	}
+	VmaAllocationCreateInfo allocCreateInfo = {
+		.flags = allocFlags,
+		.usage = VMA_MEMORY_USAGE_UNKNOWN,
+		.requiredFlags = memPropFlags,
+	};
+
+	VkBuffer vkBuffer;
+	VmaAllocation mem;
+	VmaAllocationInfo allocInfo;
+	VK_CHECK( vmaCreateBuffer( this->allocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &mem, &allocInfo ) );
+
+	if( buffInfo.name )
+	{
+		VkDbgNameObj( vkBuffer, this->device, buffInfo.name );
+	}
+
+	u64 devicePointer = 0;
+	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT )
+	{
+		devicePointer = VkGetBufferDeviceAddress( this->device, vkBuffer );
+		assert( devicePointer );
+	}
+
+	return {
+		.mem = mem,
+		.hndl = vkBuffer,
+		.sizeInBytes = bufferCreateInfo.size,
+		.hostVisible = ( u8* ) allocInfo.pMappedData,
+		.devicePointer = devicePointer,
+		.usgFlags = bufferCreateInfo.usage
+	};
+}
+vk_image vk_device_ctx::CreateImage( const image_info& imgInfo )
+{
+	VkFormatFeatureFlags formatFeatures = 0;
+	if( imgInfo.usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+	if( imgInfo.usg & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) 
+		formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	if( imgInfo.usg & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+	if( imgInfo.usg & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+
+	VkFormatProperties formatProps;
+	vkGetPhysicalDeviceFormatProperties( this->gpu, imgInfo.format, &formatProps );
+	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
+
+	VkImageCreateInfo imageInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = imgInfo.format,
+		.extent = { imgInfo.width,  imgInfo.height, 1 },
+		.mipLevels = imgInfo.mipCount,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = imgInfo.usg,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+	};
+
+	VmaAllocationCreateInfo allocCreateInfo = {
+		.usage = VMA_MEMORY_USAGE_AUTO,
+	};
+	VkImage img;
+	VmaAllocation mem;
+	VmaAllocationInfo allocInfo;
+	VK_CHECK( vmaCreateImage( this->allocator, &imageInfo, &allocCreateInfo, &img, &mem, &allocInfo ) );
+
+	if( imgInfo.name )
+	{
+		VkDbgNameObj( img, this->device, imgInfo.name );
+	}
+
+	//VkImageView vkImgView = VkMakeImgView(
+	//	this->device, img, imageInfo.format, 0, imageInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
+
+	return {
+		.mem = mem,
+		.hndl = img,
+		.usageFlags = imageInfo.usage,
+		.format = imageInfo.format,
+		.width = (u16)imageInfo.extent.width,
+		.height = (u16)imageInfo.extent.height,
+		.layerCount = (u8)imageInfo.arrayLayers,
+		.mipCount = (u8)imageInfo.mipLevels,
+	};
+}
+inline VmaAllocator MakeVmaAllocator( VkPhysicalDevice vkGpu, VkDevice vkDevice, VkInstance vkInst, u32 vkVersion )
+{
+	constexpr VmaAllocatorCreateFlags createFlags =
+		VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT | VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT |
+		VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE4_BIT | VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE5_BIT;
+	
+	VmaVulkanFunctions vulkanFunctions = {
+		.vkGetInstanceProcAddr = vkGetInstanceProcAddr,
+		.vkGetDeviceProcAddr = vkGetDeviceProcAddr,
+	};
+
+	// TODO: which are default, which do we have ?
+	VmaAllocatorCreateInfo allocatorCreateInfo = {
+		.flags = createFlags,
+		.physicalDevice = vkGpu,
+		.device = vkDevice,
+		.pVulkanFunctions = &vulkanFunctions,
+		.instance = vkInst,
+		.vulkanApiVersion = vkVersion 
+	};
+
+	VmaAllocator vmaAllocator;
+	vmaCreateAllocator( &allocatorCreateInfo, &vmaAllocator );
+
+	return vmaAllocator;
+}
 
 inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf )
 {
@@ -155,9 +305,8 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	std::vector<VkPhysicalDevice> availableDevices( numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
-	VkPhysicalDeviceMultiDrawPropertiesEXT multiDrawExt = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_PROPERTIES_EXT };
 	VkPhysicalDeviceInlineUniformBlockPropertiesEXT inlineBlockProps =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT, &multiDrawExt };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT };
 	VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeRasterProps =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, &inlineBlockProps };
 	VkPhysicalDeviceSubgroupProperties waveProps = 
@@ -176,10 +325,8 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
-	VkPhysicalDeviceMultiDrawFeaturesEXT multiDrawFeasturesExt = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT, &presentIdFeatures };
 	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &multiDrawFeasturesExt };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &presentIdFeatures };
 	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentsFeature =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT, &extDynamicStateFeatures };
 	VkPhysicalDeviceVulkan14Features gpuFeatures14 = 
@@ -194,12 +341,13 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 
 	// TODO: check for more stuff ?
 	VkPhysicalDevice gpu = 0;
-	for( u64 i = 0; i < numDevices; ++i )
+	u32 deviceIdx = 0;
+	for( ; deviceIdx < numDevices; ++deviceIdx )
 	{
 		u32 extsNum = 0;
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ i ], 0, &extsNum, 0 ) || !extsNum ) continue;
+		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ], 0, &extsNum, 0 ) || !extsNum ) continue;
 		std::vector<VkExtensionProperties> availableExts( extsNum );
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ i ], 0, &extsNum, std::data( availableExts ) ) ) continue;
+		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ], 0, &extsNum, std::data( availableExts ) ) ) continue;
 
 		for( std::string_view requiredExt : ENABLED_DEVICE_EXTS )
 		{
@@ -215,14 +363,14 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 			if( !foundExt ) goto NEXT_DEVICE;
 		};
 
-		vkGetPhysicalDeviceProperties2( availableDevices[ i ], &gpuProps2 );
+		vkGetPhysicalDeviceProperties2( availableDevices[ deviceIdx ], &gpuProps2 );
 		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_4 ) continue;
 		if( gpuProps2.properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) continue;
 		if( !gpuProps2.properties.limits.timestampComputeAndGraphics ) continue;
 
-		vkGetPhysicalDeviceFeatures2( availableDevices[ i ], &gpuFeatures );
+		vkGetPhysicalDeviceFeatures2( availableDevices[ deviceIdx ], &gpuFeatures );
 
-		gpu = availableDevices[ i ];
+		gpu = availableDevices[ deviceIdx ];
 
 		break;
 
@@ -265,178 +413,16 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	vkDc.device = vkDevice;
 	vkDc.gpu = gpu;
 	vkDc.gpuProps = gpuProps2.properties;
+	vkDc.deviceMask = u32( 1u << deviceIdx );
 	vkDc.timestampPeriod = gpuProps2.properties.limits.timestampPeriod;
 	vkDc.waveSize = waveProps.subgroupSize;
 
 	VkPhysicalDeviceMemoryProperties memProps;
 	vkGetPhysicalDeviceMemoryProperties( gpu, &memProps );
 
-	vkDc.deviceLocalArena = VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
-	vkDc.imgArena = VkMakeMemoryArena( memProps, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
-	vkDc.stagingArena = VkMakeMemoryArena( 
-		memProps, 
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT );
-	vkDc.hostVisibleArena = VkMakeMemoryArena( 
-		memProps,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+	vkDc.allocator = MakeVmaAllocator( gpu, vkDevice, vkInst, VK_API_VERSION_1_4 ); // TODO: main file with this );
 
 	return vkDc;
-}
-
-vk_mem_arena* VkChooseBufferArenaBasedOnUsage( vk_device_ctx* vkDc, buffer_usage usage )
-{
-	using enum buffer_usage;
-	switch( usage )
-	{
-	case GPU_ONLY: return &vkDc->deviceLocalArena;
-	case HOST_VISIBLE: return &vkDc->hostVisibleArena;
-	case STAGING: return &vkDc->stagingArena;
-	}
-	return 0;
-}
-
-static vk_buffer VkCreateAllocBindBuffer( vk_device_ctx* vkDc, const buffer_info& buffInfo ) 
-{
-	VkBuffer vkBuffer;
-	VkBufferCreateInfo bufferInfo = { 
-		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size = buffInfo.elemCount * buffInfo.stride,
-		.usage = buffInfo.usageFlags,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-	};
-	VK_CHECK( vkCreateBuffer( vkDc->device, &bufferInfo, 0, &vkBuffer ) );
-
-	if( buffInfo.name )
-	{
-		VkDbgNameObj( vkBuffer, vkDc->device, buffInfo.name );
-	}
-
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS_KHR };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	VkBufferMemoryRequirementsInfo2 buffMemReqs2 = { 
-		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
-		.buffer = vkBuffer,
-	};
-	vkGetBufferMemoryRequirements2( vkDc->device, &buffMemReqs2, &memReqs2 );
-
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkDc->gpu, &memProps );
-
-	vk_mem_arena* vkArena = VkChooseBufferArenaBasedOnUsage( vkDc, buffInfo.usage );
-	u32 memTypeIdx = VkFindMemTypeIdx( memProps, vkArena->memTypeProperties, memReqs2.memoryRequirements.memoryTypeBits );
-	VK_CHECK( VK_INTERNAL_ERROR( !( memTypeIdx == vkArena->memTypeIdx ) ) );
-
-	VkMemoryAllocateFlags allocFlags =
-		( bufferInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT ) ? VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT : 0;
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { 
-		.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
-		.buffer = buffMemReqs2.buffer,
-	};
-
-	bool dedicatedAlloc = dedicatedReqs.requiresDedicatedAllocation;
-
-	u64 size = memReqs2.memoryRequirements.size;
-	u64 align = memReqs2.memoryRequirements.alignment;
-	vk_allocation bufferMem = VkArenaAlignAlloc( 
-		vkDc->device, vkArena, size, align, allocFlags, dedicatedAlloc ? &dedicatedAllocateInfo : 0 );
-
-	VK_CHECK( vkBindBufferMemory( vkDc->device, vkBuffer, bufferMem.deviceMem, bufferMem.dataOffset ) );
-
-	u8* hostVisible = ( bufferMem.hostVisible ) ? ( bufferMem.hostVisible + bufferMem.dataOffset ) : 0;
-
-	u64 devicePointer = 0;
-	if( allocFlags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT )
-	{
-		devicePointer = VkGetBufferDeviceAddress( vkDc->device, vkBuffer );
-		assert( devicePointer );
-	}
-
-	return {
-		.mem = bufferMem,
-		.hndl = vkBuffer,
-		.sizeInBytes = bufferInfo.size,
-		.hostVisible = hostVisible,
-		.devicePointer = devicePointer,
-		.usgFlags = bufferInfo.usage
-	};
-}
-
-static vk_image VkCreateAllocBindImage( vk_device_ctx* vkDc, const image_info& imgInfo ) 
-{
-	VkFormatFeatureFlags formatFeatures = 0;
-	if( imgInfo.usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-	if( imgInfo.usg & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) 
-		formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-	if( imgInfo.usg & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-	if( imgInfo.usg & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-
-	VkFormatProperties formatProps;
-	vkGetPhysicalDeviceFormatProperties( vkDc->gpu, imgInfo.format, &formatProps );
-	VK_CHECK( VK_INTERNAL_ERROR( ( formatProps.optimalTilingFeatures & formatFeatures ) != formatFeatures ) );
-
-	VkImageCreateInfo imageInfo = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.imageType = VK_IMAGE_TYPE_2D,
-		.format = imgInfo.format,
-		.extent = { imgInfo.width,  imgInfo.height, 1 },
-		.mipLevels = imgInfo.mipCount,
-		.arrayLayers = 1,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = imgInfo.usg,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
-	};
-
-	VkImage img;
-	VK_CHECK( vkCreateImage( vkDc->device, &imageInfo, 0, &img ) );
-
-	if( imgInfo.name )
-	{
-		VkDbgNameObj( img, vkDc->device, imgInfo.name );
-	}
-
-	VkImageMemoryRequirementsInfo2 imgReqs2 = { 
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
-		.image = img,
-	};
-	VkMemoryDedicatedRequirements dedicatedReqs = { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS };
-	VkMemoryRequirements2 memReqs2 = { VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedReqs };
-	vkGetImageMemoryRequirements2( vkDc->device, &imgReqs2, &memReqs2 );
-
-
-	VkPhysicalDeviceMemoryProperties memProps;
-	vkGetPhysicalDeviceMemoryProperties( vkDc->gpu, &memProps );
-
-	u32 memTypeBits = memReqs2.memoryRequirements.memoryTypeBits;
-	u32 memTypeIdx = VkFindMemTypeIdx( memProps, vkDc->imgArena.memTypeProperties, memTypeBits );
-	u32 arenaMemTypeIdx = vkDc->imgArena.memTypeIdx;
-	VK_CHECK( VK_INTERNAL_ERROR( !( memTypeIdx == arenaMemTypeIdx ) ) );
-
-	VkMemoryDedicatedAllocateInfo dedicatedAllocateInfo = { 
-		.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
-		.image = imgReqs2.image,
-	};
-	bool dedicatedAlloc = dedicatedReqs.prefersDedicatedAllocation || dedicatedReqs.requiresDedicatedAllocation;
-	const VkMemoryDedicatedAllocateInfo* pDedicatedAllocInfo = dedicatedAlloc ? &dedicatedAllocateInfo : 0;
-
-	u64 size = memReqs2.memoryRequirements.size;
-	u64 align = memReqs2.memoryRequirements.alignment;
-	vk_allocation imgMem = VkArenaAlignAlloc( vkDc->device, &vkDc->imgArena, size, align, 0, pDedicatedAllocInfo );
-
-	VK_CHECK( vkBindImageMemory( vkDc->device, img, imgMem.deviceMem, imgMem.dataOffset ) );
-
-	return {
-		.mem = imgMem,
-		.hndl = img,
-		.usageFlags = imageInfo.usage,
-		.nativeFormat = imageInfo.format,
-		.width = (u16)imageInfo.extent.width,
-		.height = (u16)imageInfo.extent.height,
-		.layerCount = (u8)imageInfo.arrayLayers,
-		.mipCount = (u8)imageInfo.mipLevels,
-	};
 }
 
 #endif // !__VK_DEVICE_H__

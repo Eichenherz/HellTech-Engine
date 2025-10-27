@@ -10,7 +10,7 @@ layout( push_constant ) uniform block{
 	uint64_t transfAddr;
 	uint64_t meshletsVtxAddr;
 	uint64_t compactedDrawsAddr;
-	uint64_t camIdx;
+	uint viewDataIdx;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer vtx_ref{
@@ -34,8 +34,8 @@ void main()
 	
 	uint di = compacted_args_ref( compactedDrawsAddr ).compactedDrawArgs[ gl_DrawIDARB ].nodeIdx;
 	instance_desc thisInst = inst_desc_ref( transfAddr ).instDescs[ di ];
-	global_data cam = ssbos[uint(camIdx)].g;
 
-	mat4 camProjMainView = cam.proj * cam.mainView;
-	gl_Position = camProjMainView * thisInst.localToWorld * vec4( vtx.px, vtx.py, vtx.pz, 1.0f );
+	view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
+
+	gl_Position = view.mainViewProj * thisInst.localToWorld * vec4( vtx.px, vtx.py, vtx.pz, 1.0f );
 }

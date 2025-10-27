@@ -39,3 +39,5 @@ imgui/
 Shader.hlsl
 
 bin/*
+
+3rdParty/*
