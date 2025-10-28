@@ -230,6 +230,8 @@ struct virtual_camera
 		XMMATRIX xmProj = XMLoadFloat4x4A( &projection );
 
 		view_data viewData = {};
+		viewData.proj = projection;
+		XMStoreFloat4x4A( &viewData.mainView, view );
 		XMStoreFloat4x4A( &viewData.mainViewProj, XMMatrixMultiply( view, xmProj ) );
 		viewData.prevViewProj = prevViewProj;
 		viewData.worldPos = worldPos;
@@ -240,12 +242,12 @@ struct virtual_camera
 };
 
 // NOTE: this is useful when we want to draw the frozen frustum
-inline DirectX::XMMATRIX XM_CALLCONV FrustumMatrixFromViewProj( DirectX::XMMATRIX view, DirectX::XMMATRIX proj )
+inline DirectX::XMMATRIX XM_CALLCONV FrustumMatrixFromViewProj( DirectX::XMMATRIX viewXProj )
 {
 	using namespace DirectX;
 
 	// NOTE: inv( A * B ) = inv B * inv A
-	XMMATRIX invFrustMat = XMMatrixMultiply( view, proj );
+	XMMATRIX invFrustMat = viewXProj; //XMMatrixMultiply( view, proj );
 	XMVECTOR det = XMMatrixDeterminant( invFrustMat );
 	assert( XMVectorGetX( det ) );
 	XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
@@ -533,38 +535,18 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
 		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
 
-		view_data mainViewData = mainActiveCam.GetViewData();
-		mainActiveCam.prevViewProj = mainViewData.mainViewProj;
-
-		view_data dbgViewData = debugCam.GetViewData();
-
-		frameData.views[ mainViewIdx ] = mainViewData;
-		frameData.views[ dbgViewIdx ] = dbgViewData;
-
-		// TRANSF CAM VIEW
-		XMVECTOR camLookAt = XMVector3Transform( camFwdBasis, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = XMMatrixLookAtLH( smoothNewCamPos, XMVectorAdd( smoothNewCamPos, camLookAt ), camUpBasis );
-
-		XMVECTOR viewDet = XMMatrixDeterminant( view );
-		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
-		XMVECTOR viewDir = XMVectorNegate( invView.r[ 2 ] );
-
-		XMMATRIX frustMat = FrustumMatrixFromViewProj( view, proj );
-
-		XMStoreFloat4x4A( &frameData.proj, proj );
-		XMStoreFloat4x4A( &frameData.activeView, view );
 		if( !kbd.f )
 		{
-			XMStoreFloat4x4A( &frameData.mainView, view );
+			view_data mainViewData = mainActiveCam.GetViewData();
+			mainActiveCam.prevViewProj = mainViewData.mainViewProj;
+			frameData.views[ mainViewIdx ] = mainViewData;
 		}
-		frameData.worldPos = camWorldPos;
-		XMStoreFloat3( &frameData.camViewDir, viewDir );
-
 		
-		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
+		view_data dbgViewData = debugCam.GetViewData();
+		frameData.views[ dbgViewIdx ] = dbgViewData;
 
-		XMStoreFloat4x4A( &frameData.activeProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.activeView ), proj ) );
-		XMStoreFloat4x4A( &frameData.mainProjView, XMMatrixMultiply( XMLoadFloat4x4A( &frameData.mainView ), proj ) );
+		XMMATRIX frustMat = FrustumMatrixFromViewProj( XMLoadFloat4x4A( &frameData.views[ mainViewIdx ].mainViewProj ) );
+		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
 
 		frameData.elapsedSeconds = elapsedSecs;
 		frameData.freezeMainView = kbd.f;

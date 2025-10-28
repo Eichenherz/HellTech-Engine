@@ -24,14 +24,7 @@ struct view_data;
 struct frame_data
 {
 	std::vector<view_data> views;
-	DirectX::XMFLOAT4X4A	proj;
-	DirectX::XMFLOAT4X4A	mainView;
-	DirectX::XMFLOAT4X4A	activeView;
 	DirectX::XMFLOAT4X4A    frustTransf;
-	DirectX::XMFLOAT4X4A    activeProjView;
-	DirectX::XMFLOAT4X4A    mainProjView;
-	DirectX::XMFLOAT3	    worldPos;
-	DirectX::XMFLOAT3	    camViewDir;
 	float                   elapsedSeconds;
 	bool                    freezeMainView;
 	bool                    dbgDraw;
@@ -77,6 +70,9 @@ const float PI = 3.14159265359;
 
 struct view_data
 {
+	mat4	proj;
+	mat4	mainView;
+	mat4	prevView;
 	mat4	mainViewProj;
 	mat4	prevViewProj;
 	vec3	worldPos;
@@ -230,18 +226,19 @@ struct avg_luminance_info
 	float dt;
 };
 
-struct dbg_vertex
-{
-	vec3 pos;
-	uint color;
-};
-
 // TODO: uv to u16 or smth
 struct imgui_vertex
 {
 	float x, y;
 	float u, v;
 	uint  rgba8Unorm;
+};
+
+struct dbg_draw_args
+{
+	mat4 transf;
+	uint color;
+	uint padding;
 };
 
 // TODO: re-order these

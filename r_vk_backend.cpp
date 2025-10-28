@@ -55,7 +55,6 @@ constexpr u32 MLET_CULL_WORKSIZE = 256;
 // TODO: compile time switches
 //==============CONSTEXPR_SWITCH==============//
 
-constexpr bool dbgDraw = true;
 //==============================================//
 
 
@@ -92,41 +91,6 @@ struct vk_scoped_label
 		vkCmdEndDebugUtilsLabelEXT( cmdBuff );
 	}
 };
-
-#include <iostream>
-
-VKAPI_ATTR VkBool32 VKAPI_CALL
-VkDbgUtilsMsgCallback(
-	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
-	VkDebugUtilsMessageTypeFlagsEXT				msgType,
-	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
-	void* userData
-) {
-	// NOTE: validation layer bug
-	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
-
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
-	{
-		std::string_view msgView = { callbackData->pMessage };
-		std::cout << msgView.substr( msgView.rfind( "| " ) + 2 ) << "\n";
-
-		return VK_FALSE;
-	}
-
-	auto formattedMsg = std::format( "{}\n{}\n", callbackData->pMessageIdName, callbackData->pMessage );
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
-	{
-		std::cout << ">>> VK_WARNING <<<\n" << formattedMsg << "\n";
-	}
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT )
-	{
-		//const char* pVkObjName = callbackData->pObjects ? callbackData->pObjects[ 0 ].pObjectName : "";
-		std::cout << ">>> VK_ERROR <<<\n" << formattedMsg << "\n";// << pVkObjName << "\n";
-		abort();
-	} 
-
-	return VK_FALSE;
-}
 
 
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
@@ -849,6 +813,8 @@ struct imgui_context
 	VkDescriptorUpdateTemplate  descTemplate = {};
 	VkPipeline	                pipeline;
 	
+
+
 	// TODO: overdraw more efficiently 
 	void DrawUiPass(
 		VkCommandBuffer cmdBuff,
@@ -1101,7 +1067,7 @@ struct debug_context
 
 		vk_gfx_pipeline_state triDrawPipelineState = {
 			.polyMode = VK_POLYGON_MODE_FILL,
-			.cullFlags = VK_CULL_MODE_NONE,// VK_CULL_MODE_FRONT_BIT,
+			.cullFlags = VK_CULL_MODE_NONE,
 			.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 			.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
 			.depthWrite = VK_TRUE,
@@ -1113,6 +1079,14 @@ struct debug_context
 
 		vkDestroyShaderModule( dc.device, vert.module, 0 );
 		vkDestroyShaderModule( dc.device, frag.module, 0 );
+
+		pDrawCount = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		.name = "Buff_DbgDrawCount",
+		.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		.elemCount = 1,
+		.stride = sizeof( u32 ),
+		.usage = buffer_usage::GPU_ONLY } ) );  
 	}
 
 	void InitData( vk_device_ctx& dc, u32 dbgLinesSizeInBytes, u32 dbgTrianglesSizeInBytes )
@@ -1130,24 +1104,30 @@ struct debug_context
 			.elemCount = dbgTrianglesSizeInBytes, 
 			.stride = 1, 
 			.usage = buffer_usage::HOST_VISIBLE } ) );
-
-		pDrawCount = std::make_shared<vk_buffer>( dc.CreateBuffer( {
-		.name = "Buff_DbgDrawCount",
-		.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT 
-		| VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-		.elemCount = 1,
-		.stride = sizeof( u32 ),
-		.usage = buffer_usage::GPU_ONLY } ) );  
 	}
 
+	void UploadDebugGeometry()
+	{
+		auto unitCube = GenerateBoxWithBounds( BOX_MIN, BOX_MAX );
+		auto lineVtxBuff = BoxVerticesAsLines( unitCube );
+		auto trisVtxBuff = BoxVerticesAsTriangles( unitCube );
+
+		assert( pLinesBuff->sizeInBytes >= BYTE_COUNT( lineVtxBuff ) );
+		assert( pTrisBuff->sizeInBytes >= BYTE_COUNT( trisVtxBuff ) );
+		std::memcpy( pLinesBuff->hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
+		std::memcpy( pTrisBuff->hostVisible, std::data( trisVtxBuff ), BYTE_COUNT( trisVtxBuff ) );
+	}
+
+	// TODO: multi draw with params
 	void DrawCPU( 
 		vk_command_buffer&        cmdBuff, 
 		const vk_rendering_info&  renderingInfo, 
 		const char*               name,
 		debug_draw_type           ddType, 
-		u32                       viewDataIdx, 
+		u64                       viewAddr, 
 		u32                       viewIdx,
-		const VkMultiDrawInfoEXT& mdInfo
+		const mat4&      transf,
+		u32 color
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( name, {} );
 		auto dynamicRendering = cmdBuff.CmdIssueDynamicScopedRenderPass( std::data( renderingInfo.colorAttachments ), 
@@ -1161,20 +1141,24 @@ struct debug_context
 		cmdBuff.CmdBindPipelineAndBindlessDesc( vkPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS );
 
 		u64 vtxAddr = ( ddType == debug_draw_type::TRIANGLE ) ? pTrisBuff->devicePointer : pLinesBuff->devicePointer;
+		u32 vertexCount = ( ddType == debug_draw_type::TRIANGLE ) ? std::size( boxTrisIndices ) : std::size( boxLineIndices );
+#pragma pack(push, 1)
 		struct debug_cpu_push
 		{
+			mat4 transf;
 			uint64_t vtxAddr;
-			uint viewDataIdx;
+			uint64_t viewAddr;
 			uint viewIdx;
-		} pc = { vtxAddr, viewDataIdx, viewIdx };
+			uint color;
+		} pc = { transf, vtxAddr, viewAddr, viewIdx, color };
+#pragma pack(pop)
 		cmdBuff.CmdPushConstants( &pc, sizeof( pc ) );
-		vkCmdDraw( cmdBuff.hndl, mdInfo.vertexCount, 1, mdInfo.firstVertex, 0 );
+		vkCmdDraw( cmdBuff.hndl, vertexCount, 1, 0, 0 );
 	}
 };
 
 
 static entities_data entities;
-static std::vector<dbg_vertex> dbgLineGeomCache;
 
 
 static vk_buffer globVertexBuff;
@@ -2546,13 +2530,6 @@ static inline void VkUploadResources(
 	cmdBuff.CmdPipelineBarriers( buffBarriers, imageBarriers );
 }
 
-void GenerateDebugVertexBuffer()
-{
-	auto unitCube = GenerateBoxWithBounds( BOX_MIN, BOX_MAX );
-	auto unitCubeEdges = BoxVerticesAsLines( unitCube );
-	auto unitCubeTris = BoxVerticesAsTriangles( unitCube );
-}
-
 // TODO: in and out data
 void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
@@ -2586,29 +2563,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	assert( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
 	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	// TODO: move out of this 
-	dbgLineGeomCache = ComputeSceneDebugBoundingBoxes( XMLoadFloat4x4A( &frameData.frustTransf ), entities, yellow, cyan );
-	// TODO: might need to double buffer
-	std::memcpy( rndCtx.dbgCtx.pLinesBuff->hostVisible, std::data( dbgLineGeomCache ), BYTE_COUNT( dbgLineGeomCache ) );
-
 	// TODO: remove from here
 	static bool rscCpy = false;
 	if( !rscCpy )
 	{
-		{
-			using namespace DirectX;
-
-			XMMATRIX t = XMMatrixMultiply( 
-				XMMatrixScaling( 100.0f, 60.0f, 20.0f ), XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
-			auto boxVertices = GenerateTransformedBox( t, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f } );
-			std::span<dbg_vertex> occlusionBoxSpan = { ( dbg_vertex* ) rndCtx.dbgCtx.pTrisBuff->hostVisible,boxTrisVertexCount };
-			assert( std::size( occlusionBoxSpan ) == std::size( boxTrisIndices ) );
-			for( u64 i = 0; i < std::size( occlusionBoxSpan ); ++i )
-			{
-				occlusionBoxSpan[ i ] = { boxVertices[ boxTrisIndices[ i ] ], magenta };
-			}
-		}
-		
+		rndCtx.dbgCtx.UploadDebugGeometry();
 		rscCpy = true;
 	}
 	
@@ -2708,7 +2667,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		thisFrameCmdBuffer.CmdPipelineBarriers( {}, fontsBarrier );
 
-		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
 		rescUploaded = 1;
 	}
 
@@ -2729,6 +2687,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	u32 instCount = instDescBuff.sizeInBytes / sizeof( instance_desc );
 	u32 mletCount = meshletBuff.sizeInBytes / sizeof( meshlet );
 	u32 meshletUpperBound = instCount * mletCount;
+
+	DirectX::XMMATRIX t = DirectX::XMMatrixMultiply( 
+		DirectX::XMMatrixScaling( 180.0f, 100.0f, 60.0f ), DirectX::XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
+	DirectX::XMFLOAT4X4A debugOcclusionWallTransf;
+	DirectX::XMStoreFloat4x4A( &debugOcclusionWallTransf, t );
 
 	VkResetGpuTimer( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
 	u32 imgIdx;
@@ -2805,7 +2768,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			.pDepthAttachment = &depthRead
 		};
 		rndCtx.dbgCtx.DrawCPU( thisFrameCmdBuffer, zDgbInfo, "Draw Occluder-Depth", debug_draw_type::TRIANGLE, 
-			thisVFrame.viewDataIdx, 0, { .firstVertex = 0, .vertexCount = boxTrisVertexCount } );
+			thisVFrame.pViewData->devicePointer, 0, debugOcclusionWallTransf, 0 );
 
 		DepthPyramidMultiPass(
 			thisFrameCmdBuffer,
@@ -2884,16 +2847,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			.pDepthAttachment = 0
 		};
 		rndCtx.dbgCtx.DrawCPU( thisFrameCmdBuffer, colDgbInfo, "Draw Occluder-Color", debug_draw_type::TRIANGLE, 
-			thisVFrame.viewDataIdx, 0, { .firstVertex = 0, .vertexCount = boxTrisVertexCount } );
+			thisVFrame.pViewData->devicePointer, 1, debugOcclusionWallTransf, magenta );
 
-		if( dbgDraw && ( frameData.freezeMainView || frameData.dbgDraw ) )
+		if( frameData.freezeMainView )
 		{
-			u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
-
-			u32 offset = frameData.dbgDraw ? 0 : frustBoxOffset;
-			u32 size = ( frameData.freezeMainView && frameData.dbgDraw ) ?
-				std::size( dbgLineGeomCache ) : ( frameData.freezeMainView ? boxLineVertexCount : frustBoxOffset );
-
 			VkRenderingAttachmentInfo attInfosDbg[] = { colorRead };
 			vk_rendering_info colDgbInfo = {
 				.viewport = viewport,
@@ -2901,21 +2858,20 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				.colorAttachments = attInfosDbg,
 				.pDepthAttachment = 0
 			};
-			rndCtx.dbgCtx.DrawCPU( thisFrameCmdBuffer, colDgbInfo, "Draw AABB", debug_draw_type::LINE, 
-				thisVFrame.viewDataIdx, 1, { .firstVertex = offset, .vertexCount = size } );
+			rndCtx.dbgCtx.DrawCPU( thisFrameCmdBuffer, colDgbInfo, "Draw Frustum", debug_draw_type::LINE, 
+				thisVFrame.pViewData->devicePointer, 1, frameData.frustTransf, yellow );
+		}
 
-			if( frameData.dbgDraw )
-			{
-				//DrawIndirectPass( thisVFrame.cmdBuff,
-				//				  gfxDrawIndirDbg,
-				//				  &colorRead,
-				//				  0,
-				//				  drawCmdAabbsBuff,
-				//				  drawCountDbgBuff.hndl,
-				//				  dbgDrawProgram,
-				//				  frameData.activeProjView, scissor );
-			}
-
+		if( frameData.dbgDraw )
+		{
+			//DrawIndirectPass( thisVFrame.cmdBuff,
+			//				  gfxDrawIndirDbg,
+			//				  &colorRead,
+			//				  0,
+			//				  drawCmdAabbsBuff,
+			//				  drawCountDbgBuff.hndl,
+			//				  dbgDrawProgram,
+			//				  frameData.activeProjView, scissor );
 		}
 
 		thisFrameCmdBuffer.CmdFillVkBuffer( *rndCtx.pShaderGlobalScratchpadBuff, 0u );

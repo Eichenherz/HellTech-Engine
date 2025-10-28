@@ -57,13 +57,14 @@ static const float PI = 3.14159265359f;
 
 #endif
 
-// TODO: use mat4x3
-struct global_data
+struct view_data
 {
 	float4x4	proj;
 	float4x4	mainView;
-	float4x4	activeView;
-	float3	worldPos;
+	float4x4	prevView;
+	float4x4	mainViewProj;
+	float4x4	prevViewProj;
+	float3	    worldPos;
 	float	pad0;
 	float3	camViewDir;
 	float	pad1;

@@ -8,6 +8,7 @@
 #include <vulkan.h>
 #include "vk_procs.h"
 
+#include <iostream>
 #include <string_view>
 
 #include "ht_error.h"
@@ -136,5 +137,38 @@ inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
 	VK_CHECK( vkSetDebugUtilsObjectNameEXT( vkDevice, &nameInfo ) );
 }
 
+
+VKAPI_ATTR VkBool32 VKAPI_CALL
+VkDbgUtilsMsgCallback(
+	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
+	VkDebugUtilsMessageTypeFlagsEXT				msgType,
+	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
+	void* userData
+) {
+	// NOTE: validation layer bug
+	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
+
+	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
+	{
+		std::string_view msgView = { callbackData->pMessage };
+		std::cout << msgView.substr( msgView.rfind( "| " ) + 2 ) << "\n";
+
+		return VK_FALSE;
+	}
+
+	auto formattedMsg = std::format( "{}\n{}\n", callbackData->pMessageIdName, callbackData->pMessage );
+	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
+	{
+		std::cout << ">>> VK_WARNING <<<\n" << formattedMsg << "\n";
+	}
+	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT )
+	{
+		//const char* pVkObjName = callbackData->pObjects ? callbackData->pObjects[ 0 ].pObjectName : "";
+		std::cout << ">>> VK_ERROR <<<\n" << formattedMsg << "\n";// << pVkObjName << "\n";
+		abort();
+	} 
+
+	return VK_FALSE;
+}
 
 #endif // !__VK_ERROR_H__

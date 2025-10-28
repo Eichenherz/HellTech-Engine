@@ -29,7 +29,6 @@ struct vk_buffer
 
 inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
 {
-	//return VkDescriptorBufferInfo{ hndl,offset,size };
 	return VkDescriptorBufferInfo{ b.hndl,0,b.sizeInBytes };
 }
 

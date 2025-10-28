@@ -88,9 +88,9 @@ void main()
 	vec3 worldPos = RotateQuat( vec3( vtx.px, vtx.py, vtx.pz ) * inst.scale, inst.rot ) + inst.pos;
 
 	//global_data cam = cam_data_ref( camDataAddr ).camera;
-	view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
+	view_data view = ssbos[ viewDataIdx ].views[ 1 ];//viewIdx ];
 
-	gl_Position = view.mainViewProj * vec4( worldPos, 1 );
+	gl_Position = view.mainViewProj * vec4( worldPos, 1.0f );
 
 	vec3 encodedTanFame = unpackSnorm4x8( vtx.snorm8octTanFrame ).xyz;
 	vec3 n = DecodeOctaNormal( encodedTanFame.xy );

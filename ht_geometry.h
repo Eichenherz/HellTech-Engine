@@ -26,7 +26,8 @@
 
 constexpr bool worldLeftHanded = true;
 
-inline constexpr void ReverseTriangleWinding( u32* indices, u64 count )
+template<typename Index>
+inline constexpr void ReverseTriangleWinding( Index* indices, u64 count )
 {
 	assert( count % 3 == 0 );
 	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
@@ -209,7 +210,7 @@ static void GenerateBoxCube( std::vector<DirectX::XMFLOAT4>& vtx, std::vector<u3
 constexpr u64 boxLineVertexCount = 24u;
 constexpr u64 boxTrisVertexCount = 36u;
 /*
-// NOTE: corners are stored in this way:
+// NOTE: corners are stored in this way: ( WRONG ! CORRECT DIAGRAM )
 //	   3---------7
 //	  /|        /|
 //	 / |       / |
@@ -243,10 +244,11 @@ constexpr u8 boxTrisIndices[] = {
 constexpr DirectX::XMFLOAT3 BOX_MIN = {-0.5f, -0.5f, -0.5f };
 constexpr DirectX::XMFLOAT3 BOX_MAX = { 0.5f,  0.5f,  0.5f };
 
-constexpr std::array<DirectX::XMFLOAT3, 8u> 
+
+constexpr std::array<DirectX::XMFLOAT3A, 8u> 
 GenerateBoxWithBounds( DirectX::XMFLOAT3 boxMin, DirectX::XMFLOAT3 boxMax )
 {
-	std::array<DirectX::XMFLOAT3,8u> boxCorners = {};
+	std::array<DirectX::XMFLOAT3A,8u> boxCorners = {};
 	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z };
 	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z };
 	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z };
@@ -259,26 +261,27 @@ GenerateBoxWithBounds( DirectX::XMFLOAT3 boxMin, DirectX::XMFLOAT3 boxMax )
 	return boxCorners;
 }
 
-inline std::array<DirectX::XMFLOAT3,8u> XM_CALLCONV 
-GenerateTransformedBox( DirectX::XMMATRIX transf, DirectX::XMFLOAT3	boxMin, DirectX::XMFLOAT3 boxMax )
+//inline std::array<DirectX::XMFLOAT3,8u> XM_CALLCONV 
+//GenerateTransformedBox( DirectX::XMMATRIX transf, DirectX::XMFLOAT3	boxMin, DirectX::XMFLOAT3 boxMax )
+//{
+//	using namespace DirectX;
+//
+//	std::array<DirectX::XMFLOAT3, 8u> boxCorners = GenerateBoxWithBounds( boxMin, boxMax );
+//
+//	for( XMFLOAT3& thisCorner : boxCorners )
+//	{
+//		XMVECTOR transformedCorner = XMVector4Transform( XMVectorSet( thisCorner.x, thisCorner.y, thisCorner.z, 1.0f ), transf );
+//		XMStoreFloat3( &thisCorner, transformedCorner );
+//	}
+//
+//	return boxCorners;
+//}
+
+template<typename Vertex>
+constexpr std::array<Vertex, std::size( boxLineIndices )> 
+BoxVerticesAsLines( const std::array<Vertex, 8u>& boxVertices )
 {
-	using namespace DirectX;
-
-	std::array<DirectX::XMFLOAT3, 8u> boxCorners = GenerateBoxWithBounds( boxMin, boxMax );
-
-	for( XMFLOAT3& thisCorner : boxCorners )
-	{
-		XMVECTOR trnasformedCorner = XMVector4Transform( XMVectorSet( thisCorner.x, thisCorner.y, thisCorner.z, 1.0f ), transf );
-		XMStoreFloat3( &thisCorner, trnasformedCorner );
-	}
-
-	return boxCorners;
-}
-
-constexpr std::array<DirectX::XMFLOAT3, std::size( boxLineIndices )> 
-BoxVerticesAsLines( const std::array<DirectX::XMFLOAT3, 8u>& boxVertices )
-{
-	std::array<DirectX::XMFLOAT3, std::size( boxLineIndices )> out;
+	std::array<Vertex, std::size( boxLineIndices )> out;
 	for( u64 i = 0; i < std::size( boxLineIndices ); ++i )
 	{
 		out[ i ] = boxVertices[ boxLineIndices[ i ] ];
@@ -287,10 +290,11 @@ BoxVerticesAsLines( const std::array<DirectX::XMFLOAT3, 8u>& boxVertices )
 	return out;
 }
 
-constexpr std::array<DirectX::XMFLOAT3, std::size( boxTrisIndices )> 
-BoxVerticesAsTriangles( const std::array<DirectX::XMFLOAT3, 8u>& boxVertices )
+template<typename Vertex>
+constexpr std::array<Vertex, std::size( boxTrisIndices )> 
+BoxVerticesAsTriangles( const std::array<Vertex, 8u>& boxVertices )
 {
-	std::array<DirectX::XMFLOAT3, std::size( boxTrisIndices )> out;
+	std::array<Vertex, std::size( boxTrisIndices )> out;
 	for( u64 i = 0; i < std::size( boxTrisIndices ); ++i )
 	{
 		out[ i ] = boxVertices[ boxTrisIndices[ i ] ];
@@ -337,50 +341,6 @@ struct entities_data
 	std::vector<DirectX::XMFLOAT4X4A> transforms;
 	std::vector<box_bounds> instAabbs;
 };
-
-inline std::vector<dbg_vertex>
-ComputeSceneDebugBoundingBoxes(
-	DirectX::XMMATRIX frustDrawMat,
-	const entities_data& entities,
-	DirectX::PackedVector::XMCOLOR boxCol,
-	DirectX::PackedVector::XMCOLOR frustCol
-){
-	using namespace DirectX;
-
-	assert( std::size( entities.instAabbs ) == std::size( entities.transforms ) );
-	assert( boxLineVertexCount == std::size( boxLineIndices ) );
-
-	u64 entitiesCount = std::size( entities.transforms );
-	std::vector<dbg_vertex> dbgGeom;
-	// NOTE: + boxLineVertexCount for frustum
-	dbgGeom.resize( entitiesCount * boxLineVertexCount + boxLineVertexCount );
-
-	for( u64 i = 0; i < entitiesCount; ++i )
-	{
-		const box_bounds& aabb = entities.instAabbs[ i ];
-		const XMFLOAT4X4A& mat = entities.transforms[ i ];
-
-		auto boxVertices = GenerateTransformedBox( XMLoadFloat4x4A( &mat ), aabb.min, aabb.max );
-
-		dbg_vertex* boxLineRange = std::data( dbgGeom ) + i * boxLineVertexCount;
-		for( u64 ii = 0; ii < boxLineVertexCount; ++ii )
-		{
-			boxLineRange[ ii ] = { boxVertices[ boxLineIndices[ ii ] ],boxCol };
-		}
-	}
-
-	u64 frustBoxOffset = std::size( entities.instAabbs ) * boxLineVertexCount;
-
-	auto boxVertices = GenerateTransformedBox( frustDrawMat, { -1.0f,-1.0f,-1.0f }, { 1.0f,1.0f,1.0f } );
-
-	dbg_vertex* boxLineRange = std::data( dbgGeom ) + frustBoxOffset;
-	for( u64 i = 0; i < boxLineVertexCount; ++i )
-	{
-		boxLineRange[ i ] = { boxVertices[ boxLineIndices[ i ] ],frustCol };
-	}
-
-	return dbgGeom;
-}
 
 constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
 // TODO: remove ?

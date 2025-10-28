@@ -154,20 +154,17 @@ vk_buffer vk_device_ctx::CreateBuffer( const buffer_info& buffInfo )
 
 	VkMemoryPropertyFlags memPropFlags = VkChooseMemoryProperitesOnUsage( buffInfo.usage );
 
-	VmaAllocationCreateFlags allocFlags = 
+	VmaAllocationCreateFlags allocFlags =
 		VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT;
+	// TODO: do we do random access ?
 	if( memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
 	{
-		allocFlags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
-	}
-	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT )
-	{
-		allocFlags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+		allocFlags |= VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
 	}
 	VmaAllocationCreateInfo allocCreateInfo = {
 		.flags = allocFlags,
-		.usage = VMA_MEMORY_USAGE_UNKNOWN,
-		.requiredFlags = memPropFlags,
+		.usage = VMA_MEMORY_USAGE_AUTO,
+		//.requiredFlags = memPropFlags,
 	};
 
 	VkBuffer vkBuffer;

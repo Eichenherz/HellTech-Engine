@@ -6,13 +6,15 @@
 #include "..\r_data_structs.h"
 
 layout( push_constant, scalar ) uniform block {
+	mat4 transf;
 	uint64_t vtxAddr;
-	uint viewDataIdx;
+	uint64_t viewAddr;
 	uint viewIdx;
+	uint color;
 };
 
-layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer dbg_vtx_ref{
-	dbg_vertex dbgVertices[];
+layout( buffer_reference ) readonly buffer dbg_vtx_ref{
+	vec3 dbgVertices[];
 };
 
 layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer view_ref{
@@ -30,11 +32,10 @@ vec3 AabbTransfromVertex( vec3 pos, vec3 minBox, vec3 maxBox )
 layout( location = 0 ) out vec3 oCol;
 void main()
 {
-	dbg_vertex v = dbg_vtx_ref( vtxAddr ).dbgVertices[ gl_VertexIndex ];
+	vec3 pos = dbg_vtx_ref( vtxAddr ).dbgVertices[ gl_VertexIndex ];
 
-	//view_data viewData = view_ref( viewAddr ).views[ viewIdx ];
-	view_data viewData = ssbos[ viewDataIdx ].views[ viewIdx ];
+	view_data viewData = view_ref( viewAddr ).views[ viewIdx ];
 
-	gl_Position = viewData.mainViewProj * vec4( v.pos, 1.0f );
-	oCol = unpackUnorm4x8( v.color ).xyz;
+	gl_Position = viewData.mainViewProj * transf * vec4( pos, 1.0f );
+	oCol = unpackUnorm4x8( color ).xyz;
 }
