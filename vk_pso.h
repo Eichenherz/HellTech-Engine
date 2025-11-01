@@ -156,8 +156,6 @@ struct vk_gfx_pipeline_state
 	VkBlendFactor       dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
 	VkBlendFactor       srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
 	VkBlendFactor       dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	float               extraPrimitiveOverestimationSize = 0.0f;
-	bool                conservativeRasterEnable = false;
 	bool				depthWrite = true;
 	bool				depthTestEnable = true;
 	bool				blendCol = false;
@@ -191,15 +189,8 @@ VkPipeline VkMakeGfxPipeline(
 		.pDynamicStates = std::data( dynamicStates ),
 	};
 
-	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState = { 
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT,
-		.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT,
-		.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize,
-	};
-
 	VkPipelineRasterizationStateCreateInfo rasterInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0,
 		.depthClampEnable = 0,
 		.rasterizerDiscardEnable = 0,
 		.polygonMode = pipelineState.polyMode,
@@ -319,16 +310,8 @@ VkPipeline VkMakeGfxPipeline(
 		.pDynamicStates = dynamicStates,
 	};
 
-	// TODO: place inside if ?
-	VkPipelineRasterizationConservativeStateCreateInfoEXT conservativeRasterState = { 
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT,
-		.conservativeRasterizationMode = VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT,
-		.extraPrimitiveOverestimationSize = pipelineState.extraPrimitiveOverestimationSize,
-	};
-
 	VkPipelineRasterizationStateCreateInfo rasterInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		.pNext = pipelineState.conservativeRasterEnable ? &conservativeRasterState : 0,
 		.depthClampEnable = 0,
 		.rasterizerDiscardEnable = 0,
 		.polygonMode = pipelineState.polyMode,

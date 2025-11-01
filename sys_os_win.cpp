@@ -154,15 +154,8 @@ inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInByte
 	return true;
 }
 
-
-
 constexpr char	ENGINE_NAME[] = "helltech_engine";
 constexpr char	WINDOW_TITLE[] = "HellTech Engine";
-
-HINSTANCE		hInst = 0;
-HWND			hWnd = 0;
-
-static bool frustumCullDbg = 0;
 
 constexpr u16 VK_W = 0x57;
 constexpr u16 VK_A = 0x41;
@@ -405,8 +398,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 	SYSTEM_INFO	sysInfo = {};
 	GetSystemInfo( &sysInfo );
-
-	hInst = hInstance;
+	
+	HINSTANCE hInst = hInstance;
 	WNDCLASSEX wc = {
 		.cbSize = sizeof( WNDCLASSEX ),
 		.lpfnWndProc = MainWndProc,
@@ -425,7 +418,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	};
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
-	hWnd = CreateWindow( 
+	HWND hWnd = CreateWindow( 
 		wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, 0 );
 	WIN_CHECK(  !hWnd );
 
@@ -461,15 +454,11 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	virtual_camera mainActiveCam = { proj };
 	virtual_camera debugCam = { proj };
 
-	// NOTE: pitch must be in [-pi/2,pi/2]
-	float pitch = 0;
-	float yaw = 0;
+	{
+		view_data mainViewData = mainActiveCam.GetViewData();
+		mainActiveCam.prevViewProj = mainViewData.mainViewProj;
+	}
 
-	// TODO: use store/load ?
-	XMVECTOR camFwdBasis = XMVectorSet( 0, 0, 1, 0 );
-	XMVECTOR camUpBasis = XMVectorSet( 0, 1, 0, 0 );
-	XMFLOAT3 camWorldPos = { 0,0,0 };
-	
 	gpu_data gpuData = {};
 	frame_data frameData = {};
 
@@ -477,7 +466,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	u16 mainViewIdx = 0;
 	u16 dbgViewIdx = 1;
 
-	VkBackendInit();
+	VkBackendInit( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
@@ -522,24 +511,12 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 		mainActiveCam.Move( camMove, { m.dx, m.dy }, elapsedSecs );
 		debugCam.Move( camMove, { m.dx, m.dy }, elapsedSecs );
 
-		yaw = XMScalarModAngle( yaw + m.dx * mouseSensitivity * elapsedSecs );
-		pitch = std::clamp( pitch + float( m.dy * mouseSensitivity * elapsedSecs ), -almostPiDiv2, almostPiDiv2 );
-
-		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( moveSpeed, moveSpeed, moveSpeed );
-		camMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
-									  
-		XMVECTOR xmCamPos = XMLoadFloat3( &camWorldPos );
-		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, camMove ), 0.18f * elapsedSecs / 0.0166f );
-		
-		// TODO: thresholds
-		float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
-		XMStoreFloat3( &camWorldPos, smoothNewCamPos );
-
 		if( !kbd.f )
 		{
 			view_data mainViewData = mainActiveCam.GetViewData();
-			mainActiveCam.prevViewProj = mainViewData.mainViewProj;
 			frameData.views[ mainViewIdx ] = mainViewData;
+
+			mainActiveCam.prevViewProj = mainViewData.mainViewProj;
 		}
 		
 		view_data dbgViewData = debugCam.GetViewData();

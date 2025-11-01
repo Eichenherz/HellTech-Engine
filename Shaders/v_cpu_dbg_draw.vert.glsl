@@ -37,5 +37,5 @@ void main()
 	view_data viewData = view_ref( viewAddr ).views[ viewIdx ];
 
 	gl_Position = viewData.mainViewProj * transf * vec4( pos, 1.0f );
-	oCol = unpackUnorm4x8( color ).xyz;
+	oCol = unpackUnorm4x8( color ).zyx;
 }

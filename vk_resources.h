@@ -36,6 +36,7 @@ struct vk_image
 {
 	VmaAllocation   mem;
 	VkImage			hndl;
+	VkImageView     view;
 	VkImageUsageFlags usageFlags;
 	VkFormat		format;
 	u16				width;

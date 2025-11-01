@@ -45,7 +45,7 @@ constexpr u64 SYS_MEM_BYTES = 1 * GB;
 //////////////////////////////////////
 void			CoreLoop();
 
-extern void		VkBackendInit();
+extern void		VkBackendInit( uintptr_t hInst, uintptr_t hWnd );
 extern void		HostFrames( const frame_data& frameData, gpu_data& gpuData );
 extern void		VkBackendKill();
 extern void     Dx12BackendInit();
@@ -64,3 +64,8 @@ extern u32		SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize 
 extern std::vector<u8> SysReadFile( const char* fileName );
 extern u64		SysGetFileTimestamp( const char* filename );
 extern bool		SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes );
+
+struct sys_window
+{
+	//virtual void SetUserData( uintptr_t pData ) = 0;
+};

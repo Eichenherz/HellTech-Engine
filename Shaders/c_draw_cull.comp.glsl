@@ -14,7 +14,7 @@ layout( push_constant, scalar ) uniform block {
 	uint64_t    visInstAddr;
 	uint64_t	drawCmdsAddr;
 	uint64_t	compactedArgsAddr;
-	uint64_t	instVisCacheAddr;
+	uint64_t	occludedCacheAddr;
 	uint64_t    atomicWorkgrCounterAddr;
 	uint64_t    visInstaceCounterAddr;
 	uint64_t    dispatchCmdAddr;
@@ -22,32 +22,12 @@ layout( push_constant, scalar ) uniform block {
 	uint	    hizSamplerIdx;
 	uint		instCount;
 	uint		viewDataIdx;
-	bool		latePass;
+	uint		latePass;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) buffer bitset_ref{ 
-	uint bitset[]; 
+	uint b[]; 
 };
-
-bool IsBitSet( bitset_ref b, uint instanceIdx ) 
-{
-    uint wordIdx = instanceIdx >> 5;       // divide by 32 using shift
-    uint bitIdx  = instanceIdx & 31u;      // modulo 32 using mask
-    return ( b.bitset[ wordIdx ] & ( 1u << bitIdx ) ) != 0u;
-}
-
-// NOTE: https://stackoverflow.com/questions/24314281/conditionally-set-or-clear-bits
-void ConditionallySetOrClearBit( bitset_ref b, uint instanceIdx, bool val ) 
-{
-    uint wordIdx = instanceIdx >> 5;
-
-	uint word = b.bitset[ wordIdx ];
-    uint mask  = instanceIdx & 31u;
-
-	word = ( word & ~mask ) | ( uint( -int( val ) ) & mask );
-
-    b.bitset[ wordIdx ] = word;
-}
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mesh_desc_ref{ 
 	mesh_desc meshes[]; 
@@ -82,7 +62,6 @@ struct frustum_culling_result
 
 // TODO: culling inspired by Nabla
 // https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
-// TODO: cleanup revisit same in cluster culling
 frustum_culling_result FrustumCulling( vec3 boxMin, vec3 boxMax, mat4 mvp )
 {	
 	mat4 trsMvp = transpose( mvp );
@@ -115,6 +94,8 @@ struct proj_bounds
 	float maxZ;
 };
 
+// NOTE: we're using reverse Z 
+// NOTE: from https://interplayoflight.wordpress.com/2017/11/15/experiments-in-gpu-based-occlusion-culling/
 proj_bounds ProjectAabbToScreenspace( vec3 boxMin, vec3 boxMax, mat4 mvp )
 {
 	vec3 boxSize = boxMax - boxMin;
@@ -152,96 +133,37 @@ proj_bounds ProjectAabbToScreenspace( vec3 boxMin, vec3 boxMax, mat4 mvp )
 	return res;
 }
 
+// NOTE: also check https://github.com/zeux/niagara/blob/master/src/shaders/drawcull.comp.glsl for more details
 bool ProjectedAabbVsHzb( proj_bounds projBounds, uint hzbIdx, uint minQuadSamplerIdx )
 {
-	vec2 projBoundsSize = abs( projBounds.maxXY - projBounds.minXY );
-	vec2 size = projBoundsSize * textureSize( sampler2D( sampledImages[ hzbIdx ], samplers[ minQuadSamplerIdx ] ), 0 ).xy;
-	float hzbMaxMip = textureQueryLevels( sampler2D( sampledImages[ hzbIdx ], samplers[ minQuadSamplerIdx ] ) ) - 1.0f;
-			
-	float mipLevel = min( floor( log2( max( size.x, size.y ) ) ), hzbMaxMip );
+	vec2 hzbSize = textureSize( sampler2D( sampledImages[ hzbIdx ], samplers[ minQuadSamplerIdx ] ), 0 ).xy;
+	vec2 projAabbSize = abs( projBounds.maxXY - projBounds.minXY ) * hzbSize;
 
-	//// NOTE: from https://interplayoflight.wordpress.com/2017/11/15/experiments-in-gpu-based-occlusion-culling/
-    //float levelLower = max( hzbMaxMip - 1, 0 );
-    //vec2 scale = exp2( -levelLower );
-    //vec2 a = floor( projBounds.minXY * scale );
-    //vec2 b = ceil( projBounds.maxXY * scale );
-    //vec2 dims = b - a;
-	//
-	//bvec2 cmp = lessThanEqual( dims, vec2( 2.0f, 2.0f ) );
-    //// NOTE: Use the lower level if we only touch <= 2 texels in both dimensions
-    //if( all( cmp ) )
-	//{
-	//	mipLevel = level_lower;
-	//}
-            
+	float mipLevel = ceil( log2( max( projAabbSize.x, projAabbSize.y ) ) );
+	float hzbMaxMip = textureQueryLevels( sampler2D( sampledImages[ hzbIdx ], samplers[ minQuadSamplerIdx ] ) ) - 1.0f;
+    mipLevel = clamp( mipLevel, 0, hzbMaxMip );
+
+    float prevLevel = max( mipLevel - 1, 0 );
+    vec2 scale = vec2( exp2( -prevLevel ) );
+    vec2 scaledMinCorner = floor( projBounds.minXY * scale );
+    vec2 scaledMaxCorner = ceil( projBounds.maxXY * scale);
+    vec2 dims = scaledMaxCorner - scaledMinCorner;
+ 
+    // NOTE: Use the prev level ( more detailed ) if we only touch <= 2 texels in both dimensions
+    if( all( lessThanEqual( dims, vec2( 2 ) ) ) )
+	{
+		mipLevel = prevLevel;
+	}
+
 	vec2 uvMid = ( projBounds.maxXY + projBounds.minXY ) * 0.5f;
 	float sampledDepth = textureLod( sampler2D( sampledImages[ hzbIdx ], samplers[ minQuadSamplerIdx ] ), uvMid, mipLevel ).x;	
 	return ( sampledDepth <= projBounds.maxZ );	
 }
 
-bool FirstPass( uint globalIdx )
-{
-	bool visible = IsBitSet( bitset_ref( instVisCacheAddr ), globalIdx );
-	if( visible )
-	{
-		instance_desc currentInst = inst_desc_ref( instDescAddr ).instDescs[ globalIdx ];
-		mesh_desc currentMesh = mesh_desc_ref( meshDescAddr ).meshes[ currentInst.meshIdx ];
-		
-		vec3 center = currentMesh.center;
-		vec3 extent = currentMesh.extent;
-		
-		vec3 boxMin = center - extent;
-		vec3 boxMax = center + extent;
-		
-		view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
-		
-		mat4 mvp = view.mainViewProj * currentInst.localToWorld;
-		
-		frustum_culling_result frustumCullingResult = FrustumCulling( boxMin, boxMax, mvp );
-		visible = frustumCullingResult.visible;
-	}
-
-	return visible;
-}
-
-bool SecondPass( uint globalIdx )
-{
-	instance_desc currentInst = inst_desc_ref( instDescAddr ).instDescs[ globalIdx ];
-	mesh_desc currentMesh = mesh_desc_ref( meshDescAddr ).meshes[ currentInst.meshIdx ];
-	
-	vec3 center = currentMesh.center;
-	vec3 extent = currentMesh.extent;
-	
-	vec3 boxMin = center - extent;
-	vec3 boxMax = center + extent;
-	
-	view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
-		
-	mat4 mvp = view.mainViewProj * currentInst.localToWorld;
-	
-	frustum_culling_result frustumCullingResult = FrustumCulling( boxMin, boxMax, mvp );
-	bool visible = frustumCullingResult.visible;
-	// NOTE: only test Occlusion on the late pass
-	if( visible && !frustumCullingResult.intersectsNearZ )
-	{
-		proj_bounds projBounds = ProjectAabbToScreenspace( boxMin, boxMax, mvp );
-		visible = ProjectedAabbVsHzb( projBounds, hizBuffIdx, hizSamplerIdx );
-	}
-
-	bool visCache = IsBitSet( bitset_ref( instVisCacheAddr ), globalIdx );
-	// TODO: might have a race here
-	memoryBarrierBuffer();
-	ConditionallySetOrClearBit( bitset_ref( instVisCacheAddr ), globalIdx, visible );
-
-	// NOTE: for instance drawing we don't draw again in the late pass if alredy visible
-	//visible = visible && !visCache;
-	return visible;
-}
-
 layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
 void main()
 {
-	if( gl_LocalInvocationID.x == 0 )
+	if( gl_LocalInvocationIndex.x == 0 )
 	{
 		workgrAtomicCounterShared = 0u;
 	}
@@ -252,13 +174,44 @@ void main()
 	uint globalIdx = gl_GlobalInvocationID.x;
 	if( globalIdx < instCount )
 	{
-		if( !latePass )
+		instance_desc currentInst = inst_desc_ref( instDescAddr ).instDescs[ globalIdx ];
+		mesh_desc currentMesh = mesh_desc_ref( meshDescAddr ).meshes[ currentInst.meshIdx ];
+	
+		vec3 center = currentMesh.center;
+		vec3 extent = currentMesh.extent;
+	
+		vec3 boxMin = center - extent;
+		vec3 boxMax = center + extent;
+	
+		view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
+		
+		bool testOcclusion = true;
+		if( !bool( latePass ) ) 
 		{
-			visible = FirstPass( globalIdx );
-		} 
-		else
+			mat4 mvp = view.mainViewProj * currentInst.localToWorld;
+			frustum_culling_result frustumCullingResult = FrustumCulling( boxMin, boxMax, mvp );
+			visible = frustumCullingResult.visible;
+			testOcclusion = visible && !frustumCullingResult.intersectsNearZ;
+		}
+		else // NOTE: Late pass will only test occluded from prev
 		{
-			visible = SecondPass( globalIdx );
+			testOcclusion = bool( bitset_ref( occludedCacheAddr ).b[ globalIdx ] );
+			//visible = testOcclusion;
+		}
+
+		// NOTE: no mem barrier for occluder cache bc the accesses happen on different passes
+		if( testOcclusion )
+		{
+			mat4 viewProj = bool( latePass ) ? view.mainViewProj : view.prevViewProj;
+			// NOTE: must use prev instance transform too if not static geometry
+			mat4 mvp = viewProj * currentInst.localToWorld;
+
+			proj_bounds projBounds = ProjectAabbToScreenspace( boxMin, boxMax, mvp );
+			visible = ProjectedAabbVsHzb( projBounds, hizBuffIdx, hizSamplerIdx );
+			if( !bool( latePass ) ) 
+			{
+				bitset_ref( occludedCacheAddr ).b[ globalIdx ] = uint( -int( !visible ) );
+			}
 		}
 	}
 
@@ -289,12 +242,12 @@ void main()
 			draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].indexCount = lod.indexCount; 
 			draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].instanceCount = 1;
 			draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].firstIndex = lod.indexOffset;
-			draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].vertexOffset = 0; //int( vtxOffset );
+			draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].vertexOffset = 0;
 			draw_cmd_ref( drawCmdsAddr ).drawCmds[ slotIdx ].firstInstance = 0;
 		}
 	}
 
-	if( gl_LocalInvocationID.x == 0 ) 
+	if( gl_LocalInvocationIndex.x == 0 ) 
 	{
 		workgrAtomicCounterShared = atomicAdd( coherent_counter_ref( atomicWorkgrCounterAddr ).coherentCounter, 1 );
 	}
@@ -302,12 +255,12 @@ void main()
 	barrier();
 	memoryBarrier();
 
-	if( workgrAtomicCounterShared != ( gl_NumWorkGroups.x - 1  ) )
+	if( workgrAtomicCounterShared != ( gl_NumWorkGroups.x - 1 ) )
 	{
 		return;
 	}
 
-	if( gl_LocalInvocationID.x == 0 )
+	if( gl_LocalInvocationIndex.x == 0 )
 	{
 		//// TODO: pass as spec consts or push consts ? 
 		//uint mletsExpDispatch = ( coherent_counter_ref( drawCounterAddr ).coherentCounter + 3 ) / 4;

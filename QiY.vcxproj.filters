@@ -42,9 +42,6 @@
     <ClCompile Include="imgui\imgui_widgets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="r_dx12_backend.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="spng.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -198,5 +195,8 @@
     <None Include="Shaders\v_debug_draw.hlsl.null" />
     <None Include="Shaders\f_col_pass.hlsl" />
     <None Include="Shaders\c_avg_luminance.hlsl" />
+    <None Include="r_dx12_backend.cpp">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
