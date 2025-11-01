@@ -1196,10 +1196,13 @@ struct staging_manager
 	) {
 		u64 sizeInBytes = std::size( dataIn ) * sizeof( T );
 		auto stagingBuff = std::make_shared<vk_buffer>( dc.CreateBuffer( { 
-			.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .elemCount = size, .stride = 1, .usage = buffer_usage::STAGING } ) );
+			.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+			.elemCount = sizeInBytes, 
+			.stride = 1, 
+			.usage = buffer_usage::STAGING } ) );
 		std::memcpy( stagingBuff->hostVisible, std::data( dataIn ), sizeInBytes );
 
-		PushForRecycle( stagingBuff, currentFrameID );
+		PushForRecycle( stagingBuff, currentFrameId );
 
 		return stagingBuff;
 	}
@@ -2531,6 +2534,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	static bool initResources = false;
 	if( !initResources )
 	{
+		GltfConditionAssetFile( glbPath );
 		VkInitGlobalResources( *vk.pDc, rndCtx, vk.descManager );
 
 		VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );

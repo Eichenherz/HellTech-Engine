@@ -1,9 +1,9 @@
 #include "asset_compiler.h"
 
-// TODO: make into program/dll
-#include <meshoptimizer.h>
-#define CGLTF_IMPLEMENTATION
-#include "cgltf.h"
+#include <3rdParty/meshoptimizer/src/meshoptimizer.h>
+#include <fastgltf/core.hpp>
+#include <fastgltf/types.hpp>
+#include <fastgltf/tools.hpp>
 #include "spng.h"
 #include "lz4.h"
 
@@ -13,6 +13,8 @@
 #include <vector>
 #include <span>
 #include <string_view>
+
+#include <iostream>
 
 #include "sys_os_api.h"
 // TODO: utils file
@@ -27,6 +29,15 @@ do{																					\
 		abort();																	\
 	}																				\
 }while( 0 )			
+
+#define FASTGLTF_ERR( err )															\
+do{																					\
+	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR;						\
+	if( !bool( binaryData ) ) {														\
+		std::cerr<< std::format("ERR: {} at {}", fastgltf::getErrorMessage(binaryData.error()), DEV_ERR_STR); \
+		abort();																	\
+	}																				\
+}while( 0 )	
 
 
 // TODO: write own lib
@@ -50,7 +61,48 @@ do{																					\
 
 #include "bcn_compressor.h"
 
+#include <System/sys_file.h>
+#include <System/sys_filesystem.h>
 
+struct gltf_conditioner
+{
+	static constexpr fastgltf::ExportOptions EXPORT_FLAGS = fastgltf::ExportOptions::ValidateAsset;
+};
+
+
+void GltfConditionAssetFile( path filePath )
+{
+	file_permissions_flags flags = file_permissions_bits::READ;
+	std::unique_ptr<file> assetFile = SysCreateFile( filePath.string(), flags );
+	auto gltfFile = fastgltf::GltfDataBuffer::FromBytes( ( const std::byte* ) assetFile->Data(), assetFile->Size() );
+
+	if( !bool( gltfFile ) )
+	{
+		std::cerr << "Failed to open glTF file: " << fastgltf::getErrorMessage( gltfFile.error() ) << '\n';
+		abort();
+	}
+
+	static constexpr auto supportedExtensions =
+		fastgltf::Extensions::KHR_mesh_quantization |
+		fastgltf::Extensions::KHR_texture_transform |
+		fastgltf::Extensions::KHR_materials_variants;
+
+	fastgltf::Parser parser( supportedExtensions );
+
+	constexpr auto gltfOptions =
+		fastgltf::Options::DontRequireValidAssetMember |
+		fastgltf::Options::AllowDouble |
+		fastgltf::Options::LoadExternalBuffers |
+		fastgltf::Options::LoadExternalImages |
+		fastgltf::Options::GenerateMeshIndices;
+
+	auto asset = parser.loadGltf( gltfFile.get(), filePath.parent_path(), gltfOptions );
+	if( asset.error() != fastgltf::Error::None )
+	{
+		std::cerr << "Failed to load glTF: " << fastgltf::getErrorMessage( asset.error() ) << '\n';
+		abort();
+	}
+}
 // TODO: use DirectXMath ?
 // TODO: fast ?
 inline float SignNonZero( float e )
@@ -155,6 +207,8 @@ struct imported_mesh
 	u16		mtlIdx;
 };
 
+#define CGLTF_IMPLEMENTATION
+#include "cgltf.h"
 
 inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
 {

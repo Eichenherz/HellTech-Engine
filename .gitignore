@@ -11,21 +11,19 @@ spirv_reflect.c
 
 spirv_reflect.h
 
-diy_pch.h
+AssetCompiler/lz4.c
 
-lz4.c
+AssetCompiler/lz4.h
 
-lz4.h
+AssetCompiler/miniz.c
 
-miniz.c
+AssetCompiler/miniz.h
 
-miniz.h
+AssetCompiler/spng.c
 
-spng.c
+AssetCompiler/spng.h
 
-spng.h
-
-cgltf.h
+AssetCompiler/cgltf.h
 
 Assets/
 
@@ -33,11 +31,10 @@ Assets/
 
 README.md
 
-bcn_compressor.cpp
+AssetCompiler/bcn_compressor.cpp
 
 imgui/
-Shader.hlsl
 
 bin/*
 
-3rdParty/*
+vcpkg_installed/*

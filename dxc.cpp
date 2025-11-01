@@ -9,7 +9,7 @@
 #include <iostream>
 #include <System/sys_file.h>
 #include <System/sys_filesystem.h>
-#include <System/Win32/win32_utils.h>
+#include <System/Win32/win32_err.h>
 
 #define HR_CHECK( func )												\
 do{																		\

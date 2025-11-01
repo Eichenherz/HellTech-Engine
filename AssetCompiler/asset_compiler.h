@@ -2,7 +2,7 @@
 
 #include "core_types.h"
 
-// TODO: remove these includes
+#include <System/sys_filesystem.h>
 #include <vector>
 #include <span>
 
@@ -84,8 +84,7 @@ struct drak_file_footer
 	u32 contentVer = 0;
 };
 
-using PfnReadFile = std::vector<u8>( * )( const char* );
-
+void GltfConditionAssetFile( path filePath );
 void CompileGlbAssetToBinary( const std::vector<u8>& glbData, std::vector<u8>& drakAsset );
 template<typename T> extern u64 MeshoptReindexMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );
 template<typename T> extern void MeshoptOptimizeMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );

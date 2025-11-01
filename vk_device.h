@@ -385,10 +385,8 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, &gpuProps12 };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps11 };
 
-	VkPhysicalDeviceHostImageCopyFeatures hostImgCopyFeatures =
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES };
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, &hostImgCopyFeatures };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR };
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
 	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
