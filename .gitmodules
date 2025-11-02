@@ -1,3 +1,6 @@
 [submodule "3rdParty/meshoptimizer"]
 	path = 3rdParty/meshoptimizer
 	url = https://github.com/zeux/meshoptimizer.git
+[submodule "3rdParty/unordered_dense"]
+	path = 3rdParty/unordered_dense
+	url = https://github.com/martinus/unordered_dense.git

@@ -626,8 +626,8 @@ inline VkFormat VkGetFormat( texture_format t )
 	{
 	case TEXTURE_FORMAT_RBGA8_SRGB: return VK_FORMAT_R8G8B8A8_SRGB;
 	case TEXTURE_FORMAT_RBGA8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
-	case TEXTURE_FORMAT_BC1_RGB_SRGB: return VK_FORMAT_BC1_RGB_SRGB_BLOCK;
-	case TEXTURE_FORMAT_BC5_UNORM: return VK_FORMAT_BC5_UNORM_BLOCK;
+	//case TEXTURE_FORMAT_BC1_RGB_SRGB: return VK_FORMAT_BC1_RGB_SRGB_BLOCK;
+	//case TEXTURE_FORMAT_BC5_UNORM: return VK_FORMAT_BC5_UNORM_BLOCK;
 	case TEXTURE_FORMAT_UNDEFINED: assert( 0 );
 	}
 }
@@ -684,20 +684,20 @@ inline VkSamplerAddressMode VkGetAddressModeFromGltf( gltf_sampler_address_mode 
 // TODO: ensure mipmapMode in assetcmpl
 // TODO: addrModeW ?
 // TODO: more stuff ?
-inline VkSamplerCreateInfo VkMakeSamplerInfo( sampler_config config )
-{
-	assert( 0 );
-	VkSamplerCreateInfo vkSamplerInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-		.magFilter = VkGetFilterTypeFromGltf( config.mag ),
-		.minFilter = VkGetFilterTypeFromGltf( config.min ),
-		.mipmapMode =  VkGetMipmapTypeFromGltf( config.min ),
-		.addressModeU = VkGetAddressModeFromGltf( config.addrU ),
-		.addressModeV = VkGetAddressModeFromGltf( config.addrV )
-	};
-
-	return vkSamplerInfo;
-}
+//inline VkSamplerCreateInfo VkMakeSamplerInfo( sampler_config config )
+//{
+//	assert( 0 );
+//	VkSamplerCreateInfo vkSamplerInfo = { 
+//		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+//		.magFilter = VkGetFilterTypeFromGltf( config.mag ),
+//		.minFilter = VkGetFilterTypeFromGltf( config.min ),
+//		.mipmapMode =  VkGetMipmapTypeFromGltf( config.min ),
+//		.addressModeU = VkGetAddressModeFromGltf( config.addrU ),
+//		.addressModeV = VkGetAddressModeFromGltf( config.addrV )
+//	};
+//
+//	return vkSamplerInfo;
+//}
 
 inline image_info GetImageInfoFromMetadata( const image_metadata& meta, VkImageUsageFlags usageFlags )
 {

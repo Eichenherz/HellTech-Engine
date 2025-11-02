@@ -113,12 +113,13 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
+    <IncludePath>D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools\include;D:\EichenRepos\QiY\QiY\3rdParty;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
     <CustomBuildBeforeTargets>
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
     <CustomBuildAfterTargets>ClCompile</CustomBuildAfterTargets>
     <SourcePath>$(SourcePath)</SourcePath>
+    <PostBuildEventUseInBuild>false</PostBuildEventUseInBuild>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
@@ -190,7 +191,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>D:\EichenRepos\QiY\QiY\3rdParty\fastgltf\include;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include\ankerl;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AdditionalOptions>/arch:AVX2 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -199,7 +200,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine>MachineX64</TargetMachine>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VULKAN_SDK)\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools\lib\x64-v142;$(VULKAN_SDK)\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <PreventDllBinding>false</PreventDllBinding>
     </Link>
     <CustomBuild>
@@ -216,7 +217,8 @@
       <AdditionalInputs>%(FullPath);$(ProjectDir)r_data_structs.h</AdditionalInputs>
     </CustomBuild>
     <PostBuildEvent>
-      <Command>xcopy /y /d "..\..\meshoptimizer\bin\CMakeFiles\Release\meshoptimizer.dll" "$(OutDir)"</Command>
+      <Command>
+      </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">
@@ -289,6 +291,7 @@
     <ClCompile Include="AssetCompiler\lz4.c" />
     <ClCompile Include="AssetCompiler\miniz.c" />
     <ClCompile Include="AssetCompiler\spng.c" />
+    <ClCompile Include="AssetCompiler\texture_compressor.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -306,12 +309,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="3rdParty\meshoptimizer\src\meshoptimizer.h" />
+    <ClInclude Include="3rdParty\unordered_dense\include\ankerl\stl.h" />
+    <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h" />
     <ClInclude Include="3rdParty\vk_mem_alloc.h" />
     <ClInclude Include="AssetCompiler\asset_compiler.h" />
     <ClInclude Include="AssetCompiler\bcn_compressor.h" />
     <ClInclude Include="AssetCompiler\cgltf.h" />
     <ClInclude Include="AssetCompiler\lz4.h" />
     <ClInclude Include="AssetCompiler\spng.h" />
+    <ClInclude Include="AssetCompiler\texture_compressor.h" />
     <ClInclude Include="core_types.h" />
     <ClInclude Include="dxc.h" />
     <ClInclude Include="ht_error.h" />
@@ -332,6 +338,14 @@
     <ClInclude Include="System\Win32\win32_err.h" />
     <ClInclude Include="sys_os_api.h" />
     <ClInclude Include="DEFS_WIN32_NO_BS.h" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\base64.hpp" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\core.hpp" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\dxmath_element_traits.hpp" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\glm_element_traits.hpp" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\math.hpp" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\tools.hpp" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\types.hpp" />
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp" />
     <ClInclude Include="vk_descriptor.h" />
     <ClInclude Include="vk_device.h" />
     <ClInclude Include="vk_error.h" />

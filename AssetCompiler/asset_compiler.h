@@ -1,18 +1,106 @@
-#pragma once
+#ifndef __ASSET_COMPILER_H__
+#define __ASSET_COMPILER_H__
 
-#include "core_types.h"
-
-#include <System/sys_filesystem.h>
 #include <vector>
 #include <span>
+
+#include "core_types.h"
+#include "r_data_structs.h"
+
+#include <System/sys_filesystem.h>
+
+
+enum alpha_mode : u8
+{
+	ALPHA_MODE_OPAQUE,
+	ALPHA_MODE_MASK,
+	ALPHA_MODE_BLEND,
+};
+
+enum sampler_filter_mode_flags : u8
+{
+	FILTER_NEAREST = 1 << 0,
+	FILTER_LINEAR = 1 << 1,
+	FILTER_NEAREST_MIPMAP_NEAREST = 1 << 2,
+	FILTER_LINEAR_MIPMAP_NEAREST = 1 << 3,
+	FILTER_NEAREST_MIPMAP_LINEAR = 1 << 4,
+	FILTER_LINEAR_MIPMAP_LINEAR = 1 << 5,
+};
+
+enum sampler_wrap_mode_flags : u8
+{
+	WRAP_CLAMP_TO_EDGE        = 1 << 0,
+	WRAP_MIRRORED_REPEAT      = 1 << 1,
+	WRAP_REPEAT               = 1 << 2,
+};
+
+struct sampler_config
+{
+	u32 filterModeS : 8;
+	u32 filterModeT : 8;
+	u32 wrapModeS : 8;
+	u32 wrapModeT : 8;
+
+	inline bool operator==( const sampler_config& rhs ) const
+	{
+		return filterModeS == rhs.filterModeS
+			&& filterModeT == rhs.filterModeT
+			&& wrapModeS == rhs.wrapModeS
+			&& wrapModeT == rhs.wrapModeT;
+	}
+	inline bool operator!=( const sampler_config& rhs ) const
+	{
+		return !( *this == rhs );
+	}
+};
+
+constexpr sampler_config DEFAULT_SAMPLER = {
+	.filterModeS = sampler_filter_mode_flags::FILTER_LINEAR,
+	.filterModeT = sampler_filter_mode_flags::FILTER_LINEAR,
+	.wrapModeS = sampler_wrap_mode_flags::WRAP_REPEAT,
+	.wrapModeT = sampler_wrap_mode_flags::WRAP_REPEAT
+};
+
+struct material_info
+{
+	u32 baseColorIdx;
+	u32 metallicRoughnessIdx;
+	u32 normalIdx;
+	u32 occlusionIdx;
+	u32 emissiveIdx;
+	u32 samplerIdx;
+
+	vec3 baseColFactor;
+	//float pad0;
+	float metallicFactor;
+	float roughnessFactor;
+	float alphaCutoff;
+	//float pad1;
+	vec3 emmisiveFactor;
+	//float pad2;
+
+	alpha_mode alphaMode;
+};
 
 enum texture_format : u8
 {
 	TEXTURE_FORMAT_UNDEFINED,
 	TEXTURE_FORMAT_RBGA8_SRGB,
 	TEXTURE_FORMAT_RBGA8_UNORM,
-	TEXTURE_FORMAT_BC1_RGB_SRGB,
-	TEXTURE_FORMAT_BC5_UNORM,
+	TEXTURE_FORMAT_BC1, 
+	TEXTURE_FORMAT_BC1A,
+	TEXTURE_FORMAT_BC2, 
+	TEXTURE_FORMAT_BC3, 
+	TEXTURE_FORMAT_BC3_NORMAL_MAP,
+	TEXTURE_FORMAT_BC3_RGBM,
+	TEXTURE_FORMAT_BC4,
+	TEXTURE_FORMAT_BC4_SIGNED,
+	TEXTURE_FORMAT_BC5,
+	TEXTURE_FORMAT_BC5_SIGNED,
+	TEXTURE_FORMAT_BC6_UNSIGNED,
+	TEXTURE_FORMAT_BC6_SIGNED,
+	TEXTURE_FORMAT_BC7_SRGB, 
+	TEXTURE_FORMAT_BC7_LINEAR,
 	TEXTURE_FORMAT_COUNT
 };
 
@@ -21,8 +109,18 @@ enum texture_type : u8
 	TEXTURE_TYPE_1D,
 	TEXTURE_TYPE_2D,
 	TEXTURE_TYPE_3D,
-	//TEXTURE_TYPE_CUBE,
+	TEXTURE_TYPE_CUBE,
 	TEXTURE_TYPE_COUNT
+};
+
+enum class material_map_type : u8
+{
+	BASE_COLOR,
+	NORMALS,
+	METALLIC_ROUGHNESS,
+	OCCLUSION,
+	EMISSIVE,
+	COUNT
 };
 
 enum gltf_sampler_filter : u8
@@ -42,14 +140,14 @@ enum gltf_sampler_address_mode : u8
 	GLTF_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT = 2
 };
 
-// TODO: compress even more ?
-struct sampler_config
+struct texture_metadata
 {
-	gltf_sampler_filter			min;
-	gltf_sampler_filter			mag;
-	gltf_sampler_address_mode	addrU;
-	gltf_sampler_address_mode	addrV;
-	//gltf_sampler_address_mode	addrW;
+	u32				width;
+	u32				height;
+	texture_format	format;
+	texture_type	type;
+	u8				mipCount;
+	u8				layerCount;
 };
 
 struct image_metadata
@@ -88,3 +186,5 @@ void GltfConditionAssetFile( path filePath );
 void CompileGlbAssetToBinary( const std::vector<u8>& glbData, std::vector<u8>& drakAsset );
 template<typename T> extern u64 MeshoptReindexMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );
 template<typename T> extern void MeshoptOptimizeMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );
+
+#endif // !__ASSET_COMPILER_H__

@@ -1,9 +1,10 @@
 #include "asset_compiler.h"
 
-#include <3rdParty/meshoptimizer/src/meshoptimizer.h>
+#include <meshoptimizer/src/meshoptimizer.h>
 #include <fastgltf/core.hpp>
 #include <fastgltf/types.hpp>
 #include <fastgltf/tools.hpp>
+#include <fastgltf/util.hpp>
 #include "spng.h"
 #include "lz4.h"
 
@@ -11,12 +12,16 @@
 #include "r_data_structs.h"
 #include <cmath>
 #include <vector>
+#include <queue>
+
 #include <span>
 #include <string_view>
 
 #include <iostream>
 
-#include "sys_os_api.h"
+#include "ht_error.h"
+#include "core_types.h"
+
 // TODO: utils file
 #define ACOMPL_ERR( err )															\
 do{																					\
@@ -29,15 +34,6 @@ do{																					\
 		abort();																	\
 	}																				\
 }while( 0 )			
-
-#define FASTGLTF_ERR( err )															\
-do{																					\
-	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR;						\
-	if( !bool( binaryData ) ) {														\
-		std::cerr<< std::format("ERR: {} at {}", fastgltf::getErrorMessage(binaryData.error()), DEV_ERR_STR); \
-		abort();																	\
-	}																				\
-}while( 0 )	
 
 
 // TODO: write own lib
@@ -58,23 +54,816 @@ do{																					\
 
 #include <DirectXCollision.h>
 
+#include <ankerl/unordered_dense.h>
 
 #include "bcn_compressor.h"
 
 #include <System/sys_file.h>
 #include <System/sys_filesystem.h>
 
-struct gltf_conditioner
+struct alignas( 16 ) packed_trs
 {
-	static constexpr fastgltf::ExportOptions EXPORT_FLAGS = fastgltf::ExportOptions::ValidateAsset;
+	vec3 t;
+	float pad0;
+	vec4 r;
+	vec3 s;
+	float pad1;
 };
 
+inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs a, packed_trs b )
+{
+	using namespace DirectX;
 
+	XMVECTOR aT = XMLoadFloat3( &a.t );
+	XMVECTOR aR = XMLoadFloat4( &a.r );
+	XMVECTOR aS = XMLoadFloat3( &a.s );
+
+	XMVECTOR bT = XMLoadFloat3( &b.t );
+	XMVECTOR bR = XMLoadFloat4( &b.r );
+	XMVECTOR bS = XMLoadFloat3( &b.s );
+
+	vec3 outT;
+	XMStoreFloat3( &outT, XMVectorAdd( aT, bT ) );
+	vec4 outR;
+	XMStoreFloat4( &outR, XMQuaternionMultiply( aR, bR ) ); // World = Partent * Local
+	vec3 outS;
+	XMStoreFloat3( &outS, XMVectorMultiply( aS, bS ) );
+
+	return { .t = outT, .r = outR, .s = outS };
+}
+
+
+inline DirectX::XMFLOAT3 FastgltfVec3ToXMFLOAT3( fastgltf::math::nvec3 in )
+{
+	return { in.x(), in.y(), in.z() };
+}
+
+inline DirectX::XMFLOAT4 FastgltfVec4ToXMFLOAT4( fastgltf::math::nvec4 in )
+{
+	return { in.x(), in.y(), in.z(), in.w() };
+}
+
+struct gltf_nodes
+{
+	packed_trs transform;
+	u64 meshIdx;
+};
+
+inline packed_trs GetTrsFromNode( const fastgltf::Node& node )
+{
+	fastgltf::TRS trs = std::get<fastgltf::TRS>( node.transform );
+	vec3 t = { trs.translation.x(), trs.translation.y(), trs.translation.z() };
+	vec4 r = { trs.rotation.x(), trs.rotation.y(), trs.rotation.z(), trs.rotation.w() };
+	vec3 s = { trs.scale.x(), trs.scale.y(), trs.scale.z() };
+
+	return { .t = t, .r = r, .s = s };
+}
+
+std::vector<gltf_nodes> GltfFlattenNodes( const std::vector<fastgltf::Node>& nodes )
+{
+	struct queued_node
+	{
+		packed_trs parentTRS;
+		u64 nodeIdx;
+	};
+	std::vector<queued_node> nodeQueue;
+	// NOTE: we need this bc our tree is flattened 
+	std::vector<bool> visited( std::size( nodes ), false );
+
+	std::vector<gltf_nodes> flatNodes;
+	flatNodes.reserve( std::size( nodes ) );
+	
+	for( u64 nodeIdx = 0; nodeIdx < std::size( nodes ); ++nodeIdx )
+	{
+		if( visited[ nodeIdx ] ) continue;
+
+		const fastgltf::Node& n = nodes[ nodeIdx ];
+		packed_trs pkTrs = GetTrsFromNode( n );
+		
+		nodeQueue.push_back( { pkTrs, nodeIdx } );
+		while( std::size( nodeQueue ) > 0 )
+		{
+			queued_node curr = nodeQueue.back();
+			nodeQueue.pop_back();
+
+			const fastgltf::Node& currentNode = nodes[ curr.nodeIdx ];
+			packed_trs currentTrs = GetTrsFromNode( currentNode );
+			assert( currentNode.meshIndex.has_value() );
+
+			packed_trs parentTrs = XMComposePackedTRS( curr.parentTRS, currentTrs );
+			u64 meshIdx = currentNode.meshIndex.value();
+			flatNodes.push_back( { parentTrs, meshIdx } );
+			visited[ curr.nodeIdx ] = true;
+
+			for( u64 childNodeIdx : currentNode.children )
+			{
+				nodeQueue.push_back( { parentTrs, childNodeIdx } );
+			}
+		} 
+	}
+
+	return flatNodes;
+}
+
+enum class index_type : u8
+{
+	U8,
+	U16,
+	U32
+};
+
+struct gltf_index_span
+{
+	index_type type;
+	union
+	{
+		std::span<const u8>  u8Data;
+		std::span<const u16> u16Data;
+		std::span<const u32> u32Data;
+	};
+
+	gltf_index_span( std::span<const u8> span ) : type{ index_type::U8 }, u8Data{ span } {}
+	gltf_index_span( std::span<const u16> span ) : type{ index_type::U16 }, u16Data{ span } {}
+	gltf_index_span( std::span<const u32> span ) : type{ index_type::U32 }, u32Data{ span } {}
+};
+
+struct gltf_attr_stream
+{
+	const u8* data;
+	u64 elemCount;
+	u64 compnentCount;
+	u64 componentByteSize;
+
+	template<typename T>
+	explicit operator std::span<T>() const
+	{
+		HT_ASSERT( sizeof( T ) == ( compnentCount * componentByteSize ) );
+		return std::span<T>( ( T* ) data, elemCount );
+	}
+
+	explicit operator gltf_index_span() const
+	{
+		switch( componentByteSize )
+		{
+		case sizeof( u8 ) : return gltf_index_span( std::span<const u8>{ data, elemCount } );
+		case sizeof( u16 ) : return gltf_index_span( std::span<const u16>{ ( const u16* ) data, elemCount } );
+		case sizeof( u32 ) : return gltf_index_span( std::span<const u32>{ ( const u32* ) data, elemCount } );
+
+		default: HT_ASSERT( false );
+		}
+	}
+};
+
+inline const fastgltf::Accessor& FastgltfGetAccessorByName( 
+	std::string_view name,
+	const fastgltf::Primitive& primMesh,
+	const std::vector<fastgltf::Accessor>& accessors 
+) {
+	const fastgltf::Attribute* pAttr = primMesh.findAttribute( name );
+	HT_ASSERT( pAttr );
+	const fastgltf::Accessor& accessor = accessors[ pAttr->accessorIndex ];
+	return accessor;
+}
+
+// NOTE: according to the spec https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes
+// we could just fix these attribute's size
+gltf_attr_stream FastgltfGetAttributeStream(
+	const fastgltf::Accessor& accessor, 
+	const std::vector<fastgltf::BufferView>& bufferViews,
+	const std::vector<fastgltf::Buffer>& buffers
+) {
+	HT_ASSERT( accessor.bufferViewIndex.has_value() );
+	const u64 viewIdx = accessor.bufferViewIndex.value();
+	const fastgltf::BufferView& view = bufferViews[ viewIdx ];
+
+	const fastgltf::Buffer& dataBuff = buffers[ view.bufferIndex ];
+	const fastgltf::sources::Array data = std::get<fastgltf::sources::Array>( dataBuff.data );
+	HT_ASSERT( ( data.mimeType == fastgltf::MimeType::GltfBuffer ) || ( data.mimeType == fastgltf::MimeType::OctetStream ) );
+	const u8* streamView = ( const u8* ) ( std::data( data.bytes ) + view.byteOffset + accessor.byteOffset );
+
+	const u64 numComponents = fastgltf::getNumComponents( accessor.type );
+	const u64 componentSizeInBytes = fastgltf::getComponentByteSize( accessor.componentType );
+
+	return { streamView, accessor.count, numComponents, componentSizeInBytes };
+}
+
+constexpr bool LEFT_HANDED = true;
+static_assert( LEFT_HANDED );
+
+struct unpacked_vertex
+{
+	DirectX::XMFLOAT3 pos;
+	DirectX::XMFLOAT3 normal;
+	DirectX::XMFLOAT3 tan;
+	DirectX::XMFLOAT2 uv;
+};
+
+struct raw_mesh
+{
+	std::vector<unpacked_vertex> vertices;
+	std::vector<u32> indices;
+	u64 materialIdx;
+};
+
+// TODO: we'll need to adjust the normal and tan stuff if we use !LEFT_HANDED
+struct gltf_mesh_view
+{
+	gltf_index_span indexStream;
+	std::span<const DirectX::XMFLOAT3> posStream;
+	std::span<const DirectX::XMFLOAT3> normStream;
+	std::span<const DirectX::XMFLOAT4> tanStream;
+	std::span<const DirectX::XMFLOAT2> uvStream;
+	u64 materialIdx;
+
+	std::vector<unpacked_vertex> InterleaveStreams()
+	{
+		const u64 streamElemCount = std::size( posStream );
+		HT_ASSERT( ( streamElemCount == std::size( normStream ) ) &&
+				   ( streamElemCount == std::size( tanStream ) ) &&
+				   ( streamElemCount == std::size( uvStream ) ) );
+
+		std::vector<unpacked_vertex> interleaved( streamElemCount );
+		for( u64 i = 0; i < streamElemCount; ++i )
+		{
+			const DirectX::XMFLOAT4 tanW = tanStream[ i ];
+			const DirectX::XMFLOAT3 tan = { tanW.x * tanW.w, tanW.y * tanW.w, tanW.z * tanW.w };
+			interleaved[ i ] = {
+				.pos = posStream[ i ],
+				.normal = normStream[ i ],
+				.tan = tan,
+				.uv = uvStream[ i ]
+			};
+		}
+
+		return interleaved;
+	}
+	std::vector<u32> NormalizeIndexBuffer()
+	{
+		std::vector<u32> normalized;
+		switch( indexStream.type )
+		{
+		case index_type::U8:
+		{
+			normalized.reserve( std::size( indexStream.u8Data ) );
+			for( u8 idx : indexStream.u8Data )
+			{
+				normalized.push_back( u32( idx ) );
+			}
+			break;
+		}
+		case index_type::U16:
+		{
+			normalized.reserve( std::size( indexStream.u16Data ) );
+			for( u16 idx : indexStream.u16Data )
+			{
+				normalized.push_back( u32( idx ) );
+			}
+			break;
+		}
+		case index_type::U32:
+		{
+			normalized.reserve( std::size( indexStream.u32Data ) );
+			for( u32 idx : indexStream.u32Data )
+			{
+				normalized.push_back( idx );
+			}
+			break;
+		}
+		}
+		return normalized;
+	}
+
+	inline raw_mesh GetRawMesh() const
+	{
+		std::vector<unpacked_vertex> vertices;
+		std::vector<u32> indices;
+
+		return { std::move( vertices ), std::move( indices ), materialIdx };
+	}
+};
+
+std::vector<gltf_mesh_view> GltfProcessMesh(
+	const fastgltf::Mesh& mesh,
+	const std::vector<fastgltf::Accessor>& accessors,
+	const std::vector<fastgltf::BufferView>& bufferViews,
+	const std::vector<fastgltf::Buffer>& buffers
+) {
+	std::vector<gltf_mesh_view> outMeshes;
+	outMeshes.reserve( std::size( mesh.primitives ) );
+
+	for( const fastgltf::Primitive& primMesh : mesh.primitives )
+	{
+		HT_ASSERT( primMesh.materialIndex.has_value() );
+		const u64 materialIdx = primMesh.materialIndex.value();
+
+		// TODO: handle more types ?
+		HT_ASSERT( fastgltf::PrimitiveType::Triangles == primMesh.type );
+		HT_ASSERT( primMesh.indicesAccessor.has_value() );
+
+		gltf_attr_stream idxStream = FastgltfGetAttributeStream(
+			accessors[ primMesh.indicesAccessor.value() ], bufferViews, buffers );
+		gltf_attr_stream posStream = FastgltfGetAttributeStream(
+			FastgltfGetAccessorByName( "POSITION", primMesh, accessors ), bufferViews, buffers );
+		gltf_attr_stream normStream = FastgltfGetAttributeStream(
+			FastgltfGetAccessorByName( "NORMAL", primMesh, accessors ), bufferViews, buffers );
+		gltf_attr_stream tanStream = FastgltfGetAttributeStream(
+			FastgltfGetAccessorByName( "TANGENT", primMesh, accessors ), bufferViews, buffers );
+		gltf_attr_stream uvStream = FastgltfGetAttributeStream(
+			FastgltfGetAccessorByName( "TEXCOORD_0", primMesh, accessors ), bufferViews, buffers );
+
+		gltf_mesh_view currentMesh = {
+			.indexStream = ( gltf_index_span ) idxStream,
+			.posStream = ( std::span<const DirectX::XMFLOAT3> ) posStream,
+			.normStream = ( std::span<const DirectX::XMFLOAT3> ) normStream,
+			.tanStream = ( std::span<const DirectX::XMFLOAT4> ) tanStream,
+			.uvStream = ( std::span<const DirectX::XMFLOAT2> ) uvStream,
+			.materialIdx = materialIdx
+		};
+		outMeshes.emplace_back( currentMesh );
+	}
+
+	return outMeshes;
+}
+
+struct meshlet_info
+{
+	vec3	aabbMin;
+	vec3	aabbMax;
+
+	vec3    coneAxis;
+	vec3    coneApex;
+
+	int8_t	coneX, coneY, coneZ, coneCutoff;
+
+	uint    vertexOffset;
+	uint    triangleOffset;
+	uint8_t vertexCount;
+	uint8_t triangleCount;
+};
+
+struct aabb_t
+{
+	DirectX::XMFLOAT3 min;
+	DirectX::XMFLOAT3 max;
+};
+
+#include <immintrin.h>
+
+// NOTE: from https://stackoverflow.com/questions/17638487/minimum-of-4-sp-values-in-m128
+inline __m128 _mm_hmin_ps( __m128 v )
+{
+	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
+	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
+	return v;
+}
+
+inline __m128 _mm_hmax_ps( __m128 v )
+{
+	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
+	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
+	return v;
+}
+
+inline float MinF32x8_SIMD( __m256 a, __m256 b )
+{
+	__m256 laneMin_f32x8 = _mm256_min_ps( a, b );
+	__m128 lo = _mm256_castps256_ps128( laneMin_f32x8 );
+	__m128 hi = _mm256_extractf128_ps( laneMin_f32x8, 1 );
+
+	__m128 laneMin_f32x4 = _mm_min_ps( lo, hi );
+
+	__m128 min_f32x4 = _mm_hmin_ps( laneMin_f32x4 );
+
+	return _mm_cvtss_f32( min_f32x4 );
+}
+
+inline float MaxF32x8_SIMD( __m256 a, __m256 b )
+{
+	__m256 laneMax_f32x8 = _mm256_max_ps( a, b );
+	__m128 lo = _mm256_castps256_ps128( laneMax_f32x8 );
+	__m128 hi = _mm256_extractf128_ps( laneMax_f32x8, 1 );
+
+	__m128 laneMax_f32x4 = _mm_max_ps( lo, hi );
+
+	__m128 max_f32x4 = _mm_hmax_ps( laneMax_f32x4 );
+
+	return _mm_cvtss_f32( max_f32x4 );
+}
+
+aabb_t ComputeMeshletAabb( const meshopt_Meshlet& m, std::span<const unpacked_vertex> vertices, std::span<const u32> mletVtx )
+{
+	using namespace DirectX;
+	
+	constexpr u64 laneCount = 8;
+	constexpr u64 batchSize = 16;
+
+	XMFLOAT3 min = vertices[ 0 ].pos;
+	XMFLOAT3 max = vertices[ 0 ].pos;
+
+	const u64 batches = m.vertex_count / batchSize;
+	u64 vi = 0;
+	for( ; vi < batches; vi += batchSize )
+	{
+		alignas( sizeof( __m256 ) ) float xBatch[ batchSize ];
+		alignas( sizeof( __m256 ) ) float yBatch[ batchSize ];
+		alignas( sizeof( __m256 ) ) float zBatch[ batchSize ];
+		//[[unroll]]
+		for( u64 i = 0; i < batchSize; ++i )
+		{
+			XMFLOAT3 pos = vertices[ mletVtx[ vi + m.vertex_offset + i ] ].pos;
+			xBatch[ i ] = pos.x;
+			yBatch[ i ] = pos.y;
+			zBatch[ i ] = pos.z;
+		}
+
+		__m256 laneX0_f32x8 = _mm256_load_ps( xBatch );
+		__m256 laneX1_f32x8 = _mm256_load_ps( xBatch + laneCount );
+
+		float minX = MinF32x8_SIMD( laneX0_f32x8, laneX1_f32x8 );
+		float maxX = MaxF32x8_SIMD( laneX0_f32x8, laneX1_f32x8 );
+
+		__m256 laneY0_f32x8 = _mm256_load_ps( yBatch );
+		__m256 laneY1_f32x8 = _mm256_load_ps( yBatch + laneCount );
+
+		float minY = MinF32x8_SIMD( laneY0_f32x8, laneY1_f32x8 );
+		float maxY = MaxF32x8_SIMD( laneY0_f32x8, laneY1_f32x8 );
+
+		__m256 laneZ0_f32x8 = _mm256_load_ps( zBatch );
+		__m256 laneZ1_f32x8 = _mm256_load_ps( zBatch + laneCount );
+
+		float minZ = MinF32x8_SIMD( laneZ0_f32x8, laneZ1_f32x8 );
+		float maxZ = MaxF32x8_SIMD( laneZ0_f32x8, laneZ1_f32x8 );
+
+		min.x = std::min( minX, min.x );
+		max.x = std::max( maxX, max.x );
+
+		min.y = std::min( minY, min.y );
+		max.y = std::max( maxY, max.y );
+
+		min.z = std::min( minZ, min.z );
+		max.z = std::max( maxZ, max.z );
+	}
+
+	for( ; vi < m.vertex_count; ++vi )
+	{
+		XMFLOAT3 pos = vertices[ mletVtx[ vi + m.vertex_offset ] ].pos;
+		min.x = std::min( pos.x, min.x );
+		max.x = std::max( pos.x, max.x );
+
+		min.y = std::min( pos.y, min.y );
+		max.y = std::max( pos.y, max.y );
+
+		min.z = std::min( pos.z, min.z );
+		max.z = std::max( pos.z, max.z );
+	}
+	return { .min = min, .max = max };
+}
+
+struct meshlets
+{
+	std::vector<meshlet_info> desc;
+	std::vector<u32> vertices;
+	std::vector<u8> indices;
+};
+
+struct meshoptimizer_pipeline
+{
+	raw_mesh& rawMesh;
+
+	void ReindexAndOptimizeMesh()
+	{
+		std::vector<unpacked_vertex>& vertices = rawMesh.vertices;
+		std::vector<u32>& indices = rawMesh.indices;
+
+		const u64 vtxCount = std::size( vertices );
+		const u64 idxCount = std::size( indices );
+
+		std::vector<u32> remap( vtxCount );
+		u64 newVtxCount = meshopt_generateVertexRemap( 
+			std::data( remap ), std::data( indices ), idxCount, std::data( vertices ), vtxCount, sizeof( vertices[ 0 ] ) );
+
+		HT_ASSERT( newVtxCount <= vtxCount );
+		if( newVtxCount != vtxCount )
+		{
+			meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( remap ) );
+			meshopt_remapVertexBuffer( 
+				std::data( vertices ), std::data( vertices ), vtxCount, sizeof( vertices[ 0 ] ), std::data( remap ) );
+		}
+
+		vertices.resize( newVtxCount );
+
+		meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), idxCount, newVtxCount );
+		meshopt_optimizeVertexFetch( 
+			std::data( vertices ), std::data( indices ), idxCount, std::data( vertices ), newVtxCount, sizeof( vertices[ 0 ] ) );
+	}
+
+	meshlets MakeMeshlets( u64 vertexCount, u64 triangleCount, float coneWeight )
+	{
+		using namespace DirectX;
+
+		std::vector<meshopt_Meshlet> meshlets;
+		std::vector<u32> mletVtx;
+		std::vector<u8> mletIdx;
+
+		const std::span<u32> indices = rawMesh.indices;
+		const std::span<unpacked_vertex> vertices = rawMesh.vertices;
+
+		const u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( indices ), vertexCount, triangleCount );
+		meshlets.resize( maxMeshletCount );
+		mletVtx.resize( maxMeshletCount * vertexCount );
+		mletIdx.resize( maxMeshletCount * triangleCount * 3 );
+
+		const u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), std::data( mletVtx ), std::data( mletIdx ),
+				std::data( indices ), std::size( indices ), &vertices[ 0 ].pos.x, std::size( vertices ), sizeof( vertices[ 0 ] ),
+				vertexCount, triangleCount, coneWeight );
+
+		const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
+
+		meshlets.resize( meshletCount );
+		mletVtx.resize( last.vertex_offset + last.vertex_count );
+		mletIdx.resize( last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
+
+		std::vector<meshlet_info> mletsDesc;
+		mletsDesc.reserve( meshletCount );
+		for( const meshopt_Meshlet& m : meshlets )
+		{
+			const meshopt_Bounds bounds = meshopt_computeMeshletBounds(
+				std::data( mletVtx ), std::data( mletIdx ), m.triangle_count,
+				&vertices[ 0 ].pos.x, std::size( vertices ), sizeof( vertices[ 0 ] ) );
+
+			const aabb_t aabb = ComputeMeshletAabb( m, vertices, mletVtx );
+			
+			const meshlet_info mlet = {
+				.aabbMin = aabb.min,
+				.aabbMax = aabb.max,
+				.coneAxis = { bounds.cone_axis[ 0 ], bounds.cone_axis[ 1 ], bounds.cone_axis[ 2 ] },
+				.coneApex = { bounds.cone_apex[ 0 ], bounds.cone_apex[ 1 ], bounds.cone_apex[ 2 ] },
+				.coneX = bounds.cone_axis_s8[ 0 ],
+				.coneY = bounds.cone_axis_s8[ 1 ],
+				.coneZ = bounds.cone_axis_s8[ 2 ],
+				.coneCutoff = bounds.cone_cutoff_s8,
+				.vertexOffset = m.vertex_offset,
+				.triangleOffset = m.triangle_offset,
+				.vertexCount = ( u8 ) m.vertex_count,
+				.triangleCount = ( u8 ) m.triangle_count
+			};
+			
+			mletsDesc.emplace_back( mlet );
+		}
+
+		return { std::move( mletsDesc ), std::move( mletVtx ), std::move( mletIdx ) };
+	}
+};
+
+struct texture_data
+{
+	std::span<const u8> bin;
+};
+
+struct texture_job_batch
+{
+	ankerl::unordered_dense::set<u32> materialMapSets[ ( u64 ) material_map_type::COUNT ];
+
+	inline void PushBack( material_map_type type, u32 mapDataIdx )
+	{
+		materialMapSets[ ( u64 ) type ].insert( mapDataIdx );
+	}
+};
+
+// NOTE: we'll assume a material has the same sampler for all its component textures
+// TODO: expand for more materials currently we support color, metalRough, occlusion, normal and emissive
+struct material_processor
+{
+	static constexpr u64                      TEX_UV_INDEX = 0;
+	static constexpr u64                      INVALID_IDX = ~0u;
+	static constexpr u64                      DEFAULT_SAMPLER_IDX = 0;
+
+	const std::vector<fastgltf::Material>&    materials;
+	const std::vector<fastgltf::Texture>&     textures;
+	const std::vector<fastgltf::Sampler>&     samplers;
+	const std::vector<fastgltf::Image>&       images;
+	const std::vector<fastgltf::BufferView>&  bufferViews;
+	const std::vector<fastgltf::Buffer>&      buffers;
+
+	std::vector<material_info>&               materialsOut;
+	std::vector<sampler_config>&              samplersOut;
+	// NOTE: these have to match exacly with the outputted images/textures
+	std::vector<texture_data>&                texDataOut;
+	texture_job_batch&                        texJobBatchesOut;
+
+	material_processor(
+		const fastgltf::Asset&                asset,
+		std::vector<material_info>&           mtrls,
+		std::vector<sampler_config>&          samaplersRef,
+		std::vector<texture_data>&            texData,
+		texture_job_batch&                    texJobBatches
+	) :
+		materials{ asset.materials },
+		textures{ asset.textures },
+		samplers{ asset.samplers },
+		images{ asset.images },
+		bufferViews{ asset.bufferViews },
+		buffers{ asset.buffers },
+		materialsOut{ mtrls },
+		samplersOut{ samaplersRef },
+		texDataOut{ texData },
+		texJobBatchesOut{ texJobBatches }
+	{
+		// NOTE: so we can use u32 keys !!!
+		HT_ASSERT( std::size( samplers ) < u32( ~0u ) );
+		HT_ASSERT( std::size( images ) < u32( ~0u ) );
+	}
+
+	void PorcessSamplers()
+	{
+		samplersOut.reserve( std::size( samplers ) );
+		for( const fastgltf::Sampler& sampler : samplers )
+		{
+			sampler_config samplerConfig = DEFAULT_SAMPLER;
+			samplerConfig.wrapModeS = FastgltfToSamplerWrap( sampler.wrapS );
+			samplerConfig.wrapModeT = FastgltfToSamplerWrap( sampler.wrapT );
+
+			if( sampler.minFilter.has_value() )
+			{
+				samplerConfig.filterModeS = FastgltfToSamplerFilter( sampler.minFilter.value() );
+			}
+			if( sampler.magFilter.has_value() )
+			{
+				samplerConfig.filterModeT = FastgltfToSamplerFilter( sampler.magFilter.value() );
+			}
+			samplersOut.push_back( samplerConfig );
+		}
+		if( std::size( samplers ) == 0 )
+		{
+			samplersOut.push_back( DEFAULT_SAMPLER );
+		}
+	}
+
+	inline void ProcessImages()
+	{
+		texDataOut.reserve( std::size( images ) );
+		for( const fastgltf::Image& image : images )
+		{
+			const auto& buffViewSource = std::get<fastgltf::sources::BufferView>( image.data );
+			const fastgltf::BufferView& buffView = bufferViews[ buffViewSource.bufferViewIndex ];
+			const fastgltf::Buffer& buff = buffers[ buffView.bufferIndex ];
+
+			const fastgltf::sources::Array data = std::get<fastgltf::sources::Array>( buff.data );
+
+			std::span<const u8> binData = { 
+				( const u8* ) ( std::data( data.bytes ) + buffView.byteOffset ), buffView.byteLength };
+			texDataOut.push_back( { binData } );
+		}
+	}
+
+	struct processed_gltf_texture
+	{
+		u64 binDataIdx : 32;
+		u64 samplerIdx : 32;
+	};
+	inline processed_gltf_texture ProcessTexture( const fastgltf::TextureInfo& texInfo ) 
+	{
+		HT_ASSERT( texInfo.texCoordIndex == TEX_UV_INDEX );
+		const fastgltf::Texture& tex = textures[ texInfo.textureIndex ];
+
+		const u64 samplerIdx = ( tex.samplerIndex.has_value() ) ? tex.samplerIndex.value() : DEFAULT_SAMPLER_IDX;
+		
+		HT_ASSERT( tex.imageIndex.has_value() );
+		return { .binDataIdx = ( u32 ) tex.imageIndex.value(), .samplerIdx = ( u32 ) samplerIdx };
+	}
+
+	void ProcessMaterials()
+	{
+		for( const fastgltf::Material& material : materials )
+		{
+			const auto baseColFactor = material.pbrData.baseColorFactor;
+
+			material_info metadata = {
+				.baseColFactor = { baseColFactor.x(), baseColFactor.y(), baseColFactor.z() },
+				.metallicFactor = material.pbrData.metallicFactor,
+				.roughnessFactor = material.pbrData.roughnessFactor,
+				.alphaCutoff = material.alphaCutoff,
+				.emmisiveFactor = FastgltfVec3ToXMFLOAT3( material.emissiveFactor ),
+				.alphaMode = FastgltfMapAlphaMode( material.alphaMode )
+			};
+
+			u64 samplerIdx = INVALID_IDX;
+			if( material.normalTexture.has_value() )
+			{
+				const processed_gltf_texture processedTex = ProcessTexture( material.normalTexture.value() );
+				
+				if( INVALID_IDX == samplerIdx )
+				{
+					samplerIdx = processedTex.samplerIdx;
+				}
+				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
+
+				texJobBatchesOut.PushBack( material_map_type::NORMALS, processedTex.binDataIdx );
+				metadata.normalIdx = processedTex.binDataIdx;
+			}
+			if( material.pbrData.baseColorTexture.has_value() )
+			{
+				const processed_gltf_texture processedTex = ProcessTexture( material.pbrData.baseColorTexture.value() );
+
+				if( INVALID_IDX == samplerIdx )
+				{
+					samplerIdx = processedTex.samplerIdx;
+				}
+				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
+
+				texJobBatchesOut.PushBack( material_map_type::BASE_COLOR, processedTex.binDataIdx );
+				metadata.baseColorIdx = processedTex.binDataIdx;
+			}
+			if( material.pbrData.metallicRoughnessTexture.has_value() )
+			{
+				const processed_gltf_texture processedTex = ProcessTexture( material.pbrData.metallicRoughnessTexture.value() );
+
+				if( INVALID_IDX == samplerIdx )
+				{
+					samplerIdx = processedTex.samplerIdx;
+				}
+				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
+
+				texJobBatchesOut.PushBack( material_map_type::METALLIC_ROUGHNESS, processedTex.binDataIdx );
+				metadata.metallicRoughnessIdx = processedTex.binDataIdx;
+			}
+			if( material.occlusionTexture.has_value() )
+			{
+				const processed_gltf_texture processedTex = ProcessTexture( material.occlusionTexture.value() );
+
+				if( INVALID_IDX == samplerIdx )
+				{
+					samplerIdx = processedTex.samplerIdx;
+				}
+				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
+
+				texJobBatchesOut.PushBack( material_map_type::OCCLUSION, processedTex.binDataIdx );
+				metadata.occlusionIdx = processedTex.binDataIdx;
+			}
+			if( material.emissiveTexture.has_value() )
+			{
+				const processed_gltf_texture processedTex = ProcessTexture( material.emissiveTexture.value() );
+
+				if( INVALID_IDX == samplerIdx )
+				{
+					samplerIdx = processedTex.samplerIdx;
+				}
+				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
+
+				texJobBatchesOut.PushBack( material_map_type::EMISSIVE, processedTex.binDataIdx );
+				metadata.emissiveIdx = processedTex.binDataIdx;
+			}
+			HT_ASSERT( INVALID_IDX != samplerIdx );
+			metadata.samplerIdx = samplerIdx;
+
+			materialsOut.emplace_back( metadata );
+		}
+	}
+
+	static inline alpha_mode FastgltfMapAlphaMode( fastgltf::AlphaMode m )
+	{
+		switch( m )
+		{
+		case fastgltf::AlphaMode::Opaque: return ALPHA_MODE_OPAQUE;
+		case fastgltf::AlphaMode::Mask:   return ALPHA_MODE_MASK;
+		case fastgltf::AlphaMode::Blend:  return ALPHA_MODE_BLEND;
+		default:                return ALPHA_MODE_OPAQUE;
+		}
+	}
+	static inline sampler_filter_mode_flags FastgltfToSamplerFilter( fastgltf::Filter f )
+	{
+		switch( f )
+		{
+		case fastgltf::Filter::Nearest:              return sampler_filter_mode_flags::FILTER_NEAREST;
+		case fastgltf::Filter::Linear:               return sampler_filter_mode_flags::FILTER_LINEAR;
+		case fastgltf::Filter::NearestMipMapNearest: return sampler_filter_mode_flags::FILTER_NEAREST_MIPMAP_NEAREST;
+		case fastgltf::Filter::LinearMipMapNearest:  return sampler_filter_mode_flags::FILTER_LINEAR_MIPMAP_NEAREST;
+		case fastgltf::Filter::NearestMipMapLinear:  return sampler_filter_mode_flags::FILTER_NEAREST_MIPMAP_LINEAR;
+		case fastgltf::Filter::LinearMipMapLinear:   return sampler_filter_mode_flags::FILTER_LINEAR_MIPMAP_LINEAR;
+		default: return sampler_filter_mode_flags::FILTER_LINEAR;
+		}
+	}
+	static inline sampler_wrap_mode_flags FastgltfToSamplerWrap( fastgltf::Wrap w )
+	{
+		switch( w )
+		{
+		case fastgltf::Wrap::ClampToEdge:   return sampler_wrap_mode_flags::WRAP_CLAMP_TO_EDGE;
+		case fastgltf::Wrap::MirroredRepeat: return sampler_wrap_mode_flags::WRAP_MIRRORED_REPEAT;
+		case fastgltf::Wrap::Repeat:         return sampler_wrap_mode_flags::WRAP_REPEAT;
+		default: return sampler_wrap_mode_flags::WRAP_REPEAT;
+		}
+	}
+};
+
+// NOTE: assume we have a single scene
+// NOTE: cameras and animations are ignored rn
 void GltfConditionAssetFile( path filePath )
 {
 	file_permissions_flags flags = file_permissions_bits::READ;
 	std::unique_ptr<file> assetFile = SysCreateFile( filePath.string(), flags );
-	auto gltfFile = fastgltf::GltfDataBuffer::FromBytes( ( const std::byte* ) assetFile->Data(), assetFile->Size() );
+
+	fastgltf::Expected<fastgltf::GltfDataBuffer> gltfFile = 
+		fastgltf::GltfDataBuffer::FromBytes( ( const std::byte* ) assetFile->Data(), assetFile->Size() );
 
 	if( !bool( gltfFile ) )
 	{
@@ -82,26 +871,41 @@ void GltfConditionAssetFile( path filePath )
 		abort();
 	}
 
-	static constexpr auto supportedExtensions =
-		fastgltf::Extensions::KHR_mesh_quantization |
-		fastgltf::Extensions::KHR_texture_transform |
-		fastgltf::Extensions::KHR_materials_variants;
+	constexpr auto supportedExtensions = fastgltf::Extensions::KHR_mesh_quantization;
 
 	fastgltf::Parser parser( supportedExtensions );
 
 	constexpr auto gltfOptions =
 		fastgltf::Options::DontRequireValidAssetMember |
-		fastgltf::Options::AllowDouble |
 		fastgltf::Options::LoadExternalBuffers |
 		fastgltf::Options::LoadExternalImages |
-		fastgltf::Options::GenerateMeshIndices;
+		// NOTE: used to get TRS instead of full float4x4
+		fastgltf::Options::DecomposeNodeMatrices;
 
-	auto asset = parser.loadGltf( gltfFile.get(), filePath.parent_path(), gltfOptions );
+	fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf( gltfFile.get(), filePath.parent_path(), gltfOptions );
 	if( asset.error() != fastgltf::Error::None )
 	{
 		std::cerr << "Failed to load glTF: " << fastgltf::getErrorMessage( asset.error() ) << '\n';
 		abort();
 	}
+
+	assert( std::size( asset->scenes ) == 1 );
+	auto flatNodes = GltfFlattenNodes( asset->nodes );
+	for( const fastgltf::Mesh& m : asset->meshes )
+	{
+		GltfProcessMesh( m, asset->accessors, asset->bufferViews, asset->buffers );
+	}
+	
+	std::vector<material_info> materialsOut;
+	std::vector<sampler_config> samplersOut;
+	std::vector<texture_data> texDataOut;
+	texture_job_batch texJobBatchesOut;
+	material_processor materialProcessor{ asset.get(), materialsOut, samplersOut, texDataOut, texJobBatchesOut};
+	materialProcessor.PorcessSamplers();
+	materialProcessor.ProcessImages();
+	materialProcessor.ProcessMaterials();
+
+	u64 i = 0;
 }
 // TODO: use DirectXMath ?
 // TODO: fast ?
@@ -359,8 +1163,8 @@ LoadGlbFile(
 				u64 bcByteCount = GetBCTexByteCount( raw.width, raw.height, bc1BytesPerBlock );
 				texBin.resize( raw.offset + bcByteCount );
 
-				compressedImgs.push_back(
-					{ 0,{ raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC1_RGB_SRGB, TEXTURE_TYPE_2D } );
+				//compressedImgs.push_back(
+				//	{ 0,{ raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC1_RGB_SRGB, TEXTURE_TYPE_2D } );
 			}
 			materials[ mi ].baseColIdx = texProcessingCache[ texDscIdx ];
 		}
@@ -381,8 +1185,8 @@ LoadGlbFile(
 				u64 bcByteCount = GetBCTexByteCount( raw.width, raw.height, bc5BytesPerBlock );
 				texBin.resize( raw.offset + bcByteCount );
 
-				compressedImgs.push_back(
-					{ 0,{ raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC5_UNORM, TEXTURE_TYPE_2D } );
+				//compressedImgs.push_back(
+				//	{ 0,{ raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC5_UNORM, TEXTURE_TYPE_2D } );
 			}
 			materials[ mi ].occRoughMetalIdx = texProcessingCache[ texDscIdx ];
 		}
@@ -402,8 +1206,8 @@ LoadGlbFile(
 				u64 bcByteCount = GetBCTexByteCount( raw.width, raw.height, bc5BytesPerBlock );
 				texBin.resize( raw.offset + bcByteCount );
 
-				compressedImgs.push_back(
-					{ 0, { raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC5_UNORM, TEXTURE_TYPE_2D } );
+				//compressedImgs.push_back(
+				//	{ 0, { raw.offset,bcByteCount }, raw.width, raw.height, TEXTURE_FORMAT_BC5_UNORM, TEXTURE_TYPE_2D } );
 			}
 			materials[ mi ].normalMapIdx = texProcessingCache[ texDscIdx ];
 		}

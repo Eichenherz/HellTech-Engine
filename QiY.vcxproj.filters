@@ -105,6 +105,9 @@
     <ClCompile Include="3rdParty\meshoptimizer\src\vfetchoptimizer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="AssetCompiler\texture_compressor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
@@ -210,6 +213,39 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="3rdParty\meshoptimizer\src\meshoptimizer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\base64.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\core.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\dxmath_element_traits.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\glm_element_traits.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\math.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\tools.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\types.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\unordered_dense\include\ankerl\stl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="AssetCompiler\texture_compressor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
