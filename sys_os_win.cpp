@@ -388,6 +388,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 #include "imgui/imgui.h"
 
+
 INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
@@ -396,7 +397,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 
 	SysOsCreateConsole();
 
-	SYSTEM_INFO	sysInfo = {};
+	SYSTEM_INFO sysInfo = {};
 	GetSystemInfo( &sysInfo );
 	
 	HINSTANCE hInst = hInstance;

@@ -20,8 +20,7 @@
 // TO AVOID include WIN every where
 //////////////////////////////////////
 
-
-#endif // WIN32
+#endif // _WIN32
 
 // TODO: move
 struct gpu_data

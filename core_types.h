@@ -13,10 +13,20 @@ using i16 = int16_t;
 using i32 = int32_t;
 using i64 = int64_t;
 
+//template<typename T>
 struct range
 {
-	u64 offset : 32;
-	u64 size : 32;
+	u64 offset;
+	u64 size;
+
+	//inline u64 OffsetInBytes() const
+	//{
+	//	return offset * sizeof( T );
+	//}
+	//inline u64 SizeInBytes() const
+	//{
+	//	return size * sizeof( T );
+	//}
 };
 
 constexpr u64 INVALID_IDX = -1;

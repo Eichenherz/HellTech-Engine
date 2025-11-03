@@ -106,7 +106,6 @@ enum texture_format : u8
 
 enum texture_type : u8
 {
-	TEXTURE_TYPE_1D,
 	TEXTURE_TYPE_2D,
 	TEXTURE_TYPE_3D,
 	TEXTURE_TYPE_CUBE,
@@ -142,12 +141,18 @@ enum gltf_sampler_address_mode : u8
 
 struct texture_metadata
 {
-	u32				width;
-	u32				height;
+	u16				width;
+	u16				height;
 	texture_format	format;
 	texture_type	type;
 	u8				mipCount;
 	u8				layerCount;
+};
+
+struct texture_entry
+{
+	range texRangeInBytes;
+	texture_metadata metadata;
 };
 
 struct image_metadata

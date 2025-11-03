@@ -119,7 +119,7 @@
     <LibraryPath>$(LibraryPath)</LibraryPath>
     <CustomBuildAfterTargets>ClCompile</CustomBuildAfterTargets>
     <SourcePath>$(SourcePath)</SourcePath>
-    <PostBuildEventUseInBuild>false</PostBuildEventUseInBuild>
+    <PostBuildEventUseInBuild>true</PostBuildEventUseInBuild>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
@@ -199,8 +199,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine>MachineX64</TargetMachine>
-      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools\lib\x64-v142;$(VULKAN_SDK)\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>nvtt30205.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools;D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools\lib\x64-v142;$(VULKAN_SDK)\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <PreventDllBinding>false</PreventDllBinding>
     </Link>
     <CustomBuild>
@@ -217,8 +217,7 @@
       <AdditionalInputs>%(FullPath);$(ProjectDir)r_data_structs.h</AdditionalInputs>
     </CustomBuild>
     <PostBuildEvent>
-      <Command>
-      </Command>
+      <Command>xcopy /Y /R /D "D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools\nvtt30205.dll" "$(TargetDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">

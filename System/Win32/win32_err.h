@@ -8,6 +8,11 @@
 #include "sys_os_api.h"
 #include "core_types.h"
 
+inline bool Win32IsHandleValid( HANDLE h )
+{
+	return ( INVALID_HANDLE_VALUE == h ) || ( 0 == h );
+}
+
 inline void Win32WriteLastErr( LPTSTR lpsLineFile )
 {
 	LPVOID lpMsgBuf;

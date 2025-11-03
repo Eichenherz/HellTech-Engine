@@ -635,7 +635,6 @@ inline VkImageType VkGetImageType( texture_type t )
 {
 	switch( t )
 	{
-	case TEXTURE_TYPE_1D: return VK_IMAGE_TYPE_1D;
 	case TEXTURE_TYPE_2D: return VK_IMAGE_TYPE_2D;
 	case TEXTURE_TYPE_3D: return VK_IMAGE_TYPE_3D;
 	default: assert( 0 ); return VK_IMAGE_TYPE_MAX_ENUM;
@@ -1118,7 +1117,7 @@ struct debug_context
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( name, {} );
 		auto dynamicRendering = cmdBuff.CmdIssueDynamicScopedRenderPass( std::data( renderingInfo.colorAttachments ), 
-			std::size( renderingInfo.colorAttachments ), renderingInfo.pDepthAttachment, renderingInfo.scissor, 1 );
+			( u32 ) std::size( renderingInfo.colorAttachments ), renderingInfo.pDepthAttachment, renderingInfo.scissor, 1 );
 		
 		vkCmdSetScissor( cmdBuff.hndl, 0, 1, &renderingInfo.scissor );
 		vkCmdSetViewport( cmdBuff.hndl, 0, 1, &renderingInfo.viewport );
@@ -2534,6 +2533,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	static bool initResources = false;
 	if( !initResources )
 	{
+		std::vector<u8> fileData = SysReadFile( glbPath );
+		std::vector<u8> out;
+		//CompileGlbAssetToBinary( fileData, out );
 		GltfConditionAssetFile( glbPath );
 		VkInitGlobalResources( *vk.pDc, rndCtx, vk.descManager );
 

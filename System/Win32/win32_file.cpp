@@ -80,15 +80,15 @@ constexpr DWORD MakeMapViewFlags( file_permissions_flags openFlags )
 
 struct win32_mmaped_file_handle : file
 {
+	std::span<u8> dataView;
 	HANDLE hFile = INVALID_HANDLE_VALUE;
 	HANDLE hFileMapping = INVALID_HANDLE_VALUE;
-	std::span<u8> dataView;
 
 	win32_mmaped_file_handle( std::string_view fileName, file_permissions_flags openFlags, DWORD createFlags, DWORD accessFlags )
 	{
 		DWORD desiredAccessFlags = MakeGenericAccessFlags( openFlags );
 		this->hFile = CreateFileA(
-			std::data( fileName ), desiredAccessFlags, FILE_SHARE_READ, 0, createFlags, accessFlags, 0 );
+			std::data( fileName ), desiredAccessFlags, FILE_SHARE_READ, 0, createFlags, accessFlags, NULL );
 		WIN_CHECK( hFile == INVALID_HANDLE_VALUE );
 
 		DWORD dwFlagsFileMapping = MakeFileMappingFlags( openFlags );
@@ -130,6 +130,7 @@ struct win32_mmaped_file_handle : file
 	{
 		return dataView;
 	}
+
 	virtual ~win32_mmaped_file_handle() override
 	{
 		UnmapViewOfFile( std::data( this->dataView ) );
@@ -137,6 +138,7 @@ struct win32_mmaped_file_handle : file
 		CloseHandle( this->hFile );
 	}
 };
+
 
 std::unique_ptr<file> SysCreateFile( std::string_view path, file_permissions_flags filePermissions )
 {

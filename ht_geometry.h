@@ -67,9 +67,9 @@ inline void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vec
 	vtxCache = { std::begin( vertices ), std::end( vertices ) };
 	idxData = { std::begin( triangles ),std::end( triangles ) };
 
-	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * std::exp2( numIters ) );
-	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
-	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * exp2( 2 * numIters ) );
+	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * ( 1ull << numIters ) );
+	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * ( 1ull << ( 2 * numIters ) ) );
+	idxData.reserve( 3 * ICOSAHEDRON_FACE_NUM * ( 1ull << ( 2 * numIters ) ) );
 
 
 	for( u64 i = 0; i < numIters; ++i )

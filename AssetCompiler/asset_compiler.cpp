@@ -8,7 +8,6 @@
 #include "spng.h"
 #include "lz4.h"
 
-
 #include "r_data_structs.h"
 #include <cmath>
 #include <vector>
@@ -18,6 +17,8 @@
 #include <string_view>
 
 #include <iostream>
+
+#include <string.h>
 
 #include "ht_error.h"
 #include "core_types.h"
@@ -187,66 +188,6 @@ struct gltf_index_span
 	gltf_index_span( std::span<const u32> span ) : type{ index_type::U32 }, u32Data{ span } {}
 };
 
-struct gltf_attr_stream
-{
-	const u8* data;
-	u64 elemCount;
-	u64 compnentCount;
-	u64 componentByteSize;
-
-	template<typename T>
-	explicit operator std::span<T>() const
-	{
-		HT_ASSERT( sizeof( T ) == ( compnentCount * componentByteSize ) );
-		return std::span<T>( ( T* ) data, elemCount );
-	}
-
-	explicit operator gltf_index_span() const
-	{
-		switch( componentByteSize )
-		{
-		case sizeof( u8 ) : return gltf_index_span( std::span<const u8>{ data, elemCount } );
-		case sizeof( u16 ) : return gltf_index_span( std::span<const u16>{ ( const u16* ) data, elemCount } );
-		case sizeof( u32 ) : return gltf_index_span( std::span<const u32>{ ( const u32* ) data, elemCount } );
-
-		default: HT_ASSERT( false );
-		}
-	}
-};
-
-inline const fastgltf::Accessor& FastgltfGetAccessorByName( 
-	std::string_view name,
-	const fastgltf::Primitive& primMesh,
-	const std::vector<fastgltf::Accessor>& accessors 
-) {
-	const fastgltf::Attribute* pAttr = primMesh.findAttribute( name );
-	HT_ASSERT( pAttr );
-	const fastgltf::Accessor& accessor = accessors[ pAttr->accessorIndex ];
-	return accessor;
-}
-
-// NOTE: according to the spec https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes
-// we could just fix these attribute's size
-gltf_attr_stream FastgltfGetAttributeStream(
-	const fastgltf::Accessor& accessor, 
-	const std::vector<fastgltf::BufferView>& bufferViews,
-	const std::vector<fastgltf::Buffer>& buffers
-) {
-	HT_ASSERT( accessor.bufferViewIndex.has_value() );
-	const u64 viewIdx = accessor.bufferViewIndex.value();
-	const fastgltf::BufferView& view = bufferViews[ viewIdx ];
-
-	const fastgltf::Buffer& dataBuff = buffers[ view.bufferIndex ];
-	const fastgltf::sources::Array data = std::get<fastgltf::sources::Array>( dataBuff.data );
-	HT_ASSERT( ( data.mimeType == fastgltf::MimeType::GltfBuffer ) || ( data.mimeType == fastgltf::MimeType::OctetStream ) );
-	const u8* streamView = ( const u8* ) ( std::data( data.bytes ) + view.byteOffset + accessor.byteOffset );
-
-	const u64 numComponents = fastgltf::getNumComponents( accessor.type );
-	const u64 componentSizeInBytes = fastgltf::getComponentByteSize( accessor.componentType );
-
-	return { streamView, accessor.count, numComponents, componentSizeInBytes };
-}
-
 constexpr bool LEFT_HANDED = true;
 static_assert( LEFT_HANDED );
 
@@ -275,7 +216,7 @@ struct gltf_mesh_view
 	std::span<const DirectX::XMFLOAT2> uvStream;
 	u64 materialIdx;
 
-	std::vector<unpacked_vertex> InterleaveStreams()
+	inline std::vector<unpacked_vertex> InterleaveStreams() const
 	{
 		const u64 streamElemCount = std::size( posStream );
 		HT_ASSERT( ( streamElemCount == std::size( normStream ) ) &&
@@ -297,7 +238,7 @@ struct gltf_mesh_view
 
 		return interleaved;
 	}
-	std::vector<u32> NormalizeIndexBuffer()
+	inline std::vector<u32> NormalizeIndexBuffer() const
 	{
 		std::vector<u32> normalized;
 		switch( indexStream.type )
@@ -342,48 +283,111 @@ struct gltf_mesh_view
 	}
 };
 
-std::vector<gltf_mesh_view> GltfProcessMesh(
-	const fastgltf::Mesh& mesh,
-	const std::vector<fastgltf::Accessor>& accessors,
-	const std::vector<fastgltf::BufferView>& bufferViews,
-	const std::vector<fastgltf::Buffer>& buffers
-) {
-	std::vector<gltf_mesh_view> outMeshes;
-	outMeshes.reserve( std::size( mesh.primitives ) );
+struct mesh_processor
+{
+	const std::vector<fastgltf::Mesh>& meshes;
+	const std::vector<fastgltf::Accessor>& accessors;
+	const std::vector<fastgltf::BufferView>& bufferViews;
+	const std::vector<fastgltf::Buffer>& buffers;
 
-	for( const fastgltf::Primitive& primMesh : mesh.primitives )
+	mesh_processor( const fastgltf::Asset& asset ) :
+		meshes{ asset.meshes }, accessors{ asset.accessors }, bufferViews{ asset.bufferViews }, buffers{ asset.buffers } {}
+
+	inline std::vector<gltf_mesh_view> ProcessMeshes() const
 	{
-		HT_ASSERT( primMesh.materialIndex.has_value() );
-		const u64 materialIdx = primMesh.materialIndex.value();
+		u64 meshPrimitiveCount = 0;
+		for( const fastgltf::Mesh& m : meshes )
+		{
+			meshPrimitiveCount += std::size( m.primitives );
+		}
 
-		// TODO: handle more types ?
-		HT_ASSERT( fastgltf::PrimitiveType::Triangles == primMesh.type );
-		HT_ASSERT( primMesh.indicesAccessor.has_value() );
+		std::vector<gltf_mesh_view> meshesOut;
+		meshesOut.reserve( meshPrimitiveCount );
+		for( const fastgltf::Mesh& m : meshes )
+		{
+			for( const fastgltf::Primitive& primMesh : m.primitives )
+			{
+				HT_ASSERT( primMesh.materialIndex.has_value() );
+				const u64 materialIdx = primMesh.materialIndex.value();
 
-		gltf_attr_stream idxStream = FastgltfGetAttributeStream(
-			accessors[ primMesh.indicesAccessor.value() ], bufferViews, buffers );
-		gltf_attr_stream posStream = FastgltfGetAttributeStream(
-			FastgltfGetAccessorByName( "POSITION", primMesh, accessors ), bufferViews, buffers );
-		gltf_attr_stream normStream = FastgltfGetAttributeStream(
-			FastgltfGetAccessorByName( "NORMAL", primMesh, accessors ), bufferViews, buffers );
-		gltf_attr_stream tanStream = FastgltfGetAttributeStream(
-			FastgltfGetAccessorByName( "TANGENT", primMesh, accessors ), bufferViews, buffers );
-		gltf_attr_stream uvStream = FastgltfGetAttributeStream(
-			FastgltfGetAccessorByName( "TEXCOORD_0", primMesh, accessors ), bufferViews, buffers );
+				// TODO: handle more types ?
+				HT_ASSERT( fastgltf::PrimitiveType::Triangles == primMesh.type );
+				HT_ASSERT( primMesh.indicesAccessor.has_value() );
 
-		gltf_mesh_view currentMesh = {
-			.indexStream = ( gltf_index_span ) idxStream,
-			.posStream = ( std::span<const DirectX::XMFLOAT3> ) posStream,
-			.normStream = ( std::span<const DirectX::XMFLOAT3> ) normStream,
-			.tanStream = ( std::span<const DirectX::XMFLOAT4> ) tanStream,
-			.uvStream = ( std::span<const DirectX::XMFLOAT2> ) uvStream,
-			.materialIdx = materialIdx
-		};
-		outMeshes.emplace_back( currentMesh );
+				gltf_attr_stream idxStream = GetAttributeStream( accessors[ primMesh.indicesAccessor.value() ] );
+				gltf_attr_stream posStream = GetAttributeStream( GetAccessorByName( "POSITION", primMesh ) );
+				gltf_attr_stream normStream = GetAttributeStream( GetAccessorByName( "NORMAL", primMesh ) );
+				gltf_attr_stream tanStream = GetAttributeStream( GetAccessorByName( "TANGENT", primMesh ) );
+				gltf_attr_stream uvStream = GetAttributeStream( GetAccessorByName( "TEXCOORD_0", primMesh ) );
+
+				gltf_mesh_view currentMesh = {
+					.indexStream = ( gltf_index_span ) idxStream,
+					.posStream = ( std::span<const DirectX::XMFLOAT3> ) posStream,
+					.normStream = ( std::span<const DirectX::XMFLOAT3> ) normStream,
+					.tanStream = ( std::span<const DirectX::XMFLOAT4> ) tanStream,
+					.uvStream = ( std::span<const DirectX::XMFLOAT2> ) uvStream,
+					.materialIdx = materialIdx
+				};
+				meshesOut.emplace_back( currentMesh );
+			}
+		}
+
+		return meshesOut;
 	}
 
-	return outMeshes;
-}
+	inline const fastgltf::Accessor& GetAccessorByName( std::string_view name, const fastgltf::Primitive& primMesh ) const
+	{
+		const fastgltf::Attribute* pAttr = primMesh.findAttribute( name );
+		HT_ASSERT( pAttr );
+		const fastgltf::Accessor& accessor = accessors[ pAttr->accessorIndex ];
+		return accessor;
+	}
+
+	struct gltf_attr_stream
+	{
+		const u8* data;
+		u64 elemCount;
+		u64 compnentCount;
+		u64 componentByteSize;
+
+		template<typename T>
+		explicit operator std::span<T>() const
+		{
+			HT_ASSERT( sizeof( T ) == ( compnentCount * componentByteSize ) );
+			return std::span<T>( ( T* ) data, elemCount );
+		}
+
+		explicit operator gltf_index_span() const
+		{
+			switch( componentByteSize )
+			{
+				case sizeof( u8 ) : return gltf_index_span( std::span<const u8>{ data, elemCount } );
+					case sizeof( u16 ) : return gltf_index_span( std::span<const u16>{ ( const u16* ) data, elemCount } );
+						case sizeof( u32 ) : return gltf_index_span( std::span<const u32>{ ( const u32* ) data, elemCount } );
+
+						default: HT_ASSERT( false );
+			}
+		}
+	};
+	// NOTE: according to the spec https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes
+	// we could just fix these attribute's size
+	inline gltf_attr_stream GetAttributeStream( const fastgltf::Accessor& accessor ) const
+	{
+		HT_ASSERT( accessor.bufferViewIndex.has_value() );
+		const u64 viewIdx = accessor.bufferViewIndex.value();
+		const fastgltf::BufferView& view = bufferViews[ viewIdx ];
+
+		const fastgltf::Buffer& dataBuff = buffers[ view.bufferIndex ];
+		const fastgltf::sources::Array data = std::get<fastgltf::sources::Array>( dataBuff.data );
+		HT_ASSERT( ( data.mimeType == fastgltf::MimeType::GltfBuffer ) || ( data.mimeType == fastgltf::MimeType::OctetStream ) );
+		const u8* streamView = ( const u8* ) ( std::data( data.bytes ) + view.byteOffset + accessor.byteOffset );
+
+		const u64 numComponents = fastgltf::getNumComponents( accessor.type );
+		const u64 componentSizeInBytes = fastgltf::getComponentByteSize( accessor.componentType );
+
+		return { streamView, accessor.count, numComponents, componentSizeInBytes };
+	}
+};
 
 struct meshlet_info
 {
@@ -523,9 +527,10 @@ struct meshlets
 {
 	std::vector<meshlet_info> desc;
 	std::vector<u32> vertices;
-	std::vector<u8> indices;
+	std::vector<u8> triangles;
 };
 
+// TODO: add hierarchical lod
 struct meshoptimizer_pipeline
 {
 	raw_mesh& rawMesh;
@@ -563,7 +568,7 @@ struct meshoptimizer_pipeline
 
 		std::vector<meshopt_Meshlet> meshlets;
 		std::vector<u32> mletVtx;
-		std::vector<u8> mletIdx;
+		std::vector<u8> mletTris;
 
 		const std::span<u32> indices = rawMesh.indices;
 		const std::span<unpacked_vertex> vertices = rawMesh.vertices;
@@ -571,24 +576,27 @@ struct meshoptimizer_pipeline
 		const u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( indices ), vertexCount, triangleCount );
 		meshlets.resize( maxMeshletCount );
 		mletVtx.resize( maxMeshletCount * vertexCount );
-		mletIdx.resize( maxMeshletCount * triangleCount * 3 );
+		mletTris.resize( maxMeshletCount * triangleCount * 3 );
 
-		const u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), std::data( mletVtx ), std::data( mletIdx ),
+		const u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), std::data( mletVtx ), std::data( mletTris ),
 				std::data( indices ), std::size( indices ), &vertices[ 0 ].pos.x, std::size( vertices ), sizeof( vertices[ 0 ] ),
 				vertexCount, triangleCount, coneWeight );
 
 		const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
 
 		meshlets.resize( meshletCount );
-		mletVtx.resize( last.vertex_offset + last.vertex_count );
-		mletIdx.resize( last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
+		mletVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
+		mletTris.resize( ( u64 ) last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
 
 		std::vector<meshlet_info> mletsDesc;
 		mletsDesc.reserve( meshletCount );
 		for( const meshopt_Meshlet& m : meshlets )
 		{
+			meshopt_optimizeMeshlet( 
+				&mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ], m.triangle_count, m.vertex_count );
+
 			const meshopt_Bounds bounds = meshopt_computeMeshletBounds(
-				std::data( mletVtx ), std::data( mletIdx ), m.triangle_count,
+				std::data( mletVtx ), std::data( mletTris ), m.triangle_count,
 				&vertices[ 0 ].pos.x, std::size( vertices ), sizeof( vertices[ 0 ] ) );
 
 			const aabb_t aabb = ComputeMeshletAabb( m, vertices, mletVtx );
@@ -611,23 +619,13 @@ struct meshoptimizer_pipeline
 			mletsDesc.emplace_back( mlet );
 		}
 
-		return { std::move( mletsDesc ), std::move( mletVtx ), std::move( mletIdx ) };
+		return { std::move( mletsDesc ), std::move( mletVtx ), std::move( mletTris ) };
 	}
 };
 
 struct texture_data
 {
 	std::span<const u8> bin;
-};
-
-struct texture_job_batch
-{
-	ankerl::unordered_dense::set<u32> materialMapSets[ ( u64 ) material_map_type::COUNT ];
-
-	inline void PushBack( material_map_type type, u32 mapDataIdx )
-	{
-		materialMapSets[ ( u64 ) type ].insert( mapDataIdx );
-	}
 };
 
 // NOTE: we'll assume a material has the same sampler for all its component textures
@@ -645,37 +643,22 @@ struct material_processor
 	const std::vector<fastgltf::BufferView>&  bufferViews;
 	const std::vector<fastgltf::Buffer>&      buffers;
 
-	std::vector<material_info>&               materialsOut;
-	std::vector<sampler_config>&              samplersOut;
-	// NOTE: these have to match exacly with the outputted images/textures
-	std::vector<texture_data>&                texDataOut;
-	texture_job_batch&                        texJobBatchesOut;
-
-	material_processor(
-		const fastgltf::Asset&                asset,
-		std::vector<material_info>&           mtrls,
-		std::vector<sampler_config>&          samaplersRef,
-		std::vector<texture_data>&            texData,
-		texture_job_batch&                    texJobBatches
-	) :
+	material_processor( const fastgltf::Asset& asset ) :
 		materials{ asset.materials },
 		textures{ asset.textures },
 		samplers{ asset.samplers },
 		images{ asset.images },
 		bufferViews{ asset.bufferViews },
-		buffers{ asset.buffers },
-		materialsOut{ mtrls },
-		samplersOut{ samaplersRef },
-		texDataOut{ texData },
-		texJobBatchesOut{ texJobBatches }
+		buffers{ asset.buffers }
 	{
 		// NOTE: so we can use u32 keys !!!
 		HT_ASSERT( std::size( samplers ) < u32( ~0u ) );
 		HT_ASSERT( std::size( images ) < u32( ~0u ) );
 	}
 
-	void PorcessSamplers()
+	inline std::vector<sampler_config> PorcessSamplers()
 	{
+		std::vector<sampler_config> samplersOut;
 		samplersOut.reserve( std::size( samplers ) );
 		for( const fastgltf::Sampler& sampler : samplers )
 		{
@@ -697,10 +680,13 @@ struct material_processor
 		{
 			samplersOut.push_back( DEFAULT_SAMPLER );
 		}
+
+		return samplersOut;
 	}
 
-	inline void ProcessImages()
+	inline std::vector<texture_data> ProcessImages()
 	{
+		std::vector<texture_data> texDataOut;
 		texDataOut.reserve( std::size( images ) );
 		for( const fastgltf::Image& image : images )
 		{
@@ -708,12 +694,14 @@ struct material_processor
 			const fastgltf::BufferView& buffView = bufferViews[ buffViewSource.bufferViewIndex ];
 			const fastgltf::Buffer& buff = buffers[ buffView.bufferIndex ];
 
-			const fastgltf::sources::Array data = std::get<fastgltf::sources::Array>( buff.data );
+			const fastgltf::sources::Array& data = std::get<fastgltf::sources::Array>( buff.data );
 
 			std::span<const u8> binData = { 
 				( const u8* ) ( std::data( data.bytes ) + buffView.byteOffset ), buffView.byteLength };
 			texDataOut.push_back( { binData } );
 		}
+
+		return texDataOut;
 	}
 
 	struct processed_gltf_texture
@@ -732,8 +720,10 @@ struct material_processor
 		return { .binDataIdx = ( u32 ) tex.imageIndex.value(), .samplerIdx = ( u32 ) samplerIdx };
 	}
 
-	void ProcessMaterials()
+	inline std::vector<material_info> ProcessMaterials()
 	{
+		std::vector<material_info> materialsOut;
+		materialsOut.reserve( std::size( materials ) );
 		for( const fastgltf::Material& material : materials )
 		{
 			const auto baseColFactor = material.pbrData.baseColorFactor;
@@ -757,8 +747,6 @@ struct material_processor
 					samplerIdx = processedTex.samplerIdx;
 				}
 				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-
-				texJobBatchesOut.PushBack( material_map_type::NORMALS, processedTex.binDataIdx );
 				metadata.normalIdx = processedTex.binDataIdx;
 			}
 			if( material.pbrData.baseColorTexture.has_value() )
@@ -770,8 +758,6 @@ struct material_processor
 					samplerIdx = processedTex.samplerIdx;
 				}
 				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-
-				texJobBatchesOut.PushBack( material_map_type::BASE_COLOR, processedTex.binDataIdx );
 				metadata.baseColorIdx = processedTex.binDataIdx;
 			}
 			if( material.pbrData.metallicRoughnessTexture.has_value() )
@@ -783,8 +769,6 @@ struct material_processor
 					samplerIdx = processedTex.samplerIdx;
 				}
 				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-
-				texJobBatchesOut.PushBack( material_map_type::METALLIC_ROUGHNESS, processedTex.binDataIdx );
 				metadata.metallicRoughnessIdx = processedTex.binDataIdx;
 			}
 			if( material.occlusionTexture.has_value() )
@@ -796,8 +780,6 @@ struct material_processor
 					samplerIdx = processedTex.samplerIdx;
 				}
 				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-
-				texJobBatchesOut.PushBack( material_map_type::OCCLUSION, processedTex.binDataIdx );
 				metadata.occlusionIdx = processedTex.binDataIdx;
 			}
 			if( material.emissiveTexture.has_value() )
@@ -809,8 +791,6 @@ struct material_processor
 					samplerIdx = processedTex.samplerIdx;
 				}
 				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-
-				texJobBatchesOut.PushBack( material_map_type::EMISSIVE, processedTex.binDataIdx );
 				metadata.emissiveIdx = processedTex.binDataIdx;
 			}
 			HT_ASSERT( INVALID_IDX != samplerIdx );
@@ -818,6 +798,8 @@ struct material_processor
 
 			materialsOut.emplace_back( metadata );
 		}
+
+		return materialsOut;
 	}
 
 	static inline alpha_mode FastgltfMapAlphaMode( fastgltf::AlphaMode m )
@@ -855,6 +837,366 @@ struct material_processor
 	}
 };
 
+#include <nvtt/nvtt.h>
+
+struct texture_rect
+{
+	u16 width;
+	u16 height;
+	u16 depth;
+};
+
+void NvttMsgCallback( nvtt::Severity severity, nvtt::Error error, const char* message, const void* userData )
+{
+	if( severity == nvtt::Severity_Error )
+	{
+		const char* pErrStr = nvtt::errorString( error );
+		std::cout << std::format( "ERROR: {}, MSG: {}", pErrStr, message );
+	}
+}
+
+
+struct nvtt_batch_handler : public nvtt::OutputHandler
+{
+	u8* pBinOutData;
+	u64 binOutDataMaxSize;
+	std::vector<range> outputRanges;
+	u64 offsetInBytes = 0;
+
+	nvtt_batch_handler( u8* pBinOut, u64 size ) : pBinOutData{ pBinOut }, binOutDataMaxSize{ size } {}
+
+	void beginImage( int size, int width, int height, int depth, int face, int mipLevel ) override {}
+
+	bool writeData( const void* data, int size ) override
+	{
+		errno_t err = memcpy_s( pBinOutData + offsetInBytes, binOutDataMaxSize, data, size );
+		if( err )
+		{
+			char buffer[ 256 ] = {};
+			strerror_s( buffer, sizeof( buffer ), err );
+			assert( false );
+			return false;
+		}
+		outputRanges.push_back( { .offset = offsetInBytes, .size = ( u64 ) size } );
+		offsetInBytes += size;
+		
+		return true;
+	}
+
+	void endImage() override {}
+};
+
+static inline texture_format MapMaterialMapToTextureFormat( material_map_type type )
+{
+	switch( type )
+	{
+	case material_map_type::BASE_COLOR:			return TEXTURE_FORMAT_BC7_SRGB;
+	case material_map_type::NORMALS:			return TEXTURE_FORMAT_BC5;
+	case material_map_type::METALLIC_ROUGHNESS:	return TEXTURE_FORMAT_BC7_LINEAR;
+	case material_map_type::OCCLUSION:			return TEXTURE_FORMAT_BC4;
+	case material_map_type::EMISSIVE:			return TEXTURE_FORMAT_BC7_LINEAR;
+	default:									return TEXTURE_FORMAT_BC7_LINEAR;
+	}
+}
+static inline texture_type MapNvttTextureType( nvtt::TextureType t )
+{
+	switch( t )
+	{
+	case nvtt::TextureType_2D:   return TEXTURE_TYPE_2D;
+	case nvtt::TextureType_3D:   return TEXTURE_TYPE_3D;
+	case nvtt::TextureType_Cube: return TEXTURE_TYPE_CUBE;
+	default:               return TEXTURE_TYPE_2D;
+	}
+}
+static inline texture_format MapNvttFormatToTextureFormat( nvtt::Format fmt )
+{
+	switch( fmt )
+	{
+	case nvtt::Format_RGBA:        return texture_format::TEXTURE_FORMAT_RBGA8_UNORM;
+	case nvtt::Format_BC1:         return texture_format::TEXTURE_FORMAT_BC1;
+	case nvtt::Format_BC1a:        return texture_format::TEXTURE_FORMAT_BC1A;
+	case nvtt::Format_BC2:         return texture_format::TEXTURE_FORMAT_BC2;
+	case nvtt::Format_BC3:         return texture_format::TEXTURE_FORMAT_BC3;
+	case nvtt::Format_BC3n:        return texture_format::TEXTURE_FORMAT_BC3_NORMAL_MAP;
+	case nvtt::Format_BC3_RGBM:    return texture_format::TEXTURE_FORMAT_BC3_RGBM;
+	case nvtt::Format_BC4:         return texture_format::TEXTURE_FORMAT_BC4;
+	case nvtt::Format_BC4S:        return texture_format::TEXTURE_FORMAT_BC4_SIGNED;
+	case nvtt::Format_BC5:         return texture_format::TEXTURE_FORMAT_BC5;
+	case nvtt::Format_BC5S:        return texture_format::TEXTURE_FORMAT_BC5_SIGNED;
+	case nvtt::Format_BC7:         return texture_format::TEXTURE_FORMAT_BC7_LINEAR;
+	default:                        return texture_format::TEXTURE_FORMAT_UNDEFINED;
+	}
+}
+static inline nvtt::Format MapTextureFormatToNvttFormat( texture_format fmt )
+{
+	switch( fmt )
+	{
+	case texture_format::TEXTURE_FORMAT_RBGA8_UNORM:      return nvtt::Format_RGBA;
+	case texture_format::TEXTURE_FORMAT_BC1:              return nvtt::Format_BC1;
+	case texture_format::TEXTURE_FORMAT_BC1A:             return nvtt::Format_BC1a;
+	case texture_format::TEXTURE_FORMAT_BC2:              return nvtt::Format_BC2;
+	case texture_format::TEXTURE_FORMAT_BC3:              return nvtt::Format_BC3;
+	case texture_format::TEXTURE_FORMAT_BC3_NORMAL_MAP:   return nvtt::Format_BC3n;
+	case texture_format::TEXTURE_FORMAT_BC3_RGBM:         return nvtt::Format_BC3_RGBM;
+	case texture_format::TEXTURE_FORMAT_BC4:              return nvtt::Format_BC4;
+	case texture_format::TEXTURE_FORMAT_BC4_SIGNED:       return nvtt::Format_BC4S;
+	case texture_format::TEXTURE_FORMAT_BC5:              return nvtt::Format_BC5;
+	case texture_format::TEXTURE_FORMAT_BC5_SIGNED:       return nvtt::Format_BC5S;
+	case texture_format::TEXTURE_FORMAT_BC7_LINEAR:       return nvtt::Format_BC7;
+	case texture_format::TEXTURE_FORMAT_BC7_SRGB:         return nvtt::Format_BC7;
+	default:                            assert( false );  return nvtt::Format_RGBA;
+	}
+}
+inline texture_rect NvttGetSurafceRect( const nvtt::Surface& surface )
+{
+	return {
+		.width = ( u16 ) surface.width(),
+		.height = ( u16 ) surface.height(),
+		.depth = ( u16 ) surface.depth()
+	};
+}
+
+
+struct compression_batch
+{
+	std::vector<texture_data> texturesBin;
+	texture_format format;
+	material_map_type mapType;
+
+	compression_batch() = default;
+
+	explicit compression_batch( material_map_type batchMaterialMapType ) : 
+		mapType{ batchMaterialMapType }, format{ MapMaterialMapToTextureFormat( batchMaterialMapType ) } {}
+
+	inline void Append( texture_data tex )
+	{
+		texturesBin.push_back( tex );
+	}
+};
+
+struct nvtt_batch
+{
+	std::vector<nvtt::Surface> surfaces;
+	nvtt::Format format;
+	bool isNormalMap;
+	bool isSrgb;
+
+	inline nvtt_batch( const compression_batch& batch )
+	{
+		format = MapTextureFormatToNvttFormat( batch.format );
+		isNormalMap = material_map_type::NORMALS == batch.mapType;
+		isSrgb = TEXTURE_FORMAT_BC7_SRGB == batch.format;
+		for( const texture_data& t : batch.texturesBin )
+		{
+			nvtt::Surface surf;
+			HT_ASSERT( surf.loadFromMemory( std::data( t.bin ), std::size( t.bin ) ) );
+			surf.setNormalMap( isNormalMap );
+			surfaces.emplace_back( surf );
+		}
+	}
+};
+
+struct nvtt_compressor
+{
+	nvtt::Context context;
+
+	inline nvtt_compressor()
+	{
+		nvtt::setMessageCallback( NvttMsgCallback, nullptr );
+
+		context.enableCudaAcceleration( true );
+		HT_ASSERT( context.isCudaAccelerationEnabled() );
+	}
+
+	inline u64 GetEstimatedBatchSize( const nvtt_batch& batch ) const
+	{
+		u64 batchSizeInBytes = 0;
+
+		nvtt::CompressionOptions compressionOptions = {};
+		compressionOptions.setFormat( batch.format );
+		compressionOptions.setQuality( nvtt::Quality_Fastest );
+		for( const nvtt::Surface& surface : batch.surfaces )
+		{
+			const texture_rect rect = NvttGetSurafceRect( surface );
+			batchSizeInBytes += GetEstimatedCompressedSize( rect, 1, compressionOptions );
+		}
+		return batchSizeInBytes;
+	}
+
+	inline u64 GetEstimatedCompressedSize( texture_rect rect, u64 mipCount, const nvtt::CompressionOptions& opts ) const
+	{
+		return context.estimateSize( rect.width, rect.height, rect.depth, mipCount, opts );
+	}
+
+	inline void ProcessBatch( nvtt_batch& batch, nvtt_batch_handler& outHandler ) 
+	{
+		nvtt::OutputOptions outOpts;
+		outOpts.setOutputHandler( &outHandler );
+		outOpts.setSrgbFlag( batch.isSrgb );
+
+		nvtt::CompressionOptions compressionOptions = {};
+		compressionOptions.setFormat( batch.format );
+		compressionOptions.setQuality( nvtt::Quality_Fastest );
+		nvtt::BatchList batchList;
+		// NOTE: we only move to GPU when making the BatchList !
+		for( nvtt::Surface& surface : batch.surfaces )
+		{
+			surface.ToGPU();
+			batchList.Append( &surface, 0, 0, &outOpts );
+		}
+
+		context.compress( batchList, compressionOptions ); 
+	}
+};
+
+#include "DEFS_WIN32_NO_BS.h"
+#include <Windows.h>
+
+#include "System/Win32/win32_err.h"
+
+inline DWORD FileMappingProtectToMapViewAccess( DWORD flProtect )
+{
+	switch( flProtect )
+	{
+	case PAGE_READONLY: return FILE_MAP_READ;
+	case PAGE_READWRITE: return FILE_MAP_READ | FILE_MAP_WRITE;
+	case PAGE_WRITECOPY: return FILE_MAP_COPY;
+	case PAGE_EXECUTE_READ: return FILE_MAP_READ | FILE_MAP_EXECUTE;
+	case PAGE_EXECUTE_READWRITE: return FILE_MAP_ALL_ACCESS | FILE_MAP_EXECUTE;
+	case PAGE_EXECUTE_WRITECOPY: return FILE_MAP_COPY | FILE_MAP_EXECUTE;
+	default: return 0; // unsupported
+	}
+}
+
+inline DWORD ProtectToGenericAccess( DWORD flProtect )
+{
+	switch( flProtect )
+	{
+	case PAGE_NOACCESS:             return 0;
+	case PAGE_READONLY:             return GENERIC_READ;
+	case PAGE_READWRITE:            return GENERIC_READ | GENERIC_WRITE;
+	case PAGE_WRITECOPY:            return GENERIC_WRITE;
+	case PAGE_EXECUTE:              return GENERIC_EXECUTE;
+	case PAGE_EXECUTE_READ:         return GENERIC_EXECUTE | GENERIC_READ;
+	case PAGE_EXECUTE_READWRITE:    return GENERIC_EXECUTE | GENERIC_READ | GENERIC_WRITE;
+	case PAGE_EXECUTE_WRITECOPY:    return GENERIC_EXECUTE | GENERIC_WRITE;
+	default:                        return 0; // unsupported
+	}
+}
+
+struct file_mapped_view
+{
+	HANDLE hFileMapping = INVALID_HANDLE_VALUE;
+	u8* pView;
+	u64 size;
+
+	inline file_mapped_view( HANDLE hFile, DWORD accessFalgs, u64 mappingSize, u64 offset ) 
+	{
+		const LARGE_INTEGER liMappingSize = { .QuadPart = ( LONGLONG ) mappingSize };
+		hFileMapping = CreateFileMappingA( hFile, NULL, accessFalgs, liMappingSize.HighPart, liMappingSize.LowPart, NULL );
+		WIN_CHECK( Win32IsHandleValid( hFileMapping ) );
+
+		const DWORD viewAccess = FileMappingProtectToMapViewAccess( accessFalgs );
+		const LARGE_INTEGER liOffset = { .QuadPart = ( LONGLONG ) offset };
+		pView = ( u8* ) MapViewOfFileEx( hFileMapping, viewAccess, liOffset.HighPart, liOffset.LowPart, liMappingSize.QuadPart, NULL );
+		WIN_CHECK( nullptr == pView );
+
+		size = liMappingSize.QuadPart;
+	}
+
+	inline ~file_mapped_view()
+	{
+		FlushViewOfFile( pView, size );
+		UnmapViewOfFile( pView );
+		CloseHandle( hFileMapping );
+	}
+};
+
+// TODO: track mapped blocks and not resize with acive mappings
+// NOTE: a growing buffer backed by a file
+struct persistent_growing_arena
+{
+	//std::shared_ptr<file_mapped_view> pActiveMappedView;
+	HANDLE hFile = INVALID_HANDLE_VALUE;
+	DWORD accessFlags;
+	u64 fileSize = 0;
+
+	persistent_growing_arena( std::string_view path )
+	{
+		DWORD pageAccess = PAGE_READWRITE;
+		accessFlags = pageAccess;
+		
+		const DWORD genericAccess = ProtectToGenericAccess( pageAccess );
+		constexpr DWORD fileAttr = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN;
+		hFile = CreateFileA( std::data( path ), genericAccess, 0, NULL, CREATE_ALWAYS, fileAttr, NULL );
+		WIN_CHECK( Win32IsHandleValid( hFile ) );
+	}
+
+	inline void Resize( u64 newSize )
+	{
+		fileSize = newSize;
+		LARGE_INTEGER newFileSize = { .QuadPart = ( LONGLONG ) fileSize };
+		
+		BOOL res = SetFilePointerEx( hFile, newFileSize, NULL, FILE_BEGIN );
+		WIN_CHECK( res == 0 );
+		res = SetEndOfFile( hFile );
+		WIN_CHECK( res == 0 );
+	}
+
+	inline file_mapped_view GetMappedView( u64 size, u64 offset )
+	{
+		HT_ASSERT( ( size <= fileSize ) && ( offset < fileSize ) );
+		return { hFile, accessFlags, size, offset };
+	}
+};
+
+inline std::array<compression_batch, ( u64 ) material_map_type::COUNT>
+AssembleTextureJobBatches( const std::vector<material_info>& materials, const std::vector<texture_data>& texData )
+{
+	std::array<compression_batch, ( u64 ) material_map_type::COUNT> batches = {};
+	for( u64 i = 0; i < ( u64 ) material_map_type::COUNT; ++i )
+	{
+		batches[ i ] = compression_batch{ material_map_type( i ) };
+	}
+
+	ankerl::unordered_dense::set<u32> textureSet;
+	textureSet.reserve( std::size( texData ) );
+	for( const material_info& m : materials )
+	{
+		if( u32 idx = m.baseColorIdx; textureSet.find( idx ) == std::cend( textureSet ) )
+		{
+			textureSet.insert( idx );
+			batches[ ( u64 ) material_map_type::BASE_COLOR ].Append( texData[ idx ] );
+		}
+		if( u32 idx = m.metallicRoughnessIdx; textureSet.find( idx ) == std::cend( textureSet ) )
+		{
+			textureSet.insert( idx );
+			batches[ ( u64 ) material_map_type::METALLIC_ROUGHNESS ].Append( texData[ idx ] );
+		}
+		if( u32 idx = m.normalIdx; textureSet.find( idx ) == std::cend( textureSet ) )
+		{
+			textureSet.insert( idx );
+			batches[ ( u64 ) material_map_type::NORMALS ].Append( texData[ idx ] );
+		}
+		if( u32 idx = m.occlusionIdx; textureSet.find( idx ) == std::cend( textureSet ) )
+		{
+			textureSet.insert( idx );
+			batches[ ( u64 ) material_map_type::OCCLUSION ].Append( texData[ idx ] );
+		}
+		if( u32 idx = m.emissiveIdx; textureSet.find( idx ) == std::cend( textureSet ) )
+		{
+			textureSet.insert( idx );
+			batches[ ( u64 ) material_map_type::EMISSIVE ].Append( texData[ idx ] );
+		}
+	}
+
+	return batches;
+}
+
+void CompressTexutres()
+{
+
+}
 // NOTE: assume we have a single scene
 // NOTE: cameras and animations are ignored rn
 void GltfConditionAssetFile( path filePath )
@@ -891,22 +1233,70 @@ void GltfConditionAssetFile( path filePath )
 
 	assert( std::size( asset->scenes ) == 1 );
 	auto flatNodes = GltfFlattenNodes( asset->nodes );
-	for( const fastgltf::Mesh& m : asset->meshes )
+
+	mesh_processor meshProcessor{ asset.get() };
+	std::vector<gltf_mesh_view> meshes = meshProcessor.ProcessMeshes();
+
+	material_processor materialProcessor{ asset.get() };
+	std::vector<sampler_config> samplers = materialProcessor.PorcessSamplers();
+	std::vector<texture_data> texData = materialProcessor.ProcessImages();
+	std::vector<material_info> materials = materialProcessor.ProcessMaterials();
+
+	std::array<compression_batch, ( u64 ) material_map_type::COUNT> batches = AssembleTextureJobBatches( materials, texData );
+
+	texData.~vector();
+
+	path assetOutPath = path{ "Assets" } / ( filePath.stem().string() + ".bin" );
+	persistent_growing_arena fileArena{ assetOutPath.string() };
+	fileArena.Resize( 65 * MB );
+	file_mapped_view fileView = fileArena.GetMappedView( fileArena.fileSize, 0 );
+
+	nvtt_compressor nvttCompressor;
+	std::vector<texture_entry> textures;
+	// TODO: for now we always map the whole file, we might want to map a sub-region in the future
+	// NOTE: bc we do this we will be tracking "absolute" offsets
+	// NOTE: this "doubles" as a size counter
+	u64 absOffset = 0;
+	for( const compression_batch& b : batches )
 	{
-		GltfProcessMesh( m, asset->accessors, asset->bufferViews, asset->buffers );
+		if( std::size( b.texturesBin ) == 0 ) continue;
+
+		nvtt_batch nvttBatch = { b };
+		const u64 batchSizeInBytes = nvttCompressor.GetEstimatedBatchSize( nvttBatch );
+		if( absOffset + batchSizeInBytes >= fileView.size )
+		{
+			fileView.~file_mapped_view();
+			fileArena.Resize( fileArena.fileSize + 64 * MB );
+			fileView = fileArena.GetMappedView( fileArena.fileSize, 0 );
+		}
+		nvtt_batch_handler batchOutHandler = { fileView.pView + absOffset, fileView.size };
+		nvttCompressor.ProcessBatch( nvttBatch, batchOutHandler );
+
+		HT_ASSERT( std::size( nvttBatch.surfaces ) == std::size( batchOutHandler.outputRanges ) );
+		textures.reserve( std::size( textures ) + std::size( nvttBatch.surfaces ) );
+		for( u64 texIdx = 0; texIdx < std::size( nvttBatch.surfaces ); ++texIdx )
+		{
+			range r = batchOutHandler.outputRanges[ texIdx ];
+			r.offset += absOffset;
+			const nvtt::Surface& currentSurf = nvttBatch.surfaces[ texIdx ];
+			const texture_rect rect = NvttGetSurafceRect( currentSurf );
+			const texture_metadata meta = {
+				.width = rect.width,
+				.height = rect.height,
+				.format = b.format,
+				.type = MapNvttTextureType( currentSurf.type() ),
+				.mipCount = 1,
+				.layerCount = 1
+			};
+				
+			textures.push_back( { r, meta } );
+		}
+
+		absOffset += batchOutHandler.offsetInBytes;  
 	}
 	
-	std::vector<material_info> materialsOut;
-	std::vector<sampler_config> samplersOut;
-	std::vector<texture_data> texDataOut;
-	texture_job_batch texJobBatchesOut;
-	material_processor materialProcessor{ asset.get(), materialsOut, samplersOut, texDataOut, texJobBatchesOut};
-	materialProcessor.PorcessSamplers();
-	materialProcessor.ProcessImages();
-	materialProcessor.ProcessMaterials();
-
-	u64 i = 0;
 }
+
 // TODO: use DirectXMath ?
 // TODO: fast ?
 inline float SignNonZero( float e )
@@ -940,39 +1330,6 @@ inline float EncodeTanToAngle( vec3 n, vec3 t )
 	float tanRefAngle = XMVectorGetX( 
 		XMVector3AngleBetweenVectors( XMLoadFloat3( &t ), XMLoadFloat3( &tanRef ) ) );
 	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
-}
-
-// TODO: context per gltf ?
-struct png_decoder
-{
-	spng_ctx* ctx;
-
-	png_decoder( const u8* pngData, u64 pngSize ) : ctx{ spng_ctx_new( 0 ) }
-	{
-		// NOTE: ignore chunk CRC's 
-		ACOMPL_ERR( spng_set_crc_action( ctx, SPNG_CRC_USE, SPNG_CRC_USE ) );
-		ACOMPL_ERR( spng_set_png_buffer( ctx, pngData, pngSize ) );
-	}
-	~png_decoder() { spng_ctx_free( ctx ); }
-
-};
-inline u64 PngGetDecodedImageByteCount( const png_decoder& dcd )
-{
-	u64 outSize = 0;
-	ACOMPL_ERR( spng_decoded_image_size( dcd.ctx, SPNG_FMT_RGBA8, &outSize ) );
-
-	return outSize;
-}
-inline u64 PngGetDecodedImageSize( const png_decoder& dcd )
-{
-	spng_ihdr ihdr = {};
-	ACOMPL_ERR( spng_get_ihdr( dcd.ctx, &ihdr ) );
-	
-	return u64( ihdr.width ) | ( u64( ihdr.height ) << 32 );
-}
-inline void PngDecodeImageFromMem( const png_decoder& dcd, u8* txBinOut, u64 txSize )
-{
-	ACOMPL_ERR( spng_decode_image( dcd.ctx, txBinOut, txSize, SPNG_FMT_RGBA8, 0 ) );
 }
 
 
@@ -1013,6 +1370,40 @@ struct imported_mesh
 
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
+
+// TODO: context per gltf ?
+struct png_decoder
+{
+	spng_ctx* ctx;
+
+	png_decoder( const u8* pngData, u64 pngSize ) : ctx{ spng_ctx_new( 0 ) }
+	{
+		// NOTE: ignore chunk CRC's 
+		ACOMPL_ERR( spng_set_crc_action( ctx, SPNG_CRC_USE, SPNG_CRC_USE ) );
+		ACOMPL_ERR( spng_set_png_buffer( ctx, pngData, pngSize ) );
+	}
+	~png_decoder() { spng_ctx_free( ctx ); }
+
+};
+inline u64 PngGetDecodedImageByteCount( const png_decoder& dcd )
+{
+	u64 outSize = 0;
+	ACOMPL_ERR( spng_decoded_image_size( dcd.ctx, SPNG_FMT_RGBA8, &outSize ) );
+
+	return outSize;
+}
+inline u64 PngGetDecodedImageSize( const png_decoder& dcd )
+{
+	spng_ihdr ihdr = {};
+	ACOMPL_ERR( spng_get_ihdr( dcd.ctx, &ihdr ) );
+
+	return u64( ihdr.width ) | ( u64( ihdr.height ) << 32 );
+}
+inline void PngDecodeImageFromMem( const png_decoder& dcd, u8* txBinOut, u64 txSize )
+{
+	ACOMPL_ERR( spng_decode_image( dcd.ctx, txBinOut, txSize, SPNG_FMT_RGBA8, 0 ) );
+}
+
 
 inline DirectX::XMMATRIX CgltfNodeGetTransf( const cgltf_node* node )
 {
@@ -1619,6 +2010,8 @@ void CompileGlbAssetToBinary(
 	std::vector<u32>				mletsData;
 
 	LoadGlbFile( glbData, meshAttrs, rawIndices, texBin, imgDescs, mtrlDescs, rawMeshDescs );
+
+	return;
 
 	meshDescs.reserve( std::size( rawMeshDescs ) );
 	// TODO: expose lod loop ?
