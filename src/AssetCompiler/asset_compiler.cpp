@@ -1,6 +1,6 @@
 #include "asset_compiler.h"
 
-#include <meshoptimizer/src/meshoptimizer.h>
+#include <meshoptimizer.h>
 #include <fastgltf/core.hpp>
 #include <fastgltf/types.hpp>
 #include <fastgltf/tools.hpp>
@@ -9,58 +9,31 @@
 #include "lz4.h"
 
 #include "r_data_structs.h"
-#include <cmath>
 #include <vector>
-#include <queue>
 
 #include <span>
 #include <string_view>
 
-#include <iostream>
-
 #include <string.h>
 
 #include "ht_error.h"
-#include "core_types.h"
-
-// TODO: utils file
-#define ACOMPL_ERR( err )															\
-do{																					\
-	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR;						\
-	i32 errorRes = err;																\
-	if( errorRes ){																	\
-		char dbgStr[256] = {};														\
-		strcat_s( dbgStr, sizeof( dbgStr ), DEV_ERR_STR );							\
-		SysErrMsgBox( dbgStr );														\
-		abort();																	\
-	}																				\
-}while( 0 )			
+#include "ht_utils.h"
+#include "core_types.h"	
 
 
-// TODO: write own lib
-// TODO: switch to MSVC ?
-#ifdef __clang__
-// NOTE: clang-cl on VS issue
-#undef __clang__
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-#define __clang__
-
-#elif _MSC_VER >= 1916
-
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-
-#endif
+#include "ht_math.h"
+#include "encoding.h"
 
 #include <DirectXCollision.h>
 
 #include <ankerl/unordered_dense.h>
 
+#include "texture_compressor.h"
 #include "bcn_compressor.h"
 
 #include <System/sys_file.h>
-#include <System/sys_filesystem.h>
+#include <filesystem>
+namespace stdfs = std::filesystem;
 
 struct alignas( 16 ) packed_trs
 {
@@ -191,17 +164,13 @@ struct gltf_index_span
 constexpr bool LEFT_HANDED = true;
 static_assert( LEFT_HANDED );
 
-struct unpacked_vertex
-{
-	DirectX::XMFLOAT3 pos;
-	DirectX::XMFLOAT3 normal;
-	DirectX::XMFLOAT3 tan;
-	DirectX::XMFLOAT2 uv;
-};
-
 struct raw_mesh
 {
-	std::vector<unpacked_vertex> vertices;
+	std::string name;
+	std::vector<DirectX::XMFLOAT3> pos;
+	std::vector<DirectX::XMFLOAT3> normals;
+	std::vector<DirectX::XMFLOAT3> tans;
+	std::vector<DirectX::XMFLOAT2> uvs;
 	std::vector<u32> indices;
 	u64 materialIdx;
 };
@@ -209,6 +178,7 @@ struct raw_mesh
 // TODO: we'll need to adjust the normal and tan stuff if we use !LEFT_HANDED
 struct gltf_mesh_view
 {
+	std::string name;
 	gltf_index_span indexStream;
 	std::span<const DirectX::XMFLOAT3> posStream;
 	std::span<const DirectX::XMFLOAT3> normStream;
@@ -216,28 +186,6 @@ struct gltf_mesh_view
 	std::span<const DirectX::XMFLOAT2> uvStream;
 	u64 materialIdx;
 
-	inline std::vector<unpacked_vertex> InterleaveStreams() const
-	{
-		const u64 streamElemCount = std::size( posStream );
-		HT_ASSERT( ( streamElemCount == std::size( normStream ) ) &&
-				   ( streamElemCount == std::size( tanStream ) ) &&
-				   ( streamElemCount == std::size( uvStream ) ) );
-
-		std::vector<unpacked_vertex> interleaved( streamElemCount );
-		for( u64 i = 0; i < streamElemCount; ++i )
-		{
-			const DirectX::XMFLOAT4 tanW = tanStream[ i ];
-			const DirectX::XMFLOAT3 tan = { tanW.x * tanW.w, tanW.y * tanW.w, tanW.z * tanW.w };
-			interleaved[ i ] = {
-				.pos = posStream[ i ],
-				.normal = normStream[ i ],
-				.tan = tan,
-				.uv = uvStream[ i ]
-			};
-		}
-
-		return interleaved;
-	}
 	inline std::vector<u32> NormalizeIndexBuffer() const
 	{
 		std::vector<u32> normalized;
@@ -276,10 +224,30 @@ struct gltf_mesh_view
 
 	inline raw_mesh GetRawMesh() const
 	{
-		std::vector<unpacked_vertex> vertices;
-		std::vector<u32> indices;
+		const u64 streamSize = std::size( posStream );
+		HT_ASSERT( ( streamSize == std::size( normStream ) ) &&
+				   ( streamSize == std::size( tanStream ) ) &&
+				   ( streamSize == std::size( uvStream ) ) );
 
-		return { std::move( vertices ), std::move( indices ), materialIdx };
+		std::vector<DirectX::XMFLOAT3> tans;
+		tans.reserve( std::size( tanStream ) );
+		for( DirectX::XMFLOAT4 tanW : tanStream )
+		{
+			tans.push_back( { tanW.x * tanW.w, tanW.y * tanW.w, tanW.z * tanW.w } );
+		}
+		std::vector<u32> indices = NormalizeIndexBuffer();
+
+		raw_mesh mesh = {
+			.name = std::move( name ),
+			.pos = { std::cbegin( posStream ), std::cend( posStream ) },
+			.normals = { std::cbegin( normStream ), std::cend( normStream ) },
+			.tans = std::move( tans ),
+			.uvs = { std::cbegin( uvStream ), std::cend( uvStream ) },
+			.indices = std::move( indices ),
+			.materialIdx = materialIdx
+		};
+		
+		return mesh;
 	}
 };
 
@@ -321,6 +289,7 @@ struct mesh_processor
 				gltf_attr_stream uvStream = GetAttributeStream( GetAccessorByName( "TEXCOORD_0", primMesh ) );
 
 				gltf_mesh_view currentMesh = {
+					.name = m.name.c_str(),
 					.indexStream = ( gltf_index_span ) idxStream,
 					.posStream = ( std::span<const DirectX::XMFLOAT3> ) posStream,
 					.normStream = ( std::span<const DirectX::XMFLOAT3> ) normStream,
@@ -405,10 +374,11 @@ struct meshlet_info
 	uint8_t triangleCount;
 };
 
+template<typename Vec>
 struct aabb_t
 {
-	DirectX::XMFLOAT3 min;
-	DirectX::XMFLOAT3 max;
+	Vec min;
+	Vec max;
 };
 
 #include <immintrin.h>
@@ -454,15 +424,18 @@ inline float MaxF32x8_SIMD( __m256 a, __m256 b )
 	return _mm_cvtss_f32( max_f32x4 );
 }
 
-aabb_t ComputeMeshletAabb( const meshopt_Meshlet& m, std::span<const unpacked_vertex> vertices, std::span<const u32> mletVtx )
-{
+aabb_t<DirectX::XMFLOAT3> ComputeMeshletAabb( 
+	const meshopt_Meshlet& m, 
+	std::span<const DirectX::XMFLOAT3> vertices, 
+	std::span<const u32> mletVtx 
+) {
 	using namespace DirectX;
 	
-	constexpr u64 laneCount = 8;
-	constexpr u64 batchSize = 16;
+	constexpr u64 laneCount = sizeof( __m256 ) / sizeof( float );
+	constexpr u64 batchSize = 2 * laneCount;
 
-	XMFLOAT3 min = vertices[ 0 ].pos;
-	XMFLOAT3 max = vertices[ 0 ].pos;
+	XMFLOAT3 min = vertices[ 0 ];
+	XMFLOAT3 max = vertices[ 0 ];
 
 	const u64 batches = m.vertex_count / batchSize;
 	u64 vi = 0;
@@ -474,7 +447,7 @@ aabb_t ComputeMeshletAabb( const meshopt_Meshlet& m, std::span<const unpacked_ve
 		//[[unroll]]
 		for( u64 i = 0; i < batchSize; ++i )
 		{
-			XMFLOAT3 pos = vertices[ mletVtx[ vi + m.vertex_offset + i ] ].pos;
+			const XMFLOAT3 pos = vertices[ mletVtx[ vi + m.vertex_offset + i ] ];
 			xBatch[ i ] = pos.x;
 			yBatch[ i ] = pos.y;
 			zBatch[ i ] = pos.z;
@@ -510,15 +483,67 @@ aabb_t ComputeMeshletAabb( const meshopt_Meshlet& m, std::span<const unpacked_ve
 
 	for( ; vi < m.vertex_count; ++vi )
 	{
-		XMFLOAT3 pos = vertices[ mletVtx[ vi + m.vertex_offset ] ].pos;
-		min.x = std::min( pos.x, min.x );
-		max.x = std::max( pos.x, max.x );
+		const XMFLOAT3 pos = vertices[ mletVtx[ vi + m.vertex_offset ] ];
+		XMVECTOR xmMin = XMVectorMin( XMLoadFloat3( &pos ), XMLoadFloat3( &min ) );
+		XMVECTOR xmMax = XMVectorMin( XMLoadFloat3( &pos ), XMLoadFloat3( &max ) );
 
-		min.y = std::min( pos.y, min.y );
-		max.y = std::max( pos.y, max.y );
+		XMStoreFloat3( &min, xmMin );
+		XMStoreFloat3( &max, xmMax );
+	}
+	return { .min = min, .max = max };
+}
 
-		min.z = std::min( pos.z, min.z );
-		max.z = std::max( pos.z, max.z );
+aabb_t<DirectX::XMFLOAT2> ComputeTexBounds( std::span<const DirectX::XMFLOAT2> uvs )
+{
+	using namespace DirectX;
+
+	constexpr u64 laneCount = sizeof( __m256 ) / sizeof( float );
+	constexpr u64 batchSize = 2 * laneCount;
+
+	XMFLOAT2 min = uvs[ 0 ];
+	XMFLOAT2 max = uvs[ 0 ];
+
+	const u64 batches = std::size( uvs ) / batchSize;
+	u64 uvi = 0;
+	for( ; uvi < batches; uvi += batchSize )
+	{
+		alignas( sizeof( __m256 ) ) float uBatch[ batchSize ];
+		alignas( sizeof( __m256 ) ) float vBatch[ batchSize ];
+		//[[unroll]]
+		for( u64 i = 0; i < batchSize; ++i )
+		{
+			const XMFLOAT2 texCoord = uvs[ uvi + i ];
+			uBatch[ i ] = texCoord.x;
+			vBatch[ i ] = texCoord.y;
+		}
+
+		__m256 laneX0_f32x8 = _mm256_load_ps( uBatch );
+		__m256 laneX1_f32x8 = _mm256_load_ps( uBatch + laneCount );
+
+		float minX = MinF32x8_SIMD( laneX0_f32x8, laneX1_f32x8 );
+		float maxX = MaxF32x8_SIMD( laneX0_f32x8, laneX1_f32x8 );
+
+		__m256 laneY0_f32x8 = _mm256_load_ps( vBatch );
+		__m256 laneY1_f32x8 = _mm256_load_ps( vBatch + laneCount );
+
+		float minY = MinF32x8_SIMD( laneY0_f32x8, laneY1_f32x8 );
+		float maxY = MaxF32x8_SIMD( laneY0_f32x8, laneY1_f32x8 );
+
+		min.x = std::min( minX, min.x );
+		max.x = std::max( maxX, max.x );
+
+		min.y = std::min( minY, min.y );
+		max.y = std::max( maxY, max.y );
+	}
+
+	for( ; uvi < std::size( uvs ); ++uvi )
+	{
+		const XMFLOAT2 texCoord = uvs[ uvi ];
+		XMVECTOR xmMin = XMVectorMin( XMLoadFloat2( &texCoord ), XMLoadFloat2( &min ) );
+		XMVECTOR xmMax = XMVectorMin( XMLoadFloat2( &texCoord ), XMLoadFloat2( &max ) );
+
+		XMStoreFloat2( &min, xmMin );
+		XMStoreFloat2( &max, xmMax );
 	}
 	return { .min = min, .max = max };
 }
@@ -528,38 +553,97 @@ struct meshlets
 	std::vector<meshlet_info> desc;
 	std::vector<u32> vertices;
 	std::vector<u8> triangles;
+
+	inline u64 GetDataSizeInBytes() const
+	{
+		u64 szInBytes = SizeInBytes( vertices );
+		szInBytes += SizeInBytes( triangles );
+
+		return szInBytes;
+	}
 };
 
+using snorm8x4 = u32;
+
+struct optimized_mesh
+{
+	std::vector<DirectX::XMFLOAT3>     pos;
+	std::vector<snorm8x4>              tanFrames;
+	std::vector<DirectX::XMFLOAT2>     uvs;
+	std::vector<u32>                   indices;
+	
+	vec3	                           aabbMin;
+	vec3	                           aabbMax;
+
+	u64                                materialIdx;
+
+	inline u64 GetDataSizeInBytes() const
+	{
+		u64 szInBytes = SizeInBytes(pos);
+		szInBytes += SizeInBytes( tanFrames );
+		szInBytes += SizeInBytes( uvs );
+		szInBytes += SizeInBytes( indices );
+
+		return szInBytes;
+	}
+};
+
+
+constexpr u64 MAX_VTX = 128;
+constexpr u64 MAX_TRIS = 256;
+constexpr float CONE_WEIGHT = 0.8f;
 // TODO: add hierarchical lod
-struct meshoptimizer_pipeline
+struct mesh_pipeline
 {
 	raw_mesh& rawMesh;
 
+	mesh_pipeline( raw_mesh& rawMesh ) : rawMesh{ rawMesh } {}
+
 	void ReindexAndOptimizeMesh()
 	{
-		std::vector<unpacked_vertex>& vertices = rawMesh.vertices;
+		meshopt_Stream attrStreams[] = {
+			{ .data = std::data( rawMesh.pos ), .size = std::size( rawMesh.pos ), .stride = sizeof( rawMesh.pos[ 0 ] ) },
+			{ .data = std::data( rawMesh.normals ), .size = std::size( rawMesh.normals ), .stride = sizeof( rawMesh.normals[ 0 ] ) },
+			{ .data = std::data( rawMesh.tans ), .size = std::size( rawMesh.tans ), .stride = sizeof( rawMesh.tans[ 0 ] ) },
+			{ .data = std::data( rawMesh.uvs ), .size = std::size( rawMesh.uvs ), .stride = sizeof( rawMesh.uvs[ 0 ] ) },
+		};
 		std::vector<u32>& indices = rawMesh.indices;
 
-		const u64 vtxCount = std::size( vertices );
+		const u64 vtxCount = std::size( rawMesh.pos );
 		const u64 idxCount = std::size( indices );
 
 		std::vector<u32> remap( vtxCount );
-		u64 newVtxCount = meshopt_generateVertexRemap( 
-			std::data( remap ), std::data( indices ), idxCount, std::data( vertices ), vtxCount, sizeof( vertices[ 0 ] ) );
+		u64 newVtxCount = meshopt_generateVertexRemapMulti(
+			std::data( remap ), std::data( indices ), idxCount, vtxCount, attrStreams, std::size( attrStreams ) );
 
 		HT_ASSERT( newVtxCount <= vtxCount );
 		if( newVtxCount != vtxCount )
 		{
 			meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( remap ) );
-			meshopt_remapVertexBuffer( 
-				std::data( vertices ), std::data( vertices ), vtxCount, sizeof( vertices[ 0 ] ), std::data( remap ) );
+			meshopt_remapVertexBuffer( std::data( rawMesh.pos ), std::data( rawMesh.pos ), vtxCount, 
+				sizeof( rawMesh.pos[ 0 ] ), std::data( remap ) );
+			rawMesh.pos.resize( newVtxCount );
+			meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ), vtxCount, 
+				sizeof( rawMesh.normals[ 0 ] ), std::data( remap ) );
+			rawMesh.normals.resize( newVtxCount );
+			meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ), vtxCount, 
+				sizeof( rawMesh.tans[ 0 ] ), std::data( remap ) );
+			rawMesh.tans.resize( newVtxCount );
+			meshopt_remapVertexBuffer( std::data( rawMesh.uvs ), std::data( rawMesh.uvs ), vtxCount, 
+				sizeof( rawMesh.uvs[ 0 ] ), std::data( remap ) );
+			rawMesh.uvs.resize( newVtxCount );
 		}
 
-		vertices.resize( newVtxCount );
-
 		meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), idxCount, newVtxCount );
-		meshopt_optimizeVertexFetch( 
-			std::data( vertices ), std::data( indices ), idxCount, std::data( vertices ), newVtxCount, sizeof( vertices[ 0 ] ) );
+
+		meshopt_optimizeVertexFetch( std::data( rawMesh.pos ), std::data( indices ), idxCount, std::data( rawMesh.pos ), 
+			newVtxCount, sizeof( rawMesh.pos[ 0 ] ) );
+		meshopt_optimizeVertexFetch( std::data( rawMesh.normals ), std::data( indices ), idxCount, std::data( rawMesh.normals ), 
+			newVtxCount, sizeof( rawMesh.normals[ 0 ] ) );
+		meshopt_optimizeVertexFetch( std::data( rawMesh.tans ), std::data( indices ), idxCount, std::data( rawMesh.tans ), 
+			newVtxCount, sizeof( rawMesh.tans[ 0 ] ) );
+		meshopt_optimizeVertexFetch( std::data( rawMesh.uvs ), std::data( indices ), idxCount, std::data( rawMesh.uvs ), 
+			newVtxCount, sizeof( rawMesh.uvs[ 0 ] ) );
 	}
 
 	meshlets MakeMeshlets( u64 vertexCount, u64 triangleCount, float coneWeight )
@@ -571,7 +655,7 @@ struct meshoptimizer_pipeline
 		std::vector<u8> mletTris;
 
 		const std::span<u32> indices = rawMesh.indices;
-		const std::span<unpacked_vertex> vertices = rawMesh.vertices;
+		const std::span<DirectX::XMFLOAT3> pos = rawMesh.pos;
 
 		const u64 maxMeshletCount = meshopt_buildMeshletsBound( std::size( indices ), vertexCount, triangleCount );
 		meshlets.resize( maxMeshletCount );
@@ -579,14 +663,14 @@ struct meshoptimizer_pipeline
 		mletTris.resize( maxMeshletCount * triangleCount * 3 );
 
 		const u64 meshletCount = meshopt_buildMeshlets( std::data( meshlets ), std::data( mletVtx ), std::data( mletTris ),
-				std::data( indices ), std::size( indices ), &vertices[ 0 ].pos.x, std::size( vertices ), sizeof( vertices[ 0 ] ),
+				std::data( indices ), std::size( indices ), &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ),
 				vertexCount, triangleCount, coneWeight );
 
 		const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
 
 		meshlets.resize( meshletCount );
 		mletVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
-		mletTris.resize( ( u64 ) last.triangle_offset + ( ( last.triangle_count * 3 + 3 ) & ~3 ) );
+		mletTris.resize( ( u64 ) last.triangle_offset + ( ( ( u64 ) last.triangle_count * 3 + 3 ) & ~3 ) );
 
 		std::vector<meshlet_info> mletsDesc;
 		mletsDesc.reserve( meshletCount );
@@ -595,11 +679,10 @@ struct meshoptimizer_pipeline
 			meshopt_optimizeMeshlet( 
 				&mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ], m.triangle_count, m.vertex_count );
 
-			const meshopt_Bounds bounds = meshopt_computeMeshletBounds(
-				std::data( mletVtx ), std::data( mletTris ), m.triangle_count,
-				&vertices[ 0 ].pos.x, std::size( vertices ), sizeof( vertices[ 0 ] ) );
+			const meshopt_Bounds bounds = meshopt_computeMeshletBounds( std::data( mletVtx ), std::data( mletTris ), 
+				m.triangle_count, &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ) );
 
-			const aabb_t aabb = ComputeMeshletAabb( m, vertices, mletVtx );
+			const aabb_t<DirectX::XMFLOAT3> aabb = ComputeMeshletAabb( m, pos, mletVtx );
 			
 			const meshlet_info mlet = {
 				.aabbMin = aabb.min,
@@ -621,11 +704,70 @@ struct meshoptimizer_pipeline
 
 		return { std::move( mletsDesc ), std::move( mletVtx ), std::move( mletTris ) };
 	}
-};
 
-struct texture_data
-{
-	std::span<const u8> bin;
+	optimized_mesh AssembleMesh( const meshlets& mlets )
+	{
+		using namespace DirectX;
+
+		XMFLOAT3 meshAabbMin = mlets.desc[ 0 ].aabbMin;
+		XMFLOAT3 meshAabbMax = mlets.desc[ 0 ].aabbMax;
+
+		for( const meshlet_info& m : mlets.desc )
+		{
+			XMVECTOR xmMin = XMVectorMin( XMLoadFloat3( &m.aabbMin ), XMLoadFloat3( &meshAabbMin ) );
+			XMVECTOR xmMax = XMVectorMin( XMLoadFloat3( &m.aabbMax ), XMLoadFloat3( &meshAabbMax ) );
+
+			XMStoreFloat3( &meshAabbMin, xmMin );
+			XMStoreFloat3( &meshAabbMax, xmMax );
+		}
+
+		const aabb_t<DirectX::XMFLOAT2> texRect = ComputeTexBounds( rawMesh.uvs );
+
+		const u64 streamSize = std::size( rawMesh.pos );
+
+		std::vector<snorm8x4> tanFrames;
+		tanFrames.reserve( streamSize );
+
+		for( u64 i = 0; i < streamSize; ++i )
+		{
+			XMFLOAT3 n = rawMesh.normals[ i ];
+			n.x = -n.x;
+			XMFLOAT3 t = rawMesh.tans[ i ];
+
+			tanFrames.push_back( EncodeTanFrame( n, t ) );
+		}
+
+		optimized_mesh mesh = {
+			.pos = std::move( rawMesh.pos ),
+			.tanFrames = std::move( tanFrames),
+			.uvs = std::move(rawMesh.uvs),
+			.indices = std::move(rawMesh.indices),
+			
+			.aabbMin = meshAabbMin,
+			.aabbMax = meshAabbMax,
+			
+			.materialIdx = rawMesh.materialIdx
+		};
+
+		return mesh;
+	}
+
+	inline snorm8x4 EncodeTanFrame( DirectX::XMFLOAT3 n, DirectX::XMFLOAT3 t )
+	{
+		DirectX::XMFLOAT2 octaNormal = OctaNormalEncode( n );
+		float tanAngle = EncodeTanToAngle( n, t );
+
+		i8 snormNx = meshopt_quantizeSnorm( octaNormal.x, 8 );
+		i8 snormNy = meshopt_quantizeSnorm( octaNormal.y, 8 );
+		i8 snormTanAngle = meshopt_quantizeSnorm( tanAngle, 8 );
+
+		u32 bitsSnormNx = *( u8* ) &snormNx;
+		u32 bitsSnormNy = *( u8* ) &snormNy;
+		u32 bitsSnormTanAngle = *( u8* ) &snormTanAngle;
+
+		snorm8x4 packedTanFrame = bitsSnormNx | ( bitsSnormNy << 8 ) | ( bitsSnormTanAngle << 16 );
+		return packedTanFrame;
+	}
 };
 
 // NOTE: we'll assume a material has the same sampler for all its component textures
@@ -706,8 +848,8 @@ struct material_processor
 
 	struct processed_gltf_texture
 	{
-		u64 binDataIdx : 32;
-		u64 samplerIdx : 32;
+		u32 binDataIdx;
+		u32 samplerIdx;
 	};
 	inline processed_gltf_texture ProcessTexture( const fastgltf::TextureInfo& texInfo ) 
 	{
@@ -837,222 +979,24 @@ struct material_processor
 	}
 };
 
-#include <nvtt/nvtt.h>
-
-struct texture_rect
-{
-	u16 width;
-	u16 height;
-	u16 depth;
-};
-
-void NvttMsgCallback( nvtt::Severity severity, nvtt::Error error, const char* message, const void* userData )
-{
-	if( severity == nvtt::Severity_Error )
-	{
-		const char* pErrStr = nvtt::errorString( error );
-		std::cout << std::format( "ERROR: {}, MSG: {}", pErrStr, message );
-	}
-}
-
-
-struct nvtt_batch_handler : public nvtt::OutputHandler
-{
-	u8* pBinOutData;
-	u64 binOutDataMaxSize;
-	std::vector<range> outputRanges;
-	u64 offsetInBytes = 0;
-
-	nvtt_batch_handler( u8* pBinOut, u64 size ) : pBinOutData{ pBinOut }, binOutDataMaxSize{ size } {}
-
-	void beginImage( int size, int width, int height, int depth, int face, int mipLevel ) override {}
-
-	bool writeData( const void* data, int size ) override
-	{
-		errno_t err = memcpy_s( pBinOutData + offsetInBytes, binOutDataMaxSize, data, size );
-		if( err )
-		{
-			char buffer[ 256 ] = {};
-			strerror_s( buffer, sizeof( buffer ), err );
-			assert( false );
-			return false;
-		}
-		outputRanges.push_back( { .offset = offsetInBytes, .size = ( u64 ) size } );
-		offsetInBytes += size;
-		
-		return true;
-	}
-
-	void endImage() override {}
-};
-
-static inline texture_format MapMaterialMapToTextureFormat( material_map_type type )
-{
-	switch( type )
-	{
-	case material_map_type::BASE_COLOR:			return TEXTURE_FORMAT_BC7_SRGB;
-	case material_map_type::NORMALS:			return TEXTURE_FORMAT_BC5;
-	case material_map_type::METALLIC_ROUGHNESS:	return TEXTURE_FORMAT_BC7_LINEAR;
-	case material_map_type::OCCLUSION:			return TEXTURE_FORMAT_BC4;
-	case material_map_type::EMISSIVE:			return TEXTURE_FORMAT_BC7_LINEAR;
-	default:									return TEXTURE_FORMAT_BC7_LINEAR;
-	}
-}
-static inline texture_type MapNvttTextureType( nvtt::TextureType t )
-{
-	switch( t )
-	{
-	case nvtt::TextureType_2D:   return TEXTURE_TYPE_2D;
-	case nvtt::TextureType_3D:   return TEXTURE_TYPE_3D;
-	case nvtt::TextureType_Cube: return TEXTURE_TYPE_CUBE;
-	default:               return TEXTURE_TYPE_2D;
-	}
-}
-static inline texture_format MapNvttFormatToTextureFormat( nvtt::Format fmt )
-{
-	switch( fmt )
-	{
-	case nvtt::Format_RGBA:        return texture_format::TEXTURE_FORMAT_RBGA8_UNORM;
-	case nvtt::Format_BC1:         return texture_format::TEXTURE_FORMAT_BC1;
-	case nvtt::Format_BC1a:        return texture_format::TEXTURE_FORMAT_BC1A;
-	case nvtt::Format_BC2:         return texture_format::TEXTURE_FORMAT_BC2;
-	case nvtt::Format_BC3:         return texture_format::TEXTURE_FORMAT_BC3;
-	case nvtt::Format_BC3n:        return texture_format::TEXTURE_FORMAT_BC3_NORMAL_MAP;
-	case nvtt::Format_BC3_RGBM:    return texture_format::TEXTURE_FORMAT_BC3_RGBM;
-	case nvtt::Format_BC4:         return texture_format::TEXTURE_FORMAT_BC4;
-	case nvtt::Format_BC4S:        return texture_format::TEXTURE_FORMAT_BC4_SIGNED;
-	case nvtt::Format_BC5:         return texture_format::TEXTURE_FORMAT_BC5;
-	case nvtt::Format_BC5S:        return texture_format::TEXTURE_FORMAT_BC5_SIGNED;
-	case nvtt::Format_BC7:         return texture_format::TEXTURE_FORMAT_BC7_LINEAR;
-	default:                        return texture_format::TEXTURE_FORMAT_UNDEFINED;
-	}
-}
-static inline nvtt::Format MapTextureFormatToNvttFormat( texture_format fmt )
-{
-	switch( fmt )
-	{
-	case texture_format::TEXTURE_FORMAT_RBGA8_UNORM:      return nvtt::Format_RGBA;
-	case texture_format::TEXTURE_FORMAT_BC1:              return nvtt::Format_BC1;
-	case texture_format::TEXTURE_FORMAT_BC1A:             return nvtt::Format_BC1a;
-	case texture_format::TEXTURE_FORMAT_BC2:              return nvtt::Format_BC2;
-	case texture_format::TEXTURE_FORMAT_BC3:              return nvtt::Format_BC3;
-	case texture_format::TEXTURE_FORMAT_BC3_NORMAL_MAP:   return nvtt::Format_BC3n;
-	case texture_format::TEXTURE_FORMAT_BC3_RGBM:         return nvtt::Format_BC3_RGBM;
-	case texture_format::TEXTURE_FORMAT_BC4:              return nvtt::Format_BC4;
-	case texture_format::TEXTURE_FORMAT_BC4_SIGNED:       return nvtt::Format_BC4S;
-	case texture_format::TEXTURE_FORMAT_BC5:              return nvtt::Format_BC5;
-	case texture_format::TEXTURE_FORMAT_BC5_SIGNED:       return nvtt::Format_BC5S;
-	case texture_format::TEXTURE_FORMAT_BC7_LINEAR:       return nvtt::Format_BC7;
-	case texture_format::TEXTURE_FORMAT_BC7_SRGB:         return nvtt::Format_BC7;
-	default:                            assert( false );  return nvtt::Format_RGBA;
-	}
-}
-inline texture_rect NvttGetSurafceRect( const nvtt::Surface& surface )
-{
-	return {
-		.width = ( u16 ) surface.width(),
-		.height = ( u16 ) surface.height(),
-		.depth = ( u16 ) surface.depth()
-	};
-}
-
-
-struct compression_batch
-{
-	std::vector<texture_data> texturesBin;
-	texture_format format;
-	material_map_type mapType;
-
-	compression_batch() = default;
-
-	explicit compression_batch( material_map_type batchMaterialMapType ) : 
-		mapType{ batchMaterialMapType }, format{ MapMaterialMapToTextureFormat( batchMaterialMapType ) } {}
-
-	inline void Append( texture_data tex )
-	{
-		texturesBin.push_back( tex );
-	}
-};
-
-struct nvtt_batch
-{
-	std::vector<nvtt::Surface> surfaces;
-	nvtt::Format format;
-	bool isNormalMap;
-	bool isSrgb;
-
-	inline nvtt_batch( const compression_batch& batch )
-	{
-		format = MapTextureFormatToNvttFormat( batch.format );
-		isNormalMap = material_map_type::NORMALS == batch.mapType;
-		isSrgb = TEXTURE_FORMAT_BC7_SRGB == batch.format;
-		for( const texture_data& t : batch.texturesBin )
-		{
-			nvtt::Surface surf;
-			HT_ASSERT( surf.loadFromMemory( std::data( t.bin ), std::size( t.bin ) ) );
-			surf.setNormalMap( isNormalMap );
-			surfaces.emplace_back( surf );
-		}
-	}
-};
-
-struct nvtt_compressor
-{
-	nvtt::Context context;
-
-	inline nvtt_compressor()
-	{
-		nvtt::setMessageCallback( NvttMsgCallback, nullptr );
-
-		context.enableCudaAcceleration( true );
-		HT_ASSERT( context.isCudaAccelerationEnabled() );
-	}
-
-	inline u64 GetEstimatedBatchSize( const nvtt_batch& batch ) const
-	{
-		u64 batchSizeInBytes = 0;
-
-		nvtt::CompressionOptions compressionOptions = {};
-		compressionOptions.setFormat( batch.format );
-		compressionOptions.setQuality( nvtt::Quality_Fastest );
-		for( const nvtt::Surface& surface : batch.surfaces )
-		{
-			const texture_rect rect = NvttGetSurafceRect( surface );
-			batchSizeInBytes += GetEstimatedCompressedSize( rect, 1, compressionOptions );
-		}
-		return batchSizeInBytes;
-	}
-
-	inline u64 GetEstimatedCompressedSize( texture_rect rect, u64 mipCount, const nvtt::CompressionOptions& opts ) const
-	{
-		return context.estimateSize( rect.width, rect.height, rect.depth, mipCount, opts );
-	}
-
-	inline void ProcessBatch( nvtt_batch& batch, nvtt_batch_handler& outHandler ) 
-	{
-		nvtt::OutputOptions outOpts;
-		outOpts.setOutputHandler( &outHandler );
-		outOpts.setSrgbFlag( batch.isSrgb );
-
-		nvtt::CompressionOptions compressionOptions = {};
-		compressionOptions.setFormat( batch.format );
-		compressionOptions.setQuality( nvtt::Quality_Fastest );
-		nvtt::BatchList batchList;
-		// NOTE: we only move to GPU when making the BatchList !
-		for( nvtt::Surface& surface : batch.surfaces )
-		{
-			surface.ToGPU();
-			batchList.Append( &surface, 0, 0, &outOpts );
-		}
-
-		context.compress( batchList, compressionOptions ); 
-	}
-};
 
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
 
 #include "System/Win32/win32_err.h"
+
+#include <vfspp/VFS.h>
+
+using virtual_fs = vfspp::MultiThreadedVirtualFileSystem;
+
+inline std::shared_ptr<virtual_fs> MountZipFS( std::string_view parentDir, std::string_view archiveName )
+{
+	HT_ASSERT( stdfs::is_directory( parentDir ) );
+	std::shared_ptr<virtual_fs> vfs = std::make_shared<virtual_fs>();
+	HT_ASSERT( vfs->CreateFileSystem<vfspp::ZipFileSystem>( std::data( parentDir ), std::data( archiveName ) ) );
+	
+	return vfs;
+}
 
 inline DWORD FileMappingProtectToMapViewAccess( DWORD flProtect )
 {
@@ -1106,13 +1050,12 @@ struct file_mapped_view
 
 	inline ~file_mapped_view()
 	{
-		FlushViewOfFile( pView, size );
-		UnmapViewOfFile( pView );
-		CloseHandle( hFileMapping );
+		WIN_CHECK( !FlushViewOfFile( pView, size ) );
+		WIN_CHECK( !UnmapViewOfFile( pView ) );
+		WIN_CHECK( !CloseHandle( hFileMapping ) );
 	}
 };
 
-// TODO: track mapped blocks and not resize with acive mappings
 // NOTE: a growing buffer backed by a file
 struct persistent_growing_arena
 {
@@ -1134,13 +1077,13 @@ struct persistent_growing_arena
 
 	inline void Resize( u64 newSize )
 	{
+		WIN_CHECK( !FlushFileBuffers( hFile ) );
+
 		fileSize = newSize;
 		LARGE_INTEGER newFileSize = { .QuadPart = ( LONGLONG ) fileSize };
 		
-		BOOL res = SetFilePointerEx( hFile, newFileSize, NULL, FILE_BEGIN );
-		WIN_CHECK( res == 0 );
-		res = SetEndOfFile( hFile );
-		WIN_CHECK( res == 0 );
+		WIN_CHECK( !SetFilePointerEx( hFile, newFileSize, NULL, FILE_BEGIN ) );
+		WIN_CHECK( !SetEndOfFile( hFile ) );
 	}
 
 	inline file_mapped_view GetMappedView( u64 size, u64 offset )
@@ -1193,10 +1136,223 @@ AssembleTextureJobBatches( const std::vector<material_info>& materials, const st
 	return batches;
 }
 
-void CompressTexutres()
+struct meshbin_desc
 {
+	range posByteRange;
+	range tanFrameByteRange;
+	range uvByteRange;
+	range idxByteRange;
+	range mletsVtxRange;
+	range mletsTrisRange;
+};
 
-}
+struct mesh_desc2
+{
+	virtual_path    meshbinPath;
+	meshbin_desc    meshbinDesc;
+	range			mletDescRange;
+	vec3			aabbMin;
+	vec3			aabbMax;
+	u64				materialIdx;
+};
+
+//struct texture_entry
+//{
+//	virtual_path path;
+//	texture_metadata metadata;
+//};
+struct material_desc
+{
+	virtual_path baseColorPath;
+	virtual_path mroPath; // NOTE: Metallic Roughness Occlusion
+	virtual_path normalPath;
+	virtual_path emissivePath;
+
+	vec3 baseColFactor;
+	//float pad0;
+	float metallicFactor;
+	float roughnessFactor;
+	float alphaCutoff;
+	//float pad1;
+	vec3 emmisiveFactor;
+	//float pad2;
+	u32 samplerIdx;
+
+	alpha_mode alphaMode;
+};
+
+struct mesh_entry
+{
+	std::span<meshlet_info> mlets;
+
+	std::span<u8>			pos;
+	std::span<u8>			tanFrames;
+	std::span<u8>			uvs;
+	std::span<u8>			idx;
+	std::span<u8>			mletsVtx;
+	std::span<u8>			mletsTris;
+
+	vec3	                aabbMin;
+	vec3	                aabbMax;
+
+	u64                     materialIdx;
+};
+
+struct mesh_entry_internal
+{
+	std::vector<meshlet_info> mlets;
+
+	virtual_path    meshbinPath = {};
+	meshbin_desc    meshbinDesc;
+
+	vec3	                           aabbMin;
+	vec3	                           aabbMax;
+
+	u64                                materialIdx;
+}; 
+
+struct mesh_serialzier
+{
+	optimized_mesh& meshIn;
+	meshlets& mletsIn;
+
+	u64 dstOffset = 0;
+
+	std::vector<u8> binOut;
+
+	mesh_serialzier( optimized_mesh& mesh, meshlets& mlets ) : meshIn{ mesh }, mletsIn{ mlets }
+	{
+		const u64 szInBytes = meshIn.GetDataSizeInBytes() + mletsIn.GetDataSizeInBytes();
+		binOut.reserve( szInBytes );
+	}
+
+	template<typename T>
+	inline range CopyRangeWithOffset( const std::vector<T>& inData )
+	{
+		const u64 copySizeInBytes = std::size( inData );
+		std::memcpy( std::data(binOut) + dstOffset, std::data(inData), copySizeInBytes);
+		const range r = { .offset = dstOffset, .size = copySizeInBytes };
+		dstOffset += copySizeInBytes;
+
+		return r;
+	}
+
+	inline meshbin_desc Serialize()
+	{
+		meshbin_desc mei;
+
+		mei.posByteRange = CopyRangeWithOffset( meshIn.pos );
+		mei.tanFrameByteRange = CopyRangeWithOffset( meshIn.tanFrames );
+		mei.uvByteRange = CopyRangeWithOffset( meshIn.uvs );
+		mei.mletsVtxRange = CopyRangeWithOffset( mletsIn.vertices );
+		mei.mletsTrisRange = CopyRangeWithOffset( mletsIn.triangles );
+
+		return mei;
+	}
+};
+
+struct drk_file_footer
+{
+	std::vector<material_desc> materials;
+	std::vector<meshbin_desc> meshes;
+	std::vector<meshlet_info> meshlets;
+	std::vector<sampler_config> samplers;
+};
+
+// TODO: for now we always map the whole file, we might want to map a sub-regions for very large files in the future
+// NOTE: bc we do this we will be tracking "absolute" offsets
+struct drk_file_writer
+{
+	std::string parentDir;
+	std::shared_ptr<virtual_fs> zipVfs;
+	drk_file_footer footer;
+
+	drk_file_writer( std::string_view parentDirSV, std::string_view archiveName ) :
+		parentDir{ parentDirSV }, zipVfs{ MountZipFS( parentDirSV, archiveName ) } {}
+
+	std::vector<texture_entry> 
+	CompressAndSaveTexutres( const std::array<compression_batch, ( u64 ) material_map_type::COUNT>& batches )
+	{
+		std::vector<texture_entry> textures;
+
+		//file_mapped_view fileView;// = fileArena.GetMappedView( fileArena.fileSize, 0 );
+		//
+		//nvtt_compressor nvttCompressor;
+		//for( const compression_batch& b : batches )
+		//{
+		//	if( std::size( b.texturesBin ) == 0 ) continue;
+		//
+		//	nvtt_batch nvttBatch = { b };
+		//	const u64 batchSizeInBytes = nvttCompressor.GetEstimatedBatchSize( nvttBatch );
+		//	
+		//	nvtt_batch_handler batchOutHandler = { fileView.pView + absOffset, fileView.size };
+		//	nvttCompressor.ProcessBatch( nvttBatch, batchOutHandler );
+		//
+		//	HT_ASSERT( std::size( nvttBatch.surfaces ) == std::size( batchOutHandler.outputRanges ) );
+		//	textures.reserve( std::size( textures ) + std::size( nvttBatch.surfaces ) );
+		//	for( u64 texIdx = 0; texIdx < std::size( nvttBatch.surfaces ); ++texIdx )
+		//	{
+		//		range r = batchOutHandler.outputRanges[ texIdx ];
+		//		r.offset += absOffset;
+		//		const nvtt::Surface& currentSurf = nvttBatch.surfaces[ texIdx ];
+		//		const texture_rect rect = NvttGetSurafceRect( currentSurf );
+		//		const texture_metadata meta = {
+		//			.width = rect.width,
+		//			.height = rect.height,
+		//			.format = b.format,
+		//			.type = MapNvttTextureType( currentSurf.type() ),
+		//			.mipCount = 1,
+		//			.layerCount = 1
+		//		};
+		//
+		//		textures.push_back( { r, meta } );
+		//	}
+		//
+		//	absOffset += batchOutHandler.offsetInBytes;  
+		//}
+
+		return textures;
+	}
+
+	std::vector<mesh_entry_internal> OptimizeAndSaveGeometry( std::vector<raw_mesh>& rawMeshes )
+	{
+		std::vector<mesh_entry_internal> meshesOut;
+		meshesOut.reserve( std::size( rawMeshes ) );
+
+		// TODO: multithread
+		for( raw_mesh& rawMesh : rawMeshes )
+		{
+			const std::string filePath = std::format( "{}/mesh_{}.bin", parentDir, rawMesh.name );
+			auto meshFile = zipVfs->OpenFile( filePath, vfspp::IFile::FileMode::Write );
+			HT_ASSERT( !meshFile );
+
+			mesh_pipeline pipeline = { rawMesh };
+			pipeline.ReindexAndOptimizeMesh();
+			meshlets mlets = pipeline.MakeMeshlets( MAX_VTX, MAX_TRIS, CONE_WEIGHT );
+			optimized_mesh mesh = pipeline.AssembleMesh( mlets );
+
+			mesh_serialzier s{ mesh, mlets };
+
+			meshbin_desc binDesc = s.Serialize();
+
+			meshFile->Write( s.binOut );
+
+			mesh_entry_internal mei = {
+				.mlets = std::move( mlets.desc ),
+				.meshbinPath = MakeVirtPath( filePath ),
+				.meshbinDesc = binDesc,
+				.aabbMin = mesh.aabbMin,
+				.aabbMax = mesh.aabbMax,
+				.materialIdx = mesh.materialIdx
+			};
+			meshesOut.push_back( std::move( mei ) );
+		}
+
+		return meshesOut;
+	}
+};
+
+
 // NOTE: assume we have a single scene
 // NOTE: cameras and animations are ignored rn
 void GltfConditionAssetFile( path filePath )
@@ -1237,6 +1393,15 @@ void GltfConditionAssetFile( path filePath )
 	mesh_processor meshProcessor{ asset.get() };
 	std::vector<gltf_mesh_view> meshes = meshProcessor.ProcessMeshes();
 
+	std::vector<raw_mesh> rawMeshes;
+	rawMeshes.reserve( std::size( meshes ) );
+	for( const gltf_mesh_view& meshView : meshes )
+	{
+		raw_mesh rawMesh = meshView.GetRawMesh();
+		rawMeshes.push_back( std::move( rawMesh ) );
+	}
+	meshes.~vector();
+
 	material_processor materialProcessor{ asset.get() };
 	std::vector<sampler_config> samplers = materialProcessor.PorcessSamplers();
 	std::vector<texture_data> texData = materialProcessor.ProcessImages();
@@ -1246,91 +1411,13 @@ void GltfConditionAssetFile( path filePath )
 
 	texData.~vector();
 
-	path assetOutPath = path{ "Assets" } / ( filePath.stem().string() + ".bin" );
-	persistent_growing_arena fileArena{ assetOutPath.string() };
-	fileArena.Resize( 65 * MB );
-	file_mapped_view fileView = fileArena.GetMappedView( fileArena.fileSize, 0 );
-
-	nvtt_compressor nvttCompressor;
-	std::vector<texture_entry> textures;
-	// TODO: for now we always map the whole file, we might want to map a sub-region in the future
-	// NOTE: bc we do this we will be tracking "absolute" offsets
-	// NOTE: this "doubles" as a size counter
-	u64 absOffset = 0;
-	for( const compression_batch& b : batches )
-	{
-		if( std::size( b.texturesBin ) == 0 ) continue;
-
-		nvtt_batch nvttBatch = { b };
-		const u64 batchSizeInBytes = nvttCompressor.GetEstimatedBatchSize( nvttBatch );
-		if( absOffset + batchSizeInBytes >= fileView.size )
-		{
-			fileView.~file_mapped_view();
-			fileArena.Resize( fileArena.fileSize + 64 * MB );
-			fileView = fileArena.GetMappedView( fileArena.fileSize, 0 );
-		}
-		nvtt_batch_handler batchOutHandler = { fileView.pView + absOffset, fileView.size };
-		nvttCompressor.ProcessBatch( nvttBatch, batchOutHandler );
-
-		HT_ASSERT( std::size( nvttBatch.surfaces ) == std::size( batchOutHandler.outputRanges ) );
-		textures.reserve( std::size( textures ) + std::size( nvttBatch.surfaces ) );
-		for( u64 texIdx = 0; texIdx < std::size( nvttBatch.surfaces ); ++texIdx )
-		{
-			range r = batchOutHandler.outputRanges[ texIdx ];
-			r.offset += absOffset;
-			const nvtt::Surface& currentSurf = nvttBatch.surfaces[ texIdx ];
-			const texture_rect rect = NvttGetSurafceRect( currentSurf );
-			const texture_metadata meta = {
-				.width = rect.width,
-				.height = rect.height,
-				.format = b.format,
-				.type = MapNvttTextureType( currentSurf.type() ),
-				.mipCount = 1,
-				.layerCount = 1
-			};
-				
-			textures.push_back( { r, meta } );
-		}
-
-		absOffset += batchOutHandler.offsetInBytes;  
-	}
+	drk_file_writer fileWriter{ "Assets", filePath.stem().string() + ".zip" };
+	fileWriter.OptimizeAndSaveGeometry( rawMeshes );
+	//fileWriter.CompressAndSaveTexutres( batches );
+	
 	
 }
 
-// TODO: use DirectXMath ?
-// TODO: fast ?
-inline float SignNonZero( float e )
-{
-	return ( e >= 0.0f ) ? 1.0f : -1.0f;
-}
-inline vec2 OctaNormalEncode( vec3 n )
-{
-	// NOTE: Project the sphere onto the octahedron, and then onto the xy plane
-	float absLen = std::fabs( n.x ) + std::fabs( n.y ) + std::fabs( n.z );
-	float absNorm = ( absLen == 0.0f ) ? 0.0f : 1.0f / absLen;
-	float nx = n.x * absNorm;
-	float ny = n.y * absNorm;
-
-	// NOTE: Reflect the folds of the lower hemisphere over the diagonals
-	float octaX = ( n.z < 0.f ) ? ( 1.0f - std::fabs( ny ) ) * SignNonZero( nx ): nx;
-	float octaY = ( n.z < 0.f ) ? ( 1.0f - std::fabs( nx ) ) * SignNonZero( ny ): ny;
-	
-	return { octaX, octaY };
-}
-// TODO: use angle between normals ?
-inline float EncodeTanToAngle( vec3 n, vec3 t )
-{
-	using namespace DirectX;
-
-	// NOTE: inspired by Doom Eternal
-	vec3 tanRef = ( std::abs( n.x ) > std::abs( n.z ) ) ?
-		vec3{ -n.y, n.x, 0.0f } :
-		vec3{ 0.0f, -n.z, n.y };
-
-	float tanRefAngle = XMVectorGetX( 
-		XMVector3AngleBetweenVectors( XMLoadFloat3( &t ), XMLoadFloat3( &tanRef ) ) );
-	return XMScalarModAngle( tanRefAngle ) * XM_1DIVPI;
-}
 
 
 inline gltf_sampler_filter GetSamplerFilter( i32 code )
@@ -1379,8 +1466,8 @@ struct png_decoder
 	png_decoder( const u8* pngData, u64 pngSize ) : ctx{ spng_ctx_new( 0 ) }
 	{
 		// NOTE: ignore chunk CRC's 
-		ACOMPL_ERR( spng_set_crc_action( ctx, SPNG_CRC_USE, SPNG_CRC_USE ) );
-		ACOMPL_ERR( spng_set_png_buffer( ctx, pngData, pngSize ) );
+		spng_set_crc_action( ctx, SPNG_CRC_USE, SPNG_CRC_USE );
+		spng_set_png_buffer( ctx, pngData, pngSize );
 	}
 	~png_decoder() { spng_ctx_free( ctx ); }
 
@@ -1388,20 +1475,20 @@ struct png_decoder
 inline u64 PngGetDecodedImageByteCount( const png_decoder& dcd )
 {
 	u64 outSize = 0;
-	ACOMPL_ERR( spng_decoded_image_size( dcd.ctx, SPNG_FMT_RGBA8, &outSize ) );
+	spng_decoded_image_size( dcd.ctx, SPNG_FMT_RGBA8, &outSize );
 
 	return outSize;
 }
 inline u64 PngGetDecodedImageSize( const png_decoder& dcd )
 {
 	spng_ihdr ihdr = {};
-	ACOMPL_ERR( spng_get_ihdr( dcd.ctx, &ihdr ) );
+	spng_get_ihdr( dcd.ctx, &ihdr );
 
 	return u64( ihdr.width ) | ( u64( ihdr.height ) << 32 );
 }
 inline void PngDecodeImageFromMem( const png_decoder& dcd, u8* txBinOut, u64 txSize )
 {
-	ACOMPL_ERR( spng_decode_image( dcd.ctx, txBinOut, txSize, SPNG_FMT_RGBA8, 0 ) );
+	spng_decode_image( dcd.ctx, txBinOut, txSize, SPNG_FMT_RGBA8, 0 );
 }
 
 
@@ -1498,8 +1585,8 @@ LoadGlbFile(
 
 	cgltf_options options = { .type = cgltf_file_type_glb };
 	cgltf_data* data = 0;
-	ACOMPL_ERR( cgltf_parse( &options, std::data( glbData ), std::size( glbData ), &data ) );
-	ACOMPL_ERR( cgltf_validate( data ) );
+	cgltf_parse( &options, std::data( glbData ), std::size( glbData ), &data );
+	cgltf_validate( data );
 
 	const u8* pBin = (const u8*) data->bin;
 
@@ -1543,7 +1630,7 @@ LoadGlbFile(
 			u64 texDscIdx = u64( pbrBaseCol - data->textures );
 			if( texProcessingCache[ texDscIdx ] == -1 )
 			{
-				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				texProcessingCache[ texDscIdx ] = ( i32 ) std::size( compressedImgs );
 				raw_texture_info raw = CgltfDecodeTexture( *pbrBaseCol, pBin, texBin );
 
 				const u8* imgSrc = std::data( texBin ) + raw.offset;
@@ -1565,7 +1652,7 @@ LoadGlbFile(
 			u64 texDscIdx = u64( metalRoughMap - data->textures );
 			if( texProcessingCache[ texDscIdx ] == -1 )
 			{
-				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				texProcessingCache[ texDscIdx ] = ( i32 ) std::size( compressedImgs );
 				raw_texture_info raw = CgltfDecodeTexture( *metalRoughMap, pBin, texBin );
 
 				const u8* imgSrc = std::data( texBin ) + raw.offset;
@@ -1586,7 +1673,7 @@ LoadGlbFile(
 			u64 texDscIdx = u64( normalMap - data->textures );
 			if( texProcessingCache[ texDscIdx ] == -1 )
 			{
-				texProcessingCache[ texDscIdx ] = std::size( compressedImgs );
+				texProcessingCache[ texDscIdx ] = ( i32 ) std::size( compressedImgs );
 				raw_texture_info raw = CgltfDecodeTexture( *normalMap, pBin, texBin );
 
 				const u8* imgSrc = std::data( texBin ) + raw.offset;
@@ -1612,7 +1699,7 @@ LoadGlbFile(
 		const cgltf_mesh& mesh = data->meshes[ m ];
 		const cgltf_primitive& prim = mesh.primitives[ 0 ];
 
-		ACOMPL_ERR( mesh.primitives_count - 1 );
+		mesh.primitives_count - 1;
 
 		rawMeshes.push_back( {} );
 		imported_mesh& rawMesh = rawMeshes[ std::size( rawMeshes ) - 1 ];
@@ -1764,9 +1851,7 @@ void MeshoptOptimizeMesh( std::span<T> vtxSpan, std::span<u32> idxSpan )
 template u64 MeshoptReindexMesh( std::span<DirectX::XMFLOAT3> vtxSpan, std::span<u32> idxSpan );
 template void MeshoptOptimizeMesh( std::span<DirectX::XMFLOAT3> vtxSpan, std::span<u32> idxSpan );
 
-constexpr u64 MAX_VTX = 128;
-constexpr u64 MAX_TRIS = 256;
-constexpr float CONE_WEIGHT = 0.8f;
+
 // TODO: fix C++ constness thing
 // TODO: data offseting for more meshes
 static void MeshoptMakeMeshlets(
@@ -2045,31 +2130,31 @@ void CompileGlbAssetToBinary(
 
 		meshDescs.push_back( {} );
 
-		mesh_desc& meshOut = meshDescs[ std::size( meshDescs ) - 1 ];
-		meshOut.vertexCount = vtxRange.size;
-		meshOut.vertexOffset = vtxRange.offset;
-		meshOut.lodCount = std::size( idxLods );
-		for( u64 l = 0; l < std::size( idxLods ); ++l )
-		{
-			meshOut.lods[ l ].indexCount = idxLods[ l ].size;
-			meshOut.lods[ l ].indexOffset = idxLods[ l ].offset;
-			meshOut.lods[ l ].meshletCount = meshletLods[ l ].size;
-			meshOut.lods[ l ].meshletOffset = meshletLods[ l ].offset;
-		}
-
-		meshOut.aabbMin = { -m.aabbMin[ 0 ], m.aabbMin[ 1 ], m.aabbMin[ 2 ] };
-		meshOut.aabbMax = { -m.aabbMax[ 0 ], m.aabbMax[ 1 ], m.aabbMax[ 2 ] };
-		
-		{
-			XMVECTOR xmm0 = XMLoadFloat3( &meshOut.aabbMin );
-			XMVECTOR xmm1 = XMLoadFloat3( &meshOut.aabbMax );
-			XMVECTOR center = XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f );
-			XMVECTOR extent = XMVectorAbs( XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
-			XMStoreFloat3( &meshOut.center, center );
-			XMStoreFloat3( &meshOut.extent, extent );
-			//XMStoreFloat3( &out.aabbMin, XMVectorAdd( center, extent ) );
-			//XMStoreFloat3( &out.aabbMax, XMVectorSubtract( center, extent ) );
-		}
+		//mesh_desc& meshOut = meshDescs[ std::size( meshDescs ) - 1 ];
+		//meshOut.vertexCount = vtxRange.size;
+		//meshOut.vertexOffset = vtxRange.offset;
+		//meshOut.lodCount = std::size( idxLods );
+		//for( u64 l = 0; l < std::size( idxLods ); ++l )
+		//{
+		//	meshOut.lods[ l ].indexCount = idxLods[ l ].size;
+		//	meshOut.lods[ l ].indexOffset = idxLods[ l ].offset;
+		//	meshOut.lods[ l ].meshletCount = meshletLods[ l ].size;
+		//	meshOut.lods[ l ].meshletOffset = meshletLods[ l ].offset;
+		//}
+		//
+		//meshOut.aabbMin = { -m.aabbMin[ 0 ], m.aabbMin[ 1 ], m.aabbMin[ 2 ] };
+		//meshOut.aabbMax = { -m.aabbMax[ 0 ], m.aabbMax[ 1 ], m.aabbMax[ 2 ] };
+		//
+		//{
+		//	XMVECTOR xmm0 = XMLoadFloat3( &meshOut.aabbMin );
+		//	XMVECTOR xmm1 = XMLoadFloat3( &meshOut.aabbMax );
+		//	XMVECTOR center = XMVectorScale( XMVectorAdd( xmm1, xmm0 ), 0.5f );
+		//	XMVECTOR extent = XMVectorAbs( XMVectorScale( XMVectorSubtract( xmm1, xmm0 ), 0.5f ) );
+		//	XMStoreFloat3( &meshOut.center, center );
+		//	XMStoreFloat3( &meshOut.extent, extent );
+		//	XMStoreFloat3( &out.aabbMin, XMVectorAdd( center, extent ) );
+		//	XMStoreFloat3( &out.aabbMax, XMVectorSubtract( center, extent ) );
+		//}
 
 		//meshOut.materialIndex = rawMesh.mtlIdx;
 	}

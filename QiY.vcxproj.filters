@@ -15,46 +15,43 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="sys_os_win.cpp">
+    <ClCompile Include="src\sys_os_win.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="r_vk_backend.cpp">
+    <ClCompile Include="src\r_vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AssetCompiler\asset_compiler.cpp">
+    <ClCompile Include="src\AssetCompiler\asset_compiler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui.cpp">
+    <ClCompile Include="src\imgui\imgui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_demo.cpp">
+    <ClCompile Include="src\imgui\imgui_demo.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_draw.cpp">
+    <ClCompile Include="src\imgui\imgui_draw.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_tables.cpp">
+    <ClCompile Include="src\imgui\imgui_tables.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="imgui\imgui_widgets.cpp">
+    <ClCompile Include="src\imgui\imgui_widgets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="System\Win32\win32_file.cpp">
+    <ClCompile Include="src\System\Win32\win32_file.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\VulkanSDK\1.4.328.0\Source\SPIRV-Reflect\spirv_reflect.c">
+    <ClCompile Include="src\AssetCompiler\bcn_compressor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AssetCompiler\bcn_compressor.cpp">
+    <ClCompile Include="src\AssetCompiler\spng.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AssetCompiler\spng.c">
+    <ClCompile Include="src\AssetCompiler\lz4.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AssetCompiler\lz4.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="AssetCompiler\miniz.c">
+    <ClCompile Include="src\AssetCompiler\miniz.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="3rdParty\meshoptimizer\src\allocator.cpp">
@@ -105,111 +102,114 @@
     <ClCompile Include="3rdParty\meshoptimizer\src\vfetchoptimizer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AssetCompiler\texture_compressor.cpp">
+    <ClCompile Include="src\AssetCompiler\texture_compressor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\spirv_reflect.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="core_types.h">
+    <ClInclude Include="src\core_types.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="sys_os_api.h">
+    <ClInclude Include="src\sys_os_api.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="DEFS_WIN32_NO_BS.h">
+    <ClInclude Include="src\DEFS_WIN32_NO_BS.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_procs.h">
+    <ClInclude Include="src\vk_procs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="r_data_structs.h">
+    <ClInclude Include="src\r_data_structs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Shaders\glsl_func_lib.h">
+    <ClInclude Include="src\Shaders\glsl_func_lib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\asset_compiler.h">
+    <ClInclude Include="src\AssetCompiler\asset_compiler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\bcn_compressor.h">
+    <ClInclude Include="src\AssetCompiler\bcn_compressor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="imgui\imconfig.h">
+    <ClInclude Include="src\imgui\imconfig.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="imgui\imgui.h">
+    <ClInclude Include="src\imgui\imgui.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="imgui\imgui_internal.h">
+    <ClInclude Include="src\imgui\imgui_internal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="imgui\imstb_rectpack.h">
+    <ClInclude Include="src\imgui\imstb_rectpack.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="imgui\imstb_textedit.h">
+    <ClInclude Include="src\imgui\imstb_textedit.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="imgui\imstb_truetype.h">
+    <ClInclude Include="src\imgui\imstb_truetype.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\miniz.h">
+    <ClInclude Include="src\AssetCompiler\miniz.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_timer.h">
+    <ClInclude Include="src\vk_timer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ht_utils.h">
+    <ClInclude Include="src\ht_utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_error.h">
+    <ClInclude Include="src\vk_error.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ht_error.h">
+    <ClInclude Include="src\ht_error.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_resources.h">
+    <ClInclude Include="src\vk_resources.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ht_geometry.h">
+    <ClInclude Include="src\ht_geometry.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_device.h">
+    <ClInclude Include="src\vk_device.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="dxc.h">
+    <ClInclude Include="src\dxc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="System\sys_file.h">
+    <ClInclude Include="src\System\sys_file.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="System\sys_filesystem.h">
+    <ClInclude Include="src\System\sys_filesystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="System\Win32\win32_err.h">
+    <ClInclude Include="src\System\Win32\win32_err.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_pso.h">
+    <ClInclude Include="src\vk_pso.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Shaders\r_data_structs2.h">
+    <ClInclude Include="src\Shaders\r_data_structs2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_descriptor.h">
+    <ClInclude Include="src\vk_descriptor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_swapchain.h">
+    <ClInclude Include="src\vk_swapchain.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="3rdParty\vk_mem_alloc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\cgltf.h">
+    <ClInclude Include="src\AssetCompiler\cgltf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\spng.h">
+    <ClInclude Include="src\AssetCompiler\spng.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\lz4.h">
+    <ClInclude Include="src\AssetCompiler\lz4.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="3rdParty\meshoptimizer\src\meshoptimizer.h">
@@ -245,42 +245,96 @@
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\texture_compressor.h">
+    <ClInclude Include="src\AssetCompiler\texture_compressor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\AssetCompiler\encoding.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ht_math.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\Alias.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\FileInfo.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\Global.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\IFile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\IFileSystem.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\MemoryFile.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\MemoryFileSystem.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\NativeFile.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\NativeFileSystem.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\ThreadingPolicy.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\VFS.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\VirtualFileSystem.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\ZipFile.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\ZipFileSystem.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdParty\vfspp\vendor\miniz-cpp\zip_file.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
-    <CustomBuild Include="Shaders\c_draw_cull.comp.glsl" />
-    <CustomBuild Include="Shaders\avg_luminance.comp.glsl" />
-    <CustomBuild Include="Shaders\v_cpu_dbg_draw.vert.glsl" />
-    <CustomBuild Include="Shaders\pbr.frag.glsl" />
-    <CustomBuild Include="Shaders\box_meshlet_draw.vert.glsl" />
-    <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
+    <CustomBuild Include="src\Shaders\depth_pyramid.comp.glsl" />
+    <CustomBuild Include="src\Shaders\c_draw_cull.comp.glsl" />
+    <CustomBuild Include="src\Shaders\avg_luminance.comp.glsl" />
+    <CustomBuild Include="src\Shaders\v_cpu_dbg_draw.vert.glsl" />
+    <CustomBuild Include="src\Shaders\pbr.frag.glsl" />
+    <CustomBuild Include="src\Shaders\box_meshlet_draw.vert.glsl" />
+    <CustomBuild Include="src\Shaders\vtx_merged.vert.glsl">
       <Filter>Source Files</Filter>
     </CustomBuild>
-    <CustomBuild Include="Shaders\v_z_prepass.vert.glsl" />
-    <CustomBuild Include="imgui\shader_imgui.vert.glsl" />
-    <CustomBuild Include="imgui\shader_imgui.frag.glsl" />
-    <CustomBuild Include="Shaders\meshlet.vert.glsl" />
+    <CustomBuild Include="src\Shaders\v_z_prepass.vert.glsl" />
+    <CustomBuild Include="src\imgui\shader_imgui.vert.glsl" />
+    <CustomBuild Include="src\imgui\shader_imgui.frag.glsl" />
+    <CustomBuild Include="src\Shaders\meshlet.vert.glsl" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\imgui_vert.hlsl" />
+    <None Include="src\Shaders\imgui_vert.hlsl" />
     <None Include="packages.config" />
     <None Include="dxc_compile_shaders.py" />
     <None Include="run_dxc_compile.bat">
       <Filter>Source Files</Filter>
     </None>
-    <None Include="Shaders\imgui_frag.hlsl" />
-    <None Include="Shaders\c_pow2_downsampler.hlsl" />
-    <None Include="Shaders\c_tonemapping_gamma.hlsl" />
-    <None Include="Shaders\f_pass_col.frag.glsl" />
-    <None Include="Shaders\v_z_prepass.hlsl.null" />
-    <None Include="Shaders\v_debug_draw.hlsl.null" />
-    <None Include="Shaders\f_col_pass.hlsl" />
-    <None Include="Shaders\c_avg_luminance.hlsl" />
-    <None Include="r_dx12_backend.cpp">
+    <None Include="src\Shaders\imgui_frag.hlsl" />
+    <None Include="src\Shaders\c_pow2_downsampler.hlsl" />
+    <None Include="src\Shaders\c_tonemapping_gamma.hlsl" />
+    <None Include="src\Shaders\f_pass_col.frag.glsl" />
+    <None Include="src\Shaders\v_z_prepass.hlsl.null" />
+    <None Include="src\Shaders\v_debug_draw.hlsl.null" />
+    <None Include="src\Shaders\f_col_pass.hlsl" />
+    <None Include="src\Shaders\c_avg_luminance.hlsl" />
+    <None Include="src\r_dx12_backend.cpp">
       <Filter>Source Files</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CMakeLists.txt" />
   </ItemGroup>
 </Project>

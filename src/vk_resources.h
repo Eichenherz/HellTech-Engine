@@ -13,7 +13,7 @@
 #include "sys_os_api.h"
 #include <type_traits>
 
-#include <3rdParty/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 
 constexpr u64 MAX_MIP_LEVELS = 12;
 

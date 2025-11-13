@@ -38,3 +38,5 @@ imgui/
 bin/*
 
 vcpkg_installed/*
+
+Build/*

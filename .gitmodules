@@ -4,3 +4,9 @@
 [submodule "3rdParty/unordered_dense"]
 	path = 3rdParty/unordered_dense
 	url = https://github.com/martinus/unordered_dense.git
+[submodule "3rdParty/vfspp"]
+	path = 3rdParty/vfspp
+	url = https://github.com/nextgeniuspro/vfspp.git
+[submodule "3rdParty/fastgltf"]
+	path = 3rdParty/fastgltf
+	url = https://github.com/spnda/fastgltf.git

@@ -268,7 +268,6 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\VulkanSDK\1.4.328.0\Source\SPIRV-Reflect\spirv_reflect.c" />
     <ClCompile Include="3rdParty\meshoptimizer\src\allocator.cpp" />
     <ClCompile Include="3rdParty\meshoptimizer\src\clusterizer.cpp" />
     <ClCompile Include="3rdParty\meshoptimizer\src\indexanalyzer.cpp" />
@@ -285,24 +284,25 @@
     <ClCompile Include="3rdParty\meshoptimizer\src\vertexcodec.cpp" />
     <ClCompile Include="3rdParty\meshoptimizer\src\vertexfilter.cpp" />
     <ClCompile Include="3rdParty\meshoptimizer\src\vfetchoptimizer.cpp" />
-    <ClCompile Include="AssetCompiler\asset_compiler.cpp" />
-    <ClCompile Include="AssetCompiler\bcn_compressor.cpp" />
-    <ClCompile Include="AssetCompiler\lz4.c" />
-    <ClCompile Include="AssetCompiler\miniz.c" />
-    <ClCompile Include="AssetCompiler\spng.c" />
-    <ClCompile Include="AssetCompiler\texture_compressor.cpp" />
-    <ClCompile Include="imgui\imgui.cpp" />
-    <ClCompile Include="imgui\imgui_demo.cpp" />
-    <ClCompile Include="imgui\imgui_draw.cpp" />
-    <ClCompile Include="imgui\imgui_tables.cpp" />
-    <ClCompile Include="imgui\imgui_widgets.cpp" />
-    <None Include="r_dx12_backend.cpp" />
-    <ClCompile Include="r_vk_backend.cpp" />
-    <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
+    <ClCompile Include="src\AssetCompiler\asset_compiler.cpp" />
+    <ClCompile Include="src\AssetCompiler\bcn_compressor.cpp" />
+    <ClCompile Include="src\AssetCompiler\lz4.c" />
+    <ClCompile Include="src\AssetCompiler\miniz.c" />
+    <ClCompile Include="src\AssetCompiler\spng.c" />
+    <ClCompile Include="src\AssetCompiler\texture_compressor.cpp" />
+    <ClCompile Include="src\imgui\imgui.cpp" />
+    <ClCompile Include="src\imgui\imgui_demo.cpp" />
+    <ClCompile Include="src\imgui\imgui_draw.cpp" />
+    <ClCompile Include="src\imgui\imgui_tables.cpp" />
+    <ClCompile Include="src\imgui\imgui_widgets.cpp" />
+    <None Include="src\r_dx12_backend.cpp" />
+    <ClCompile Include="src\r_vk_backend.cpp" />
+    <CustomBuild Include="src\Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <ClCompile Include="System\Win32\win32_file.cpp" />
-    <ClCompile Include="sys_os_win.cpp">
+    <ClCompile Include="src\spirv_reflect.c" />
+    <ClCompile Include="src\System\Win32\win32_file.cpp" />
+    <ClCompile Include="src\sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
     </ClCompile>
   </ItemGroup>
@@ -310,33 +310,50 @@
     <ClInclude Include="3rdParty\meshoptimizer\src\meshoptimizer.h" />
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\stl.h" />
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\Alias.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\FileInfo.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\Global.h" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\IFile.h" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\IFileSystem.h" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\MemoryFile.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\MemoryFileSystem.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\NativeFile.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\NativeFileSystem.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\ThreadingPolicy.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\VFS.h" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\VirtualFileSystem.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\ZipFile.hpp" />
+    <ClInclude Include="3rdParty\vfspp\include\vfspp\ZipFileSystem.hpp" />
+    <ClInclude Include="3rdParty\vfspp\vendor\miniz-cpp\zip_file.hpp" />
     <ClInclude Include="3rdParty\vk_mem_alloc.h" />
-    <ClInclude Include="AssetCompiler\asset_compiler.h" />
-    <ClInclude Include="AssetCompiler\bcn_compressor.h" />
-    <ClInclude Include="AssetCompiler\cgltf.h" />
-    <ClInclude Include="AssetCompiler\lz4.h" />
-    <ClInclude Include="AssetCompiler\spng.h" />
-    <ClInclude Include="AssetCompiler\texture_compressor.h" />
-    <ClInclude Include="core_types.h" />
-    <ClInclude Include="dxc.h" />
-    <ClInclude Include="ht_error.h" />
-    <ClInclude Include="ht_geometry.h" />
-    <ClInclude Include="ht_utils.h" />
-    <ClInclude Include="imgui\imconfig.h" />
-    <ClInclude Include="imgui\imgui.h" />
-    <ClInclude Include="imgui\imgui_internal.h" />
-    <ClInclude Include="imgui\imstb_rectpack.h" />
-    <ClInclude Include="imgui\imstb_textedit.h" />
-    <ClInclude Include="imgui\imstb_truetype.h" />
-    <ClInclude Include="AssetCompiler\miniz.h" />
-    <ClInclude Include="r_data_structs.h" />
-    <ClInclude Include="Shaders\glsl_func_lib.h" />
-    <ClInclude Include="Shaders\r_data_structs2.h" />
-    <ClInclude Include="System\sys_file.h" />
-    <ClInclude Include="System\sys_filesystem.h" />
-    <ClInclude Include="System\Win32\win32_err.h" />
-    <ClInclude Include="sys_os_api.h" />
-    <ClInclude Include="DEFS_WIN32_NO_BS.h" />
+    <ClInclude Include="src\AssetCompiler\asset_compiler.h" />
+    <ClInclude Include="src\AssetCompiler\bcn_compressor.h" />
+    <ClInclude Include="src\AssetCompiler\cgltf.h" />
+    <ClInclude Include="src\AssetCompiler\encoding.h" />
+    <ClInclude Include="src\AssetCompiler\lz4.h" />
+    <ClInclude Include="src\AssetCompiler\spng.h" />
+    <ClInclude Include="src\AssetCompiler\texture_compressor.h" />
+    <ClInclude Include="src\core_types.h" />
+    <ClInclude Include="src\dxc.h" />
+    <ClInclude Include="src\ht_error.h" />
+    <ClInclude Include="src\ht_geometry.h" />
+    <ClInclude Include="src\ht_utils.h" />
+    <ClInclude Include="src\imgui\imconfig.h" />
+    <ClInclude Include="src\imgui\imgui.h" />
+    <ClInclude Include="src\imgui\imgui_internal.h" />
+    <ClInclude Include="src\imgui\imstb_rectpack.h" />
+    <ClInclude Include="src\imgui\imstb_textedit.h" />
+    <ClInclude Include="src\imgui\imstb_truetype.h" />
+    <ClInclude Include="src\AssetCompiler\miniz.h" />
+    <ClInclude Include="src\ht_math.h" />
+    <ClInclude Include="src\r_data_structs.h" />
+    <ClInclude Include="src\Shaders\glsl_func_lib.h" />
+    <ClInclude Include="src\Shaders\r_data_structs2.h" />
+    <ClInclude Include="src\System\sys_file.h" />
+    <ClInclude Include="src\System\sys_filesystem.h" />
+    <ClInclude Include="src\System\Win32\win32_err.h" />
+    <ClInclude Include="src\sys_os_api.h" />
+    <ClInclude Include="src\DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\base64.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\core.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\dxmath_element_traits.hpp" />
@@ -345,58 +362,58 @@
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\tools.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\types.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp" />
-    <ClInclude Include="vk_descriptor.h" />
-    <ClInclude Include="vk_device.h" />
-    <ClInclude Include="vk_error.h" />
-    <ClInclude Include="vk_procs.h" />
-    <ClInclude Include="vk_pso.h" />
-    <ClInclude Include="vk_resources.h" />
-    <ClInclude Include="vk_swapchain.h" />
-    <ClInclude Include="vk_timer.h" />
+    <ClInclude Include="src\vk_descriptor.h" />
+    <ClInclude Include="src\vk_device.h" />
+    <ClInclude Include="src\vk_error.h" />
+    <ClInclude Include="src\vk_procs.h" />
+    <ClInclude Include="src\vk_pso.h" />
+    <ClInclude Include="src\vk_resources.h" />
+    <ClInclude Include="src\vk_swapchain.h" />
+    <ClInclude Include="src\vk_timer.h" />
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">
+    <CustomBuild Include="src\Shaders\c_draw_cull.comp.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
-    <CustomBuild Include="Shaders\pbr.frag.glsl">
+    <CustomBuild Include="src\Shaders\pbr.frag.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
-    <CustomBuild Include="Shaders\depth_pyramid.comp.glsl">
-      <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
-    </CustomBuild>
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="Shaders\avg_luminance.comp.glsl">
+    <CustomBuild Include="src\Shaders\depth_pyramid.comp.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\v_cpu_dbg_draw.vert.glsl">
+    <CustomBuild Include="src\Shaders\avg_luminance.comp.glsl">
       <FileType>Document</FileType>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\box_meshlet_draw.vert.glsl">
+    <CustomBuild Include="src\Shaders\v_cpu_dbg_draw.vert.glsl">
+      <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Shaders\%(Filename).spv</Outputs>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="src\Shaders\box_meshlet_draw.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\v_z_prepass.vert.glsl">
+    <CustomBuild Include="src\Shaders\v_z_prepass.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="imgui\shader_imgui.vert.glsl">
+    <CustomBuild Include="src\imgui\shader_imgui.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="imgui\shader_imgui.frag.glsl">
+    <CustomBuild Include="src\imgui\shader_imgui.frag.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>
@@ -404,8 +421,8 @@
     <None Include="dxc_compile_shaders.py" />
     <None Include="packages.config" />
     <None Include="run_dxc_compile.bat" />
-    <None Include="Shaders\f_pass_col.frag.glsl" />
-    <None Include="Shaders\imgui_vert.hlsl">
+    <None Include="src\Shaders\f_pass_col.frag.glsl" />
+    <None Include="src\Shaders\imgui_vert.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">4.0</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Compute</ShaderType>
@@ -422,40 +439,43 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\c_pow2_downsampler.hlsl">
+    <None Include="src\Shaders\c_pow2_downsampler.hlsl">
       <FileType>Document</FileType>
     </None>
-    <None Include="Shaders\imgui_frag.hlsl">
-      <FileType>Document</FileType>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="Shaders\c_tonemapping_gamma.hlsl">
+    <None Include="src\Shaders\imgui_frag.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\meshlet.vert.glsl">
+    <None Include="src\Shaders\c_tonemapping_gamma.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="src\Shaders\meshlet.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <None Include="Shaders\v_z_prepass.hlsl.null">
+    <None Include="src\Shaders\v_z_prepass.hlsl.null">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\v_debug_draw.hlsl.null">
+    <None Include="src\Shaders\v_debug_draw.hlsl.null">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\f_col_pass.hlsl">
+    <None Include="src\Shaders\f_col_pass.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\c_avg_luminance.hlsl">
+    <None Include="src\Shaders\c_avg_luminance.hlsl">
       <FileType>Document</FileType>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CMakeLists.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -2,7 +2,9 @@
 #define __HT_UTILS_H__
 
 #include <span>
+#include <vector>
 #include <algorithm>
+#include <bit>
 
 #include "core_types.h"
 #include <assert.h>
@@ -44,7 +46,8 @@ inline u64 GetImgMipCount( u64 width, u64 height, u64 mipLevels )
 	assert( width && height );
 	u64 maxDim = std::max( width, height );
 
-	return std::min( (u64) floor( log2( maxDim ) ), mipLevels );
+	// NOTE: std::bit_width( x ) == floor( log2( x ) ) + 1
+	return std::min( (u64) ( std::bit_width( maxDim ) - 1 ), mipLevels );
 }
 
 template <typename T>
@@ -52,4 +55,11 @@ inline std::span<const u8> CastSpanAsU8ReadOnly( std::span<T> span )
 {
 	return { ( const uint8_t* )( std::data( span ) ), span.size_bytes() };
 }
+
+template<typename T>
+inline u64 SizeInBytes( const std::vector<T>& in )
+{
+	return std::size( in ) * sizeof( T );
+}
+
 #endif // !__HT_UTILS_H__

@@ -8,7 +8,7 @@
 #include <vulkan.h>
 #include "vk_procs.h"
 
-#include <3rdParty/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 
 #include "vk_error.h"
 #include "vk_resources.h"
