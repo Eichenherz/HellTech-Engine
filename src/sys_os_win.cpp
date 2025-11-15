@@ -64,12 +64,27 @@ static inline void SysBindIOStreamToConsole()
 }
 static inline void SysOsCreateConsole()
 {
-#ifdef _DEBUG
-
 	WIN_CHECK( !AllocConsole() );
-	SysBindIOStreamToConsole();
+	// NOTE: https://alexanderhoughton.co.uk/blog/redirect-all-stdout-stderr-to-console/
+	//WIN_CHECK( !AttachConsole( GetCurrentProcessId() ) );
+	HANDLE hConOut = CreateFileA("CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE,
+		nullptr, OPEN_EXISTING, 0, nullptr );
+	WIN_CHECK( INVALID_HANDLE_VALUE == hConOut );
+	WIN_CHECK( !SetStdHandle( STD_OUTPUT_HANDLE, hConOut ) );
+	WIN_CHECK( !SetStdHandle( STD_ERROR_HANDLE, hConOut ) );
 
-#endif // _DEBUG
+	//Ensures FILE* object remapped to new console window
+	freopen("CONOUT$", "w", stdout );
+	freopen("CONOUT$", "w", stderr );
+
+	//Allows use of _write(1,...) & _write(2,...) to be redirected
+	freopen("CONOUT$", "w", _fdopen(1, "w" ) );
+	freopen("CONOUT$", "w", _fdopen(2, "w" ) );
+
+	std::wcout.clear();
+	std::cout.clear();
+	std::wcerr.clear();
+	std::cerr.clear();
 }
 static inline void SysOsKillConsole()
 {

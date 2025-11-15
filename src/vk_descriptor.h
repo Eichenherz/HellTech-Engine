@@ -82,7 +82,7 @@ constexpr u32 VkDescTypeToBinding( VkDescriptorType type )
 	case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return 1;
 	case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return 2;
 	case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return 3;
-	default: return INVALID_IDX;
+	default: return (u32)INVALID_IDX;
 	}
 }
 
@@ -201,7 +201,7 @@ inline u16 VkAllocDescriptorIdx( vk_descriptor_manager& manager, const vk_descri
 	assert( bindingSlotIdx != INVALID_IDX );
 	assert( rscDescInfo.descriptorType == VkDescBindingToType( bindingSlotIdx ) );
 
-	u16 destIndex = INVALID_IDX;
+	u16 destIndex = (u16)INVALID_IDX;
 	auto& binding = manager.table[ bindingSlotIdx ];
 
 	if( u64 sz = std::size( binding.freeSlots ); sz )
@@ -258,7 +258,8 @@ inline void VkDescriptorManagerFlushUpdates( vk_descriptor_manager& manager, VkD
 			writes.push_back( writeEntryInfo );
 		}
 
-		vkUpdateDescriptorSets( vkDevice, std::size( writes ), std::data( writes ), 0, 0 );
+		vkUpdateDescriptorSets( vkDevice, std::size( writes ), std::data( writes ),
+			0, 0 );
 
 		manager.updateCache.resize( 0 );
 	}

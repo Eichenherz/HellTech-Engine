@@ -25,7 +25,7 @@ inline u64 FwdAlign( u64 addr, u64 alignment )
 // TODO: math_uitl file
 inline u64 FloorPowOf2( u64 size )
 {
-	// NOTE: use Hacker's Delight for bit-tickery
+	// NOTE: use Hacker's Delight for bit-trickery
 	constexpr u64 ONE_LEFT_MOST = u64( 1ULL << ( sizeof( u64 ) * 8 - 1 ) );
 	return ( size ) ? ONE_LEFT_MOST >> __lzcnt64( size ) : 0;
 }

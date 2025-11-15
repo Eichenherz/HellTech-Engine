@@ -1,7 +1,0 @@
-{
-  "name": "hell-tech",
-  "version": "1.0",
-  "dependencies": [
-    "fastgltf"
-  ]
-}

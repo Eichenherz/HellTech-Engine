@@ -7,6 +7,6 @@
 [submodule "3rdParty/vfspp"]
 	path = 3rdParty/vfspp
 	url = https://github.com/nextgeniuspro/vfspp.git
-[submodule "3rdParty/fastgltf"]
-	path = 3rdParty/fastgltf
-	url = https://github.com/spnda/fastgltf.git
+[submodule "3rdParty/tinygltf"]
+	path = 3rdParty/tinygltf
+	url = https://github.com/syoyo/tinygltf.git

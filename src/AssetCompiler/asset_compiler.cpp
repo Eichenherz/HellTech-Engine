@@ -1,14 +1,15 @@
 #include "asset_compiler.h"
 
 #include <meshoptimizer.h>
-#include <fastgltf/core.hpp>
-#include <fastgltf/types.hpp>
-#include <fastgltf/tools.hpp>
-#include <fastgltf/util.hpp>
+
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <tiny_gltf.h>
 #include "spng.h"
-#include "lz4.h"
 
 #include "r_data_structs.h"
+#include <ranges>
 #include <vector>
 
 #include <span>
@@ -59,85 +60,18 @@ inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs a, packed_trs b )
 	vec3 outT;
 	XMStoreFloat3( &outT, XMVectorAdd( aT, bT ) );
 	vec4 outR;
-	XMStoreFloat4( &outR, XMQuaternionMultiply( aR, bR ) ); // World = Partent * Local
+	XMStoreFloat4( &outR, XMQuaternionMultiply( aR, bR ) ); // World = Parent * Local
 	vec3 outS;
 	XMStoreFloat3( &outS, XMVectorMultiply( aS, bS ) );
 
 	return { .t = outT, .r = outR, .s = outS };
 }
 
-
-inline DirectX::XMFLOAT3 FastgltfVec3ToXMFLOAT3( fastgltf::math::nvec3 in )
-{
-	return { in.x(), in.y(), in.z() };
-}
-
-inline DirectX::XMFLOAT4 FastgltfVec4ToXMFLOAT4( fastgltf::math::nvec4 in )
-{
-	return { in.x(), in.y(), in.z(), in.w() };
-}
-
-struct gltf_nodes
+struct gltf_node
 {
 	packed_trs transform;
-	u64 meshIdx;
+	i32 meshIdx;
 };
-
-inline packed_trs GetTrsFromNode( const fastgltf::Node& node )
-{
-	fastgltf::TRS trs = std::get<fastgltf::TRS>( node.transform );
-	vec3 t = { trs.translation.x(), trs.translation.y(), trs.translation.z() };
-	vec4 r = { trs.rotation.x(), trs.rotation.y(), trs.rotation.z(), trs.rotation.w() };
-	vec3 s = { trs.scale.x(), trs.scale.y(), trs.scale.z() };
-
-	return { .t = t, .r = r, .s = s };
-}
-
-std::vector<gltf_nodes> GltfFlattenNodes( const std::vector<fastgltf::Node>& nodes )
-{
-	struct queued_node
-	{
-		packed_trs parentTRS;
-		u64 nodeIdx;
-	};
-	std::vector<queued_node> nodeQueue;
-	// NOTE: we need this bc our tree is flattened 
-	std::vector<bool> visited( std::size( nodes ), false );
-
-	std::vector<gltf_nodes> flatNodes;
-	flatNodes.reserve( std::size( nodes ) );
-	
-	for( u64 nodeIdx = 0; nodeIdx < std::size( nodes ); ++nodeIdx )
-	{
-		if( visited[ nodeIdx ] ) continue;
-
-		const fastgltf::Node& n = nodes[ nodeIdx ];
-		packed_trs pkTrs = GetTrsFromNode( n );
-		
-		nodeQueue.push_back( { pkTrs, nodeIdx } );
-		while( std::size( nodeQueue ) > 0 )
-		{
-			queued_node curr = nodeQueue.back();
-			nodeQueue.pop_back();
-
-			const fastgltf::Node& currentNode = nodes[ curr.nodeIdx ];
-			packed_trs currentTrs = GetTrsFromNode( currentNode );
-			assert( currentNode.meshIndex.has_value() );
-
-			packed_trs parentTrs = XMComposePackedTRS( curr.parentTRS, currentTrs );
-			u64 meshIdx = currentNode.meshIndex.value();
-			flatNodes.push_back( { parentTrs, meshIdx } );
-			visited[ curr.nodeIdx ] = true;
-
-			for( u64 childNodeIdx : currentNode.children )
-			{
-				nodeQueue.push_back( { parentTrs, childNodeIdx } );
-			}
-		} 
-	}
-
-	return flatNodes;
-}
 
 enum class index_type : u8
 {
@@ -172,7 +106,7 @@ struct raw_mesh
 	std::vector<DirectX::XMFLOAT3> tans;
 	std::vector<DirectX::XMFLOAT2> uvs;
 	std::vector<u32> indices;
-	u64 materialIdx;
+	i32 materialIdx;
 };
 
 // TODO: we'll need to adjust the normal and tan stuff if we use !LEFT_HANDED
@@ -184,7 +118,7 @@ struct gltf_mesh_view
 	std::span<const DirectX::XMFLOAT3> normStream;
 	std::span<const DirectX::XMFLOAT4> tanStream;
 	std::span<const DirectX::XMFLOAT2> uvStream;
-	u64 materialIdx;
+	i32 materialIdx;
 
 	inline std::vector<u32> NormalizeIndexBuffer() const
 	{
@@ -231,6 +165,7 @@ struct gltf_mesh_view
 
 		std::vector<DirectX::XMFLOAT3> tans;
 		tans.reserve( std::size( tanStream ) );
+
 		for( DirectX::XMFLOAT4 tanW : tanStream )
 		{
 			tans.push_back( { tanW.x * tanW.w, tanW.y * tanW.w, tanW.z * tanW.w } );
@@ -246,48 +181,158 @@ struct gltf_mesh_view
 			.indices = std::move( indices ),
 			.materialIdx = materialIdx
 		};
-		
+
 		return mesh;
 	}
 };
 
-struct mesh_processor
+template<typename T>
+concept TinyGltfTextureInfoConcept = requires( T a ) {
+	{ a.index } -> std::convertible_to<int>;
+	{ a.texCoord } -> std::convertible_to<int>;
+};
+
+enum class gltf_img_components : u8
 {
-	const std::vector<fastgltf::Mesh>& meshes;
-	const std::vector<fastgltf::Accessor>& accessors;
-	const std::vector<fastgltf::BufferView>& bufferViews;
-	const std::vector<fastgltf::Buffer>& buffers;
+	UNKNOWN = 0,
+	R = 1,
+	RG = 2,
+	RGB = 3,
+	RGBA = 4
+};
 
-	mesh_processor( const fastgltf::Asset& asset ) :
-		meshes{ asset.meshes }, accessors{ asset.accessors }, bufferViews{ asset.bufferViews }, buffers{ asset.buffers } {}
+enum class gltf_img_bit_depth : u8
+{
+	UNKNOWN = 0,
+	B8  = 8,
+	B16 = 16,
+	B32 = 32
+};
 
-	inline std::vector<gltf_mesh_view> ProcessMeshes() const
+enum class gltf_img_pixel_type : u8
+{
+	UNKNOWN = 0,
+	UBYTE,
+	USHORT,
+	FLOAT32
+};
+
+struct gltf_image_metadata
+{
+	i32 width;
+	i32 height;
+    gltf_img_components component;
+    gltf_img_bit_depth  bits;
+    gltf_img_pixel_type pixelType;
+};
+
+struct gltf_texture
+{
+	i32 imageIdx = -1;
+	i32 samplerIdx = -1;
+};
+
+struct gltf_image
+{
+	std::span<const u8> data;
+	gltf_image_metadata metadata;
+};
+
+struct gltf_processor
+{
+	tinygltf::Model model;
+
+	gltf_processor( std::string_view filePath )
+	{
+		std::string err, warn;
+		if( tinygltf::TinyGLTF loader; !loader.LoadASCIIFromFile(
+			&model, &err, &warn, std::string{ filePath }, tinygltf::SectionCheck::REQUIRE_ALL ) )
+		{
+			std::cout<< std::format("TinyGLTF LoadASCIIFromFile error: {}\n warn: {}\n", err, warn );
+			if( !loader.LoadBinaryFromFile(
+				&model, &err, &warn, std::string{ filePath }, tinygltf::SectionCheck::REQUIRE_ALL ) )
+			{
+				std::cout<< std::format(""
+							"TinyGLTF LoadBinaryFromFile error: {}\n warn: {}\n", err, warn );
+				abort();
+			}
+		}
+
+		HT_ASSERT( 1 == std::size( model.scenes ) );
+	}
+
+	std::vector<gltf_node> ProcessNodes() const
+	{
+		const std::vector<tinygltf::Node>& nodes = model.nodes;
+
+		struct queued_node
+		{
+			packed_trs parentTRS;
+			u32 nodeIdx;
+		};
+		std::vector<queued_node> nodeQueue;
+		// NOTE: we need this bc our tree is flattened
+		std::vector<bool> visited( std::size( nodes ), false );
+
+		std::vector<gltf_node> flatNodes;
+		flatNodes.reserve( std::size( nodes ) );
+
+		for( u32 nodeIdx = 0; nodeIdx < std::size( nodes ); ++nodeIdx )
+		{
+			if( visited[ nodeIdx ] ) continue;
+
+			const tinygltf::Node& n = nodes[ nodeIdx ];
+
+			packed_trs pkTrs = GetTrsFromNode( n );
+
+			nodeQueue.push_back( { pkTrs, nodeIdx } );
+			while( std::size( nodeQueue ) > 0 )
+			{
+				queued_node curr = nodeQueue.back();
+				nodeQueue.pop_back();
+
+				const tinygltf::Node& currentNode = nodes[ curr.nodeIdx ];
+				packed_trs currentTrs = GetTrsFromNode( currentNode );
+
+				packed_trs parentTrs = XMComposePackedTRS( curr.parentTRS, currentTrs );
+				flatNodes.push_back( { parentTrs, currentNode.mesh } );
+				visited[ curr.nodeIdx ] = true;
+
+				for( u32 childNodeIdx : currentNode.children )
+				{
+					nodeQueue.push_back( { parentTrs, childNodeIdx } );
+				}
+			}
+		}
+
+		return flatNodes;
+	}
+
+	std::vector<raw_mesh> ProcessMeshes() const
 	{
 		u64 meshPrimitiveCount = 0;
-		for( const fastgltf::Mesh& m : meshes )
+		for( const tinygltf::Mesh& m : model.meshes )
 		{
 			meshPrimitiveCount += std::size( m.primitives );
 		}
 
-		std::vector<gltf_mesh_view> meshesOut;
+		std::vector<raw_mesh> meshesOut;
 		meshesOut.reserve( meshPrimitiveCount );
-		for( const fastgltf::Mesh& m : meshes )
+		for( const tinygltf::Mesh& m : model.meshes )
 		{
-			for( const fastgltf::Primitive& primMesh : m.primitives )
+			for( const tinygltf::Primitive& primMesh : m.primitives )
 			{
-				HT_ASSERT( primMesh.materialIndex.has_value() );
-				const u64 materialIdx = primMesh.materialIndex.value();
+				const i32 materialIdx = primMesh.material;
 
-				// TODO: handle more types ?
-				HT_ASSERT( fastgltf::PrimitiveType::Triangles == primMesh.type );
-				HT_ASSERT( primMesh.indicesAccessor.has_value() );
+				HT_ASSERT( -1 != primMesh.indices );
 
-				gltf_attr_stream idxStream = GetAttributeStream( accessors[ primMesh.indicesAccessor.value() ] );
-				gltf_attr_stream posStream = GetAttributeStream( GetAccessorByName( "POSITION", primMesh ) );
-				gltf_attr_stream normStream = GetAttributeStream( GetAccessorByName( "NORMAL", primMesh ) );
-				gltf_attr_stream tanStream = GetAttributeStream( GetAccessorByName( "TANGENT", primMesh ) );
-				gltf_attr_stream uvStream = GetAttributeStream( GetAccessorByName( "TEXCOORD_0", primMesh ) );
+				const gltf_attr_stream idxStream = GetAttributeStream( model.accessors[ primMesh.indices ] );
+				const gltf_attr_stream posStream = GetAttributeStream( GetAccessorByName( "POSITION", primMesh ) );
+				const gltf_attr_stream normStream = GetAttributeStream( GetAccessorByName( "NORMAL", primMesh ) );
+				const gltf_attr_stream tanStream = GetAttributeStream( GetAccessorByName( "TANGENT", primMesh ) );
+				const gltf_attr_stream uvStream = GetAttributeStream( GetAccessorByName( "TEXCOORD_0", primMesh ) );
 
+				// NOTE: the cast to span operator will ASSERT our type matches the size and elem count
 				gltf_mesh_view currentMesh = {
 					.name = m.name.c_str(),
 					.indexStream = ( gltf_index_span ) idxStream,
@@ -297,32 +342,220 @@ struct mesh_processor
 					.uvStream = ( std::span<const DirectX::XMFLOAT2> ) uvStream,
 					.materialIdx = materialIdx
 				};
-				meshesOut.emplace_back( currentMesh );
+				raw_mesh mesh = currentMesh.GetRawMesh();
+				meshesOut.emplace_back( mesh );
 			}
 		}
 
 		return meshesOut;
 	}
 
-	inline const fastgltf::Accessor& GetAccessorByName( std::string_view name, const fastgltf::Primitive& primMesh ) const
+	std::vector<sampler_config> ProcessSamplers() const
 	{
-		const fastgltf::Attribute* pAttr = primMesh.findAttribute( name );
-		HT_ASSERT( pAttr );
-		const fastgltf::Accessor& accessor = accessors[ pAttr->accessorIndex ];
-		return accessor;
+		std::vector<sampler_config> samplersOut;
+		samplersOut.reserve( std::size( model.samplers ) );
+		for( const tinygltf::Sampler& sampler : model.samplers )
+		{
+			sampler_config samplerConfig = {
+				.filterModeS = GltfFilterToFlags( sampler.minFilter ),
+				.filterModeT = GltfFilterToFlags( sampler.magFilter ),
+				.wrapModeS = GltfWrapToFlags( sampler.wrapS ),
+				.wrapModeT = GltfWrapToFlags( sampler.wrapT )
+			};
+			samplersOut.push_back( samplerConfig );
+		}
+		if( std::size( model.samplers ) == 0 )
+		{
+			samplersOut.push_back( DEFAULT_SAMPLER );
+		}
+
+		return samplersOut;
+	}
+
+	std::vector<material_info> ProcessMaterials() const
+	{
+		std::vector<material_info> materialsOut;
+		materialsOut.reserve( std::size( model.materials ) );
+		for( const tinygltf::Material& material : model.materials )
+		{
+			const tinygltf::PbrMetallicRoughness& pbrInfo = material.pbrMetallicRoughness;
+
+			material_info metadata = {
+				.baseColFactor = {
+					( float ) pbrInfo.baseColorFactor[ 0 ],
+					( float ) pbrInfo.baseColorFactor[ 1 ],
+					( float ) pbrInfo.baseColorFactor[ 2 ],
+					( float ) pbrInfo.baseColorFactor[ 3 ]
+				},
+				.metallicFactor = ( float ) pbrInfo.metallicFactor,
+				.roughnessFactor = ( float ) pbrInfo.roughnessFactor,
+				.alphaCutoff = ( float ) material.alphaCutoff,
+				.emissiveFactor = {
+					( float ) material.emissiveFactor[ 0 ],
+					( float ) material.emissiveFactor[ 1 ],
+					( float ) material.emissiveFactor[ 2 ]
+				},
+				.alphaMode = GltfAlphaModeToEnum( material.alphaMode )
+			};
+
+			ankerl::unordered_dense::set<i32> samplers;
+			const gltf_texture normalTex = ProcessTexture( material.normalTexture );
+			samplers.insert( normalTex.samplerIdx );
+			metadata.normalIdx = normalTex.imageIdx;
+
+			const gltf_texture pbrBaseCol = ProcessTexture( pbrInfo.baseColorTexture );
+			samplers.insert( pbrBaseCol.samplerIdx );
+			metadata.baseColorIdx = pbrBaseCol.imageIdx;
+
+			const gltf_texture metallicRoughness = ProcessTexture( pbrInfo.metallicRoughnessTexture );
+			samplers.insert( metallicRoughness.samplerIdx );
+			metadata.metallicRoughnessIdx = metallicRoughness.imageIdx;
+
+			const gltf_texture occlusionTex = ProcessTexture( material.occlusionTexture );
+			samplers.insert( occlusionTex.samplerIdx );
+			metadata.occlusionIdx = occlusionTex.imageIdx;
+
+			const gltf_texture emissiveTex = ProcessTexture( material.emissiveTexture );
+			samplers.insert( emissiveTex.samplerIdx );
+			metadata.emissiveIdx = emissiveTex.imageIdx;
+
+			// NOTE: we will have -1 and possibly others so at most size 2
+			HT_ASSERT( std::size( samplers ) <= 2 );
+
+			auto it = std::ranges::find_if( samplers,
+				[]( i32 x ){ return x != -1; });
+			metadata.samplerIdx = ( it != std::cend( samplers ) ) ? *it : -1;
+
+			materialsOut.emplace_back( metadata );
+		}
+
+		return materialsOut;
+	}
+
+	std::vector<gltf_image> ProcessImages() const
+	{
+		std::vector<gltf_image> imgOut;
+		imgOut.reserve( std::size( model.images ) );
+		for( const tinygltf::Image& img : model.images )
+		{
+			HT_ASSERT( std::size( img.image ) );
+			imgOut.push_back( {
+				.data = std::span<const u8>{ std::data( img.image ), std::size( img.image ) },
+				.metadata = GetGltfTextureMetadata( img )
+			} );
+		}
+
+		return imgOut;
+	}
+
+	template<TinyGltfTextureInfoConcept TexInfo>
+	inline gltf_texture ProcessTexture( const TexInfo& texInfo ) const
+	{
+		gltf_texture texOut = {};
+		if( -1 != texInfo.index )
+		{
+			// NOTE: bc we use TEXCOORD_0
+			HT_ASSERT( 0 == texInfo.texCoord );
+			const tinygltf::Texture& tex = model.textures[ texInfo.index ];
+			texOut = {
+				.imageIdx = tex.source,
+				.samplerIdx = tex.sampler
+			};
+		}
+
+		return texOut;
+	}
+	// UTILS:
+	static inline packed_trs GetTrsFromNode( const tinygltf::Node& node )
+	{
+		using namespace DirectX;
+
+		XMVECTOR xmT = XMVectorSet( 0, 0, 0, 0 );
+		XMVECTOR xmR = XMVectorSet( 0, 0, 0, 1 );
+		XMVECTOR xmS = XMVectorSet( 1, 1, 1, 0 );
+		if( std::size( node.matrix ) == 16 )
+		{
+			XMMATRIX m = GetMatrix( node.matrix );
+			if( !XMMatrixDecompose( &xmS, &xmR, &xmT, m ) )
+			{
+				xmT = XMVectorSet( 0, 0, 0, 0 );
+				xmR = XMVectorSet( 0, 0, 0, 1 );
+				xmS = XMVectorSet( 1, 1, 1, 0 );
+			}
+
+		}
+		else
+		{
+			if( std::size( node.translation ) == 3 )
+			{
+				xmT = XMVectorSet(
+					(float)node.translation[0],
+					(float)node.translation[1],
+					(float)node.translation[2],
+					0.0f
+				);
+			}
+			if( std::size( node.rotation ) == 4 )
+			{
+				xmR = XMVectorSet(
+					(float)node.rotation[0],
+					(float)node.rotation[1],
+					(float)node.rotation[2],
+					(float)node.rotation[3]
+				);
+			}
+			if( std::size( node.scale ) == 3 )
+			{
+				xmS = XMVectorSet(
+					(float)node.scale[0],
+					(float)node.scale[1],
+					(float)node.scale[2],
+					0.0f
+				);
+			}
+		}
+
+		vec3 t;
+		vec4 r;
+		vec3 s;
+
+		XMStoreFloat3( &t, xmT );
+		XMStoreFloat4( &r, xmR );
+		XMStoreFloat3( &s, xmS );
+		return { .t = t, .r = r, .s = s };
+	}
+	// NOTE: gltf matrices are col maj, right-handed
+	static inline DirectX::XMMATRIX GetMatrix( const std::vector<double>& mIn )
+	{
+		using namespace DirectX;
+		XMMATRIX m = XMMatrixSet(
+			(float)mIn[0],  (float)mIn[1],  (float)mIn[2],  (float)mIn[3],
+			(float)mIn[4],  (float)mIn[5],  (float)mIn[6],  (float)mIn[7],
+			(float)mIn[8],  (float)mIn[9],  (float)mIn[10], (float)mIn[11],
+			(float)mIn[12], (float)mIn[13], (float)mIn[14], (float)mIn[15]
+		);
+
+		return XMMatrixTranspose( m );
+	}
+
+	inline const tinygltf::Accessor& GetAccessorByName( std::string_view name, const tinygltf::Primitive& primMesh ) const
+	{
+		const auto it = primMesh.attributes.find( std::string{ name } );
+		HT_ASSERT( std::cend( primMesh.attributes ) != it );
+		return model.accessors[ it->second ];
 	}
 
 	struct gltf_attr_stream
 	{
 		const u8* data;
 		u64 elemCount;
-		u64 compnentCount;
+		u64 component;
 		u64 componentByteSize;
 
 		template<typename T>
 		explicit operator std::span<T>() const
 		{
-			HT_ASSERT( sizeof( T ) == ( compnentCount * componentByteSize ) );
+			HT_ASSERT( sizeof( T ) == ( component * componentByteSize ) );
 			return std::span<T>( ( T* ) data, elemCount );
 		}
 
@@ -330,31 +563,101 @@ struct mesh_processor
 		{
 			switch( componentByteSize )
 			{
-				case sizeof( u8 ) : return gltf_index_span( std::span<const u8>{ data, elemCount } );
-					case sizeof( u16 ) : return gltf_index_span( std::span<const u16>{ ( const u16* ) data, elemCount } );
-						case sizeof( u32 ) : return gltf_index_span( std::span<const u32>{ ( const u32* ) data, elemCount } );
+				case sizeof( u8 ) : return { std::span<const u8>{ data, elemCount } };
+				case sizeof( u16 ) : return { std::span<const u16>{ ( const u16* ) data, elemCount } };
+				case sizeof( u32 ) : return { std::span<const u32>{ ( const u32* ) data, elemCount } };
 
-						default: HT_ASSERT( false );
+				default: HT_ASSERT( false );
 			}
 		}
 	};
 	// NOTE: according to the spec https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes
 	// we could just fix these attribute's size
-	inline gltf_attr_stream GetAttributeStream( const fastgltf::Accessor& accessor ) const
+	inline gltf_attr_stream GetAttributeStream( const tinygltf::Accessor& accessor ) const
 	{
-		HT_ASSERT( accessor.bufferViewIndex.has_value() );
-		const u64 viewIdx = accessor.bufferViewIndex.value();
-		const fastgltf::BufferView& view = bufferViews[ viewIdx ];
+		const i32 viewIdx = accessor.bufferView;
+		HT_ASSERT( -1 != viewIdx );
+		const tinygltf::BufferView& view = model.bufferViews[ viewIdx ];
 
-		const fastgltf::Buffer& dataBuff = buffers[ view.bufferIndex ];
-		const fastgltf::sources::Array data = std::get<fastgltf::sources::Array>( dataBuff.data );
-		HT_ASSERT( ( data.mimeType == fastgltf::MimeType::GltfBuffer ) || ( data.mimeType == fastgltf::MimeType::OctetStream ) );
-		const u8* streamView = ( const u8* ) ( std::data( data.bytes ) + view.byteOffset + accessor.byteOffset );
+		HT_ASSERT( -1 != view.buffer );
+		const tinygltf::Buffer& buff = model.buffers[ view.buffer ];
+		const u8* streamView = ( const u8* ) ( std::data( buff.data ) + view.byteOffset + accessor.byteOffset );
 
-		const u64 numComponents = fastgltf::getNumComponents( accessor.type );
-		const u64 componentSizeInBytes = fastgltf::getComponentByteSize( accessor.componentType );
+		const u64 numComponents = tinygltf::GetNumComponentsInType( accessor.type );
+		const u64 componentSizeInBytes = tinygltf::GetComponentSizeInBytes( accessor.componentType );
+		HT_ASSERT( view.byteStride == ( numComponents * componentSizeInBytes ) );
 
 		return { streamView, accessor.count, numComponents, componentSizeInBytes };
+	}
+
+	static inline alpha_mode GltfAlphaModeToEnum( std::string_view gltfAlphaMode )
+	{
+		if( gltfAlphaMode == "MASK" )  return ALPHA_MODE_MASK;
+		if( gltfAlphaMode == "BLEND" ) return ALPHA_MODE_BLEND;
+		return ALPHA_MODE_OPAQUE;
+	}
+
+	static inline sampler_filter_mode_flags GltfFilterToFlags( int gltfFilter )
+	{
+		switch( gltfFilter )
+		{
+			case TINYGLTF_TEXTURE_FILTER_NEAREST:                 return FILTER_NEAREST;
+			case TINYGLTF_TEXTURE_FILTER_LINEAR:                  return FILTER_LINEAR;
+			case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST: return FILTER_NEAREST_MIPMAP_NEAREST;
+			case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:  return FILTER_LINEAR_MIPMAP_NEAREST;
+			case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:  return FILTER_NEAREST_MIPMAP_LINEAR;
+			case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:   return FILTER_LINEAR_MIPMAP_LINEAR;
+			default:                                             return FILTER_LINEAR;
+		}
+	}
+
+	static inline sampler_wrap_mode_flags GltfWrapToFlags( int gltfWrap )
+	{
+		switch( gltfWrap )
+		{
+			case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:   return WRAP_CLAMP_TO_EDGE;
+			case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT: return WRAP_MIRRORED_REPEAT;
+			case TINYGLTF_TEXTURE_WRAP_REPEAT:          return WRAP_REPEAT;
+			default:                                    return WRAP_CLAMP_TO_EDGE;
+		}
+	}
+
+	static inline gltf_image_metadata GetGltfTextureMetadata( const tinygltf::Image& img )
+	{
+		gltf_image_metadata out{
+			.width = img.width,
+			.height = img.height,
+			//.component = ,
+			//.bits = ,
+			//.pixelType =
+		};
+
+		switch( img.component )
+		{
+			case 1: out.component = gltf_img_components::R; break;
+			case 2: out.component = gltf_img_components::RG; break;
+			case 3: out.component = gltf_img_components::RGB; break;
+			case 4: out.component = gltf_img_components::RGBA; break;
+			default: out.component = gltf_img_components::UNKNOWN;
+		}
+
+		switch( img.bits )
+		{
+			case 8:  out.bits = gltf_img_bit_depth::B8; break;
+			case 16: out.bits = gltf_img_bit_depth::B16; break;
+			case 32: out.bits = gltf_img_bit_depth::B32; break;
+			default: out.bits = gltf_img_bit_depth::UNKNOWN;
+		}
+
+		switch( img.pixel_type )
+		{
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:  out.pixelType = gltf_img_pixel_type::UBYTE; break;
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: out.pixelType = gltf_img_pixel_type::USHORT; break;
+			case TINYGLTF_COMPONENT_TYPE_FLOAT:          out.pixelType = gltf_img_pixel_type::FLOAT32; break;
+			default: out.pixelType = gltf_img_pixel_type::UNKNOWN;
+		}
+
+		return out;
 	}
 };
 
@@ -381,56 +684,13 @@ struct aabb_t
 	Vec max;
 };
 
-#include <immintrin.h>
-
-// NOTE: from https://stackoverflow.com/questions/17638487/minimum-of-4-sp-values-in-m128
-inline __m128 _mm_hmin_ps( __m128 v )
-{
-	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
-	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
-	return v;
-}
-
-inline __m128 _mm_hmax_ps( __m128 v )
-{
-	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
-	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
-	return v;
-}
-
-inline float MinF32x8_SIMD( __m256 a, __m256 b )
-{
-	__m256 laneMin_f32x8 = _mm256_min_ps( a, b );
-	__m128 lo = _mm256_castps256_ps128( laneMin_f32x8 );
-	__m128 hi = _mm256_extractf128_ps( laneMin_f32x8, 1 );
-
-	__m128 laneMin_f32x4 = _mm_min_ps( lo, hi );
-
-	__m128 min_f32x4 = _mm_hmin_ps( laneMin_f32x4 );
-
-	return _mm_cvtss_f32( min_f32x4 );
-}
-
-inline float MaxF32x8_SIMD( __m256 a, __m256 b )
-{
-	__m256 laneMax_f32x8 = _mm256_max_ps( a, b );
-	__m128 lo = _mm256_castps256_ps128( laneMax_f32x8 );
-	__m128 hi = _mm256_extractf128_ps( laneMax_f32x8, 1 );
-
-	__m128 laneMax_f32x4 = _mm_max_ps( lo, hi );
-
-	__m128 max_f32x4 = _mm_hmax_ps( laneMax_f32x4 );
-
-	return _mm_cvtss_f32( max_f32x4 );
-}
-
-aabb_t<DirectX::XMFLOAT3> ComputeMeshletAabb( 
-	const meshopt_Meshlet& m, 
-	std::span<const DirectX::XMFLOAT3> vertices, 
-	std::span<const u32> mletVtx 
+aabb_t<DirectX::XMFLOAT3> ComputeMeshletAabb(
+	const meshopt_Meshlet& m,
+	std::span<const DirectX::XMFLOAT3> vertices,
+	std::span<const u32> mletVtx
 ) {
 	using namespace DirectX;
-	
+
 	constexpr u64 laneCount = sizeof( __m256 ) / sizeof( float );
 	constexpr u64 batchSize = 2 * laneCount;
 
@@ -770,221 +1030,6 @@ struct mesh_pipeline
 	}
 };
 
-// NOTE: we'll assume a material has the same sampler for all its component textures
-// TODO: expand for more materials currently we support color, metalRough, occlusion, normal and emissive
-struct material_processor
-{
-	static constexpr u64                      TEX_UV_INDEX = 0;
-	static constexpr u64                      INVALID_IDX = ~0u;
-	static constexpr u64                      DEFAULT_SAMPLER_IDX = 0;
-
-	const std::vector<fastgltf::Material>&    materials;
-	const std::vector<fastgltf::Texture>&     textures;
-	const std::vector<fastgltf::Sampler>&     samplers;
-	const std::vector<fastgltf::Image>&       images;
-	const std::vector<fastgltf::BufferView>&  bufferViews;
-	const std::vector<fastgltf::Buffer>&      buffers;
-
-	material_processor( const fastgltf::Asset& asset ) :
-		materials{ asset.materials },
-		textures{ asset.textures },
-		samplers{ asset.samplers },
-		images{ asset.images },
-		bufferViews{ asset.bufferViews },
-		buffers{ asset.buffers }
-	{
-		// NOTE: so we can use u32 keys !!!
-		HT_ASSERT( std::size( samplers ) < u32( ~0u ) );
-		HT_ASSERT( std::size( images ) < u32( ~0u ) );
-	}
-
-	inline std::vector<sampler_config> PorcessSamplers()
-	{
-		std::vector<sampler_config> samplersOut;
-		samplersOut.reserve( std::size( samplers ) );
-		for( const fastgltf::Sampler& sampler : samplers )
-		{
-			sampler_config samplerConfig = DEFAULT_SAMPLER;
-			samplerConfig.wrapModeS = FastgltfToSamplerWrap( sampler.wrapS );
-			samplerConfig.wrapModeT = FastgltfToSamplerWrap( sampler.wrapT );
-
-			if( sampler.minFilter.has_value() )
-			{
-				samplerConfig.filterModeS = FastgltfToSamplerFilter( sampler.minFilter.value() );
-			}
-			if( sampler.magFilter.has_value() )
-			{
-				samplerConfig.filterModeT = FastgltfToSamplerFilter( sampler.magFilter.value() );
-			}
-			samplersOut.push_back( samplerConfig );
-		}
-		if( std::size( samplers ) == 0 )
-		{
-			samplersOut.push_back( DEFAULT_SAMPLER );
-		}
-
-		return samplersOut;
-	}
-
-	inline std::vector<texture_data> ProcessImages()
-	{
-		std::vector<texture_data> texDataOut;
-		texDataOut.reserve( std::size( images ) );
-		for( const fastgltf::Image& image : images )
-		{
-			const auto& buffViewSource = std::get<fastgltf::sources::BufferView>( image.data );
-			const fastgltf::BufferView& buffView = bufferViews[ buffViewSource.bufferViewIndex ];
-			const fastgltf::Buffer& buff = buffers[ buffView.bufferIndex ];
-
-			const fastgltf::sources::Array& data = std::get<fastgltf::sources::Array>( buff.data );
-
-			std::span<const u8> binData = { 
-				( const u8* ) ( std::data( data.bytes ) + buffView.byteOffset ), buffView.byteLength };
-			texDataOut.push_back( { binData } );
-		}
-
-		return texDataOut;
-	}
-
-	struct processed_gltf_texture
-	{
-		u32 binDataIdx;
-		u32 samplerIdx;
-	};
-	inline processed_gltf_texture ProcessTexture( const fastgltf::TextureInfo& texInfo ) 
-	{
-		HT_ASSERT( texInfo.texCoordIndex == TEX_UV_INDEX );
-		const fastgltf::Texture& tex = textures[ texInfo.textureIndex ];
-
-		const u64 samplerIdx = ( tex.samplerIndex.has_value() ) ? tex.samplerIndex.value() : DEFAULT_SAMPLER_IDX;
-		
-		HT_ASSERT( tex.imageIndex.has_value() );
-		return { .binDataIdx = ( u32 ) tex.imageIndex.value(), .samplerIdx = ( u32 ) samplerIdx };
-	}
-
-	inline std::vector<material_info> ProcessMaterials()
-	{
-		std::vector<material_info> materialsOut;
-		materialsOut.reserve( std::size( materials ) );
-		for( const fastgltf::Material& material : materials )
-		{
-			const auto baseColFactor = material.pbrData.baseColorFactor;
-
-			material_info metadata = {
-				.baseColFactor = { baseColFactor.x(), baseColFactor.y(), baseColFactor.z() },
-				.metallicFactor = material.pbrData.metallicFactor,
-				.roughnessFactor = material.pbrData.roughnessFactor,
-				.alphaCutoff = material.alphaCutoff,
-				.emmisiveFactor = FastgltfVec3ToXMFLOAT3( material.emissiveFactor ),
-				.alphaMode = FastgltfMapAlphaMode( material.alphaMode )
-			};
-
-			u64 samplerIdx = INVALID_IDX;
-			if( material.normalTexture.has_value() )
-			{
-				const processed_gltf_texture processedTex = ProcessTexture( material.normalTexture.value() );
-				
-				if( INVALID_IDX == samplerIdx )
-				{
-					samplerIdx = processedTex.samplerIdx;
-				}
-				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-				metadata.normalIdx = processedTex.binDataIdx;
-			}
-			if( material.pbrData.baseColorTexture.has_value() )
-			{
-				const processed_gltf_texture processedTex = ProcessTexture( material.pbrData.baseColorTexture.value() );
-
-				if( INVALID_IDX == samplerIdx )
-				{
-					samplerIdx = processedTex.samplerIdx;
-				}
-				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-				metadata.baseColorIdx = processedTex.binDataIdx;
-			}
-			if( material.pbrData.metallicRoughnessTexture.has_value() )
-			{
-				const processed_gltf_texture processedTex = ProcessTexture( material.pbrData.metallicRoughnessTexture.value() );
-
-				if( INVALID_IDX == samplerIdx )
-				{
-					samplerIdx = processedTex.samplerIdx;
-				}
-				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-				metadata.metallicRoughnessIdx = processedTex.binDataIdx;
-			}
-			if( material.occlusionTexture.has_value() )
-			{
-				const processed_gltf_texture processedTex = ProcessTexture( material.occlusionTexture.value() );
-
-				if( INVALID_IDX == samplerIdx )
-				{
-					samplerIdx = processedTex.samplerIdx;
-				}
-				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-				metadata.occlusionIdx = processedTex.binDataIdx;
-			}
-			if( material.emissiveTexture.has_value() )
-			{
-				const processed_gltf_texture processedTex = ProcessTexture( material.emissiveTexture.value() );
-
-				if( INVALID_IDX == samplerIdx )
-				{
-					samplerIdx = processedTex.samplerIdx;
-				}
-				HT_ASSERT( processedTex.samplerIdx == samplerIdx );
-				metadata.emissiveIdx = processedTex.binDataIdx;
-			}
-			HT_ASSERT( INVALID_IDX != samplerIdx );
-			metadata.samplerIdx = samplerIdx;
-
-			materialsOut.emplace_back( metadata );
-		}
-
-		return materialsOut;
-	}
-
-	static inline alpha_mode FastgltfMapAlphaMode( fastgltf::AlphaMode m )
-	{
-		switch( m )
-		{
-		case fastgltf::AlphaMode::Opaque: return ALPHA_MODE_OPAQUE;
-		case fastgltf::AlphaMode::Mask:   return ALPHA_MODE_MASK;
-		case fastgltf::AlphaMode::Blend:  return ALPHA_MODE_BLEND;
-		default:                return ALPHA_MODE_OPAQUE;
-		}
-	}
-	static inline sampler_filter_mode_flags FastgltfToSamplerFilter( fastgltf::Filter f )
-	{
-		switch( f )
-		{
-		case fastgltf::Filter::Nearest:              return sampler_filter_mode_flags::FILTER_NEAREST;
-		case fastgltf::Filter::Linear:               return sampler_filter_mode_flags::FILTER_LINEAR;
-		case fastgltf::Filter::NearestMipMapNearest: return sampler_filter_mode_flags::FILTER_NEAREST_MIPMAP_NEAREST;
-		case fastgltf::Filter::LinearMipMapNearest:  return sampler_filter_mode_flags::FILTER_LINEAR_MIPMAP_NEAREST;
-		case fastgltf::Filter::NearestMipMapLinear:  return sampler_filter_mode_flags::FILTER_NEAREST_MIPMAP_LINEAR;
-		case fastgltf::Filter::LinearMipMapLinear:   return sampler_filter_mode_flags::FILTER_LINEAR_MIPMAP_LINEAR;
-		default: return sampler_filter_mode_flags::FILTER_LINEAR;
-		}
-	}
-	static inline sampler_wrap_mode_flags FastgltfToSamplerWrap( fastgltf::Wrap w )
-	{
-		switch( w )
-		{
-		case fastgltf::Wrap::ClampToEdge:   return sampler_wrap_mode_flags::WRAP_CLAMP_TO_EDGE;
-		case fastgltf::Wrap::MirroredRepeat: return sampler_wrap_mode_flags::WRAP_MIRRORED_REPEAT;
-		case fastgltf::Wrap::Repeat:         return sampler_wrap_mode_flags::WRAP_REPEAT;
-		default: return sampler_wrap_mode_flags::WRAP_REPEAT;
-		}
-	}
-};
-
-
-#include "DEFS_WIN32_NO_BS.h"
-#include <Windows.h>
-
-#include "System/Win32/win32_err.h"
-
 #include <vfspp/VFS.h>
 
 using virtual_fs = vfspp::MultiThreadedVirtualFileSystem;
@@ -998,103 +1043,8 @@ inline std::shared_ptr<virtual_fs> MountZipFS( std::string_view parentDir, std::
 	return vfs;
 }
 
-inline DWORD FileMappingProtectToMapViewAccess( DWORD flProtect )
-{
-	switch( flProtect )
-	{
-	case PAGE_READONLY: return FILE_MAP_READ;
-	case PAGE_READWRITE: return FILE_MAP_READ | FILE_MAP_WRITE;
-	case PAGE_WRITECOPY: return FILE_MAP_COPY;
-	case PAGE_EXECUTE_READ: return FILE_MAP_READ | FILE_MAP_EXECUTE;
-	case PAGE_EXECUTE_READWRITE: return FILE_MAP_ALL_ACCESS | FILE_MAP_EXECUTE;
-	case PAGE_EXECUTE_WRITECOPY: return FILE_MAP_COPY | FILE_MAP_EXECUTE;
-	default: return 0; // unsupported
-	}
-}
-
-inline DWORD ProtectToGenericAccess( DWORD flProtect )
-{
-	switch( flProtect )
-	{
-	case PAGE_NOACCESS:             return 0;
-	case PAGE_READONLY:             return GENERIC_READ;
-	case PAGE_READWRITE:            return GENERIC_READ | GENERIC_WRITE;
-	case PAGE_WRITECOPY:            return GENERIC_WRITE;
-	case PAGE_EXECUTE:              return GENERIC_EXECUTE;
-	case PAGE_EXECUTE_READ:         return GENERIC_EXECUTE | GENERIC_READ;
-	case PAGE_EXECUTE_READWRITE:    return GENERIC_EXECUTE | GENERIC_READ | GENERIC_WRITE;
-	case PAGE_EXECUTE_WRITECOPY:    return GENERIC_EXECUTE | GENERIC_WRITE;
-	default:                        return 0; // unsupported
-	}
-}
-
-struct file_mapped_view
-{
-	HANDLE hFileMapping = INVALID_HANDLE_VALUE;
-	u8* pView;
-	u64 size;
-
-	inline file_mapped_view( HANDLE hFile, DWORD accessFalgs, u64 mappingSize, u64 offset ) 
-	{
-		const LARGE_INTEGER liMappingSize = { .QuadPart = ( LONGLONG ) mappingSize };
-		hFileMapping = CreateFileMappingA( hFile, NULL, accessFalgs, liMappingSize.HighPart, liMappingSize.LowPart, NULL );
-		WIN_CHECK( Win32IsHandleValid( hFileMapping ) );
-
-		const DWORD viewAccess = FileMappingProtectToMapViewAccess( accessFalgs );
-		const LARGE_INTEGER liOffset = { .QuadPart = ( LONGLONG ) offset };
-		pView = ( u8* ) MapViewOfFileEx( hFileMapping, viewAccess, liOffset.HighPart, liOffset.LowPart, liMappingSize.QuadPart, NULL );
-		WIN_CHECK( nullptr == pView );
-
-		size = liMappingSize.QuadPart;
-	}
-
-	inline ~file_mapped_view()
-	{
-		WIN_CHECK( !FlushViewOfFile( pView, size ) );
-		WIN_CHECK( !UnmapViewOfFile( pView ) );
-		WIN_CHECK( !CloseHandle( hFileMapping ) );
-	}
-};
-
-// NOTE: a growing buffer backed by a file
-struct persistent_growing_arena
-{
-	//std::shared_ptr<file_mapped_view> pActiveMappedView;
-	HANDLE hFile = INVALID_HANDLE_VALUE;
-	DWORD accessFlags;
-	u64 fileSize = 0;
-
-	persistent_growing_arena( std::string_view path )
-	{
-		DWORD pageAccess = PAGE_READWRITE;
-		accessFlags = pageAccess;
-		
-		const DWORD genericAccess = ProtectToGenericAccess( pageAccess );
-		constexpr DWORD fileAttr = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN;
-		hFile = CreateFileA( std::data( path ), genericAccess, 0, NULL, CREATE_ALWAYS, fileAttr, NULL );
-		WIN_CHECK( Win32IsHandleValid( hFile ) );
-	}
-
-	inline void Resize( u64 newSize )
-	{
-		WIN_CHECK( !FlushFileBuffers( hFile ) );
-
-		fileSize = newSize;
-		LARGE_INTEGER newFileSize = { .QuadPart = ( LONGLONG ) fileSize };
-		
-		WIN_CHECK( !SetFilePointerEx( hFile, newFileSize, NULL, FILE_BEGIN ) );
-		WIN_CHECK( !SetEndOfFile( hFile ) );
-	}
-
-	inline file_mapped_view GetMappedView( u64 size, u64 offset )
-	{
-		HT_ASSERT( ( size <= fileSize ) && ( offset < fileSize ) );
-		return { hFile, accessFlags, size, offset };
-	}
-};
-
 inline std::array<compression_batch, ( u64 ) material_map_type::COUNT>
-AssembleTextureJobBatches( const std::vector<material_info>& materials, const std::vector<texture_data>& texData )
+AssembleTextureJobBatches( const std::vector<material_info>& materials, const std::vector<gltf_image>& imgs )
 {
 	std::array<compression_batch, ( u64 ) material_map_type::COUNT> batches = {};
 	for( u64 i = 0; i < ( u64 ) material_map_type::COUNT; ++i )
@@ -1103,33 +1053,33 @@ AssembleTextureJobBatches( const std::vector<material_info>& materials, const st
 	}
 
 	ankerl::unordered_dense::set<u32> textureSet;
-	textureSet.reserve( std::size( texData ) );
+	textureSet.reserve( std::size( imgs ) );
 	for( const material_info& m : materials )
 	{
 		if( u32 idx = m.baseColorIdx; textureSet.find( idx ) == std::cend( textureSet ) )
 		{
 			textureSet.insert( idx );
-			batches[ ( u64 ) material_map_type::BASE_COLOR ].Append( texData[ idx ] );
+			batches[ ( u64 ) material_map_type::BASE_COLOR ].Append( { imgs[ idx ].data } );
 		}
 		if( u32 idx = m.metallicRoughnessIdx; textureSet.find( idx ) == std::cend( textureSet ) )
 		{
 			textureSet.insert( idx );
-			batches[ ( u64 ) material_map_type::METALLIC_ROUGHNESS ].Append( texData[ idx ] );
+			batches[ ( u64 ) material_map_type::METALLIC_ROUGHNESS ].Append( { imgs[ idx ].data } );
 		}
 		if( u32 idx = m.normalIdx; textureSet.find( idx ) == std::cend( textureSet ) )
 		{
 			textureSet.insert( idx );
-			batches[ ( u64 ) material_map_type::NORMALS ].Append( texData[ idx ] );
+			batches[ ( u64 ) material_map_type::NORMALS ].Append( { imgs[ idx ].data } );
 		}
 		if( u32 idx = m.occlusionIdx; textureSet.find( idx ) == std::cend( textureSet ) )
 		{
 			textureSet.insert( idx );
-			batches[ ( u64 ) material_map_type::OCCLUSION ].Append( texData[ idx ] );
+			batches[ ( u64 ) material_map_type::OCCLUSION ].Append( { imgs[ idx ].data } );
 		}
 		if( u32 idx = m.emissiveIdx; textureSet.find( idx ) == std::cend( textureSet ) )
 		{
 			textureSet.insert( idx );
-			batches[ ( u64 ) material_map_type::EMISSIVE ].Append( texData[ idx ] );
+			batches[ ( u64 ) material_map_type::EMISSIVE ].Append( { imgs[ idx ].data } );
 		}
 	}
 
@@ -1174,7 +1124,7 @@ struct material_desc
 	float roughnessFactor;
 	float alphaCutoff;
 	//float pad1;
-	vec3 emmisiveFactor;
+	vec3 emissiveFactor;
 	//float pad2;
 	u32 samplerIdx;
 
@@ -1275,9 +1225,7 @@ struct drk_file_writer
 	{
 		std::vector<texture_entry> textures;
 
-		//file_mapped_view fileView;// = fileArena.GetMappedView( fileArena.fileSize, 0 );
-		//
-		//nvtt_compressor nvttCompressor;
+		nvtt_compressor nvttCompressor;
 		//for( const compression_batch& b : batches )
 		//{
 		//	if( std::size( b.texturesBin ) == 0 ) continue;
@@ -1355,70 +1303,25 @@ struct drk_file_writer
 
 // NOTE: assume we have a single scene
 // NOTE: cameras and animations are ignored rn
-void GltfConditionAssetFile( path filePath )
+void GltfConditionAssetFile( const path& filePath )
 {
-	file_permissions_flags flags = file_permissions_bits::READ;
-	std::unique_ptr<file> assetFile = SysCreateFile( filePath.string(), flags );
+	gltf_processor gltf{ filePath.string() };
 
-	fastgltf::Expected<fastgltf::GltfDataBuffer> gltfFile = 
-		fastgltf::GltfDataBuffer::FromBytes( ( const std::byte* ) assetFile->Data(), assetFile->Size() );
+	std::vector<gltf_node> nodes = gltf.ProcessNodes();
+	std::vector<raw_mesh> meshes = gltf.ProcessMeshes();
+	std::vector<gltf_image> images = gltf.ProcessImages();
+	std::vector<sampler_config> samplers = gltf.ProcessSamplers();
+	std::vector<material_info> materials = gltf.ProcessMaterials();
 
-	if( !bool( gltfFile ) )
-	{
-		std::cerr << "Failed to open glTF file: " << fastgltf::getErrorMessage( gltfFile.error() ) << '\n';
-		abort();
-	}
-
-	constexpr auto supportedExtensions = fastgltf::Extensions::KHR_mesh_quantization;
-
-	fastgltf::Parser parser( supportedExtensions );
-
-	constexpr auto gltfOptions =
-		fastgltf::Options::DontRequireValidAssetMember |
-		fastgltf::Options::LoadExternalBuffers |
-		fastgltf::Options::LoadExternalImages |
-		// NOTE: used to get TRS instead of full float4x4
-		fastgltf::Options::DecomposeNodeMatrices;
-
-	fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf( gltfFile.get(), filePath.parent_path(), gltfOptions );
-	if( asset.error() != fastgltf::Error::None )
-	{
-		std::cerr << "Failed to load glTF: " << fastgltf::getErrorMessage( asset.error() ) << '\n';
-		abort();
-	}
-
-	assert( std::size( asset->scenes ) == 1 );
-	auto flatNodes = GltfFlattenNodes( asset->nodes );
-
-	mesh_processor meshProcessor{ asset.get() };
-	std::vector<gltf_mesh_view> meshes = meshProcessor.ProcessMeshes();
-
-	std::vector<raw_mesh> rawMeshes;
-	rawMeshes.reserve( std::size( meshes ) );
-	for( const gltf_mesh_view& meshView : meshes )
-	{
-		raw_mesh rawMesh = meshView.GetRawMesh();
-		rawMeshes.push_back( std::move( rawMesh ) );
-	}
-	meshes.~vector();
-
-	material_processor materialProcessor{ asset.get() };
-	std::vector<sampler_config> samplers = materialProcessor.PorcessSamplers();
-	std::vector<texture_data> texData = materialProcessor.ProcessImages();
-	std::vector<material_info> materials = materialProcessor.ProcessMaterials();
-
-	std::array<compression_batch, ( u64 ) material_map_type::COUNT> batches = AssembleTextureJobBatches( materials, texData );
-
-	texData.~vector();
+	std::array<compression_batch, ( u64 ) material_map_type::COUNT> batches =
+		AssembleTextureJobBatches( materials, images );
 
 	drk_file_writer fileWriter{ "Assets", filePath.stem().string() + ".zip" };
-	fileWriter.OptimizeAndSaveGeometry( rawMeshes );
+	//fileWriter.OptimizeAndSaveGeometry( rawMeshes );
 	//fileWriter.CompressAndSaveTexutres( batches );
 	
 	
 }
-
-
 
 inline gltf_sampler_filter GetSamplerFilter( i32 code )
 {
@@ -1565,11 +1468,8 @@ inline raw_texture_info CgltfDecodeTexture( const cgltf_texture& t, const u8* pB
 	assert( 0 );
 }
 
+
 // TODO: rethink samplers
-// TODO: use own mem
-// TODO: more ?
-// TODO: better tex processing
-// NOTE: assume model has pre-baked textures and merged primitives
 static void
 LoadGlbFile(
 	const std::vector<u8>&			glbData,

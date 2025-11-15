@@ -1683,6 +1683,7 @@ static vk_backend vk;
 // TODO: separate from render_context
 void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 {
+	GltfConditionAssetFile( glbPath );
 	vk.inst = VkMakeInstance();
 
 	vk.surf = VkMakeWinSurface( vk.inst.hndl, ( HINSTANCE ) hInst, ( HWND ) hWnd );

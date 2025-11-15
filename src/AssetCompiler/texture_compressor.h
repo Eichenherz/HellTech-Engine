@@ -161,7 +161,7 @@ struct compression_batch
 	compression_batch() = default;
 
 	explicit compression_batch( material_map_type batchMaterialMapType ) : 
-		mapType{ batchMaterialMapType }, format{ MapMaterialMapToTextureFormat( batchMaterialMapType ) } {}
+		format{ MapMaterialMapToTextureFormat( batchMaterialMapType ) }, mapType{ batchMaterialMapType } {}
 
 	inline void Append( texture_data tex )
 	{
@@ -229,11 +229,6 @@ struct nvtt_compressor
 	inline u64 GetEstimatedCompressedSize( texture_rect rect, u32 mipCount, const nvtt::CompressionOptions& opts ) const
 	{
 		return context.estimateSize( rect.width, rect.height, rect.depth, mipCount, opts );
-	}
-
-	inline void ProcessTexture(const nvtt_surface& surf)
-	{
-
 	}
 
 	inline void ProcessBatch( nvtt_batch& batch, nvtt_batch_handler& outHandler ) 

@@ -77,20 +77,19 @@ inline virtual_path MakeVirtPath( std::string_view sv )
 
 struct material_info
 {
-	u32 baseColorIdx;
-	u32 metallicRoughnessIdx;
-	u32 normalIdx;
-	u32 occlusionIdx;
-	u32 emissiveIdx;
-	u32 samplerIdx;
+	u32 baseColorIdx = ( u32 ) INVALID_IDX;
+	u32 metallicRoughnessIdx = ( u32 ) INVALID_IDX;
+	u32 normalIdx = ( u32 ) INVALID_IDX;
+	u32 occlusionIdx = ( u32 ) INVALID_IDX;
+	u32 emissiveIdx = ( u32 ) INVALID_IDX;
+	u32 samplerIdx = ( u32 ) INVALID_IDX;
 
-	vec3 baseColFactor;
-	//float pad0;
+	vec4 baseColFactor;
 	float metallicFactor;
 	float roughnessFactor;
 	float alphaCutoff;
 	//float pad1;
-	vec3 emmisiveFactor;
+	vec3 emissiveFactor;
 	//float pad2;
 
 	alpha_mode alphaMode;
@@ -210,7 +209,7 @@ struct drak_file_footer
 	u32 contentVer = 0;
 };
 
-void GltfConditionAssetFile( path filePath );
+void GltfConditionAssetFile( const path& filePath );
 void CompileGlbAssetToBinary( const std::vector<u8>& glbData, std::vector<u8>& drakAsset );
 template<typename T> extern u64 MeshoptReindexMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );
 template<typename T> extern void MeshoptOptimizeMesh( std::span<T> vtxSpan, std::span<u32> idxSpan );
