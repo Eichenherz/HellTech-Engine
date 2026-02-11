@@ -26,56 +26,33 @@ using namespace std;
 
 #include <System/Win32/win32_err.h>
 
-// TODO: handle debug func better
-// TODO: all streams to console  
-// TODO: customize console  
-static inline void SysBindIOStreamToConsole()
-{
-#ifdef _DEBUG
-	// https://stackoverflow.com/questions/311955/redirecting-cout-to-a-console-in-windows
-	// Re-initialize the C runtime "FILE" handles with clean handles bound to "nul". We do this because it has been
-	// observed that the file number of our standard handle file objects can be assigned internally to a value of -2
-	// when not bound to a valid target, which represents some kind of unknown internal invalid state. In this state our
-	// call to "_dup2" fails, as it specifically tests to ensure that the target file number isn't equal to this value
-	// before allowing the operation to continue. We can resolve this issue by first "re-opening" the target files to
-	// use the "nul" device, which will place them into a valid state, after which we can redirect them to our target
-	// using the "_dup2" function.
-
-	FILE* dummyFile;
-	freopen_s( &dummyFile, "nul", "w", stdout );
-
-	HANDLE hStd = GetStdHandle( STD_OUTPUT_HANDLE );
-	i32 fileDescriptor = _open_osfhandle( (i64) hStd, _O_TEXT );
-	FILE* file = _fdopen( fileDescriptor, "r" );
-	i32 dup2Res = _dup2( _fileno( file ), _fileno( stdout ) );
-
-	assert( dup2Res != -1 );
-
-	setvbuf( stdout, 0, _IONBF, 0 );
-	
-
-	// Clear the error state for each of the C++ standard stream objects. We need to do this, as attempts to access the
-	// standard streams before they refer to a valid target will cause the iostream objects to enter an error state. In
-	// versions of Visual Studio after 2005, this seems to always occur during startup regardless of whether anything
-	// has been read from or written to the targets or not.
-	std::wcout.clear();
-	std::cout.clear();
-#endif//_DEBUG
-}
 static inline void SysOsCreateConsole()
 {
-#ifdef _DEBUG
-
 	WIN_CHECK( !AllocConsole() );
-	SysBindIOStreamToConsole();
+	// NOTE: https://alexanderhoughton.co.uk/blog/redirect-all-stdout-stderr-to-console/
+	//WIN_CHECK( !AttachConsole( GetCurrentProcessId() ) );
+	HANDLE hConOut = CreateFileA(
+		"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr );
+	WIN_CHECK( INVALID_HANDLE_VALUE == hConOut );
+	WIN_CHECK( !SetStdHandle( STD_OUTPUT_HANDLE, hConOut ) );
+	WIN_CHECK( !SetStdHandle( STD_ERROR_HANDLE, hConOut ) );
 
-#endif // _DEBUG
+	//Ensures FILE* object remapped to new console window
+	freopen("CONOUT$", "w", stdout );
+	freopen("CONOUT$", "w", stderr );
+
+	//Allows use of _write(1,...) & _write(2,...) to be redirected
+	freopen("CONOUT$", "w", _fdopen(1, "w" ) );
+	freopen("CONOUT$", "w", _fdopen(2, "w" ) );
+
+	std::wcout.clear();
+	std::cout.clear();
+	std::wcerr.clear();
+	std::cerr.clear();
 }
 static inline void SysOsKillConsole()
 {
-#ifdef _DEBUG
 	FreeConsole();
-#endif//_DEBUG
 }
 static inline void SysDbgPrint( const char* str )
 {
@@ -286,21 +263,6 @@ inline DirectX::XMMATRIX PerspRevInfFovRH( float fovYRads, float aspectRatioWH, 
 	return proj;
 }
 
-
-struct mouse
-{
-	float dx, dy;
-};
-
-struct keyboard
-{
-	bool w, a, s, d;
-	bool c;
-	bool space, lctrl;
-	bool f, o;
-	bool esc;
-};
-
 inline u64	SysDllLoad( const char* name )
 {
 	return (u64) LoadLibrary( name );
@@ -327,8 +289,54 @@ static inline u64	SysTicks()
 	QueryPerformanceCounter( &tick );
 	return double( tick.QuadPart );
 }
-// TODO: remake
-static inline bool	SysPumpUserInput( mouse* m, keyboard* kbd, bool insideWnd )
+
+struct mouse
+{
+	float dx, dy;
+};
+
+struct keyboard
+{
+	bool w, a, s, d;
+	bool c;
+	bool space, lctrl;
+	bool f, o;
+	bool esc;
+};
+
+struct alignas( 4 ) input_state
+{
+	vec2 dMouse;
+	u8 keyStates[ 512 ];
+};
+
+struct move_cam_action
+{
+	DirectX::XMVECTOR camMove;
+	DirectX::XMFLOAT2 dRot;
+};
+
+inline move_cam_action GetMoveCamAction( const input_state& inputState )
+{
+	using namespace DirectX;
+
+	XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
+	if( inputState.keyStates[ VK_W ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, 1, 0 ) );
+	if( inputState.keyStates[ VK_A ] ) camMove = XMVectorAdd( camMove, XMVectorSet( -1, 0, 0, 0 ) );
+	if( inputState.keyStates[ VK_S ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, -1, 0 ) );
+	if( inputState.keyStates[ VK_D ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 1, 0, 0, 0 ) );
+	if( inputState.keyStates[ VK_SPACE ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
+	if( inputState.keyStates[ VK_C ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
+
+	if( !XMVector3Equal( camMove, XMVectorZero() ) )
+	{
+		camMove = XMVector3Normalize( camMove );
+	}
+
+	return { .camMove = camMove, .dRot = inputState.dMouse };
+}
+
+static inline bool	SysPumpUserInput()
 {
 	MSG msg;
 	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) )
@@ -336,52 +344,72 @@ static inline bool	SysPumpUserInput( mouse* m, keyboard* kbd, bool insideWnd )
 		TranslateMessage( &msg );
 		DispatchMessageA( &msg );
 		if( msg.message == WM_QUIT ) return false;
-
-		m->dx = 0;
-		m->dy = 0;
-
-		if( msg.message == WM_INPUT )
-		{
-			RAWINPUT ri = {};
-			u32 rawDataSize = sizeof( ri );
-			// TODO: how to handle GetRawInputData errors ?
-			UINT res = GetRawInputData( ( HRAWINPUT )msg.lParam, RID_INPUT, &ri, &rawDataSize, sizeof( RAWINPUTHEADER ) );
-			if( res == UINT( -1 ) ) continue;
-
-			if( ri.header.dwType == RIM_TYPEKEYBOARD )
-			{
-				bool isPressed = !( ri.data.keyboard.Flags & RI_KEY_BREAK );
-				bool isE0 = ( ri.data.keyboard.Flags & RI_KEY_E0 );
-				bool isE1 = ( ri.data.keyboard.Flags & RI_KEY_E1 );
-
-				if( ri.data.keyboard.VKey == VK_W ) kbd->w = isPressed;
-				if( ri.data.keyboard.VKey == VK_A ) kbd->a = isPressed;
-				if( ri.data.keyboard.VKey == VK_S ) kbd->s = isPressed;
-				if( ri.data.keyboard.VKey == VK_D ) kbd->d = isPressed;
-				if( ri.data.keyboard.VKey == VK_C ) kbd->c = isPressed;
-				if( ri.data.keyboard.VKey == VK_SPACE ) kbd->space = isPressed;
-				if( ri.data.keyboard.VKey == VK_CONTROL && !isE0 ) kbd->lctrl = isPressed;
-				if( ( ri.data.keyboard.VKey == VK_F ) && isPressed ) kbd->f = !kbd->f;
-				if( ( ri.data.keyboard.VKey == VK_O ) && isPressed ) kbd->o = !kbd->o;
-				if( ( ri.data.keyboard.VKey == VK_ESCAPE ) && isPressed ) kbd->esc = !kbd->esc;
-
-			}
-			if( ( ri.header.dwType == RIM_TYPEMOUSE ) && insideWnd )
-			{
-				m->dx = ri.data.mouse.lLastX;
-				m->dy = ri.data.mouse.lLastY;
-			}
-		}
 	}
 
 	return true;
+}
+
+static inline u16 KeyIndex( const RAWKEYBOARD& kb )
+{
+	bool isE0 = kb.Flags & RI_KEY_E0;
+	return ( u16 ) ( kb.MakeCode | ( isE0 ? 0x100 : 0 ) );
+}
+
+static void Win32ProcessRawInput( const RAWINPUT& ri, input_state& inputState )
+{
+	if( ri.header.dwType == RIM_TYPEKEYBOARD )
+	{
+		bool isPressed = !( ri.data.keyboard.Flags & RI_KEY_BREAK );
+		inputState.keyStates[ KeyIndex( ri.data.keyboard ) ] = isPressed;
+	}
+	if( ( ri.header.dwType == RIM_TYPEMOUSE ) )
+	{
+		inputState.dMouse = { ( float ) ri.data.mouse.lLastX, ( float ) ri.data.mouse.lLastY };
+	}
 }
 
 LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
 	switch( uMsg )
 	{
-	case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); break;
+	case WM_NCCREATE:
+	{
+		CREATESTRUCTW* cs = ( CREATESTRUCTW* ) lParam;
+		SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR ) cs->lpCreateParams );
+		return TRUE;
+	}
+	// TODO: this will exit the Loop immediately. 
+	case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); return 0; // NOTE: no more def handling 
+		
+	case WM_INPUT:
+	{
+		constexpr u64 cbSzHeader = sizeof( RAWINPUTHEADER );
+		HRAWINPUT hri = ( HRAWINPUT ) lParam;
+
+		// TODO: might wanna self supply this
+		static thread_local std::vector<u8> scratchPad;
+
+		UINT size = 0;
+		if( GetRawInputData( hri, RID_INPUT, nullptr, &size, cbSzHeader ) == UINT( -1 ) || !size  )
+		{
+			return 0;
+		}
+
+		scratchPad.resize( size );
+		if( GetRawInputData( hri, RID_INPUT, std::data( scratchPad ), &size, cbSzHeader ) == UINT( -1 ) )
+		{
+			return 0;
+		}
+
+		const RAWINPUT& ri = *( const RAWINPUT* ) std::data( scratchPad );
+
+		LONG_PTR pUserData = GetWindowLongPtr( hwnd, GWLP_USERDATA );
+		if( !pUserData ) return 0;
+
+		Win32ProcessRawInput( ri, *( input_state* ) pUserData );
+
+		return 0;
+	}
 	}
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }						 
@@ -389,9 +417,12 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 #include "imgui/imgui.h"
 
 
-INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
+INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
+
+	input_state inputState = {};
+
 
 	WIN_CHECK( !DirectX::XMVerifyCPUSupport() );
 
@@ -400,7 +431,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	SYSTEM_INFO sysInfo = {};
 	GetSystemInfo( &sysInfo );
 	
-	HINSTANCE hInst = hInstance;
 	WNDCLASSEX wc = {
 		.cbSize = sizeof( WNDCLASSEX ),
 		.lpfnWndProc = MainWndProc,
@@ -410,22 +440,22 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	};
 	WIN_CHECK( !RegisterClassEx( &wc ) );
 	
-
 	RECT wr = {
 		.left = 350,
 		.top = 100,
 		.right = ( LONG ) SCREEN_WIDTH + wr.left,
 		.bottom = ( LONG ) SCREEN_HEIGHT + wr.top
 	};
+
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
 	HWND hWnd = CreateWindow( 
-		wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, 0 );
+		wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, &inputState );
 	WIN_CHECK(  !hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
-
+	// NOTE: don't use RIDEV_INPUTSINK in order to only receive when in focus
 	RAWINPUTDEVICE hid[ 2 ] = {};
 	hid[ 0 ].usUsage = HID_USAGE_GENERIC_MOUSE;
 	hid[ 0 ].usUsagePage = HID_USAGE_PAGE_GENERIC;
@@ -440,8 +470,6 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	hid[ 1 ].dwFlags = 0;// RIDEV_NOLEGACY;
 	WIN_CHECK( !RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
-
-	mouse m = {};
 	keyboard kbd = {};
 
 	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
@@ -480,8 +508,8 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
-	BOOL				isRunning = true;
-	const u64			FREQ = SysGetCpuFreq();
+	bool				isRunning = true;
+	const double		cpuPeriod = 1.0 / double( SysGetCpuFreq() );
 	//constexpr double	dt = 0.01;
 	//double				t = double( UINT64( 1ULL << 32 ) );
 	//double				accumulator = 0;
@@ -491,26 +519,18 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 	while( isRunning )
 	{
 		const u64 newTicks = SysTicks();
-		const double elapsedSecs = double( newTicks - currentTicks ) / double( FREQ );
+		const double elapsedSecs = double( newTicks - currentTicks ) * cpuPeriod;
 		currentTicks = newTicks;
 		//accumulator += elapsedSecs;
 
-		isRunning = SysPumpUserInput( &m, &kbd, 1 );
+		inputState.dMouse = {};
 
-		// TODO: smooth camera some more ?
-		// TODO: wtf Newton ?
-		float moveSpeed = camSpeed;// *elapsedSecs;
+		isRunning = SysPumpUserInput();
 
-		XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
-		if( kbd.w ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, 1, 0 ) );
-		if( kbd.a ) camMove = XMVectorAdd( camMove, XMVectorSet( -1, 0, 0, 0 ) );
-		if( kbd.s ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, -1, 0 ) );
-		if( kbd.d ) camMove = XMVectorAdd( camMove, XMVectorSet( 1, 0, 0, 0 ) );
-		if( kbd.space ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
-		if( kbd.c ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
+		auto[ camMove, dRot ] = GetMoveCamAction( inputState );
 
-		mainActiveCam.Move( camMove, { m.dx, m.dy }, elapsedSecs );
-		debugCam.Move( camMove, { m.dx, m.dy }, elapsedSecs );
+		mainActiveCam.Move( camMove, dRot, elapsedSecs );
+		debugCam.Move( camMove, dRot, elapsedSecs );
 
 		if( !kbd.f )
 		{
@@ -520,8 +540,7 @@ INT WINAPI WinMain( HINSTANCE hInstance, HINSTANCE, LPSTR, INT )
 			mainActiveCam.prevViewProj = mainViewData.mainViewProj;
 		}
 		
-		view_data dbgViewData = debugCam.GetViewData();
-		frameData.views[ dbgViewIdx ] = dbgViewData;
+		frameData.views[ dbgViewIdx ] = debugCam.GetViewData();
 
 		XMMATRIX frustMat = FrustumMatrixFromViewProj( XMLoadFloat4x4A( &frameData.views[ mainViewIdx ].mainViewProj ) );
 		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );

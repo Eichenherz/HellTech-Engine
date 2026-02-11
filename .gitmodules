@@ -1,6 +1,9 @@
-[submodule "3rdParty/meshoptimizer"]
-	path = 3rdParty/meshoptimizer
-	url = https://github.com/zeux/meshoptimizer.git
 [submodule "3rdParty/unordered_dense"]
 	path = 3rdParty/unordered_dense
 	url = https://github.com/martinus/unordered_dense.git
+[submodule "HellPack"]
+	path = HellPack
+	url = https://github.com/Eichenherz/HellPack.git
+[submodule "3rdParty/dds"]
+	path = 3rdParty/dds
+	url = https://github.com/turanszkij/dds.git

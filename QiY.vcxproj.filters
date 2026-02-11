@@ -21,9 +21,6 @@
     <ClCompile Include="r_vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AssetCompiler\asset_compiler.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="imgui\imgui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -40,21 +37,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="System\Win32\win32_file.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\..\VulkanSDK\1.4.328.0\Source\SPIRV-Reflect\spirv_reflect.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="AssetCompiler\bcn_compressor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="AssetCompiler\spng.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="AssetCompiler\lz4.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="AssetCompiler\miniz.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="3rdParty\meshoptimizer\src\allocator.cpp">
@@ -105,7 +87,7 @@
     <ClCompile Include="3rdParty\meshoptimizer\src\vfetchoptimizer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AssetCompiler\texture_compressor.cpp">
+    <ClCompile Include="spirv_reflect.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -128,10 +110,7 @@
     <ClInclude Include="Shaders\glsl_func_lib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AssetCompiler\asset_compiler.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="AssetCompiler\bcn_compressor.h">
+    <ClInclude Include="asset_compiler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="imgui\imconfig.h">
@@ -243,9 +222,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="AssetCompiler\texture_compressor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

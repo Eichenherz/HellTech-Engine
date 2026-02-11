@@ -44,7 +44,7 @@ struct vk_queue
 	// NOTE: queue submit has implicit host sync for trivial stuff, so in theroy we shouldn't worry about memcpy
 	void QueueSubmit( 
 		std::span<VkSemaphore> waitSemas,
-		std::span<VkCommandBuffer> cmdBuffs,
+		VkCommandBuffer cmdBuff,
 		std::span<VkSemaphore> signalSemas,
 		std::span<u64> signalValues,
 		VkPipelineStageFlags waitDstStageMsk 
@@ -61,8 +61,8 @@ struct vk_queue
 			.waitSemaphoreCount = (u32) std::size( waitSemas ),
 			.pWaitSemaphores = std::data( waitSemas ),
 			.pWaitDstStageMask = &waitDstStageMsk,
-			.commandBufferCount = (u32) std::size( cmdBuffs ),
-			.pCommandBuffers = std::data( cmdBuffs ),
+			.commandBufferCount = 1,
+			.pCommandBuffers = &cmdBuff,
 			.signalSemaphoreCount = (u32) std::size( signalSemas ),
 			.pSignalSemaphores = std::data( signalSemas ),
 		};
@@ -145,6 +145,7 @@ struct vk_device_ctx
 
 	vk_buffer CreateBuffer( const buffer_info& buffInfo );
 	vk_image CreateImage( const image_info& imgInfo );
+
 	inline void TransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
 	{
 		VK_CHECK( vkTransitionImageLayout( device, transitionCount, transitions ) );
@@ -317,10 +318,10 @@ vk_image vk_device_ctx::CreateImage( const image_info& imgInfo )
 		.view = vkImgView,
 		.usageFlags = imageInfo.usage,
 		.format = imageInfo.format,
-		.width = (u16)imageInfo.extent.width,
-		.height = (u16)imageInfo.extent.height,
-		.layerCount = (u8)imageInfo.arrayLayers,
-		.mipCount = (u8)imageInfo.mipLevels,
+		.width = ( u16 ) imageInfo.extent.width,
+		.height = ( u16 ) imageInfo.extent.height,
+		.layerCount = ( u8 ) imageInfo.arrayLayers,
+		.mipCount = ( u8 ) imageInfo.mipLevels,
 	};
 }
 
@@ -433,7 +434,7 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 			}
 			if( !foundExt )
 			{
-				SysErrMsgBox( std::format( "ERR: Required ext {} not found !", requiredExt ).c_str() );
+				//SysErrMsgBox( std::format( "ERR: Required ext {} not found !", requiredExt ).c_str() );
 				goto NEXT_DEVICE;
 			}
 		}
@@ -472,26 +473,24 @@ inline static vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR
 	};
 	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, 0, &vkDevice ) );
 
-	vk_device_ctx vkDc = {};
-
 	VkLoadDeviceProcs( vkDevice );
 
-	vkDc.gfxQueue = VkCreateQueue( vkDevice, queueCreateInfos[0].queueFamilyIndex, queueFlags, true );
-
-	vkDc.device = vkDevice;
-	vkDc.gpu = gpu;
-	vkDc.gpuProps = gpuProps2.properties;
-	vkDc.deviceMask = u32( 1u << deviceIdx );
-	vkDc.timestampPeriod = gpuProps2.properties.limits.timestampPeriod;
-	vkDc.waveSize = waveProps.subgroupSize;
+	vk_queue gfxQueue = VkCreateQueue( vkDevice, queueCreateInfos[ 0 ].queueFamilyIndex, queueFlags, true );
 
 	VkPhysicalDeviceMemoryProperties memProps;
 	vkGetPhysicalDeviceMemoryProperties( gpu, &memProps );
 
-	vkDc.allocator = MakeVmaAllocator( gpu, vkDevice, vkInst, VK_API_VERSION_1_4 ); // TODO: main file with this );
-	vkDc.sc = VkMakeSwapchain( vkDevice, gpu, vkSurf, vkDc.gfxQueue.index, cfg.desiredSwapchainFormat, cfg.swapchainImageCount );
-
-	return vkDc;
+	return {
+		.sc = VkMakeSwapchain( vkDevice, gpu, vkSurf, gfxQueue.index, cfg.desiredSwapchainFormat, cfg.swapchainImageCount ),
+		.gfxQueue = gfxQueue,
+		.allocator = MakeVmaAllocator( gpu, vkDevice, vkInst, VK_API_VERSION_1_4 ), // TODO: main file with this );
+		.gpuProps = gpuProps2.properties,
+		.gpu = gpu,
+		.device = vkDevice,
+		.deviceMask = u32( 1u << deviceIdx ),
+		.timestampPeriod = gpuProps2.properties.limits.timestampPeriod,
+		.waveSize = ( u8 ) waveProps.subgroupSize
+	};
 }
 
 #endif // !__VK_DEVICE_H__

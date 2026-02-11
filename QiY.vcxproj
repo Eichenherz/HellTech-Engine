@@ -68,13 +68,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>Intel C++ Compiler 19.1</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>ClangCL</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
@@ -113,7 +113,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools\include;D:\EichenRepos\QiY\QiY\3rdParty;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
+    <IncludePath>D:\EichenRepos\QiY\QiY\3rdParty\dds;D:\EichenRepos\QiY\QiY\HellPack;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
     <CustomBuildBeforeTargets>
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
@@ -132,7 +132,9 @@
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>
   </PropertyGroup>
   <PropertyGroup Label="Vcpkg">
-    <VcpkgEnableManifest>true</VcpkgEnableManifest>
+    <VcpkgEnableManifest>false</VcpkgEnableManifest>
+    <VcpkgEnabled>false</VcpkgEnabled>
+    <VcpkgManifestInstall>false</VcpkgManifestInstall>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -217,7 +219,8 @@
       <AdditionalInputs>%(FullPath);$(ProjectDir)r_data_structs.h</AdditionalInputs>
     </CustomBuild>
     <PostBuildEvent>
-      <Command>xcopy /Y /R /D "D:\Program Files\NVIDIA Corporation\NVIDIA Texture Tools\nvtt30205.dll" "$(TargetDir)"</Command>
+      <Command>
+      </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='VK_Debug|x64'">
@@ -231,6 +234,8 @@
       <Optimization>MaxSpeed</Optimization>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -250,9 +255,9 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <AdditionalIncludeDirectories>D:\EichenRepos\meshoptimizer\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -260,37 +265,15 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine>MachineX64</TargetMachine>
-      <AdditionalLibraryDirectories>D:\EichenRepos\meshoptimizer\bin\CMakeFiles\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>meshoptimizer.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /y /d "..\..\meshoptimizer\bin\CMakeFiles\Release\meshoptimizer.dll" "$(OutDir)"</Command>
+      <Command>
+      </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\VulkanSDK\1.4.328.0\Source\SPIRV-Reflect\spirv_reflect.c" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\allocator.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\clusterizer.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\indexanalyzer.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\indexcodec.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\indexgenerator.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\overdrawoptimizer.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\partition.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\quantization.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\rasterizer.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\simplifier.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\spatialorder.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\stripifier.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\vcacheoptimizer.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\vertexcodec.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\vertexfilter.cpp" />
-    <ClCompile Include="3rdParty\meshoptimizer\src\vfetchoptimizer.cpp" />
-    <ClCompile Include="AssetCompiler\asset_compiler.cpp" />
-    <ClCompile Include="AssetCompiler\bcn_compressor.cpp" />
-    <ClCompile Include="AssetCompiler\lz4.c" />
-    <ClCompile Include="AssetCompiler\miniz.c" />
-    <ClCompile Include="AssetCompiler\spng.c" />
-    <ClCompile Include="AssetCompiler\texture_compressor.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -301,22 +284,20 @@
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
+    <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="System\Win32\win32_file.cpp" />
     <ClCompile Include="sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="3rdParty\meshoptimizer\src\meshoptimizer.h" />
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\stl.h" />
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h" />
     <ClInclude Include="3rdParty\vk_mem_alloc.h" />
-    <ClInclude Include="AssetCompiler\asset_compiler.h" />
-    <ClInclude Include="AssetCompiler\bcn_compressor.h" />
+    <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="AssetCompiler\cgltf.h" />
     <ClInclude Include="AssetCompiler\lz4.h" />
     <ClInclude Include="AssetCompiler\spng.h" />
-    <ClInclude Include="AssetCompiler\texture_compressor.h" />
     <ClInclude Include="core_types.h" />
     <ClInclude Include="dxc.h" />
     <ClInclude Include="ht_error.h" />
@@ -454,6 +435,11 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\c_avg_luminance.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\c_draw_cull.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

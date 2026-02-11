@@ -1,6 +1,0 @@
-#ifndef __TEXTURE_COMPRESSOR_H__
-#define __TEXTURE_COMPRESSOR_H__
-
-
-
-#endif // !__TEXTURE_COMPRESSOR_H__

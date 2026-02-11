@@ -78,7 +78,7 @@ inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& 
 	u64 timestampBeg = pTimestamps[ 0 ];
 	u64 timestampEnd = pTimestamps[ 1 ];
 
-	constexpr float nsToMs = 1e-6;
+	constexpr float nsToMs = 1.0e-6f;
 	return float( timestampEnd - timestampBeg ) * vkTimer.timestampPeriod * nsToMs;
 }
 

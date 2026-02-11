@@ -23,7 +23,7 @@ struct view_data;
 
 struct frame_data
 {
-	std::vector<view_data> views;
+	std::vector<view_data>  views;
 	DirectX::XMFLOAT4X4A    frustTransf;
 	float                   elapsedSeconds;
 	bool                    freezeMainView;

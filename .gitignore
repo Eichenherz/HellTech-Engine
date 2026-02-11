@@ -7,34 +7,14 @@ desktop.ini
 
 vk_generator.py
 
-spirv_reflect.c
-
-spirv_reflect.h
-
-AssetCompiler/lz4.c
-
-AssetCompiler/lz4.h
-
-AssetCompiler/miniz.c
-
-AssetCompiler/miniz.h
-
-AssetCompiler/spng.c
-
-AssetCompiler/spng.h
-
-AssetCompiler/cgltf.h
-
 Assets/
-
-.vscode/
 
 README.md
 
-AssetCompiler/bcn_compressor.cpp
+.vs/
+
+packages/
 
 imgui/
 
 bin/*
-
-vcpkg_installed/*
