@@ -3,7 +3,7 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
-#include "vk_procs.h"
+#include <Volk/volk.h>
 
 #include "core_types.h"
 

@@ -3,7 +3,8 @@
 #define __VK
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
-#include "vk_procs.h"
+
+#include <Volk/volk.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -103,7 +104,6 @@ constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 
 struct vk_instance
 {
-	u64 dll;
 	VkInstance hndl;
 	VkDebugUtilsMessengerEXT dbgMsg;
 };
@@ -116,29 +116,16 @@ inline static vk_instance VkMakeInstance()
 	#ifdef VK_USE_PLATFORM_WIN32_KHR
 		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
 	#endif // VK_USE_PLATFORM_WIN32_KHR
-	#ifdef _VK_DEBUG_
 		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-	#endif // _VK_DEBUG_
 	};
 
 	constexpr const char* LAYERS[] =
 	{
-	#ifdef _VK_DEBUG_
 		"VK_LAYER_KHRONOS_validation",
 		//"VK_LAYER_LUNARG_api_dump"
-	#endif // _VK_DEBUG_
 	};
 
-	u64 VK_DLL;
-	VK_CHECK( VK_INTERNAL_ERROR( !( VK_DLL = SysDllLoad( "vulkan-1.dll" ) ) ) );
-
-	vkGetInstanceProcAddr = ( PFN_vkGetInstanceProcAddr ) SysGetProcAddr( VK_DLL, "vkGetInstanceProcAddr" );
-	vkCreateInstance = ( PFN_vkCreateInstance ) vkGetInstanceProcAddr( 0, "vkCreateInstance" );
-	vkEnumerateInstanceExtensionProperties =
-		( PFN_vkEnumerateInstanceExtensionProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceExtensionProperties" );
-	vkEnumerateInstanceLayerProperties =
-		( PFN_vkEnumerateInstanceLayerProperties ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceLayerProperties" );
-	vkEnumerateInstanceVersion = ( PFN_vkEnumerateInstanceVersion ) vkGetInstanceProcAddr( 0, "vkEnumerateInstanceVersion" );
+	VK_CHECK( volkInitialize() );
 
 	u32 vkExtsNum = 0;
 	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, 0 ) );
@@ -192,7 +179,6 @@ inline static vk_instance VkMakeInstance()
 		.enabledExtensionCount = std::size( ENABLED_INST_EXTS ),
 		.ppEnabledExtensionNames = ENABLED_INST_EXTS,
 	};
-#ifdef _VK_DEBUG_
 
 	VkValidationFeaturesEXT vkValidationFeatures = { 
 		.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
@@ -211,16 +197,14 @@ inline static vk_instance VkMakeInstance()
 	};
 
 	instInfo.pNext = &vkDbgExt;
-#endif
+
 	VK_CHECK( vkCreateInstance( &instInfo, 0, &vkInstance ) );
 
-	VkLoadInstanceProcs( vkInstance, *vkGetInstanceProcAddr );
+	volkLoadInstance( vkInstance );
 
-#ifdef _VK_DEBUG_
 	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, 0, &vkDbgUtilsMsgExt ) );
-#endif
 
-	return { .dll = VK_DLL, .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
+	return { .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
 }
 
 #define VMA_IMPLEMENTATION
@@ -471,152 +455,6 @@ struct vk_command_buffer
 	//}
 };
 
-
-// TODO: should make obsolete
-struct vk_program
-{
-	VkPipelineLayout			pipeLayout;
-	VkDescriptorUpdateTemplate	descUpdateTemplate;
-	VkShaderStageFlags			pushConstStages;
-	VkDescriptorSetLayout       descSetLayout;
-	group_size					groupSize;
-};
-
-
-inline static void VkReflectShaderLayout(
-	const VkPhysicalDeviceProperties&			gpuProps,
-	const std::vector<u8>&						spvByteCode,
-	std::vector<VkDescriptorSetLayoutBinding>&	descSetBindings,
-	std::vector<VkPushConstantRange>&			pushConstRanges,
-	group_size&									gs,
-	char*										entryPointName,
-	u64											entryPointNameStrLen 
-){
-	SpvReflectShaderModule shaderReflection;
-	VK_CHECK( (VkResult) spvReflectCreateShaderModule( std::size( spvByteCode ) * sizeof( spvByteCode[ 0 ] ),
-													   std::data( spvByteCode ),
-													   &shaderReflection ) );
-
-	SpvReflectDescriptorSet& set = shaderReflection.descriptor_sets[ 0 ];
-
-	for( u64 bindingIdx = 0; bindingIdx < set.binding_count; ++bindingIdx )
-	{
-		if( set.set > 0 ) continue;
-
-		const SpvReflectDescriptorBinding& descBinding = *set.bindings[ bindingIdx ];
-
-		if( bindingIdx < std::size( descSetBindings ) )
-		{
-			// NOTE: if binding matches, assume the same resource will be used in multiple shaders in the same pipeline/program
-			// TODO: should VK_CHECK here ?
-			assert( descSetBindings[ bindingIdx ].descriptorType == VkDescriptorType( descBinding.descriptor_type ) );
-			descSetBindings[ bindingIdx ].stageFlags |= shaderReflection.shader_stage;
-			continue;
-		}
-
-		VkDescriptorSetLayoutBinding binding = {};
-		binding.binding = descBinding.binding;
-		binding.descriptorType = VkDescriptorType( descBinding.descriptor_type );
-		binding.descriptorCount = descBinding.count;
-		binding.stageFlags = shaderReflection.shader_stage;
-		descSetBindings.push_back( binding );
-	}
-
-	for( u64 pci = 0; pci < shaderReflection.push_constant_block_count; ++pci )
-	{
-		VkPushConstantRange pushConstRange = {};
-		pushConstRange.stageFlags = shaderReflection.shader_stage;
-		pushConstRange.offset = shaderReflection.push_constant_blocks[ pci ].offset;
-		pushConstRange.size = shaderReflection.push_constant_blocks[ pci ].size;
-		VK_CHECK( VK_INTERNAL_ERROR( pushConstRange.size > gpuProps.limits.maxPushConstantsSize ) );
-
-		pushConstRanges.push_back( pushConstRange );
-	}
-
-	assert( shaderReflection.entry_point_count == 1 );
-	const SpvReflectEntryPoint& entryPoint = shaderReflection.entry_points[ 0 ];
-	assert( std::strlen( entryPoint.name ) <= entryPointNameStrLen );
-	std::memcpy( entryPointName, entryPoint.name, entryPointNameStrLen );
-	if( VkShaderStageFlags( shaderReflection.shader_stage ) == VK_SHADER_STAGE_COMPUTE_BIT )
-		gs = { entryPoint.local_size.x, entryPoint.local_size.y, entryPoint.local_size.z };
-
-	spvReflectDestroyShaderModule( &shaderReflection );
-}
-
-inline static vk_program VkMakePipelineProgram(
-	VkDevice							vkDevice,
-	const VkPhysicalDeviceProperties&	gpuProps,
-	VkPipelineBindPoint					bindPoint,
-	vk_shader_list						shaders,
-	VkDescriptorSetLayout				bindlessLayout 
-){
-	assert( std::size( shaders ) );
-
-	vk_program program = {};
-
-	std::vector<VkDescriptorSetLayoutBinding> bindings;
-	std::vector<VkPushConstantRange>	pushConstRanges;
-	group_size gs = {};
-
-	for( vk_shader* s : shaders )
-	{
-		VkReflectShaderLayout( 
-			gpuProps, s->spvByteCode, bindings, pushConstRanges, gs, s->entryPointName, std::size( s->entryPointName ) );
-	}
-
-	VkDescriptorSetLayout descSetLayout = {};
-	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	descSetLayoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-	descSetLayoutInfo.bindingCount = std::size( bindings );
-	descSetLayoutInfo.pBindings = std::data( bindings );
-	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &descSetLayoutInfo, 0, &descSetLayout ) );
-
-	VkDescriptorSetLayout setLayouts[] = { descSetLayout, bindlessLayout };
-
-	VkPipelineLayoutCreateInfo pipeLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-	pipeLayoutInfo.setLayoutCount = std::size( setLayouts );
-	pipeLayoutInfo.pSetLayouts = setLayouts;
-	pipeLayoutInfo.pushConstantRangeCount = std::size( pushConstRanges );
-	pipeLayoutInfo.pPushConstantRanges = std::data( pushConstRanges );
-	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &program.pipeLayout ) );
-
-	if( std::size( bindings ) )
-	{
-		std::vector<VkDescriptorUpdateTemplateEntry> entries;
-		entries.reserve( std::size( bindings ) );
-		for( const VkDescriptorSetLayoutBinding& binding : bindings )
-		{
-			VkDescriptorUpdateTemplateEntry entry = {};
-			entry.dstBinding = binding.binding;
-			entry.dstArrayElement = 0;
-			entry.descriptorCount = binding.descriptorCount;
-			entry.descriptorType = binding.descriptorType;
-			entry.offset = std::size( entries ) * sizeof( vk_descriptor_info );
-			entry.stride = sizeof( vk_descriptor_info );
-			entries.emplace_back( entry );
-		}
-
-		VkDescriptorUpdateTemplateCreateInfo templateInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO };
-		templateInfo.descriptorUpdateEntryCount = std::size( entries );
-		templateInfo.pDescriptorUpdateEntries = std::data( entries );
-		templateInfo.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR;
-		templateInfo.descriptorSetLayout = descSetLayout;
-		templateInfo.pipelineBindPoint = bindPoint;
-		templateInfo.pipelineLayout = program.pipeLayout;
-		templateInfo.set = 0;
-		VK_CHECK( vkCreateDescriptorUpdateTemplate( vkDevice, &templateInfo, 0, &program.descUpdateTemplate ) );
-	}
-
-	//vkDestroyDescriptorSetLayout( vkDevice, descSetLayout, 0 );
-
-	program.descSetLayout = descSetLayout;
-	program.pushConstStages = std::size( pushConstRanges ) ? pushConstRanges[ 0 ].stageFlags : 0;
-	program.groupSize = gs;
-
-	return program;
-}
-
-
 #include "asset_compiler.h"
 
 
@@ -845,8 +683,10 @@ struct imgui_context
 		VkDescriptorUpdateTemplate descTemplate = {};
 		VK_CHECK( vkCreateDescriptorUpdateTemplate( dc.device, &templateInfo, 0, &descTemplate ) );
 
-		vk_shader2 vert = VkLoadShader2( "bin/SpirV/vertex_ImGuiVsMain.spirv", dc.device );
-		vk_shader2 frag = VkLoadShader2( "bin/SpirV/pixel_ImGuiPsMain.spirv", dc.device );
+		unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
+			SysReadFile( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
+		unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
+			SysReadFile( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
 
 		vk_gfx_pipeline_state guiState = {};
 		guiState.blendCol = VK_TRUE; 
@@ -861,12 +701,11 @@ struct imgui_context
 		guiState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		guiState.cullFlags = VK_CULL_MODE_NONE;
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { VkMakePipelineShaderInfo( vert ), VkMakePipelineShaderInfo( frag ) };
+		vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-		VkPipeline pipeline = VkMakeGfxPipeline(
-			dc.device, shaderStages, dynamicStates, 
-			&renderCfg.desiredSwapchainFormat, 1, VK_FORMAT_UNDEFINED, pipelineLayout, guiState );
+		VkPipeline pipeline = dc.CreateGfxPipeline(
+			shaderStages, dynamicStates, &renderCfg.desiredSwapchainFormat, 1, VK_FORMAT_UNDEFINED, guiState );
 	}
 
 	void InitResources( vk_device_ctx& dc, VkFormat colDstFormat )
@@ -1028,42 +867,52 @@ struct debug_context
 	std::shared_ptr<vk_buffer> pTrisBuff;
 	std::shared_ptr<vk_buffer> pDrawCount;
 
-	vk_program	pipeProg;
 	VkPipeline	drawAsLines;
 	VkPipeline	drawAsTriangles;
 
 	void Init( vk_device_ctx& dc, VkPipelineLayout globalLayout, renderer_config& rndCfg )
 	{
-		vk_shader vert = VkLoadShader( "Shaders/v_cpu_dbg_draw.vert.spv", dc.device );
-		vk_shader frag = VkLoadShader( "Shaders/f_pass_col.frag.spv", dc.device );
+		unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
+			SysReadFile( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
+		unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
+			SysReadFile( "Shaders/f_pass_col.frag.spv" ) );
 
 		static_assert( worldLeftHanded );
-		vk_gfx_pipeline_state lineDrawPipelineState = {
-			.polyMode = VK_POLYGON_MODE_LINE,
-			.cullFlags = VK_CULL_MODE_NONE,
-			.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-			.primTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
-			.depthWrite = VK_FALSE,
-			.depthTestEnable = VK_FALSE,
-			.blendCol = VK_FALSE,
-		};
-		drawAsLines = VkMakeGfxPipeline( dc.device, 0, globalLayout, vert.module, frag.module, 
-										 &rndCfg.desiredColorFormat, 1, VK_FORMAT_UNDEFINED, lineDrawPipelineState );
 
-		vk_gfx_pipeline_state triDrawPipelineState = {
-			.polyMode = VK_POLYGON_MODE_FILL,
-			.cullFlags = VK_CULL_MODE_NONE,
-			.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-			.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-			.depthWrite = VK_TRUE,
-			.depthTestEnable = VK_TRUE,
-			.blendCol = VK_TRUE
-		};
-		drawAsTriangles = VkMakeGfxPipeline( dc.device, 0, globalLayout, vert.module, frag.module, 
-											 &rndCfg.desiredColorFormat, 1, rndCfg.desiredDepthFormat, triDrawPipelineState );
+		{
+			vk_gfx_pipeline_state lineDrawPipelineState = {
+				.polyMode = VK_POLYGON_MODE_LINE,
+				.cullFlags = VK_CULL_MODE_NONE,
+				.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+				.primTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+				.depthWrite = VK_FALSE,
+				.depthTestEnable = VK_FALSE,
+				.blendCol = VK_FALSE,
+			};
+			VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-		vkDestroyShaderModule( dc.device, vert.module, 0 );
-		vkDestroyShaderModule( dc.device, frag.module, 0 );
+			vk_gfx_shader_stage shaders[] = { *vtx, *frag };
+			drawAsLines = dc.CreateGfxPipeline(  
+				shaders, dynamicStates, &rndCfg.desiredColorFormat, 1, VK_FORMAT_UNDEFINED, lineDrawPipelineState );
+		}
+		
+		{
+			vk_gfx_pipeline_state triDrawPipelineState = {
+				.polyMode = VK_POLYGON_MODE_FILL,
+				.cullFlags = VK_CULL_MODE_NONE,
+				.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+				.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+				.depthWrite = VK_TRUE,
+				.depthTestEnable = VK_TRUE,
+				.blendCol = VK_TRUE
+			};
+
+			vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
+			VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+			drawAsTriangles = dc.CreateGfxPipeline( 
+				shaderStages, dynamicStates, &rndCfg.desiredColorFormat, 1, rndCfg.desiredDepthFormat, triDrawPipelineState );
+		}
 
 		pDrawCount = std::make_shared<vk_buffer>( dc.CreateBuffer( {
 			.name = "Buff_DbgDrawCount",
@@ -1116,8 +965,11 @@ struct debug_context
 		u32 color
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( name, {} );
-		auto dynamicRendering = cmdBuff.CmdIssueDynamicScopedRenderPass( std::data( renderingInfo.colorAttachments ), 
-																		 ( u32 ) std::size( renderingInfo.colorAttachments ), renderingInfo.pDepthAttachment, renderingInfo.scissor, 1 );
+		auto dynamicRendering = cmdBuff.CmdIssueDynamicScopedRenderPass( 
+			std::data( renderingInfo.colorAttachments ), 
+			( u32 ) std::size( renderingInfo.colorAttachments ), 
+			renderingInfo.pDepthAttachment, 
+			renderingInfo.scissor, 1 );
 
 		vkCmdSetScissor( cmdBuff.hndl, 0, 1, &renderingInfo.scissor );
 		vkCmdSetViewport( cmdBuff.hndl, 0, 1, &renderingInfo.viewport );
@@ -1227,7 +1079,6 @@ StagingManagerUploadBuffer(
 
 static staging_manager stagingManager;
 
-static vk_program   dbgDrawProgram = {};
 static VkPipeline   gfxDrawIndirDbg = {};
 
 struct culling_ctx
@@ -1243,18 +1094,14 @@ struct culling_ctx
 	VkPipeline		compPipeline;
 	VkPipeline      compClusterCullPipe;
 
-	void Init( vk_device_ctx& dc, VkPipelineLayout pipelineLayout )
+	void Init( vk_device_ctx& dc )
 	{
-		vk_shader drawCull = VkLoadShader( "Shaders/c_draw_cull.comp.spv", dc.device );
-		compPipeline = VkMakeComputePipeline( 
-			dc.device, 0, pipelineLayout, drawCull.module, 
-			{ dc.waveSize }, dc.waveSize, SHADER_ENTRY_POINT, "Pipeline_Comp_DrawCull" );
+		unique_shader_ptr drawCull = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/c_draw_cull.comp.spv" ) );
+		compPipeline = dc.CreateComptuePipeline( *drawCull, { dc.waveSize }, "Pipeline_Comp_DrawCull" );
 
-		//vk_shader clusterCull = VkLoadShader( "Shaders/c_meshlet_cull.comp.spv", dc.device );
+		//vk_shader clusterCull = dc.CreateShaderFromSpirv( "Shaders/c_meshlet_cull.comp.spv", dc.device );
 		//compClusterCullPipe = VkMakeComputePipeline( 
 		//	dc.device, 0, pipelineLayout, clusterCull.module, {}, dc.waveSize, SHADER_ENTRY_POINT, "Pipeline_Comp_ClusterCull" );
-
-		vkDestroyShaderModule( dc.device, drawCull.module, 0 );
 
 		pDrawCount = std::make_unique<vk_buffer>( dc.CreateBuffer( {
 			.name = "Buff_DrawCount",
@@ -1459,16 +1306,15 @@ struct tonemapping_ctx
 	u16 atomicWgCounterIdx;
 	u16 lumHistoIdx;
 
-	void Init( vk_device_ctx& dc, VkPipelineLayout globalLayout, vk_descriptor_manager& descManager )
+	void Init( vk_device_ctx& dc, vk_descriptor_manager& descManager )
 	{
-		vk_shader2 avgLum = VkLoadShader2( "bin/SpirV/compute_AvgLuminanceCsMain.spirv", dc.device );
-		compAvgLumPipe = VkMakeComputePipeline( 
-			dc.device, 0, globalLayout, avgLum.shaderModule, {}, dc.waveSize, avgLum.entryPoint, "Pipeline_Comp_AvgLum" );
+		unique_shader_ptr avgLum = dc.CreateShaderFromSpirv( 
+			SysReadFile( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
+		compAvgLumPipe = dc.CreateComptuePipeline( *avgLum, {}, "Pipeline_Comp_AvgLum" );
 
-		vk_shader2 toneMapper = VkLoadShader2( "bin/SpirV/compute_TonemappingGammaCsMain.spirv", dc.device );
-		compTonemapPipe = VkMakeComputePipeline( 
-			dc.device, 0, globalLayout, toneMapper.shaderModule, {}, 
-			dc.waveSize, toneMapper.entryPoint, "Pipeline_Comp_Tonemapping");
+		unique_shader_ptr toneMapper = dc.CreateShaderFromSpirv( 
+			SysReadFile( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
+		compTonemapPipe = dc.CreateComptuePipeline( *toneMapper, {}, "Pipeline_Comp_Tonemapping" );
 
 		VkBufferUsageFlags usageFlags = 
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -1574,7 +1420,6 @@ struct render_context
 	std::shared_ptr<vk_image> pDepthTarget;
 
 	VkSurfaceKHR surf;
-	VkPipelineLayout globalLayout;
 
 	// TODO: move to appropriate technique/context
 	VkPipeline      gfxZPrepass;
@@ -1627,20 +1472,18 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 
 	rndCtx.frameTimeline = rndCtx.pDevice->CreateGpuTimeline( 0 );
 
-	rndCtx.descManager = VkMakeDescriptorManager( rndCtx.pDevice->device, rndCtx.pDevice->gpuProps );
-	rndCtx.globalLayout = VkMakeGlobalPipelineLayout( rndCtx.pDevice->device, rndCtx.pDevice->gpuProps, rndCtx.descManager );
-	VkDbgNameObj( rndCtx.globalLayout, rndCtx.pDevice->device, "Vk_Pipeline_Layout_Global" );
-
 	{
-		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", rndCtx.pDevice->device );
-		rndCtx.gfxZPrepass = VkMakeGfxPipeline( 
-			rndCtx.pDevice->device, 0, rndCtx.globalLayout, vertZPre.module, 0, 0, 0, renderCfg.desiredDepthFormat, {} );
+		unique_shader_ptr vtx = rndCtx.pDevice->CreateShaderFromSpirv( SysReadFile( "Shaders/v_z_prepass.vert.spv" ) );
 
-		vkDestroyShaderModule( rndCtx.pDevice->device, vertZPre.module, 0 );
+		vk_gfx_shader_stage shaderStages[] = { *vtx };
+		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+		rndCtx.gfxZPrepass = rndCtx.pDevice->CreateGfxPipeline( 
+			shaderStages, dynamicStates, 0, 0, renderCfg.desiredDepthFormat, {} );
 	}
 	//{
-	//	vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", rndCtx.pDevice->device );
-	//	vk_shader normalCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", rndCtx.pDevice->device );
+	//	vk_shader vertBox = dc.CreateShaderFromSpirv( "Shaders/box_meshlet_draw.vert.spv", rndCtx.pDevice->device );
+	//	vk_shader normalCol = dc.CreateShaderFromSpirv( "Shaders/f_pass_col.frag.spv", rndCtx.pDevice->device );
 	//
 	//	vk_gfx_pipeline_state lineDrawPipelineState = {
 	//		.polyMode = VK_POLYGON_MODE_LINE,
@@ -1663,26 +1506,22 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, vertBox.module, 0 );
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, normalCol.module, 0 );
 	//}
-	rndCtx.cullingCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout );
-	rndCtx.tonemappingCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout, rndCtx.descManager );
+	rndCtx.cullingCtx.Init( *rndCtx.pDevice );
+	rndCtx.tonemappingCtx.Init( *rndCtx.pDevice, rndCtx.descManager );
 	{
-		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", rndCtx.pDevice->device );
-		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", rndCtx.pDevice->device );
+		unique_shader_ptr vtx = rndCtx.pDevice->CreateShaderFromSpirv( SysReadFile( "Shaders/vtx_merged.vert.spv" ) );
+		unique_shader_ptr frag = rndCtx.pDevice->CreateShaderFromSpirv( SysReadFile( "Shaders/pbr.frag.spv" ) );
 		vk_gfx_pipeline_state opaqueState = {};
 
-		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline(
-			rndCtx.pDevice->device, 0, rndCtx.globalLayout, 
-			vtxMerged.module, fragPBR.module, 
-			&renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, 
-			opaqueState );
-		VkDbgNameObj( rndCtx.gfxMergedPipeline, rndCtx.pDevice->device, "Pipeline_Gfx_Merged" );
+		vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
+		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-		vkDestroyShaderModule( rndCtx.pDevice->device, vtxMerged.module, 0 );
-		vkDestroyShaderModule( rndCtx.pDevice->device, fragPBR.module, 0 );
+		rndCtx.gfxMergedPipeline = rndCtx.pDevice->CreateGfxPipeline( 
+			shaderStages, dynamicStates, &renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, opaqueState );
 	}
 	//{
-	//	vk_shader vertMeshlet = VkLoadShader( "Shaders/meshlet.vert.spv", rndCtx.pDevice->device );
-	//	vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", rndCtx.pDevice->device );
+	//	vk_shader vertMeshlet = dc.CreateShaderFromSpirv( "Shaders/meshlet.vert.spv", rndCtx.pDevice->device );
+	//	vk_shader fragCol = dc.CreateShaderFromSpirv( "Shaders/f_pass_col.frag.spv", rndCtx.pDevice->device );
 	//	rndCtx.gfxMeshletPipeline = VkMakeGfxPipeline(
 	//		rndCtx.pDevice->device, 0, rndCtx.globalLayout, vertMeshlet.module, fragCol.module, 
 	//		&renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, {} );
@@ -1692,10 +1531,9 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, fragCol.module, 0 );
 	//}
 	{
-		vk_shader2 downsampler = VkLoadShader2( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv", rndCtx.pDevice->device );
-		rndCtx.compHiZPipeline = VkMakeComputePipeline( 
-			rndCtx.pDevice->device, 0, rndCtx.globalLayout, downsampler.shaderModule, {}, 
-			rndCtx.pDevice->waveSize, downsampler.entryPoint, "Pipeline_Comp_HiZ" );
+		unique_shader_ptr downsampler = rndCtx.pDevice->CreateShaderFromSpirv( 
+			SysReadFile( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
+		rndCtx.compHiZPipeline = rndCtx.pDevice->CreateComptuePipeline( *downsampler, {}, "Pipeline_Comp_HiZ" );
 	}
 
 	//rndCtx.dbgCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout, renderCfg );
@@ -1704,6 +1542,7 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 	//rndCtx.imguiCtx.Init( *rndCtx.pDevice );
 }
 
+#if 0
 inline static void
 DrawIndirectPass(
 	VkCommandBuffer			cmdBuff,
@@ -1733,6 +1572,8 @@ DrawIndirectPass(
 
 	vkCmdEndRendering( cmdBuff );
 }
+
+#endif
 
 inline static void
 DrawIndexedIndirectMerged(
@@ -2377,7 +2218,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	assert( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
 	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, rndCtx.globalLayout, rndCtx.descManager.set };
+	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, rndCtx.pDevice->globalPipelineLayout, rndCtx.descManager.set };
 
 	std::vector<vk_descriptor_write> vkDescUpdateCache;
 	static bool initResources = false;
@@ -2526,7 +2367,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			rndCtx.hizSrv,
 			rndCtx.hizMipUavs,
 			rndCtx.quadMinSamplerIdx,
-			rndCtx.globalLayout,
+			rndCtx.pDevice->globalPipelineLayout,
 			{32,32,1}
 		);
 
@@ -2575,7 +2416,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			rndCtx.hizSrv,
 			rndCtx.hizMipUavs,
 			rndCtx.quadMinSamplerIdx,
-			rndCtx.globalLayout,
+			rndCtx.pDevice->globalPipelineLayout,
 			{32,32,1}
 		);
 
@@ -2733,21 +2574,12 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 void VkBackendKill()
 {
-	// NOTE: SHOULDN'T need to check if( VkObj ). Can't create -> app fail
-	assert( rndCtx.pDevice->device );
 	vkDeviceWaitIdle( rndCtx.pDevice->device );
-	//for( auto& queued : deviceGlobalDeletionQueue ) queued();
-	//deviceGlobalDeletionQueue.clear();
-
-
+	
 	vkDestroyDevice( rndCtx.pDevice->device, 0 );
-#ifdef _VK_DEBUG_
 	vkDestroyDebugUtilsMessengerEXT( rndCtx.inst.hndl, rndCtx.inst.dbgMsg, 0 );
-#endif
 	vkDestroySurfaceKHR( rndCtx.inst.hndl, rndCtx.surf, 0 );
 	vkDestroyInstance( rndCtx.inst.hndl, 0 );
-
-	SysDllUnload( rndCtx.inst.dll );
 }
 
 #undef HTVK_NO_SAMPLER_REDUCTION

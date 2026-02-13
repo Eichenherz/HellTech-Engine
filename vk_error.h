@@ -3,11 +3,10 @@
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
-#define __VK
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
-#include "vk_procs.h"
 
+#include <format>
 #include <iostream>
 #include <string_view>
 
@@ -66,7 +65,7 @@ inline VkResult VkResFromStatement( bool statement )
 {
 	return !statement ? VK_SUCCESS : VkResult( int( 0x8FFFFFFF ) );
 }
-// TODO: keep ?
+// TODO: deprecate
 #define VK_INTERNAL_ERROR( vk ) VkResFromStatement( bool( vk ) )
 
 #define VK_CHECK( vk )																\
@@ -138,7 +137,7 @@ inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
 }
 
 
-VKAPI_ATTR VkBool32 VKAPI_CALL
+inline VKAPI_ATTR VkBool32 VKAPI_CALL
 VkDbgUtilsMsgCallback(
 	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
 	VkDebugUtilsMessageTypeFlagsEXT				msgType,

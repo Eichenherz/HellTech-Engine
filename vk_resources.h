@@ -3,10 +3,8 @@
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
-#define __VK
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
-#include "vk_procs.h"
 
 #include "vk_error.h"
 #include "core_types.h"

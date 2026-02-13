@@ -39,52 +39,7 @@
     <ClCompile Include="System\Win32\win32_file.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\allocator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\clusterizer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\indexanalyzer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\indexcodec.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\indexgenerator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\overdrawoptimizer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\partition.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\quantization.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\rasterizer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\simplifier.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\spatialorder.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\stripifier.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\vcacheoptimizer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\vertexcodec.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\vertexfilter.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\meshoptimizer\src\vfetchoptimizer.cpp">
+    <ClCompile Include="vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="spirv_reflect.c">
@@ -99,9 +54,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DEFS_WIN32_NO_BS.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="vk_procs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="r_data_structs.h">
@@ -191,9 +143,6 @@
     <ClInclude Include="AssetCompiler\lz4.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="3rdParty\meshoptimizer\src\meshoptimizer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\base64.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -258,5 +207,6 @@
     <None Include="r_dx12_backend.cpp">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="Shaders\c_draw_cull.hlsl" />
   </ItemGroup>
 </Project>

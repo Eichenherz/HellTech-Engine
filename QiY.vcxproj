@@ -279,12 +279,13 @@
     <ClCompile Include="imgui\imgui_draw.cpp" />
     <ClCompile Include="imgui\imgui_tables.cpp" />
     <ClCompile Include="imgui\imgui_widgets.cpp" />
+    <ClCompile Include="spirv_reflect.c" />
+    <ClCompile Include="vk_backend.cpp" />
     <None Include="r_dx12_backend.cpp" />
     <ClCompile Include="r_vk_backend.cpp" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="System\Win32\win32_file.cpp" />
     <ClCompile Include="sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
@@ -329,7 +330,6 @@
     <ClInclude Include="vk_descriptor.h" />
     <ClInclude Include="vk_device.h" />
     <ClInclude Include="vk_error.h" />
-    <ClInclude Include="vk_procs.h" />
     <ClInclude Include="vk_pso.h" />
     <ClInclude Include="vk_resources.h" />
     <ClInclude Include="vk_swapchain.h" />
