@@ -1554,6 +1554,8 @@ struct tonemapping_ctx
 // TODO: add the backend here basically 
 struct render_context
 {
+	vk_descriptor_manager descManager;
+
 	imgui_context   imguiCtx;
 	debug_context   dbgCtx;
 	culling_ctx     cullingCtx;
@@ -1561,11 +1563,18 @@ struct render_context
 
 	virtual_frame	vrtFrames[ renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 
+	vk_instance inst;
+
+	vk_timeline frameTimeline;
+	vk_timeline uploadTimeline;
+
+	std::unique_ptr<vk_device_ctx> pDevice;
+
 	std::shared_ptr<vk_image> pColorTarget;
 	std::shared_ptr<vk_image> pDepthTarget;
 
-	u16 colSrv;
-	u16 depthSrv;
+	VkSurfaceKHR surf;
+	VkPipelineLayout globalLayout;
 
 	// TODO: move to appropriate technique/context
 	VkPipeline      gfxZPrepass;
@@ -1575,9 +1584,13 @@ struct render_context
 
 	VkPipeline		compHiZPipeline;
 
-	VkSemaphore     timelineSema;
 	u64				vFrameIdx = 0;
+
+	u16 colSrv;
+	u16 depthSrv;
+
 	u8				framesInFlight;
+	u8              maxFrameSubmittionsAllowed = 2;
 
 	// TODO: move to appropriate technique/context
 	std::shared_ptr<vk_image> pHiZTarget;
@@ -1598,53 +1611,36 @@ struct render_context
 
 static render_context rndCtx;
 
-// TODO: move to render_context ?
-struct vk_backend
-{
-	std::unique_ptr<vk_device_ctx> pDc;
-	vk_descriptor_manager descManager;
-	vk_instance inst;
-	VkSurfaceKHR surf;
-	VkPipelineLayout globalLayout;
-};
-
-static vk_backend vk;
-
 // TODO: separate from render_context
 void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 {
-	vk.inst = VkMakeInstance();
+	rndCtx.inst = VkMakeInstance();
 
-	vk.surf = VkMakeWinSurface( vk.inst.hndl, ( HINSTANCE ) hInst, ( HWND ) hWnd );
-	vk.pDc = std::make_unique<vk_device_ctx>( VkMakeDeviceContext( vk.inst.hndl, vk.surf, renderCfg ) );
+	rndCtx.surf = VkMakeWinSurface( rndCtx.inst.hndl, ( HINSTANCE ) hInst, ( HWND ) hWnd );
+	rndCtx.pDevice = std::make_unique<vk_device_ctx>( VkMakeDeviceContext( rndCtx.inst.hndl, rndCtx.surf, renderCfg ) );
 
 	rndCtx.framesInFlight = renderCfg.framesInFlightCount;
 	for( u64 vfi = 0; vfi < rndCtx.framesInFlight; ++vfi )
 	{
-		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( *vk.pDc );
+		rndCtx.vrtFrames[ vfi ] = VkCreateVirtualFrame( *rndCtx.pDevice );
 	}
-	VkSemaphoreTypeCreateInfo timelineInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = rndCtx.vFrameIdx = 0,
-	};
-	VkSemaphoreCreateInfo timelineSemaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &timelineInfo };
-	VK_CHECK( vkCreateSemaphore( vk.pDc->device, &timelineSemaInfo, 0, &rndCtx.timelineSema ) );
 
-	vk.descManager = VkMakeDescriptorManager( vk.pDc->device, vk.pDc->gpuProps );
-	vk.globalLayout = VkMakeGlobalPipelineLayout( vk.pDc->device, vk.pDc->gpuProps, vk.descManager );
-	VkDbgNameObj( vk.globalLayout, vk.pDc->device, "Vk_Pipeline_Layout_Global" );
+	rndCtx.frameTimeline = rndCtx.pDevice->CreateGpuTimeline( 0 );
+
+	rndCtx.descManager = VkMakeDescriptorManager( rndCtx.pDevice->device, rndCtx.pDevice->gpuProps );
+	rndCtx.globalLayout = VkMakeGlobalPipelineLayout( rndCtx.pDevice->device, rndCtx.pDevice->gpuProps, rndCtx.descManager );
+	VkDbgNameObj( rndCtx.globalLayout, rndCtx.pDevice->device, "Vk_Pipeline_Layout_Global" );
 
 	{
-		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", vk.pDc->device );
+		vk_shader vertZPre = VkLoadShader( "Shaders/v_z_prepass.vert.spv", rndCtx.pDevice->device );
 		rndCtx.gfxZPrepass = VkMakeGfxPipeline( 
-			vk.pDc->device, 0, vk.globalLayout, vertZPre.module, 0, 0, 0, renderCfg.desiredDepthFormat, {} );
+			rndCtx.pDevice->device, 0, rndCtx.globalLayout, vertZPre.module, 0, 0, 0, renderCfg.desiredDepthFormat, {} );
 
-		vkDestroyShaderModule( vk.pDc->device, vertZPre.module, 0 );
+		vkDestroyShaderModule( rndCtx.pDevice->device, vertZPre.module, 0 );
 	}
 	//{
-	//	vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", vk.pDc->device );
-	//	vk_shader normalCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", vk.pDc->device );
+	//	vk_shader vertBox = VkLoadShader( "Shaders/box_meshlet_draw.vert.spv", rndCtx.pDevice->device );
+	//	vk_shader normalCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", rndCtx.pDevice->device );
 	//
 	//	vk_gfx_pipeline_state lineDrawPipelineState = {
 	//		.polyMode = VK_POLYGON_MODE_LINE,
@@ -1657,55 +1653,55 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 	//	};
 	//
 	//	dbgDrawProgram = VkMakePipelineProgram( 
-	//		vk.pDc->device, vk.pDc->gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol }, vk.descManager.setLayout );
+	//		rndCtx.pDevice->device, rndCtx.pDevice->gpuProps, VK_PIPELINE_BIND_POINT_GRAPHICS, { &vertBox, &normalCol }, rndCtx..descManager.setLayout );
 	//	gfxDrawIndirDbg = VkMakeGfxPipeline(
-	//		vk.pDc->device, 0, dbgDrawProgram.pipeLayout, 
+	//		rndCtx.pDevice->device, 0, dbgDrawProgram.pipeLayout, 
 	//		vertBox.module, normalCol.module, 
 	//		&renderCfg.desiredColorFormat, 1, VK_FORMAT_UNDEFINED,
 	//		lineDrawPipelineState );
 	//
-	//	vkDestroyShaderModule( vk.pDc->device, vertBox.module, 0 );
-	//	vkDestroyShaderModule( vk.pDc->device, normalCol.module, 0 );
+	//	vkDestroyShaderModule( rndCtx.pDevice->device, vertBox.module, 0 );
+	//	vkDestroyShaderModule( rndCtx.pDevice->device, normalCol.module, 0 );
 	//}
-	rndCtx.cullingCtx.Init( *vk.pDc, vk.globalLayout );
-	rndCtx.tonemappingCtx.Init( *vk.pDc, vk.globalLayout, vk.descManager );
+	rndCtx.cullingCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout );
+	rndCtx.tonemappingCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout, rndCtx.descManager );
 	{
-		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", vk.pDc->device );
-		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", vk.pDc->device );
+		vk_shader vtxMerged = VkLoadShader( "Shaders/vtx_merged.vert.spv", rndCtx.pDevice->device );
+		vk_shader fragPBR = VkLoadShader( "Shaders/pbr.frag.spv", rndCtx.pDevice->device );
 		vk_gfx_pipeline_state opaqueState = {};
 
 		rndCtx.gfxMergedPipeline = VkMakeGfxPipeline(
-			vk.pDc->device, 0, vk.globalLayout, 
+			rndCtx.pDevice->device, 0, rndCtx.globalLayout, 
 			vtxMerged.module, fragPBR.module, 
 			&renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, 
 			opaqueState );
-		VkDbgNameObj( rndCtx.gfxMergedPipeline, vk.pDc->device, "Pipeline_Gfx_Merged" );
+		VkDbgNameObj( rndCtx.gfxMergedPipeline, rndCtx.pDevice->device, "Pipeline_Gfx_Merged" );
 
-		vkDestroyShaderModule( vk.pDc->device, vtxMerged.module, 0 );
-		vkDestroyShaderModule( vk.pDc->device, fragPBR.module, 0 );
+		vkDestroyShaderModule( rndCtx.pDevice->device, vtxMerged.module, 0 );
+		vkDestroyShaderModule( rndCtx.pDevice->device, fragPBR.module, 0 );
 	}
 	//{
-	//	vk_shader vertMeshlet = VkLoadShader( "Shaders/meshlet.vert.spv", vk.pDc->device );
-	//	vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", vk.pDc->device );
+	//	vk_shader vertMeshlet = VkLoadShader( "Shaders/meshlet.vert.spv", rndCtx.pDevice->device );
+	//	vk_shader fragCol = VkLoadShader( "Shaders/f_pass_col.frag.spv", rndCtx.pDevice->device );
 	//	rndCtx.gfxMeshletPipeline = VkMakeGfxPipeline(
-	//		vk.pDc->device, 0, vk.globalLayout, vertMeshlet.module, fragCol.module, 
+	//		rndCtx.pDevice->device, 0, rndCtx.globalLayout, vertMeshlet.module, fragCol.module, 
 	//		&renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, {} );
-	//	VkDbgNameObj( rndCtx.gfxMeshletPipeline, vk.pDc->device, "Pipeline_Gfx_MeshletDraw" );
+	//	VkDbgNameObj( rndCtx.gfxMeshletPipeline, rndCtx.pDevice->device, "Pipeline_Gfx_MeshletDraw" );
 	//
-	//	vkDestroyShaderModule( vk.pDc->device, vertMeshlet.module, 0 );
-	//	vkDestroyShaderModule( vk.pDc->device, fragCol.module, 0 );
+	//	vkDestroyShaderModule( rndCtx.pDevice->device, vertMeshlet.module, 0 );
+	//	vkDestroyShaderModule( rndCtx.pDevice->device, fragCol.module, 0 );
 	//}
 	{
-		vk_shader2 downsampler = VkLoadShader2( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv", vk.pDc->device );
+		vk_shader2 downsampler = VkLoadShader2( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv", rndCtx.pDevice->device );
 		rndCtx.compHiZPipeline = VkMakeComputePipeline( 
-			vk.pDc->device, 0, vk.globalLayout, downsampler.shaderModule, {}, 
-			vk.pDc->waveSize, downsampler.entryPoint, "Pipeline_Comp_HiZ" );
+			rndCtx.pDevice->device, 0, rndCtx.globalLayout, downsampler.shaderModule, {}, 
+			rndCtx.pDevice->waveSize, downsampler.entryPoint, "Pipeline_Comp_HiZ" );
 	}
 
-	//rndCtx.dbgCtx.Init( *vk.pDc, vk.globalLayout, renderCfg );
-	//rndCtx.dbgCtx.InitData( *vk.pDc, 1 * KB, 1 * KB );
+	//rndCtx.dbgCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout, renderCfg );
+	//rndCtx.dbgCtx.InitData( *rndCtx.pDevice, 1 * KB, 1 * KB );
 
-	//rndCtx.imguiCtx.Init( *vk.pDc );
+	//rndCtx.imguiCtx.Init( *rndCtx.pDevice );
 }
 
 inline static void
@@ -1984,7 +1980,7 @@ void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descri
 	for( u64 scImgIdx = 0; scImgIdx < dc.sc.imgCount; ++scImgIdx )
 	{
 		rndCtx.swapchainUavs[ scImgIdx ] = VkAllocDescriptorIdx( 
-			descManager, vk_descriptor_info{ dc.sc.imgViews[ scImgIdx ], VK_IMAGE_LAYOUT_GENERAL } );
+			descManager, vk_descriptor_info{ dc.sc.imgs[ scImgIdx ].view, VK_IMAGE_LAYOUT_GENERAL } );
 	}
 }
 
@@ -2132,11 +2128,11 @@ struct renderer_geometry
 			const auto& mOccRoughMetal = pTextures[ m.occRoughMetalIdx + texOffset ];
 
 			refM.baseColIdx = VkAllocDescriptorIdx( 
-				vk.descManager, vk_descriptor_info{ mBaseCol->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+				rndCtx.descManager, vk_descriptor_info{ mBaseCol->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 			refM.normalMapIdx = VkAllocDescriptorIdx( 
-				vk.descManager, vk_descriptor_info{ mNormalMap->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+				rndCtx.descManager, vk_descriptor_info{ mNormalMap->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 			refM.occRoughMetalIdx = VkAllocDescriptorIdx( 
-				vk.descManager, vk_descriptor_info{ mOccRoughMetal->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL });
+				rndCtx.descManager, vk_descriptor_info{ mOccRoughMetal->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL });
 		}
 		constexpr VkBufferUsageFlags usg =
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -2360,44 +2356,40 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	const u64 currentFrameBufferedIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 	virtual_frame& thisVFrame = rndCtx.vrtFrames[ currentFrameBufferedIdx ];
 
-	VkSemaphoreWaitInfo waitInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-		.semaphoreCount = 1,
-		.pSemaphores = &rndCtx.timelineSema,
-		.pValues = &currentFrameIdx,
-	};
-	VK_CHECK( VK_INTERNAL_ERROR( vkWaitSemaphores( vk.pDc->device, &waitInfo, UINT64_MAX ) > VK_TIMEOUT ) );
+	VkResult timelineWaitResult = rndCtx.pDevice->TryWaitOnTimelineFor( 
+		rndCtx.frameTimeline, rndCtx.framesInFlight, UINT64_MAX );
+	VK_CHECK( VK_INTERNAL_ERROR( timelineWaitResult > VK_TIMEOUT ) );
 
-	VK_CHECK( vkResetCommandPool( vk.pDc->device, thisVFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+	rndCtx.pDevice->ResetCmdPool( thisVFrame.cmdPool );
 
 	// TODO: 
 	if( currentFrameIdx < VK_MAX_FRAMES_IN_FLIGHT_ALLOWED )
 	{
-		thisVFrame.pViewData = std::make_shared<vk_buffer>( vk.pDc->CreateBuffer( {
+		thisVFrame.pViewData = std::make_shared<vk_buffer>( rndCtx.pDevice->CreateBuffer( {
 			.name = "Buff_VirtualFrame_ViewBuff",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 			.elemCount = std::size( frameData.views ),
 			.stride = sizeof( view_data ),
 			.usage = buffer_usage::HOST_VISIBLE
 																				  } ) );
-		thisVFrame.viewDataIdx = VkAllocDescriptorIdx( vk.descManager, vk_descriptor_info{ *thisVFrame.pViewData } );
+		thisVFrame.viewDataIdx = VkAllocDescriptorIdx( rndCtx.descManager, vk_descriptor_info{ *thisVFrame.pViewData } );
 	}
 	assert( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
 	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, vk.globalLayout, vk.descManager.set };
+	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, rndCtx.globalLayout, rndCtx.descManager.set };
 
 	std::vector<vk_descriptor_write> vkDescUpdateCache;
 	static bool initResources = false;
 	if( !initResources )
 	{
-		VkInitGlobalResources( *vk.pDc, rndCtx, vk.descManager );
+		VkInitGlobalResources( *rndCtx.pDevice, rndCtx, rndCtx.descManager );
 
 		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
 
 		u32 instCount = 1; instDescBuff.sizeInBytes / sizeof( instance_desc );
 		u32 mletCount = 1; meshletBuff.sizeInBytes / sizeof( meshlet );
-		rndCtx.cullingCtx.InitSceneDependentData( *vk.pDc, instCount, mletCount * instCount );
+		rndCtx.cullingCtx.InitSceneDependentData( *rndCtx.pDevice, instCount, mletCount * instCount );
 
 		//rndCtx.dbgCtx.UploadDebugGeometry();
 
@@ -2427,7 +2419,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		initResources = true;
 	}
 
-	VkDescriptorManagerFlushUpdates( vk.descManager, vk.pDc->device );
+	VkDescriptorManagerFlushUpdates( rndCtx.descManager, rndCtx.pDevice->device );
 
 	const vk_image& depthTarget = *rndCtx.pDepthTarget;
 	const vk_image& depthPyramid = *rndCtx.pHiZTarget;
@@ -2438,8 +2430,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	auto colorWrite = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
 	auto colorRead = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 
-	VkViewport viewport = VkGetSwapchainViewport( vk.pDc->sc );
-	VkRect2D scissor = VkGetSwapchianScissor( vk.pDc->sc );
+	VkViewport viewport = VkGetSwapchainViewport( rndCtx.pDevice->sc );
+	VkRect2D scissor = VkGetSwapchianScissor( rndCtx.pDevice->sc );
 
 	u32 instCount = instDescBuff.sizeInBytes / sizeof( instance_desc );
 	u32 mletCount = meshletBuff.sizeInBytes / sizeof( meshlet );
@@ -2453,7 +2445,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	DirectX::XMUINT2 colorTargetSize = { colorTarget.width, colorTarget.height };
 
 	VkResetGpuTimer( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
-	u32 imgIdx;
+
+	u32 scImgIdx = rndCtx.pDevice->AcquireNextSwapchainImageBlocking( thisVFrame.canGetImgSema );
+	const vk_swapchain_image& scImg = rndCtx.pDevice->sc.imgs[ scImgIdx ];
+
 	{
 		vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
 		rndCtx.cullingCtx.Execute( thisFrameCmdBuffer, depthPyramid, instCount, thisVFrame.viewDataIdx, 
@@ -2531,7 +2526,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			rndCtx.hizSrv,
 			rndCtx.hizMipUavs,
 			rndCtx.quadMinSamplerIdx,
-			vk.globalLayout,
+			rndCtx.globalLayout,
 			{32,32,1}
 		);
 
@@ -2580,7 +2575,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			rndCtx.hizSrv,
 			rndCtx.hizMipUavs,
 			rndCtx.quadMinSamplerIdx,
-			vk.globalLayout,
+			rndCtx.globalLayout,
 			{32,32,1}
 		);
 
@@ -2647,11 +2642,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rndCtx.tonemappingCtx.AverageLuminancePass(
 			thisFrameCmdBuffer, frameData.elapsedSeconds, rndCtx.colSrv, colorTargetSize );
 
-		imgIdx = vk.pDc->AcquireNextSwapchainImage( thisVFrame.canGetImgSema );
-
 		// NOTE: we need exec dependency from acquireImgKHR ( col out + compute shader ) to compute shader
 		VkImageMemoryBarrier2 scWriteBarrier[] = { 
-			VkMakeImageBarrier2( vk.pDc->sc.imgs[ imgIdx ],
+			VkMakeImageBarrier2( scImg.hndl,
 								 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 								 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 								 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_ASPECT_COLOR_BIT ) 
@@ -2666,9 +2659,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		thisFrameCmdBuffer.CmdPipelineBarriers( avgLumReadBarrier, scWriteBarrier );
 
 
-		VK_CHECK( VK_INTERNAL_ERROR( ( colorTarget.width != vk.pDc->sc.width ) || ( colorTarget.height != vk.pDc->sc.height ) ) );
+		VK_CHECK( VK_INTERNAL_ERROR( 
+			( colorTarget.width != rndCtx.pDevice->sc.width ) || 
+			( colorTarget.height != rndCtx.pDevice->sc.height ) ) );
 		rndCtx.tonemappingCtx.TonemappingGammaPass( 
-			thisFrameCmdBuffer, rndCtx.colSrv, rndCtx.swapchainUavs[ imgIdx ], colorTargetSize );
+			thisFrameCmdBuffer, rndCtx.colSrv, rndCtx.swapchainUavs[ scImgIdx ], colorTargetSize );
 
 		VkImageMemoryBarrier2 compositionEndBarriers[] = {
 			VkMakeImageBarrier2( colorTarget.hndl,
@@ -2678,26 +2673,26 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 								 VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
 								 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
 								 VK_IMAGE_ASPECT_COLOR_BIT ),
-								 VkMakeImageBarrier2( vk.pDc->sc.imgs[ imgIdx ],
-													  VK_ACCESS_2_SHADER_WRITE_BIT,
-													  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-													  VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-													  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-													  VK_IMAGE_LAYOUT_GENERAL,
-													  VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-													  VK_IMAGE_ASPECT_COLOR_BIT ) };
+			VkMakeImageBarrier2( scImg.hndl,
+							  VK_ACCESS_2_SHADER_WRITE_BIT,
+							  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+							  VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+							  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+							  VK_IMAGE_LAYOUT_GENERAL,
+							  VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+							  VK_IMAGE_ASPECT_COLOR_BIT ) };
 
 		thisFrameCmdBuffer.CmdPipelineImageBarriers( compositionEndBarriers );
 
-		VkViewport uiViewport = { 0, 0, ( float ) vk.pDc->sc.width, ( float ) vk.pDc->sc.height, 0, 1.0f };
+		VkViewport uiViewport = { 0, 0, ( float ) rndCtx.pDevice->sc.width, ( float ) rndCtx.pDevice->sc.height, 0, 1.0f };
 		vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &uiViewport );
 
 		auto swapchainUIRW = VkMakeAttachemntInfo( 
-			vk.pDc->sc.imgViews[ imgIdx ], VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
+			scImg.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {});
 		//rndCtx.imguiCtx.DrawUiPass( thisVFrame.cmdBuff, &swapchainUIRW, 0, scissor, currentFrameIdx );
 
 		VkImageMemoryBarrier2 presentWaitBarrier[] = { 
-			VkMakeImageBarrier2( vk.pDc->sc.imgs[ imgIdx ],
+			VkMakeImageBarrier2( scImg.hndl,
 								 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 								 0, 0,
 								 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_ASPECT_COLOR_BIT ) };
@@ -2708,34 +2703,51 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
 	thisFrameCmdBuffer.CmdEndCmbBuffer();
 
+	// NOTE: with all these cool stage masks we can only let the gpu run until it need the sc image THEN wait
+	VkSemaphoreSubmitInfo waitScImgAcquire = {
+		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore = thisVFrame.canGetImgSema,
+		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+	};
 
-	VkSemaphore waitSemas[] = { thisVFrame.canGetImgSema };
-	VkSemaphore signalSemas[] = { vk.pDc->sc.canPresentSemas[ imgIdx ], rndCtx.timelineSema };
-	u64 signalValues[] = { 0, rndCtx.vFrameIdx }; // NOTE: this is the next frame val
-	VkPipelineStageFlags waitDstStageMsk = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;// VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+	VkSemaphoreSubmitInfo signalRenderFinished = {
+		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore = scImg.canPresentSema, 
+		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+	};
 
-	vk.pDc->gfxQueue.QueueSubmit( waitSemas, thisFrameCmdBuffer.hndl, signalSemas, signalValues, waitDstStageMsk );
+	VkSemaphoreSubmitInfo signalTimeline = {
+		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore = rndCtx.frameTimeline.sema,
+		.value     = rndCtx.vFrameIdx,
+		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+	};
+	rndCtx.frameTimeline.submitionCount++;
 
-	vk.pDc->QueuePresent( vk.pDc->gfxQueue, imgIdx );
+	VkSemaphoreSubmitInfo waits[] = { waitScImgAcquire };
+	VkSemaphoreSubmitInfo signals[] = { signalRenderFinished, signalTimeline };
+	rndCtx.pDevice->gfxQueue.QueueSubmit( waits, signals, thisFrameCmdBuffer.hndl );
+
+	rndCtx.pDevice->QueuePresent( rndCtx.pDevice->gfxQueue, scImgIdx );
 }
 
 void VkBackendKill()
 {
 	// NOTE: SHOULDN'T need to check if( VkObj ). Can't create -> app fail
-	assert( vk.pDc->device );
-	vkDeviceWaitIdle( vk.pDc->device );
+	assert( rndCtx.pDevice->device );
+	vkDeviceWaitIdle( rndCtx.pDevice->device );
 	//for( auto& queued : deviceGlobalDeletionQueue ) queued();
 	//deviceGlobalDeletionQueue.clear();
 
 
-	vkDestroyDevice( vk.pDc->device, 0 );
+	vkDestroyDevice( rndCtx.pDevice->device, 0 );
 #ifdef _VK_DEBUG_
-	vkDestroyDebugUtilsMessengerEXT( vk.inst.hndl, vk.inst.dbgMsg, 0 );
+	vkDestroyDebugUtilsMessengerEXT( rndCtx.inst.hndl, rndCtx.inst.dbgMsg, 0 );
 #endif
-	vkDestroySurfaceKHR( vk.inst.hndl, vk.surf, 0 );
-	vkDestroyInstance( vk.inst.hndl, 0 );
+	vkDestroySurfaceKHR( rndCtx.inst.hndl, rndCtx.surf, 0 );
+	vkDestroyInstance( rndCtx.inst.hndl, 0 );
 
-	SysDllUnload( vk.inst.dll );
+	SysDllUnload( rndCtx.inst.dll );
 }
 
 #undef HTVK_NO_SAMPLER_REDUCTION

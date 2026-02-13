@@ -41,32 +41,28 @@ struct vk_queue
 	VkQueueFlags familyFlags;
 	bool canPresent;
 
-	// NOTE: queue submit has implicit host sync for trivial stuff, so in theroy we shouldn't worry about memcpy
-	void QueueSubmit( 
-		std::span<VkSemaphore> waitSemas,
-		VkCommandBuffer cmdBuff,
-		std::span<VkSemaphore> signalSemas,
-		std::span<u64> signalValues,
-		VkPipelineStageFlags waitDstStageMsk 
+	// NOTE: queue submit has implicit host sync for trivial stuff, 
+	// so in theroy we shouldn't worry about memcpy to HOST_VISIBLE | DEVICE_LOCAL
+	inline void QueueSubmit( 
+		std::span<VkSemaphoreSubmitInfo> waits,
+		std::span<VkSemaphoreSubmitInfo> signals,
+		VkCommandBuffer cmdBuff
 	) {
-		VkTimelineSemaphoreSubmitInfo timelineInfo = { 
-			.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-			.signalSemaphoreValueCount = (u32) std::size( signalValues ),
-			.pSignalSemaphoreValues = std::data( signalValues ),
+		VkCommandBufferSubmitInfo cmdInfo = {
+			.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+			.commandBuffer = cmdBuff,
 		};
 
-		VkSubmitInfo submitInfo = { 
-			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-			.pNext = &timelineInfo,
-			.waitSemaphoreCount = (u32) std::size( waitSemas ),
-			.pWaitSemaphores = std::data( waitSemas ),
-			.pWaitDstStageMask = &waitDstStageMsk,
-			.commandBufferCount = 1,
-			.pCommandBuffers = &cmdBuff,
-			.signalSemaphoreCount = (u32) std::size( signalSemas ),
-			.pSignalSemaphores = std::data( signalSemas ),
+		VkSubmitInfo2 submitInfo = { 
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+			.waitSemaphoreInfoCount = (u32) std::size( waits ),
+			.pWaitSemaphoreInfos = std::data( waits ),
+			.commandBufferInfoCount = 1,
+			.pCommandBufferInfos = &cmdInfo,
+			.signalSemaphoreInfoCount = (u32) std::size( signals ),
+			.pSignalSemaphoreInfos = std::data( signals ),
 		};
-		VK_CHECK( vkQueueSubmit( hndl, 1, &submitInfo, 0 ) );
+		VK_CHECK( vkQueueSubmit2( hndl, 1, &submitInfo, VK_NULL_HANDLE ) );
 	}
 };
 
@@ -128,6 +124,12 @@ vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex, VkQueueFlags de
 	};
 }
 
+struct vk_timeline
+{
+	VkSemaphore     sema; // NOTE: timeline sema
+	u64             submitionCount;
+};
+
 struct vk_device_ctx
 {
 	vk_swapchain    sc;
@@ -146,6 +148,47 @@ struct vk_device_ctx
 	vk_buffer CreateBuffer( const buffer_info& buffInfo );
 	vk_image CreateImage( const image_info& imgInfo );
 
+	inline vk_timeline CreateGpuTimeline( u64 intialValue )
+	{
+		VkSemaphoreTypeCreateInfo timelineInfo = { 
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+			.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+			.initialValue = intialValue,
+		};
+		VkSemaphoreCreateInfo timelineSemaInfo = { 
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
+			.pNext = &timelineInfo 
+		};
+
+		VkSemaphore timelineSema;
+		VK_CHECK( vkCreateSemaphore( device, &timelineSemaInfo, 0, &timelineSema ) );
+
+		return { .sema = timelineSema, .submitionCount = 0 };
+	}
+	// NOTE: passing UINT64_MAX will block forever
+	inline VkResult TryWaitOnTimelineFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime )
+	{
+		u64 signalsCount = 0;
+		VK_CHECK( vkGetSemaphoreCounterValue( device, timeline.sema, &signalsCount ) );
+
+		if( timeline.submitionCount - signalsCount >= maxDiffAllowed )
+		{
+			u64 targetCount = timeline.submitionCount;
+			VkSemaphoreWaitInfo waitInfo = { 
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+				.semaphoreCount = 1,
+				.pSemaphores = &timeline.sema,
+				.pValues = &targetCount,
+			};
+
+			return vkWaitSemaphores( device, &waitInfo, waitTime );
+		}
+		return VK_SUCCESS;
+	}
+	inline void ResetCmdPool( VkCommandPool cmdPool )
+	{
+		VK_CHECK( vkResetCommandPool( device, cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+	}
 	inline void TransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
 	{
 		VK_CHECK( vkTransitionImageLayout( device, transitionCount, transitions ) );
@@ -175,7 +218,7 @@ struct vk_device_ctx
 
 		VK_CHECK( vkCopyMemoryToImage( device, &copyMemInfo ) );
 	}
-	inline u32 AcquireNextSwapchainImage( VkSemaphore virtualFrameSema ) const
+	inline u32 AcquireNextSwapchainImageBlocking( VkSemaphore virtualFrameSema ) const
 	{
 		u32 imgIdx;
 		VK_CHECK( vkAcquireNextImageKHR( device, sc.swapchain, UINT64_MAX, virtualFrameSema, 0, &imgIdx ) );
@@ -186,7 +229,7 @@ struct vk_device_ctx
 		VkPresentInfoKHR presentInfo = { 
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 			.waitSemaphoreCount = 1,
-			.pWaitSemaphores = &sc.canPresentSemas[ imgIdx ],
+			.pWaitSemaphores = &sc.imgs[ imgIdx ].canPresentSema,
 			.swapchainCount = 1,
 			.pSwapchains = &sc.swapchain,
 			.pImageIndices = &imgIdx

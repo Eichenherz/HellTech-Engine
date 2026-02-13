@@ -6,6 +6,9 @@
 #define __VK
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
+
+#include <array>
+
 #include "vk_procs.h"
 
 #include "vk_error.h"
@@ -13,16 +16,21 @@
 
 constexpr u32 VK_SWAPCHAIN_MAX_IMG_ALLOWED = 3;
 
+struct vk_swapchain_image
+{
+	VkImage			hndl;
+	VkImageView		view;
+	VkSemaphore		canPresentSema;
+};
+
 struct vk_swapchain
 {
-	VkSwapchainKHR	swapchain;
-	VkImage			imgs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
-	VkImageView		imgViews[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
-	VkSemaphore		canPresentSemas[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
-	VkFormat		imgFormat;
-	u16				width;
-	u16				height;
-	u8				imgCount;
+	std::array<vk_swapchain_image, VK_SWAPCHAIN_MAX_IMG_ALLOWED> imgs;
+	VkSwapchainKHR		swapchain;
+	VkFormat			imgFormat;
+	u16					width;
+	u16					height;
+	u8					imgCount;
 };
 
 // TODO: more params ??
@@ -48,7 +56,12 @@ VkMakeSwapchain(
 ) {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkPhysicalDevice, vkSurf, &surfaceCaps ) );
-	assert( surfaceCaps.maxImageArrayLayers >= 1 );
+	HT_ASSERT( surfaceCaps.maxImageArrayLayers >= 1 );
+
+	u32 scImgCount = numImages;
+	HT_ASSERT( ( scImgCount > surfaceCaps.minImageCount ) && ( scImgCount < surfaceCaps.maxImageCount ) );
+	HT_ASSERT( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
+			   ( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
 
 	VkCompositeAlphaFlagBitsKHR surfaceComposite =
 		( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR )
@@ -74,7 +87,7 @@ VkMakeSwapchain(
 				break;
 			}
 		}
-		VK_CHECK( VK_INTERNAL_ERROR( !scFormatAndColSpace.format ) );
+		HT_ASSERT( scFormatAndColSpace.format );
 	}
 
 	VkPresentModeKHR presentMode = VkPresentModeKHR( 0 );
@@ -94,18 +107,12 @@ VkMakeSwapchain(
 				break;
 			}
 		}
-		VK_CHECK( VK_INTERNAL_ERROR( !presentMode ) );
+		HT_ASSERT( presentMode );
 	}
-
-
-	u32 scImgCount = numImages;
-	assert( ( scImgCount > surfaceCaps.minImageCount ) && ( scImgCount < surfaceCaps.maxImageCount ) );
-	assert( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
-			( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
 
 	VkImageUsageFlags scImgUsage =
 		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-	VK_CHECK( VK_INTERNAL_ERROR( ( surfaceCaps.supportedUsageFlags & scImgUsage ) != scImgUsage ) );
+	HT_ASSERT( ( surfaceCaps.supportedUsageFlags & scImgUsage ) == scImgUsage );
 
 
 	VkSwapchainCreateInfoKHR scInfo = { 
@@ -132,31 +139,54 @@ VkMakeSwapchain(
 		vkPhysicalDevice, scInfo.imageFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, scInfo.imageUsage,
 		scInfo.flags, &scImageProps ) );
 
-	vk_swapchain sc = {};
-	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &sc.swapchain ) );
+	VkSwapchainKHR swapchain;
+	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &swapchain ) );
 
 	u32 scImgsNum = 0;
-	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, sc.swapchain, &scImgsNum, 0 ) );
-	VK_CHECK( VK_INTERNAL_ERROR( !( scImgsNum == scInfo.minImageCount ) ) );
-	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, sc.swapchain, &scImgsNum, sc.imgs ) );
+	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, swapchain, &scImgsNum, 0 ) ); 
+	HT_ASSERT( scImgsNum == scInfo.minImageCount );
+
+	std::vector<VkImage> vkScImgs( scImgsNum );
+	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, swapchain, &scImgsNum, std::data( vkScImgs ) ) );
 
 	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( scInfo.imageFormat );
-	char name[ 32 ];
-	for( u64 i = 0; i < scImgsNum; ++i )
+
+	// TODO: where to hardcode this
+	constexpr u64 scImageCount = sizeof( vk_swapchain::imgs ) / sizeof( vk_swapchain_image );
+	HT_ASSERT( scImgsNum == scImageCount );
+	std::array<vk_swapchain_image, scImageCount> scImgs;
+
+	for( u64 scii = 0; scii < scImgsNum; ++scii )
 	{
-		snprintf( name, sizeof( name ), "Img_Swapchain%d", ( u32 ) i );
-		VkDbgNameObj( sc.imgs[ i ], vkDevice, name );
-		sc.imgViews[ i ] = VkMakeImgView( vkDevice, sc.imgs[ i ], scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
-		VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &sc.canPresentSemas[ i ] ) );
+		VkImage img = vkScImgs[ scii ];
+
+		// NOTE: yeah yeah, multiple allocs, this is fine for init !
+		std::string name = std::format( "Img_Swapchain{}", scii );
+		VkDbgNameObj( img, vkDevice, name.c_str() );
+
+		VkImageView view = VkMakeImgView( vkDevice, img, scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
+
+		VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		VkSemaphore canPresentSema;
+		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &canPresentSema ) );
+
+		scImgs[ scii ] = {
+			.hndl = img,
+			.view = view,
+			.canPresentSema = canPresentSema
+		};
 	}
+	
+	HT_ASSERT( ( scInfo.imageExtent.width < u32( u16( -1 ) ) ) && ( scInfo.imageExtent.height < u32( u16( -1 ) ) ) );
 
-	sc.width = scInfo.imageExtent.width;
-	sc.height = scInfo.imageExtent.height;
-	sc.imgCount = scInfo.minImageCount;
-	sc.imgFormat = scInfo.imageFormat;
-
-	return sc;
+	return {
+		.imgs = scImgs,
+		.swapchain = swapchain,
+		.imgFormat = scInfo.imageFormat,
+		.width = ( u16 ) scInfo.imageExtent.width,
+		.height = ( u16 ) scInfo.imageExtent.height,
+		.imgCount = ( u8 ) scInfo.minImageCount
+	};
 }
 
 inline VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
