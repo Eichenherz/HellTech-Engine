@@ -4,8 +4,6 @@
 
 #include <vector>
 
-#include "ht_error.h"
-
 #include "ht_utils.h"
 //////////////////////////////////////
 // MACROS

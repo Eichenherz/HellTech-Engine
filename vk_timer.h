@@ -29,7 +29,7 @@ struct vk_time_section
 	}
 };
 
-// TODO: redesign
+// TODO: rebuild
 // NOTE: for timestamps we need 2 queries 
 struct vk_gpu_timer
 {

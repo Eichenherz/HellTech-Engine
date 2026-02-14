@@ -327,6 +327,7 @@
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\tools.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\types.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp" />
+    <ClInclude Include="vector_w_dead_entries.h" />
     <ClInclude Include="vk_descriptor.h" />
     <ClInclude Include="vk_device.h" />
     <ClInclude Include="vk_error.h" />

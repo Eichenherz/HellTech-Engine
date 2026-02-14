@@ -61,24 +61,12 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 	default: return "VK_UNKNOWN_INTERNAL_ERROR";
 	}
 }
-inline VkResult VkResFromStatement( bool statement )
-{
-	return !statement ? VK_SUCCESS : VkResult( int( 0x8FFFFFFF ) );
-}
-// TODO: deprecate
-#define VK_INTERNAL_ERROR( vk ) VkResFromStatement( bool( vk ) )
 
-#define VK_CHECK( vk )																\
-do{																					\
-	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";				\
-	VkResult res = vk;																\
-	if( res ){																		\
-		char dbgStr[1024] = {};														\
-		strcat_s( dbgStr, sizeof( dbgStr ), DEV_ERR_STR );							\
-		strcat_s( dbgStr, sizeof( dbgStr ), std::data( VkResErrorString( res ) ) );	\
-		SysErrMsgBox( dbgStr );														\
-		abort();																	\
-	}																				\
+#define VK_CHECK( vk )																	\
+do{																						\
+	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR;							\
+	VkResult res = vk;																	\
+	if( res ) PrintErrAndDie( "{} \nERR: {}", DEV_ERR_STR, VkResErrorString( res ) );	\
 }while( 0 )	
 
 template<typename VKH>
@@ -136,7 +124,6 @@ inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
 	VK_CHECK( vkSetDebugUtilsObjectNameEXT( vkDevice, &nameInfo ) );
 }
 
-
 inline VKAPI_ATTR VkBool32 VKAPI_CALL
 VkDbgUtilsMsgCallback(
 	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
@@ -155,7 +142,7 @@ VkDbgUtilsMsgCallback(
 		return VK_FALSE;
 	}
 
-	auto formattedMsg = std::format( "{}\n{}\n", callbackData->pMessageIdName, callbackData->pMessage );
+	std::string formattedMsg = std::format( "{}\n{}\n", callbackData->pMessageIdName, callbackData->pMessage );
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
 	{
 		std::cout << ">>> VK_WARNING <<<\n" << formattedMsg << "\n";
@@ -164,7 +151,7 @@ VkDbgUtilsMsgCallback(
 	{
 		//const char* pVkObjName = callbackData->pObjects ? callbackData->pObjects[ 0 ].pObjectName : "";
 		std::cout << ">>> VK_ERROR <<<\n" << formattedMsg << "\n";// << pVkObjName << "\n";
-		abort();
+		std::abort();
 	} 
 
 	return VK_FALSE;

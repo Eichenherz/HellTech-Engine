@@ -17,7 +17,9 @@
 #include "vk_pso.h"
 #include "core_types.h"
 #include "sys_os_api.h"
+
 #include <type_traits>
+#include <functional>
 
 // TODO:
 struct renderer_config

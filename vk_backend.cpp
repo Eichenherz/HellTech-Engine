@@ -67,7 +67,7 @@ static void VkMakeCreateQueueInfoWithProperties(
 			{
 				VkBool32 present = 0;
 				vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qIdx, vkSurf, &present );
-				VK_CHECK( VK_INTERNAL_ERROR( !present ) );
+				HT_ASSERT( present );
 			}
 			desiredQueueIdx = qIdx;
 			queueFlags = familyFlags;
@@ -75,7 +75,7 @@ static void VkMakeCreateQueueInfoWithProperties(
 		}
 	}
 
-	VK_CHECK( VK_INTERNAL_ERROR( ( desiredQueueIdx == u32( -1 ) ) ) );
+	HT_ASSERT( desiredQueueIdx != u32( -1 ) );
 	VkDeviceQueueCreateInfo createInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 		.queueFamilyIndex = desiredQueueIdx,
@@ -91,7 +91,7 @@ static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex, VkQueueF
 {
 	VkQueue	hndl;
 	vkGetDeviceQueue( vkDevice, queueFamilyIndex, 0, &hndl );
-	VK_CHECK( VK_INTERNAL_ERROR( !hndl ) );
+	HT_ASSERT( hndl );
 
 	return {
 		.hndl = hndl,
@@ -328,11 +328,11 @@ vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, const
 	NEXT_DEVICE:;
 	}
 
-	VK_CHECK( VK_INTERNAL_ERROR( !gpu ) );
+	HT_ASSERT( gpu );
 
 	u32 queueFamNum = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, 0 );
-	VK_CHECK( VK_INTERNAL_ERROR( !queueFamNum ) );
+	HT_ASSERT( queueFamNum );
 	std::vector<VkQueueFamilyProperties> queueFamProps( queueFamNum );
 	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, std::data( queueFamProps ) );
 

@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <assert.h>
 #include <string_view>
 #include <charconv>
 #include <span>
@@ -45,9 +44,6 @@ namespace DXPacked = DirectX::PackedVector;
 //====================CONSTS====================//
 constexpr u64 VK_MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
 
-constexpr u32 NOT_USED_IDX = -1;
-constexpr u32 OBJ_CULL_WORKSIZE = 64;
-constexpr u32 MLET_CULL_WORKSIZE = 256;
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
@@ -142,7 +138,7 @@ inline static vk_instance VkMakeInstance()
 				break;
 			}
 		}
-		VK_CHECK( VK_INTERNAL_ERROR( !foundExt ) );
+		HT_ASSERT( foundExt );
 	};
 
 	u32 layerCount = 0;
@@ -160,16 +156,16 @@ inline static vk_instance VkMakeInstance()
 				break;
 			}
 		}
-		VK_CHECK( VK_INTERNAL_ERROR( !foundLayer ) );
+		HT_ASSERT( foundLayer );
 	}
 
 
 	VkInstance vkInstance = 0;
 	VkDebugUtilsMessengerEXT vkDbgUtilsMsgExt = 0;
 
-	VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+	VkApplicationInfo appInfo = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO };
 	VK_CHECK( vkEnumerateInstanceVersion( &appInfo.apiVersion ) );
-	VK_CHECK( VK_INTERNAL_ERROR( appInfo.apiVersion < VK_API_VERSION_1_4 ) );
+	HT_ASSERT( VK_API_VERSION_1_4 == appInfo.apiVersion );
 
 	VkInstanceCreateInfo instInfo = { 
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -214,7 +210,7 @@ inline static vk_instance VkMakeInstance()
 
 struct virtual_frame
 {
-	vk_gpu_timer gpuTimer;
+	//vk_gpu_timer gpuTimer;
 
 	std::shared_ptr<vk_buffer>		pViewData;
 
@@ -247,24 +243,51 @@ inline virtual_frame VkCreateVirtualFrame( vk_device_ctx& dc )
 	VkSemaphoreCreateInfo semaInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 	VK_CHECK( vkCreateSemaphore( dc.device, &semaInfo, 0, &vrtFrame.canGetImgSema ) );
 
-	vrtFrame.gpuTimer = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
-
-	buffer_info queryBuff = {
-		.name = "Buff_TimestampQueries",
-		.usageFlags = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		.elemCount = vrtFrame.gpuTimer.queryCount,
-		.stride = sizeof( u64 ),
-		.usage = buffer_usage::HOST_VISIBLE
-	};
-	vrtFrame.gpuTimer.resultBuff = dc.CreateBuffer( queryBuff );
+	//vrtFrame.gpuTimer = VkMakeGpuTimer( dc.device, 1, dc.timestampPeriod );
+	//
+	//buffer_info queryBuff = {
+	//	.name = "Buff_TimestampQueries",
+	//	.usageFlags = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+	//	.elemCount = vrtFrame.gpuTimer.queryCount,
+	//	.stride = sizeof( u64 ),
+	//	.usage = buffer_usage::HOST_VISIBLE
+	//};
+	//vrtFrame.gpuTimer.resultBuff = dc.CreateBuffer( queryBuff );
 
 	return vrtFrame;
 }
 
-#include "vk_swapchain.h"
-
 #include "r_data_structs.h"
 
+// NOTE: clear depth to 0 bc we use RevZ
+constexpr VkClearValue DEPTH_CLEAR_VAL = {};
+constexpr VkClearValue RT_CLEAR_VAL = {};
+
+enum render_target_op : u32
+{
+	LOAD = VK_ATTACHMENT_LOAD_OP_LOAD,
+	LOAD_CLEAR = VK_ATTACHMENT_LOAD_OP_CLEAR,
+	STORE = VK_ATTACHMENT_STORE_OP_STORE
+};
+
+// TODO: enforce some clearOp ---> clearVals params correctness ?
+inline static VkRenderingAttachmentInfo VkMakeAttachemntInfo(
+	VkImageView view,
+	VkAttachmentLoadOp       loadOp,
+	VkAttachmentStoreOp      storeOp,
+	VkClearValue             clearValue
+) {
+	return {
+		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+		.imageView = view,
+		.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+		.loadOp = loadOp,
+		.storeOp = storeOp,
+		.clearValue = ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
+	};
+}
+
+// TODO: handle dynamic state  
 struct vk_rendering_info
 {
 	VkViewport                                 viewport;
@@ -273,17 +296,17 @@ struct vk_rendering_info
 	const VkRenderingAttachmentInfo const*     pDepthAttachment;
 };
 
-// TODO: add dynamic state params too 
-struct vk_scoped_dynamic_renderpass
+
+struct vk_scoped_renderpass
 {
 	VkCommandBuffer cmdBuff;
 
-	vk_scoped_dynamic_renderpass( VkCommandBuffer _cmdBuff, const VkRenderingInfo& renderInfo ) 
+	vk_scoped_renderpass( VkCommandBuffer _cmdBuff, const VkRenderingInfo& renderInfo ) 
 	{
 		this->cmdBuff = _cmdBuff;
 		vkCmdBeginRendering( cmdBuff, &renderInfo );
 	}
-	~vk_scoped_dynamic_renderpass()
+	~vk_scoped_renderpass()
 	{
 		vkCmdEndRendering( cmdBuff );
 	}
@@ -315,29 +338,27 @@ struct vk_command_buffer
 		return { hndl, labelName, col };
 	}
 
-	vk_scoped_dynamic_renderpass CmdIssueDynamicScopedRenderPass(
-		const VkRenderingAttachmentInfo* pColInfos,
-		u32 colAttachmentCount,
-		const VkRenderingAttachmentInfo* pDepthInfo,
-		const VkRect2D& renderArea,
-		u32 layerCount = 1
-	) {
-		VkRenderingInfo renderInfo = {
+	vk_scoped_renderpass CmdIssueScopedRenderPass( const vk_rendering_info& renderingInfo ) 
+	{
+		vkCmdSetScissor( hndl, 0, 1, &renderingInfo.scissor );
+		vkCmdSetViewport( hndl, 0, 1, &renderingInfo.viewport );
+
+		VkRenderingInfo vkRenderInfo = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-			.renderArea = renderArea,
-			.layerCount = layerCount,
-			.colorAttachmentCount = colAttachmentCount,
-			.pColorAttachments = pColInfos,
-			.pDepthAttachment = pDepthInfo
+			.renderArea = renderingInfo.scissor,
+			.layerCount = 1,
+			.colorAttachmentCount = ( u32 ) std::size( renderingInfo.colorAttachments ),
+			.pColorAttachments = std::data( renderingInfo.colorAttachments ),
+			.pDepthAttachment = renderingInfo.pDepthAttachment
 		};
-		return { hndl, renderInfo };
+		return { hndl, vkRenderInfo };
 	}
 
 	void CmdBindPipelineAndBindlessDesc( VkPipeline pipeline, const VkPipelineBindPoint bindPoint )
 	{
 		if( bindPoint != currentBindPoint )
 		{
-			vkCmdBindDescriptorSets( hndl, bindPoint, bindlessPipelineLayout,0, 1, &bindlessDescriptorSet, 0, 0 );
+			vkCmdBindDescriptorSets( hndl, bindPoint, bindlessPipelineLayout, 0, 1, &bindlessDescriptorSet, 0, 0 );
 			currentBindPoint = bindPoint;
 		}
 		vkCmdBindPipeline( hndl, bindPoint, pipeline );
@@ -448,11 +469,6 @@ struct vk_command_buffer
 	{
 		VK_CHECK( vkEndCommandBuffer( hndl ) );
 	}
-
-	//~vk_command_buffer()
-	//{
-	//	VK_CHECK( vkEndCommandBuffer( cmdBuff ) );
-	//}
 };
 
 #include "asset_compiler.h"
@@ -466,7 +482,7 @@ inline VkFormat VkGetFormat( texture_format t )
 	case TEXTURE_FORMAT_RBGA8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
 		//case TEXTURE_FORMAT_BC1_RGB_SRGB: return VK_FORMAT_BC1_RGB_SRGB_BLOCK;
 		//case TEXTURE_FORMAT_BC5_UNORM: return VK_FORMAT_BC5_UNORM_BLOCK;
-	case TEXTURE_FORMAT_UNDEFINED: assert( 0 );
+	case TEXTURE_FORMAT_UNDEFINED: HT_ASSERT( 0 );
 	}
 }
 inline VkImageType VkGetImageType( texture_type t )
@@ -475,55 +491,16 @@ inline VkImageType VkGetImageType( texture_type t )
 	{
 	case TEXTURE_TYPE_2D: return VK_IMAGE_TYPE_2D;
 	case TEXTURE_TYPE_3D: return VK_IMAGE_TYPE_3D;
-	default: assert( 0 ); return VK_IMAGE_TYPE_MAX_ENUM;
+	default: HT_ASSERT( 0 ); return VK_IMAGE_TYPE_MAX_ENUM;
 	}
 }
-// TODO: default types ?
-inline VkFilter VkGetFilterTypeFromGltf( gltf_sampler_filter f )
-{
-	switch( f )
-	{
-	case GLTF_SAMPLER_FILTER_NEAREST:
-	case GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_NEAREST:
-	case GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_LINEAR:
-		return VK_FILTER_NEAREST;
 
-	case GLTF_SAMPLER_FILTER_LINEAR:
-	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_NEAREST:
-	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR:
-	default:
-		return VK_FILTER_LINEAR;
-	}
-}
-inline VkSamplerMipmapMode VkGetMipmapTypeFromGltf( gltf_sampler_filter m )
-{
-	switch( m )
-	{
-	case GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_NEAREST:
-	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_NEAREST:
-		return VK_SAMPLER_MIPMAP_MODE_NEAREST;
-
-	case GLTF_SAMPLER_FILTER_NEAREST_MIPMAP_LINEAR:
-	case GLTF_SAMPLER_FILTER_LINEAR_MIPMAP_LINEAR:
-	default:
-		return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-	}
-}
-inline VkSamplerAddressMode VkGetAddressModeFromGltf( gltf_sampler_address_mode a )
-{
-	switch( a )
-	{
-	case GLTF_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-	case GLTF_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-	case GLTF_SAMPLER_ADDRESS_MODE_REPEAT: default: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
-	}
-}
 // TODO: ensure mipmapMode in assetcmpl
 // TODO: addrModeW ?
 // TODO: more stuff ?
 //inline VkSamplerCreateInfo VkMakeSamplerInfo( sampler_config config )
 //{
-//	assert( 0 );
+//	HT_ASSERT( 0 );
 //	VkSamplerCreateInfo vkSamplerInfo = { 
 //		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 //		.magFilter = VkGetFilterTypeFromGltf( config.mag ),
@@ -784,8 +761,8 @@ struct imgui_context
 		const vk_buffer& vtxBuff = vtxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 		const vk_buffer& idxBuff = idxBuffs[ frameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED ];
 
-		assert( guiDrawData->TotalVtxCount < u16( -1 ) );
-		assert( guiDrawData->TotalVtxCount * sizeof( ImDrawVert ) < vtxBuff.sizeInBytes );
+		HT_ASSERT( guiDrawData->TotalVtxCount < u16( -1 ) );
+		HT_ASSERT( guiDrawData->TotalVtxCount * sizeof( ImDrawVert ) < vtxBuff.sizeInBytes );
 
 		ImDrawVert* vtxDst = ( ImDrawVert* ) vtxBuff.hostVisible;
 		ImDrawIdx* idxDst = ( ImDrawIdx* ) idxBuff.hostVisible;
@@ -859,6 +836,17 @@ enum class debug_draw_type : u8
 	LINE,
 	TRIANGLE,
 };
+
+constexpr const char* ToString( debug_draw_type t )
+{
+	switch( t )
+	{
+	case debug_draw_type::LINE:     return "LINE";
+	case debug_draw_type::TRIANGLE: return "TRIANGLE";
+	}
+	return "UNKNOWN";
+}
+
 // TODO: use instancing for drawing ?
 // TODO: double buffer debug geometry ?
 struct debug_context
@@ -947,8 +935,8 @@ struct debug_context
 		auto lineVtxBuff = BoxVerticesAsLines( unitCube );
 		auto trisVtxBuff = BoxVerticesAsTriangles( unitCube );
 
-		assert( pLinesBuff->sizeInBytes >= BYTE_COUNT( lineVtxBuff ) );
-		assert( pTrisBuff->sizeInBytes >= BYTE_COUNT( trisVtxBuff ) );
+		HT_ASSERT( pLinesBuff->sizeInBytes >= BYTE_COUNT( lineVtxBuff ) );
+		HT_ASSERT( pTrisBuff->sizeInBytes >= BYTE_COUNT( trisVtxBuff ) );
 		std::memcpy( pLinesBuff->hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
 		std::memcpy( pTrisBuff->hostVisible, std::data( trisVtxBuff ), BYTE_COUNT( trisVtxBuff ) );
 	}
@@ -957,22 +945,18 @@ struct debug_context
 	void DrawCPU( 
 		vk_command_buffer&        cmdBuff, 
 		const vk_rendering_info&  renderingInfo, 
-		const char*               name,
 		debug_draw_type           ddType, 
 		u64                       viewAddr, 
 		u32                       viewIdx,
 		const mat4&      transf,
 		u32 color
 	) {
-		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( name, {} );
-		auto dynamicRendering = cmdBuff.CmdIssueDynamicScopedRenderPass( 
-			std::data( renderingInfo.colorAttachments ), 
-			( u32 ) std::size( renderingInfo.colorAttachments ), 
-			renderingInfo.pDepthAttachment, 
-			renderingInfo.scissor, 1 );
+		std::array<char, 64> fixedStr = {};
+		std::format_to_n( 
+			&fixedStr[ 0 ], std::size( fixedStr ) - 1 /* for \0 */, "debug_context.DrawCPU: {}", ToString( ddType ) );
 
-		vkCmdSetScissor( cmdBuff.hndl, 0, 1, &renderingInfo.scissor );
-		vkCmdSetViewport( cmdBuff.hndl, 0, 1, &renderingInfo.viewport );
+		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( &fixedStr[ 0 ], {} );
+		auto dynamicRendering = cmdBuff.CmdIssueScopedRenderPass( renderingInfo );
 
 		VkPipeline vkPipeline = ( ddType == debug_draw_type::TRIANGLE ) ? drawAsTriangles : drawAsLines;
 
@@ -996,9 +980,6 @@ struct debug_context
 };
 
 
-static entities_data entities;
-
-
 static vk_buffer globVertexBuff;
 static vk_buffer indexBuff;
 static vk_buffer meshBuff;
@@ -1006,19 +987,9 @@ static vk_buffer meshBuff;
 static vk_buffer meshletBuff;
 static vk_buffer meshletDataBuff;
 
-// TODO:
-static vk_buffer transformsBuff;
-
 static vk_buffer materialsBuff;
 static vk_buffer instDescBuff;
 static vk_buffer lightsBuff;
-
-
-static vk_buffer intermediateIndexBuff;
-static vk_buffer indirectMergedIndexBuff;
-
-static vk_buffer drawCmdAabbsBuff;
-static vk_buffer drawCmdDbgBuff;
 
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
@@ -1078,8 +1049,6 @@ StagingManagerUploadBuffer(
 }
 
 static staging_manager stagingManager;
-
-static VkPipeline   gfxDrawIndirDbg = {};
 
 struct culling_ctx
 {
@@ -1243,7 +1212,7 @@ struct culling_ctx
 			struct culling_push{ 
 				u64 instDescAddr = instDescBuff.devicePointer;
 				u64 meshDescAddr = meshBuff.devicePointer;
-				u64 visInstsAddr = intermediateIndexBuff.devicePointer;
+				u64 visInstsAddr = 0;//intermediateIndexBuff.devicePointer;
 				u64 drawCmdsAddr;
 				u64 compactedArgsAddr;
 				u64 instOccCacheAddr;
@@ -1397,7 +1366,7 @@ struct tonemapping_ctx
 	}
 };
 
-// TODO: add the backend here basically 
+
 struct render_context
 {
 	vk_descriptor_manager descManager;
@@ -1435,7 +1404,6 @@ struct render_context
 	u16 depthSrv;
 
 	u8				framesInFlight;
-	u8              maxFrameSubmittionsAllowed = 2;
 
 	// TODO: move to appropriate technique/context
 	std::shared_ptr<vk_image> pHiZTarget;
@@ -1590,14 +1558,7 @@ DrawIndexedIndirectMerged(
 ) {
 	vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Draw Indexed Indirect Pass", {} );
 
-	vk_scoped_dynamic_renderpass dynamicRendering = cmdBuff.CmdIssueDynamicScopedRenderPass( 
-		std::data( renderingInfo.colorAttachments ),
-		std::size( renderingInfo.colorAttachments ), 
-		renderingInfo.pDepthAttachment, 
-		renderingInfo.scissor, 1 );
-
-	vkCmdSetScissor( cmdBuff.hndl, 0, 1, &renderingInfo.scissor );
-	vkCmdSetViewport( cmdBuff.hndl, 0, 1, &renderingInfo.viewport );
+	vk_scoped_renderpass dynamicRendering = cmdBuff.CmdIssueScopedRenderPass( renderingInfo );
 
 	cmdBuff.CmdBindPipelineAndBindlessDesc( vkPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS );
 
@@ -1715,24 +1676,6 @@ DepthPyramidMultiPass(
 	cmdBuff.CmdPipelineImageBarriers( hizEndBarriers );
 }
 
-
-// TODO: enforce some clearOp ---> clearVals params correctness ?
-inline static VkRenderingAttachmentInfo VkMakeAttachemntInfo(
-	VkImageView view,
-	VkAttachmentLoadOp       loadOp,
-	VkAttachmentStoreOp      storeOp,
-	VkClearValue             clearValue
-) {
-	return {
-		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-		.imageView = view,
-		.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-		.loadOp = loadOp,
-		.storeOp = storeOp,
-		.clearValue = ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
-	};
-}
-
 void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descriptor_manager& descManager )
 {
 	if( rndCtx.pHiZTarget == nullptr )
@@ -1740,7 +1683,7 @@ void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descri
 		u16 squareDim = 512;
 		u8 hiZMipCount = GetImgMipCountForPow2( squareDim, squareDim, MAX_MIP_LEVELS );
 
-		assert( MAX_MIP_LEVELS >= hiZMipCount );
+		HT_ASSERT( MAX_MIP_LEVELS >= hiZMipCount );
 
 		constexpr VkImageUsageFlags hiZUsg =
 			VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -1832,18 +1775,18 @@ struct drak_file_viewer
 
 	drak_file_viewer( std::span<const u8> data ) : binaryData{ data }
 	{
-		assert( std::size( data ) );
+		HT_ASSERT( std::size( data ) );
 		//binaryData = SysReadFile( drakPath );
 		if( std::size( binaryData ) == 0 )
 		{
-			assert( 0 && "No valid file" );
+			HT_ASSERT( 0 && "No valid file" );
 			//std::vector<u8> fileData = SysReadFile( glbPath );
 			//CompileGlbAssetToBinary( fileData, binaryData );
 			// TODO: does this override ?
 			//SysWriteToFile( drakPath, std::data( binaryData ), std::size( binaryData ) );
 		}
 		fileFooter = ( drak_file_footer* ) ( std::data( binaryData ) + std::size( binaryData ) - sizeof( drak_file_footer ) );
-		assert( std::strcmp( "DRK", fileFooter->magik ) == 0 );
+		HT_ASSERT( std::strcmp( "DRK", fileFooter->magik ) == 0 );
 	}
 
 	std::span<const mesh_desc> GetMeshes() const
@@ -2126,7 +2069,7 @@ static inline void VkUploadResources(
 
 	const drak_file_footer& fileFooter =
 		*( drak_file_footer* ) ( std::data( binaryData ) + std::size( binaryData ) - sizeof( drak_file_footer ) );
-	//assert( "DRK"sv == fileFooter.magik  );
+	//HT_ASSERT( "DRK"sv == fileFooter.magik  );
 
 	const std::span<mesh_desc> meshes = { 
 		(mesh_desc*) ( std::data( binaryData ) + fileFooter.meshesByteRange.offset ),
@@ -2138,7 +2081,7 @@ static inline void VkUploadResources(
 	std::vector<instance_desc> instDesc = SpawnRandomInstances( { std::data( meshes ),std::size( meshes ) }, drawCount, 1, sceneRad );
 	std::vector<light_data> lights = SpawnRandomLights( lightCount, sceneRad * 0.75f );
 
-	assert( std::size( instDesc ) < u16( -1 ) );
+	HT_ASSERT( std::size( instDesc ) < u16( -1 ) );
 
 
 	for( const instance_desc& ii : instDesc )
@@ -2199,12 +2142,12 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	VkResult timelineWaitResult = rndCtx.pDevice->TryWaitOnTimelineFor( 
 		rndCtx.frameTimeline, rndCtx.framesInFlight, UINT64_MAX );
-	VK_CHECK( VK_INTERNAL_ERROR( timelineWaitResult > VK_TIMEOUT ) );
+	HT_ASSERT( timelineWaitResult > VK_TIMEOUT );
 
 	rndCtx.pDevice->ResetCmdPool( thisVFrame.cmdPool );
 
-	// TODO: 
-	if( currentFrameIdx < VK_MAX_FRAMES_IN_FLIGHT_ALLOWED )
+	[[unlikely]]
+	if( currentFrameIdx < rndCtx.framesInFlight )
 	{
 		thisVFrame.pViewData = std::make_shared<vk_buffer>( rndCtx.pDevice->CreateBuffer( {
 			.name = "Buff_VirtualFrame_ViewBuff",
@@ -2212,10 +2155,10 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			.elemCount = std::size( frameData.views ),
 			.stride = sizeof( view_data ),
 			.usage = buffer_usage::HOST_VISIBLE
-																				  } ) );
+		} ) );
 		thisVFrame.viewDataIdx = VkAllocDescriptorIdx( rndCtx.descManager, vk_descriptor_info{ *thisVFrame.pViewData } );
 	}
-	assert( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
+	HT_ASSERT( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
 	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
 	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, rndCtx.pDevice->globalPipelineLayout, rndCtx.descManager.set };
@@ -2285,13 +2228,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	DirectX::XMUINT2 colorTargetSize = { colorTarget.width, colorTarget.height };
 
-	VkResetGpuTimer( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
+	//VkResetGpuTimer( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
 
 	u32 scImgIdx = rndCtx.pDevice->AcquireNextSwapchainImageBlocking( thisVFrame.canGetImgSema );
 	const vk_swapchain_image& scImg = rndCtx.pDevice->sc.imgs[ scImgIdx ];
 
 	{
-		vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
+		//vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
 		rndCtx.cullingCtx.Execute( thisFrameCmdBuffer, depthPyramid, instCount, thisVFrame.viewDataIdx, 
 								   rndCtx.hizSrv, rndCtx.quadMinSamplerIdx, false );
 
@@ -2500,9 +2443,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		thisFrameCmdBuffer.CmdPipelineBarriers( avgLumReadBarrier, scWriteBarrier );
 
 
-		VK_CHECK( VK_INTERNAL_ERROR( 
-			( colorTarget.width != rndCtx.pDevice->sc.width ) || 
-			( colorTarget.height != rndCtx.pDevice->sc.height ) ) );
+		HT_ASSERT( ( colorTarget.width == rndCtx.pDevice->sc.width ) && 
+			( colorTarget.height == rndCtx.pDevice->sc.height ) );
+
 		rndCtx.tonemappingCtx.TonemappingGammaPass( 
 			thisFrameCmdBuffer, rndCtx.colSrv, rndCtx.swapchainUavs[ scImgIdx ], colorTargetSize );
 
@@ -2525,12 +2468,14 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		thisFrameCmdBuffer.CmdPipelineImageBarriers( compositionEndBarriers );
 
+
 		VkViewport uiViewport = { 0, 0, ( float ) rndCtx.pDevice->sc.width, ( float ) rndCtx.pDevice->sc.height, 0, 1.0f };
 		vkCmdSetViewport( thisVFrame.cmdBuff, 0, 1, &uiViewport );
 
 		auto swapchainUIRW = VkMakeAttachemntInfo( 
 			scImg.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {});
 		//rndCtx.imguiCtx.DrawUiPass( thisVFrame.cmdBuff, &swapchainUIRW, 0, scissor, currentFrameIdx );
+
 
 		VkImageMemoryBarrier2 presentWaitBarrier[] = { 
 			VkMakeImageBarrier2( scImg.hndl,
@@ -2541,7 +2486,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		thisFrameCmdBuffer.CmdPipelineImageBarriers( presentWaitBarrier );
 	}
 
-	gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
+	//gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
 	thisFrameCmdBuffer.CmdEndCmbBuffer();
 
 	// NOTE: with all these cool stage masks we can only let the gpu run until it need the sc image THEN wait

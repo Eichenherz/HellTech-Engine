@@ -8,6 +8,8 @@
 #include "sys_os_api.h"
 #include "core_types.h"
 
+#include "ht_error.h"
+
 inline bool Win32IsHandleValid( HANDLE h )
 {
 	return ( INVALID_HANDLE_VALUE == h ) || ( 0 == h );

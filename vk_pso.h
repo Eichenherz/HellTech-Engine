@@ -10,9 +10,6 @@
 
 #include "vk_error.h"
 #include "core_types.h"
-#include <span>
-
-#include <functional>
 
 #include <SPIRV-Reflect/spirv_reflect.h>
 

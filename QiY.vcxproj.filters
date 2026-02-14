@@ -173,6 +173,9 @@
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="vector_w_dead_entries.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
