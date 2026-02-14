@@ -173,7 +173,7 @@
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vector_w_dead_entries.h">
+    <ClInclude Include="vector_freelist.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -4,6 +4,9 @@
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
 
+#define VMA_IMPLEMENTATION
+#include <3rdParty/vk_mem_alloc.h>
+
 #define VOLK_IMPLEMENTATION 
 #include <Volk/volk.h>
 
@@ -629,4 +632,43 @@ unique_shader_ptr vk_device_ctx::CreateShaderFromSpirv( std::span<const u8> spvB
 	};
 
 	return { new vk_shader{ pEntryPointName, sm, shaderStage }, std::move( deleter ) };
+}
+
+void vk_device_ctx::UpdateDescriptorIndices( std::span<const vk_descriptor_write> updateCache )
+{
+	if( !std::size( updateCache ) ) return;
+
+	std::vector<VkWriteDescriptorSet> writes;
+	for( const auto& update : updateCache )
+	{
+		VkDescriptorType descType = update.descInfo.descriptorType;
+		u16 updateIdx = update.descIdx;
+		u32 bindingSlotIdx = VkDescTypeToBinding( descType );
+
+		const VkDescriptorImageInfo* pImageInfo = 0;
+		const VkDescriptorBufferInfo* pBufferInfo = 0;
+
+		if( update.descInfo.rscType == vk_descriptor_resource_type::BUFFER )
+		{
+			pBufferInfo = &update.descInfo.buff;
+		}
+		else if( update.descInfo.rscType == vk_descriptor_resource_type::IMAGE )
+		{
+			pImageInfo = &update.descInfo.img;
+		}
+
+		VkWriteDescriptorSet writeEntryInfo = {
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = descState.set,
+			.dstBinding = bindingSlotIdx,
+			.dstArrayElement = updateIdx,
+			.descriptorCount = 1,
+			.descriptorType = descType,
+			.pImageInfo = pImageInfo,
+			.pBufferInfo = pBufferInfo
+		};
+		writes.push_back( writeEntryInfo );
+	}
+
+	vkUpdateDescriptorSets( device, std::size( writes ), std::data( writes ), 0, 0 );
 }

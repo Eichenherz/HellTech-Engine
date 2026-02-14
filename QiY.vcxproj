@@ -113,7 +113,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>D:\EichenRepos\QiY\QiY\3rdParty\dds;D:\EichenRepos\QiY\QiY\HellPack;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
+    <IncludePath>D:\EichenRepos\QiY\QiY\3rdParty\EASTL\include;D:\EichenRepos\QiY\QiY\3rdParty\dds;D:\EichenRepos\QiY\QiY\HellPack;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
     <CustomBuildBeforeTargets>
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
@@ -327,7 +327,7 @@
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\tools.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\types.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp" />
-    <ClInclude Include="vector_w_dead_entries.h" />
+    <ClInclude Include="vector_freelist.h" />
     <ClInclude Include="vk_descriptor.h" />
     <ClInclude Include="vk_device.h" />
     <ClInclude Include="vk_error.h" />

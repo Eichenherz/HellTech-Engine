@@ -7,3 +7,6 @@
 [submodule "3rdParty/dds"]
 	path = 3rdParty/dds
 	url = https://github.com/turanszkij/dds.git
+[submodule "3rdParty/EASTL"]
+	path = 3rdParty/EASTL
+	url = https://github.com/electronicarts/EASTL.git

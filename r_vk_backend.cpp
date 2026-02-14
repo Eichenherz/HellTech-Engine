@@ -1,6 +1,6 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
-#define __VK
+
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
 
@@ -14,6 +14,8 @@
 #include <span>
 #include <format>
 #include <memory>
+
+#include <EASTL/bonus/ring_buffer.h>
 
 #include "vk_resources.h"
 #include "vk_descriptor.h"
@@ -203,7 +205,6 @@ inline static vk_instance VkMakeInstance()
 	return { .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
 }
 
-#define VMA_IMPLEMENTATION
 #include "vk_device.h"
 
 #include "vk_pso.h"
@@ -218,7 +219,7 @@ struct virtual_frame
 	VkCommandBuffer cmdBuff;
 	VkSemaphore		canGetImgSema;
 
-	u16 viewDataIdx;
+	desc_slot_idx viewDataIdx;
 };
 
 inline virtual_frame VkCreateVirtualFrame( vk_device_ctx& dc )
@@ -1271,11 +1272,11 @@ struct tonemapping_ctx
 	VkPipeline		compAvgLumPipe;
 	VkPipeline		compTonemapPipe;
 
-	u16 avgLumIdx;
-	u16 atomicWgCounterIdx;
-	u16 lumHistoIdx;
+	desc_slot_idx avgLumIdx;
+	desc_slot_idx atomicWgCounterIdx;
+	desc_slot_idx lumHistoIdx;
 
-	void Init( vk_device_ctx& dc, vk_descriptor_manager& descManager )
+	void Init( vk_device_ctx& dc, vk_descriptor_allocator& descAlloc )
 	{
 		unique_shader_ptr avgLum = dc.CreateShaderFromSpirv( 
 			SysReadFile( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
@@ -1293,7 +1294,7 @@ struct tonemapping_ctx
 			.elemCount = 1,
 			.stride = sizeof( float ),
 			.usage = buffer_usage::GPU_ONLY } ) );
-		avgLumIdx = VkAllocDescriptorIdx( descManager, vk_descriptor_info{ *pAverageLuminanceBuffer } );
+		avgLumIdx = descAlloc.Alloc( vk_descriptor_info{ *pAverageLuminanceBuffer } );
 
 		pAtomicWgCounterBuff = std::make_unique<vk_buffer>( dc.CreateBuffer( {
 			.name = "Buff_TonemappingAtomicWgCounter",
@@ -1301,8 +1302,7 @@ struct tonemapping_ctx
 			.elemCount = 1,
 			.stride = sizeof( u32 ),
 			.usage = buffer_usage::GPU_ONLY } ) );
-		atomicWgCounterIdx = VkAllocDescriptorIdx(
-			descManager, vk_descriptor_info{ *pAtomicWgCounterBuff } );
+		atomicWgCounterIdx = descAlloc.Alloc( vk_descriptor_info{ *pAtomicWgCounterBuff } );
 
 		pLuminanceHistogramBuffer = std::make_unique<vk_buffer>( dc.CreateBuffer( {
 			.name = "Buff_LumHisto",
@@ -1310,8 +1310,7 @@ struct tonemapping_ctx
 			.elemCount = 4,
 			.stride = sizeof( u64 ),
 			.usage = buffer_usage::GPU_ONLY } ) ); 
-		lumHistoIdx = VkAllocDescriptorIdx(
-			descManager, vk_descriptor_info{ *pLuminanceHistogramBuffer } );
+		lumHistoIdx = descAlloc.Alloc( vk_descriptor_info{ *pLuminanceHistogramBuffer } );
 	}
 
 	void AverageLuminancePass( 
@@ -1339,7 +1338,7 @@ struct tonemapping_ctx
 			uint				lumHistoIdx;
 			uint				atomicWorkGrCounterIdx;
 			uint				avgLumIdx;
-		} pushConst = { avgLumInfo, hdrColSrcIdx, lumHistoIdx, atomicWgCounterIdx, avgLumIdx };
+		} pushConst = { avgLumInfo, hdrColSrcIdx, lumHistoIdx.slot, atomicWgCounterIdx.slot, avgLumIdx.slot };
 		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 		cmdBuff.CmdDispatch( numWorkGrs );
 	}
@@ -1360,16 +1359,26 @@ struct tonemapping_ctx
 			uint hdrColIdx;
 			uint sdrColIdx;
 			uint avgLumIdx;
-		} pushConst = { hdrColIdx, sdrColIdx, avgLumIdx };
+		} pushConst = { hdrColIdx, sdrColIdx, avgLumIdx.slot };
 		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 		cmdBuff.CmdDispatch( numWorkGrs );
 	}
 };
 
 
+
+template<typename T>
+struct deferred_deletion_job
+{
+	u64 frameIdx;
+	T slot;
+};
+
 struct render_context
 {
-	vk_descriptor_manager descManager;
+	vk_descriptor_allocator descAllocator;
+
+	eastl::ring_buffer<deferred_deletion_job<desc_slot_idx>> descSlotRetirementQueue;
 
 	imgui_context   imguiCtx;
 	debug_context   dbgCtx;
@@ -1400,8 +1409,8 @@ struct render_context
 
 	u64				vFrameIdx = 0;
 
-	u16 colSrv;
-	u16 depthSrv;
+	desc_slot_idx colSrv;
+	desc_slot_idx depthSrv;
 
 	u8				framesInFlight;
 
@@ -1413,13 +1422,16 @@ struct render_context
 	VkSampler quadMinSampler;
 	VkSampler pbrSampler;
 
-	u16 hizSrv;
+	desc_slot_idx hizSrv;
 
-	u16 hizMipUavs[ MAX_MIP_LEVELS ];
-	u16 quadMinSamplerIdx;
-	u16 pbrSamplerIdx;
+	desc_slot_idx hizMipUavs[ MAX_MIP_LEVELS ];
+	desc_slot_idx quadMinSamplerIdx;
+	desc_slot_idx pbrSamplerIdx;
 
-	u16 swapchainUavs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
+	desc_slot_idx swapchainUavs[ VK_SWAPCHAIN_MAX_IMG_ALLOWED ];
+
+
+
 };
 
 static render_context rndCtx;
@@ -1475,7 +1487,7 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, normalCol.module, 0 );
 	//}
 	rndCtx.cullingCtx.Init( *rndCtx.pDevice );
-	rndCtx.tonemappingCtx.Init( *rndCtx.pDevice, rndCtx.descManager );
+	rndCtx.tonemappingCtx.Init( *rndCtx.pDevice, rndCtx.descAllocator );
 	{
 		unique_shader_ptr vtx = rndCtx.pDevice->CreateShaderFromSpirv( SysReadFile( "Shaders/vtx_merged.vert.spv" ) );
 		unique_shader_ptr frag = rndCtx.pDevice->CreateShaderFromSpirv( SysReadFile( "Shaders/pbr.frag.spv" ) );
@@ -1676,7 +1688,7 @@ DepthPyramidMultiPass(
 	cmdBuff.CmdPipelineImageBarriers( hizEndBarriers );
 }
 
-void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descriptor_manager& descManager )
+void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descriptor_allocator& descAlloc )
 {
 	if( rndCtx.pHiZTarget == nullptr )
 	{
@@ -1703,22 +1715,20 @@ void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descri
 
 		rndCtx.pHiZTarget = std::make_shared<vk_image>( dc.CreateImage( hiZInfo ) );
 
-		rndCtx.hizSrv = VkAllocDescriptorIdx( 
-			descManager, vk_descriptor_info{ rndCtx.pHiZTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		rndCtx.hizSrv = descAlloc.Alloc( vk_descriptor_info{ rndCtx.pHiZTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
 		for( u64 i = 0; i < rndCtx.pHiZTarget->mipCount; ++i )
 		{
 			rndCtx.hiZMipViews[ i ] = VkMakeImgView( 
 				dc.device, rndCtx.pHiZTarget->hndl, hiZInfo.format, i, 1,
 				VK_IMAGE_VIEW_TYPE_2D, 0, hiZInfo.layerCount );
-			rndCtx.hizMipUavs[ i ] = VkAllocDescriptorIdx( 
-				descManager, vk_descriptor_info{ rndCtx.hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL } );
+			rndCtx.hizMipUavs[ i ] = descAlloc.Alloc( vk_descriptor_info{ rndCtx.hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL } );
 		}
 
 		rndCtx.quadMinSampler =
 			VkMakeSampler( dc.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
 
-		rndCtx.quadMinSamplerIdx = VkAllocDescriptorIdx( descManager, vk_descriptor_info{ rndCtx.quadMinSampler } );
+		rndCtx.quadMinSamplerIdx = descAlloc.Alloc( vk_descriptor_info{ rndCtx.quadMinSampler } );
 	}
 	if( rndCtx.pDepthTarget == nullptr )
 	{
@@ -1734,8 +1744,7 @@ void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descri
 		};
 		rndCtx.pDepthTarget = std::make_shared<vk_image>( dc.CreateImage( info ) );
 
-		rndCtx.depthSrv = VkAllocDescriptorIdx( 
-			descManager, vk_descriptor_info{ rndCtx.pDepthTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		rndCtx.depthSrv = descAlloc.Alloc( vk_descriptor_info{ rndCtx.pDepthTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 	}
 	if( rndCtx.pColorTarget == nullptr )
 	{
@@ -1752,19 +1761,18 @@ void VkInitGlobalResources( vk_device_ctx& dc, render_context& rndCtx, vk_descri
 		};
 		rndCtx.pColorTarget = std::make_shared<vk_image>( dc.CreateImage( info ) );
 
-		rndCtx.colSrv = VkAllocDescriptorIdx( 
-			descManager, vk_descriptor_info{ rndCtx.pColorTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		rndCtx.colSrv = descAlloc.Alloc( vk_descriptor_info{ rndCtx.pColorTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
 		rndCtx.pbrSampler = 
 			VkMakeSampler( dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
 
-		rndCtx.pbrSamplerIdx = VkAllocDescriptorIdx( descManager, vk_descriptor_info{ rndCtx.pbrSampler } );
+		rndCtx.pbrSamplerIdx = descAlloc.Alloc( vk_descriptor_info{ rndCtx.pbrSampler } );
 	}
 
 	for( u64 scImgIdx = 0; scImgIdx < dc.sc.imgCount; ++scImgIdx )
 	{
-		rndCtx.swapchainUavs[ scImgIdx ] = VkAllocDescriptorIdx( 
-			descManager, vk_descriptor_info{ dc.sc.imgs[ scImgIdx ].view, VK_IMAGE_LAYOUT_GENERAL } );
+		rndCtx.swapchainUavs[ scImgIdx ] = descAlloc.Alloc(
+			vk_descriptor_info{ dc.sc.imgs[ scImgIdx ].view, VK_IMAGE_LAYOUT_GENERAL } );
 	}
 }
 
@@ -1911,12 +1919,12 @@ struct renderer_geometry
 			const auto& mNormalMap = pTextures[ m.normalMapIdx + texOffset ];
 			const auto& mOccRoughMetal = pTextures[ m.occRoughMetalIdx + texOffset ];
 
-			refM.baseColIdx = VkAllocDescriptorIdx( 
-				rndCtx.descManager, vk_descriptor_info{ mBaseCol->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
-			refM.normalMapIdx = VkAllocDescriptorIdx( 
-				rndCtx.descManager, vk_descriptor_info{ mNormalMap->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
-			refM.occRoughMetalIdx = VkAllocDescriptorIdx( 
-				rndCtx.descManager, vk_descriptor_info{ mOccRoughMetal->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL });
+			//refM.baseColIdx = VkAllocDescriptorIdx( 
+			//	rndCtx.descAllocator, vk_descriptor_info{ mBaseCol->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+			//refM.normalMapIdx = VkAllocDescriptorIdx( 
+			//	rndCtx.descAllocator, vk_descriptor_info{ mNormalMap->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+			//refM.occRoughMetalIdx = VkAllocDescriptorIdx( 
+			//	rndCtx.descAllocator, vk_descriptor_info{ mOccRoughMetal->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL });
 		}
 		constexpr VkBufferUsageFlags usg =
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -2156,18 +2164,18 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			.stride = sizeof( view_data ),
 			.usage = buffer_usage::HOST_VISIBLE
 		} ) );
-		thisVFrame.viewDataIdx = VkAllocDescriptorIdx( rndCtx.descManager, vk_descriptor_info{ *thisVFrame.pViewData } );
+		thisVFrame.viewDataIdx = rndCtx.descAllocator.Alloc( vk_descriptor_info{ *thisVFrame.pViewData } );
 	}
 	HT_ASSERT( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
 	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, rndCtx.pDevice->globalPipelineLayout, rndCtx.descManager.set };
+	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.cmdBuff, rndCtx.pDevice->globalPipelineLayout, rndCtx.pDevice->descState.set };
 
 	std::vector<vk_descriptor_write> vkDescUpdateCache;
 	static bool initResources = false;
 	if( !initResources )
 	{
-		VkInitGlobalResources( *rndCtx.pDevice, rndCtx, rndCtx.descManager );
+		VkInitGlobalResources( *rndCtx.pDevice, rndCtx, rndCtx.descAllocator );
 
 		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
 
@@ -2203,7 +2211,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		initResources = true;
 	}
 
-	VkDescriptorManagerFlushUpdates( rndCtx.descManager, rndCtx.pDevice->device );
+	// NOTE: excahnge will make the src empty
+	std::vector<vk_descriptor_write> descUpdates = std::exchange( rndCtx.descAllocator.pendingUpdates, {} );
+	rndCtx.pDevice->UpdateDescriptorIndices( descUpdates );
 
 	const vk_image& depthTarget = *rndCtx.pDepthTarget;
 	const vk_image& depthPyramid = *rndCtx.pHiZTarget;
@@ -2235,8 +2245,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	{
 		//vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
-		rndCtx.cullingCtx.Execute( thisFrameCmdBuffer, depthPyramid, instCount, thisVFrame.viewDataIdx, 
-								   rndCtx.hizSrv, rndCtx.quadMinSamplerIdx, false );
+		rndCtx.cullingCtx.Execute( thisFrameCmdBuffer, depthPyramid, instCount, thisVFrame.viewDataIdx.slot, 
+								   rndCtx.hizSrv.slot, rndCtx.quadMinSamplerIdx.slot, false );
 
 		VkImageMemoryBarrier2 acquireAttachmentsBarriers[] = {
 			VkMakeImageBarrier2(
@@ -2267,8 +2277,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 				.compactedArgsAddr = rndCtx.cullingCtx.pCompactedDrawArgs->devicePointer,
 				.mtrlsAddr = materialsBuff.devicePointer, 
 				.lightsAddr = lightsBuff.devicePointer,
-				.camIdx = thisVFrame.viewDataIdx,
-				.samplerIdx = rndCtx.pbrSamplerIdx
+				.camIdx = thisVFrame.viewDataIdx.slot,
+				.samplerIdx = rndCtx.pbrSamplerIdx.slot
 		};
 
 		VkRenderingAttachmentInfo attInfos[] = { colorWrite };
@@ -2305,11 +2315,11 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			thisFrameCmdBuffer,
 			rndCtx.compHiZPipeline,
 			depthTarget,
-			rndCtx.depthSrv,
+			rndCtx.depthSrv.slot,
 			depthPyramid,
-			rndCtx.hizSrv,
+			rndCtx.hizSrv.slot,
 			rndCtx.hizMipUavs,
-			rndCtx.quadMinSamplerIdx,
+			rndCtx.quadMinSamplerIdx.slot,
 			rndCtx.pDevice->globalPipelineLayout,
 			{32,32,1}
 		);

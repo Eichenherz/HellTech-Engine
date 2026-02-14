@@ -187,6 +187,9 @@ struct vk_device_ctx
 
 		VK_CHECK( vkCopyMemoryToImage( device, &copyMemInfo ) );
 	}
+
+	void UpdateDescriptorIndices( std::span<const vk_descriptor_write> updateCache );
+
 	inline u32 AcquireNextSwapchainImageBlocking( VkSemaphore virtualFrameSema ) const
 	{
 		u32 imgIdx;
