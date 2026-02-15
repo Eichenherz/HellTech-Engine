@@ -19,7 +19,7 @@
 #include <DirectXMath.h>
 
 
-struct frame_data
+struct frame_resources
 {
 	DirectX::XMFLOAT4X4A	proj;
 	DirectX::XMFLOAT4X4A	mainView;

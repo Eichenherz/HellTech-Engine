@@ -10,8 +10,19 @@
 #define VOLK_IMPLEMENTATION 
 #include <Volk/volk.h>
 
-#include "vk_device.h"
+#include <array>
+
+#include "vk_context.h"
 #include "vk_descriptor.h"
+
+constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
+	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+	VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+	VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+	//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+};
+
 
 inline VkMemoryPropertyFlags VkChooseMemoryProperitesOnUsage( buffer_usage usage )
 {
@@ -44,7 +55,6 @@ inline void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags u
 	HT_ASSERT( ( formatProps3.optimalTilingFeatures & formatFeatures ) == formatFeatures );
 	// Fallback to a different format or use other means of uploading data
 }
-
 
 static void VkMakeCreateQueueInfoWithProperties( 
 	std::span<VkQueueFamilyProperties> queueFamProps, 
@@ -131,23 +141,24 @@ static VmaAllocator MakeVmaAllocator( VkPhysicalDevice vkGpu, VkDevice vkDevice,
 	return vmaAllocator;
 }
 
-static vk_desc_state VkMakeDescriptorState( VkDevice vkDevice, const VkPhysicalDeviceProperties& gpuProps )
-{
-	constexpr u32 maxSize = u16( -1 );
+static vk_descriptor_allocator VkMakeDescriptorAllocator( 
+	VkDevice vkDevice, 
+	const VkPhysicalDeviceProperties& gpuProps, 
+	u32 maxSize 
+) {
 	constexpr u32 maxSetCount = 1;
 
-	vk_desc_table descTable = {
+	std::array<u32, vk_desc_binding_t::COUNT>  bindingSlotDescCount = {
 		std::min( maxSize, gpuProps.limits.maxDescriptorSetSamplers ),
 		std::min( maxSize, gpuProps.limits.maxDescriptorSetStorageBuffers ),
 		std::min( maxSize, gpuProps.limits.maxDescriptorSetStorageImages ),
 		std::min( maxSize, gpuProps.limits.maxDescriptorSetSampledImages )
 	};
 
-	VkDescriptorPoolSize poolSizes[ vk_desc_table::BINDING_COUNT ] = {};
-	for( u32 i = 0; i < vk_desc_table::BINDING_COUNT; ++i )
+	VkDescriptorPoolSize poolSizes[ vk_desc_binding_t::COUNT ] = {};
+	for( u32 i = 0; i < vk_desc_binding_t::COUNT; ++i )
 	{
-		VkDescriptorType type = vk_desc_table::bindingToTypeMap[ i ];
-		poolSizes[ i ] = { .type = type, .descriptorCount = descTable[ type ] };
+		poolSizes[ i ] = { .type = VkDescBindingToType( vk_desc_binding_t( i ) ), .descriptorCount = bindingSlotDescCount[ i ] };
 	}
 
 	VkDescriptorPool vkDescPool;
@@ -164,16 +175,16 @@ static vk_desc_state VkMakeDescriptorState( VkDevice vkDevice, const VkPhysicalD
 	constexpr VkDescriptorBindingFlags flag =
 		VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
 
-	VkDescriptorBindingFlags bindingFlags[ vk_desc_table::BINDING_COUNT ] = {};
-	VkDescriptorSetLayoutBinding descSetLayout[ vk_desc_table::BINDING_COUNT ] = {};
-	for( u32 i = 0; i < vk_desc_table::BINDING_COUNT; ++i )
+	VkDescriptorBindingFlags bindingFlags[ vk_desc_binding_t::COUNT ] = {};
+	VkDescriptorSetLayoutBinding descSetLayout[ vk_desc_binding_t::COUNT ] = {};
+	for( u32 i = 0; i < vk_desc_binding_t::COUNT; ++i )
 	{
-		VkDescriptorType type = vk_desc_table::bindingToTypeMap[ i ];
+		auto[ type, count ] = poolSizes[ i ];
 
 		descSetLayout[ i ] = {
 			.binding = i,
 			.descriptorType = type,
-			.descriptorCount = descTable[ type ],
+			.descriptorCount = count,
 			.stageFlags = VK_SHADER_STAGE_ALL 
 		};
 		bindingFlags[ i ] = flag;
@@ -205,11 +216,17 @@ static vk_desc_state VkMakeDescriptorState( VkDevice vkDevice, const VkPhysicalD
 	VkDescriptorSet vkDescSet;
 	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &vkDescSet ) );
 
+	vk_desc_vector bindingSlotFreelist;
+	for( u32 descMaxCount : bindingSlotDescCount )
+	{
+		bindingSlotFreelist.emplace_back( ( u64 ) descMaxCount );
+	}
+
 	return {
+		.bindingSlotFreelist = bindingSlotFreelist,
 		.pool = vkDescPool,
 		.setLayout = vkDescSetLayout,
-		.set = vkDescSet,
-		.descTable = descTable
+		.set = vkDescSet
 	};
 }
 
@@ -237,7 +254,139 @@ static VkPipelineLayout VkMakeGlobalPipelineLayout(
 	return pipelineLayout;
 }
 
-vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, const renderer_config& cfg )
+struct vk_instance
+{
+	VkInstance hndl;
+	VkDebugUtilsMessengerEXT dbgMsg;
+};
+
+static vk_instance VkMakeInstance()
+{
+	constexpr const char* ENABLED_INST_EXTS[] =
+	{
+		VK_KHR_SURFACE_EXTENSION_NAME,
+	#ifdef VK_USE_PLATFORM_WIN32_KHR
+		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+	#endif // VK_USE_PLATFORM_WIN32_KHR
+		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+	};
+
+	constexpr const char* LAYERS[] =
+	{
+		"VK_LAYER_KHRONOS_validation",
+		//"VK_LAYER_LUNARG_api_dump"
+	};
+
+	VK_CHECK( volkInitialize() );
+
+	u32 vkExtsNum = 0;
+	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, 0 ) );
+	std::vector<VkExtensionProperties> givenExts( vkExtsNum );
+	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, std::data( givenExts ) ) );
+	for( std::string_view requiredExt : ENABLED_INST_EXTS )
+	{
+		bool foundExt = false;
+		for( VkExtensionProperties& availableExt : givenExts )
+		{
+			if( requiredExt == availableExt.extensionName )
+			{
+				foundExt = true;
+				break;
+			}
+		}
+		HT_ASSERT( foundExt );
+	};
+
+	u32 layerCount = 0;
+	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, 0 ) );
+	std::vector<VkLayerProperties> layersAvailable( layerCount );
+	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, std::data( layersAvailable ) ) );
+	for( std::string_view requiredLayer : LAYERS )
+	{
+		bool foundLayer = false;
+		for( VkLayerProperties& availableLayer : layersAvailable )
+		{
+			if( requiredLayer == availableLayer.layerName )
+			{
+				foundLayer = true;
+				break;
+			}
+		}
+		HT_ASSERT( foundLayer );
+	}
+
+
+	VkInstance vkInstance = 0;
+	VkDebugUtilsMessengerEXT vkDbgUtilsMsgExt = 0;
+
+	VkApplicationInfo appInfo = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO };
+	VK_CHECK( vkEnumerateInstanceVersion( &appInfo.apiVersion ) );
+	HT_ASSERT( VK_API_VERSION_1_4 <= appInfo.apiVersion );
+
+	VkInstanceCreateInfo instInfo = { 
+		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+		.pApplicationInfo = &appInfo,
+		.enabledLayerCount = std::size( LAYERS ),
+		.ppEnabledLayerNames = LAYERS,
+		.enabledExtensionCount = std::size( ENABLED_INST_EXTS ),
+		.ppEnabledExtensionNames = ENABLED_INST_EXTS,
+	};
+
+	VkValidationFeaturesEXT vkValidationFeatures = { 
+		.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
+		.enabledValidationFeatureCount = std::size( enabledValidationFeats ),
+		.pEnabledValidationFeatures = enabledValidationFeats,
+	};
+
+	VkDebugUtilsMessengerCreateInfoEXT vkDbgExt = { 
+		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+		.pNext = &vkValidationFeatures,
+		.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | 
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+		.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+		.pfnUserCallback = VkDbgUtilsMsgCallback,
+	};
+
+	instInfo.pNext = &vkDbgExt;
+
+	VK_CHECK( vkCreateInstance( &instInfo, 0, &vkInstance ) );
+
+	volkLoadInstance( vkInstance );
+
+	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, 0, &vkDbgUtilsMsgExt ) );
+
+	return { .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
+}
+
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
+{
+	VkWin32SurfaceCreateInfoKHR surfInfo = { 
+		.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+		.hinstance = hInst,
+		.hwnd = hWnd,
+	};
+
+	VkSurfaceKHR vkSurf;
+	VK_CHECK( vkCreateWin32SurfaceKHR( vkInst, &surfInfo, 0, &vkSurf ) );
+	return vkSurf;
+}
+#else
+#error Must provide OS specific Surface
+#endif // VK_USE_PLATFORM_WIN32_KHR
+
+struct vk_device
+{
+	VkPhysicalDeviceProperties  gpuProps;
+	vk_queue                    gfxQueue;
+	VkPhysicalDevice			gpu;
+	VkDevice					logical;
+	u32							deviceMask;
+	u32							waveSize;
+};
+
+static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 {
 	constexpr const char* ENABLED_DEVICE_EXTS[] = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -347,7 +496,6 @@ vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, const
 	VkMakeCreateQueueInfoWithProperties(
 		queueFamProps, careAboutQueueTypes, true, gpu, vkSurf, &queuePriorities, queueCreateInfos[ 0 ], queueFlags );
 
-	VkDevice vkDevice;
 	VkDeviceCreateInfo deviceInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &gpuFeatures,
@@ -356,31 +504,246 @@ vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, const
 		.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS ),
 		.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS,
 	};
+
+	VkDevice vkDevice;
 	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, 0, &vkDevice ) );
 
 	volkLoadDevice( vkDevice );
 
-	vk_queue gfxQueue = VkCreateQueue( vkDevice, queueCreateInfos[ 0 ].queueFamilyIndex, queueFlags, true );
-
-	vk_desc_state descState = VkMakeDescriptorState( vkDevice, gpuProps2.properties );
-
 	return {
-		.sc = VkMakeSwapchain( vkDevice, gpu, vkSurf, gfxQueue.index, cfg.desiredSwapchainFormat, cfg.swapchainImageCount ),
-		.descState = descState,
-		.gfxQueue = gfxQueue,
-		.allocator = MakeVmaAllocator( gpu, vkDevice, vkInst, VK_API_VERSION_1_4 ), // TODO: main file with this );
 		.gpuProps = gpuProps2.properties,
+		.gfxQueue = VkCreateQueue( vkDevice, queueCreateInfos[ 0 ].queueFamilyIndex, queueFlags, true ),
 		.gpu = gpu,
-		.device = vkDevice,
-		.globalPipelineLayout = VkMakeGlobalPipelineLayout( vkDevice, descState.setLayout, gpuProps2.properties ),
-		.deviceMask = u32( 1u << deviceIdx ),
-		.timestampPeriod = gpuProps2.properties.limits.timestampPeriod,
-		.waveSize = ( u8 ) waveProps.subgroupSize
+		.logical = vkDevice,
+		.waveSize = waveProps.subgroupSize
 	};
 }
 
+// TODO: sep initial validation form sc creation when resize ?
+static vk_swapchain
+VkMakeSwapchain(
+	VkDevice			vkDevice,
+	VkPhysicalDevice	vkPhysicalDevice,
+	VkSurfaceKHR		vkSurf,
+	u32					queueFamIdx,
+	VkFormat			scDesiredFormat,
+	u32                 numImages
+) {
+	VkSurfaceCapabilitiesKHR surfaceCaps;
+	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkPhysicalDevice, vkSurf, &surfaceCaps ) );
+	HT_ASSERT( surfaceCaps.maxImageArrayLayers >= 1 );
 
-vk_buffer vk_device_ctx::CreateBuffer( const buffer_info& buffInfo )
+	u32 scImgCount = numImages;
+	HT_ASSERT( ( scImgCount > surfaceCaps.minImageCount ) && ( scImgCount < surfaceCaps.maxImageCount ) );
+	HT_ASSERT( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
+			   ( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
+
+	VkCompositeAlphaFlagBitsKHR surfaceComposite =
+		( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR )
+		? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+		: ( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR )
+		? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+		: ( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR )
+		? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
+		: VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+
+	VkSurfaceFormatKHR scFormatAndColSpace = {};
+	{
+		u32 formatCount = 0;
+		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, 0 ) );
+		std::vector<VkSurfaceFormatKHR> formats( formatCount );
+		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, std::data( formats ) ) );
+
+		for( u64 i = 0; i < formatCount; ++i )
+		{
+			if( formats[ i ].format == scDesiredFormat )
+			{
+				scFormatAndColSpace = formats[ i ];
+				break;
+			}
+		}
+		HT_ASSERT( scFormatAndColSpace.format );
+	}
+
+	VkPresentModeKHR presentMode = VkPresentModeKHR( 0 );
+	{
+		u32 numPresentModes;
+		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( vkPhysicalDevice, vkSurf, &numPresentModes, 0 ) );
+		std::vector<VkPresentModeKHR> presentModes( numPresentModes );
+		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( 
+			vkPhysicalDevice, vkSurf, &numPresentModes, std::data( presentModes ) ) );
+
+		constexpr VkPresentModeKHR desiredPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+		for( u32 j = 0; j < numPresentModes; ++j )
+		{
+			if( presentModes[ j ] == desiredPresentMode )
+			{
+				presentMode = desiredPresentMode;
+				break;
+			}
+		}
+		HT_ASSERT( presentMode );
+	}
+
+	VkImageUsageFlags scImgUsage =
+		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+	HT_ASSERT( ( surfaceCaps.supportedUsageFlags & scImgUsage ) == scImgUsage );
+
+
+	VkSwapchainCreateInfoKHR scInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = vkSurf,
+		.minImageCount = scImgCount,
+		.imageFormat = scFormatAndColSpace.format,
+		.imageColorSpace = scFormatAndColSpace.colorSpace,
+		.imageExtent = surfaceCaps.currentExtent,
+		.imageArrayLayers = 1,
+		.imageUsage = scImgUsage,
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 1,
+		.pQueueFamilyIndices = &queueFamIdx,
+		.preTransform = surfaceCaps.currentTransform,
+		.compositeAlpha = surfaceComposite,
+		.presentMode = presentMode,
+		.clipped = VK_TRUE,
+		.oldSwapchain = 0
+	};
+
+	VkImageFormatProperties scImageProps = {};
+	VK_CHECK( vkGetPhysicalDeviceImageFormatProperties( 
+		vkPhysicalDevice, scInfo.imageFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, scInfo.imageUsage,
+		scInfo.flags, &scImageProps ) );
+
+	VkSwapchainKHR swapchain;
+	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &swapchain ) );
+
+	u32 scImgsNum = 0;
+	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, swapchain, &scImgsNum, 0 ) ); 
+	HT_ASSERT( scImgsNum == scInfo.minImageCount );
+
+	std::vector<VkImage> vkScImgs( scImgsNum );
+	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, swapchain, &scImgsNum, std::data( vkScImgs ) ) );
+
+	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( scInfo.imageFormat );
+
+	vk_image_vector scImgs;
+	for( u64 scii = 0; scii < scImgsNum; ++scii )
+	{
+		VkImage img = vkScImgs[ scii ];
+
+		// NOTE: yeah yeah, multiple allocs, this is fine for init !
+		std::string name = std::format( "Img_Swapchain{}", scii );
+		VkDbgNameObj( img, vkDevice, name.c_str() );
+
+		VkImageView view = VkMakeImgView( vkDevice, img, scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
+
+		VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		VkSemaphore canPresentSema;
+		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &canPresentSema ) );
+
+		scImgs.push_back( { .hndl = img, .view = view, .canPresentSema = canPresentSema } );
+	}
+
+	HT_ASSERT( ( scInfo.imageExtent.width < u32( u16( -1 ) ) ) && ( scInfo.imageExtent.height < u32( u16( -1 ) ) ) );
+
+	return {
+		.imgs = scImgs,
+		.swapchain = swapchain,
+		.imgFormat = scInfo.imageFormat,
+		.width = ( u16 ) scInfo.imageExtent.width,
+		.height = ( u16 ) scInfo.imageExtent.height,
+		.imgCount = ( u8 ) scInfo.minImageCount
+	};
+}
+
+static vk_virtual_frame VkCreateVirtualFrame( VkDevice vkDevice, u32 queueFamIdx )
+{
+	VkCommandPoolCreateInfo cmdPoolInfo = { 
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+		.queueFamilyIndex = queueFamIdx,
+	};
+	VkCommandPool cmdPool;
+	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
+
+	VkCommandBufferAllocateInfo cmdBuffAllocInfo = { 
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = cmdPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+	VkCommandBuffer cmdBuff;
+	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
+
+	VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+	VkSemaphore canGetImgSema;
+	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &canGetImgSema ) );
+
+	return {
+		.cmdPool = cmdPool,
+		.cmdBuff = cmdBuff,
+		.canGetImgSema = canGetImgSema
+	};
+}
+
+static vk_timeline VkCreateGpuTimeline( VkDevice vkDevice, u64 intialValue )
+{
+	VkSemaphoreTypeCreateInfo timelineInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+		.initialValue = intialValue,
+	};
+	VkSemaphoreCreateInfo timelineSemaInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
+		.pNext = &timelineInfo 
+	};
+
+	VkSemaphore timelineSema;
+	VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
+
+	return { .sema = timelineSema, .submitionCount = 0 };
+}
+
+vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_config& cfg )
+{
+	auto[ vkInst, vkDbgMsg ] = VkMakeInstance();
+	VkSurfaceKHR vkSurf = VkMakeWinSurface( vkInst, ( HINSTANCE ) hInst, ( HWND ) hWnd );
+	vk_device vkDevice = VkMakeDevice( vkInst, vkSurf );
+
+	vk_swapchain vkSc = VkMakeSwapchain(
+		vkDevice.logical, vkDevice.gpu, vkSurf, vkDevice.gfxQueue.index, cfg.desiredSwapchainFormat, cfg.swapchainImageCount );
+
+	vk_frame_vector frameVec;
+	for( u64 fi = 0; fi < cfg.framesInFlightCount; fi++ )
+	{
+		frameVec.push_back( VkCreateVirtualFrame( vkDevice.logical, vkDevice.gfxQueue.index ) );
+	}
+
+	vk_descriptor_allocator descAlloc = VkMakeDescriptorAllocator( 
+		vkDevice.logical, vkDevice.gpuProps, cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE );
+
+	return {
+		.sc = vkSc,
+		.vrtFrames = std::move( frameVec ),
+		.descAllocator = descAlloc,
+		.gfxQueue = vkDevice.gfxQueue,
+		.frameTimeline = VkCreateGpuTimeline( vkDevice.logical, 0 ),
+		.uploadTimeline = VkCreateGpuTimeline( vkDevice.logical, 0 ),
+		.allocator = MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
+		.gpuProps = vkDevice.gpuProps,
+		.gpu = vkDevice.gpu,
+		.device = vkDevice.logical,
+		.inst = vkInst,
+		.dbgMsg = vkDbgMsg,
+		.surf = vkSurf,
+		.globalPipelineLayout = VkMakeGlobalPipelineLayout( vkDevice.logical, descAlloc.setLayout, vkDevice.gpuProps ),
+		.deviceMask = vkDevice.deviceMask,
+		.timestampPeriod = vkDevice.gpuProps.limits.timestampPeriod,
+		.waveSize = vkDevice.waveSize
+	};
+}
+
+vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -431,7 +794,7 @@ vk_buffer vk_device_ctx::CreateBuffer( const buffer_info& buffInfo )
 	};
 }
 
-vk_image vk_device_ctx::CreateImage( const image_info& imgInfo )
+vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
 	VkCheckFormatProperties( this->gpu, imgInfo.usg, imgInfo.format );
 
@@ -478,7 +841,7 @@ vk_image vk_device_ctx::CreateImage( const image_info& imgInfo )
 	};
 }
 
-VkPipeline vk_device_ctx::CreateGfxPipeline( 
+VkPipeline vk_context::CreateGfxPipeline( 
 	std::span<const vk_gfx_shader_stage> shaderStages, 
 	std::span<const VkDynamicState> dynamicStates, 
 	const VkFormat* pColorAttachmentFormats, 
@@ -577,7 +940,7 @@ VkPipeline vk_device_ctx::CreateGfxPipeline(
 	return vkGfxPipeline;
 }
 
-VkPipeline vk_device_ctx::CreateComptuePipeline( const vk_shader& shader, vk_specializations consts, const char* pName )
+VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, vk_specializations consts, const char* pName )
 {
 	std::vector<VkSpecializationMapEntry> specializations;
 	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
@@ -609,7 +972,7 @@ VkPipeline vk_device_ctx::CreateComptuePipeline( const vk_shader& shader, vk_spe
 	return pipeline;
 }
 
-unique_shader_ptr vk_device_ctx::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
+unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 {
 	spv_reflect::ShaderModule reflInfo = SpvMakeReflectedShaderModule( spvByteCode );
 	const char* pEntryPointName = reflInfo.GetEntryPointName();
@@ -634,34 +997,46 @@ unique_shader_ptr vk_device_ctx::CreateShaderFromSpirv( std::span<const u8> spvB
 	return { new vk_shader{ pEntryPointName, sm, shaderStage }, std::move( deleter ) };
 }
 
-void vk_device_ctx::UpdateDescriptorIndices( std::span<const vk_descriptor_write> updateCache )
+desc_handle vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
 {
-	if( !std::size( updateCache ) ) return;
+	vk_desc_binding_t bindingSlot = VkDescTypeToBinding( rscDescInfo.descriptorType );
+	HT_ASSERT( std::size( descAllocator.bindingSlotFreelist ) > bindingSlot );
+
+	vector_freelist& slotAlloc = descAllocator.bindingSlotFreelist[ bindingSlot ];
+
+	desc_handle descIdx = { .slot = slotAlloc.push(), .type = bindingSlot };
+	HT_ASSERT( INVALID_IDX != descIdx.slot );
+
+	descAllocator.pendingUpdates.push_back( { rscDescInfo, descIdx } );
+
+	return descIdx;
+}
+
+void vk_context::FlushPendingDescriptorUpdates()
+{
+	if( !std::size( descAllocator.pendingUpdates ) ) return;
 
 	std::vector<VkWriteDescriptorSet> writes;
-	for( const auto& update : updateCache )
+	for( const auto& update : descAllocator.pendingUpdates )
 	{
-		VkDescriptorType descType = update.descInfo.descriptorType;
-		u16 updateIdx = update.descIdx;
-		u32 bindingSlotIdx = VkDescTypeToBinding( descType );
-
 		const VkDescriptorImageInfo* pImageInfo = 0;
 		const VkDescriptorBufferInfo* pBufferInfo = 0;
 
-		if( update.descInfo.rscType == vk_descriptor_resource_type::BUFFER )
+		if( update.descInfo.rscType == vk_resource_type::BUFFER )
 		{
 			pBufferInfo = &update.descInfo.buff;
 		}
-		else if( update.descInfo.rscType == vk_descriptor_resource_type::IMAGE )
+		else if( update.descInfo.rscType == vk_resource_type::IMAGE )
 		{
 			pImageInfo = &update.descInfo.img;
 		}
 
+		VkDescriptorType descType = update.descInfo.descriptorType;
 		VkWriteDescriptorSet writeEntryInfo = {
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descState.set,
-			.dstBinding = bindingSlotIdx,
-			.dstArrayElement = updateIdx,
+			.dstSet = descAllocator.set,
+			.dstBinding = VkDescTypeToBinding( descType ),
+			.dstArrayElement = update.hndl.slot,
 			.descriptorCount = 1,
 			.descriptorType = descType,
 			.pImageInfo = pImageInfo,
@@ -671,4 +1046,5 @@ void vk_device_ctx::UpdateDescriptorIndices( std::span<const vk_descriptor_write
 	}
 
 	vkUpdateDescriptorSets( device, std::size( writes ), std::data( writes ), 0, 0 );
+	descAllocator.pendingUpdates.resize( 0 );
 }

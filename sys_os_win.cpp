@@ -16,6 +16,7 @@
 #include <string>
 #include <algorithm>
 
+#include <EASTL/internal/config.h>
 
 using namespace std;
 
@@ -416,6 +417,10 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 #include "imgui/imgui.h"
 
+static void EastlAssertFail( const char* expr, void* )
+{
+	HtPrintErrAndDie( "{}", expr );
+}
 
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
@@ -423,7 +428,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	input_state inputState = {};
 
-
+	eastl::SetAssertionFailureFunction(&EastlAssertFail, nullptr);
 	WIN_CHECK( !DirectX::XMVerifyCPUSupport() );
 
 	SysOsCreateConsole();

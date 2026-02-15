@@ -5,20 +5,14 @@
 
 #include <vulkan.h>
 
-#include <array>
+#include <EASTL/fixed_vector.h>
 
 #include "vector_freelist.h"
 
 #include "vk_error.h"
+#include "vk_types.h"
 #include "vk_resources.h"
 #include "core_types.h"
-
-
-enum class vk_descriptor_resource_type : u8
-{
-	BUFFER,
-	IMAGE
-};
 
 struct vk_descriptor_info
 {
@@ -28,115 +22,101 @@ struct vk_descriptor_info
 		VkDescriptorImageInfo img;
 	};
 	VkDescriptorType descriptorType;
-	vk_descriptor_resource_type rscType;
+	vk_resource_type rscType;
 
 	vk_descriptor_info() = default;
 	vk_descriptor_info( const vk_buffer& vkBuff ) : buff{ vkBuff.hndl, 0, vkBuff.sizeInBytes }
 	{
 		descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		rscType = vk_descriptor_resource_type::BUFFER;
+		rscType = vk_resource_type::BUFFER;
 	}
 	vk_descriptor_info( VkBuffer buff, u64 offset, u64 range ) : buff{ buff, offset, range }
 	{
 		descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		rscType = vk_descriptor_resource_type::BUFFER;
+		rscType = vk_resource_type::BUFFER;
 	}
 	vk_descriptor_info( VkImageView view, VkImageLayout imgLayout ) : img{ .imageView = view, .imageLayout = imgLayout }
 	{
 		descriptorType = ( imgLayout == VK_IMAGE_LAYOUT_GENERAL ) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
 			VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-		rscType = vk_descriptor_resource_type::IMAGE;
+		rscType = vk_resource_type::IMAGE;
 	}
 	vk_descriptor_info( VkSampler sampler ) : img{ .sampler = sampler, .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED }
 	{
 		descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-		rscType = vk_descriptor_resource_type::IMAGE;
+		rscType = vk_resource_type::IMAGE;
 	}
 
 	vk_descriptor_info( VkDescriptorBufferInfo buffInfo ) : buff{ buffInfo }{}
 	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo }{}
 };
 
-constexpr VkDescriptorType bindingToTypeMap[] = {
-	VK_DESCRIPTOR_TYPE_SAMPLER,
-	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-	VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+enum vk_desc_binding_t : u32
+{
+	SAMPLER = 0,
+	STORAGE_BUFFER,
+	STORAGE_IMAGE,
+	SAMPLED_IMAGE,
+	COUNT
 };
 
-inline constexpr u32 VkDescTypeToBinding( VkDescriptorType type )
+inline constexpr VkDescriptorType VkDescBindingToType( vk_desc_binding_t binding )
 {
-	switch( type )
+	using enum vk_desc_binding_t;
+	switch( binding )
 	{
-	case VK_DESCRIPTOR_TYPE_SAMPLER: return 0;
-	case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return 1;
-	case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return 2;
-	case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return 3;
+	case SAMPLER: return VK_DESCRIPTOR_TYPE_SAMPLER;
+	case STORAGE_BUFFER: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	case STORAGE_IMAGE: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	case SAMPLED_IMAGE: return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
 	}
-	return INVALID_IDX;
+	return VK_DESCRIPTOR_TYPE_MAX_ENUM;
 }
 
-struct vk_desc_table
+inline constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
 {
-	static constexpr u64 BINDING_COUNT = std::size( bindingToTypeMap );
+	using enum vk_desc_binding_t;
+	switch( type )
+	{
+	case VK_DESCRIPTOR_TYPE_SAMPLER: return SAMPLER;
+	case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return STORAGE_BUFFER;
+	case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return STORAGE_IMAGE;
+	case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return SAMPLED_IMAGE;
+	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
+	}
+	return COUNT;
+}
 
-	std::array<u32, BINDING_COUNT> bindingsSize;
-
-	inline auto& operator[]( VkDescriptorType descType ) const { return bindingsSize[ VkDescTypeToBinding( descType ) ]; }
+static_assert( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE == u64( u16( -1 ) ) );
+struct desc_handle
+{
+	u32 slot : 16;
+	u32 type : 2;
+	u32 unused : 14;
 };
 
-struct vk_desc_state
-{
-	VkDescriptorPool pool;
-	VkDescriptorSetLayout setLayout;
-	VkDescriptorSet set;
-	alignas( 8 ) vk_desc_table descTable;
-};
-
-struct desc_slot_idx
-{
-	u32 slot : 30;
-	u32 binding : 2;
-};
 
 struct vk_descriptor_write
 {
 	vk_descriptor_info descInfo;
-	desc_slot_idx descIdx;
+	desc_handle hndl;
 };
+
+using vk_desc_vector = eastl::fixed_vector<vector_freelist, vk_desc_binding_t::COUNT, false>;
 
 struct vk_descriptor_allocator
 {
-	vector_freelist bindingAlloc[ vk_desc_table::BINDING_COUNT ];
-
+	vk_desc_vector  bindingSlotFreelist;
 	std::vector<vk_descriptor_write> pendingUpdates;
 
-	vk_descriptor_allocator( const vk_desc_table& descTable )
+	VkDescriptorPool pool;
+	VkDescriptorSetLayout setLayout;
+	VkDescriptorSet set;
+
+	inline void Free( desc_handle descIdx )
 	{
-		HT_ASSERT( std::size( bindingAlloc ) == vk_desc_table::BINDING_COUNT );
-		for( u64 bi = 0; bi < vk_desc_table::BINDING_COUNT; bi++ )
-		{
-			bindingAlloc[ bi ] = vector_freelist( descTable.bindingsSize[ bi ] );
-		}
-	}
-
-	inline desc_slot_idx Alloc( const vk_descriptor_info& rscDescInfo )
-	{
-		u32 bindingIdx = VkDescTypeToBinding( rscDescInfo.descriptorType );
-		vector_freelist& slotAlloc = bindingAlloc[ bindingIdx ];
-
-		desc_slot_idx descIdx = { .slot = slotAlloc.push(), .binding = bindingIdx };
-		HT_ASSERT( INVALID_IDX != descIdx.slot );
-
-		pendingUpdates.push_back( { rscDescInfo, descIdx } );
-
-		return descIdx;
-	}
-
-	inline void Free( desc_slot_idx descIdx )
-	{
-		vector_freelist& slotAlloc = bindingAlloc[ descIdx.binding ];
+		vector_freelist& slotAlloc = bindingSlotFreelist[ descIdx.type ];
 		slotAlloc.erase( descIdx.slot );
 	}
 };

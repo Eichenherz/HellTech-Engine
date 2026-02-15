@@ -1,9 +1,7 @@
 #ifndef __VK_DEVICE_H__
 #define __VK_DEVICE_H__
 
-#define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
-#include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
 
 #include <Volk/volk.h>
@@ -11,6 +9,8 @@
 #include <3rdParty/vk_mem_alloc.h>
 
 #include "vk_error.h"
+#include "vk_types.h"
+#include "vk_command_buffer.h"
 #include "vk_resources.h"
 #include "vk_descriptor.h"
 #include "vk_swapchain.h"
@@ -21,22 +21,8 @@
 #include <type_traits>
 #include <functional>
 
-// TODO:
-struct renderer_config
-{
-	static constexpr u8 MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
-	static constexpr u8 MAX_SWAPCHAIN_IMG_ALLOWED = 3;
-
-	VkFormat		desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	VkFormat		desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-	VkFormat		desiredHiZFormat = VK_FORMAT_R32_SFLOAT;
-	VkFormat        desiredSwapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
-	u16             renderWidth;
-	u16             rednerHeight;
-	u8              framesInFlightCount = 2;
-	u8              swapchainImageCount = 3;
-};
-static renderer_config renderCfg = {};
+#include <EASTL/fixed_vector.h>
+#include <EASTL/bonus/fixed_ring_buffer.h>
 
 struct vk_queue
 {
@@ -44,30 +30,6 @@ struct vk_queue
 	u32	index;
 	VkQueueFlags familyFlags;
 	bool canPresent;
-
-	// NOTE: queue submit has implicit host sync for trivial stuff, 
-	// so in theroy we shouldn't worry about memcpy to HOST_VISIBLE | DEVICE_LOCAL
-	inline void QueueSubmit( 
-		std::span<VkSemaphoreSubmitInfo> waits,
-		std::span<VkSemaphoreSubmitInfo> signals,
-		VkCommandBuffer cmdBuff
-	) {
-		VkCommandBufferSubmitInfo cmdInfo = {
-			.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-			.commandBuffer = cmdBuff,
-		};
-
-		VkSubmitInfo2 submitInfo = { 
-			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-			.waitSemaphoreInfoCount = (u32) std::size( waits ),
-			.pWaitSemaphoreInfos = std::data( waits ),
-			.commandBufferInfoCount = 1,
-			.pCommandBufferInfos = &cmdInfo,
-			.signalSemaphoreInfoCount = (u32) std::size( signals ),
-			.pSignalSemaphoreInfos = std::data( signals ),
-		};
-		VK_CHECK( vkQueueSubmit2( hndl, 1, &submitInfo, VK_NULL_HANDLE ) );
-	}
 };
 
 struct vk_timeline
@@ -76,15 +38,56 @@ struct vk_timeline
 	u64             submitionCount;
 };
 
+struct vk_virtual_frame
+{
+	VkCommandPool	cmdPool;
+	VkCommandBuffer cmdBuff;
+	VkSemaphore		canGetImgSema;
+};
 
 using PFN_VkShaderDestoryer = std::function<void( vk_shader* )>;
 using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
 
-struct vk_device_ctx
+using vk_frame_vector = eastl::fixed_vector<vk_virtual_frame, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
+
+struct vk_resource
 {
+	union
+	{
+		VkBuffer buff;
+		VkImage img;
+	};
+	u64 timelineCounterVal;
+	vk_resource_type type;
+
+	vk_resource() = default;
+	vk_resource( const vk_buffer& b, u64 counter ) 
+		: buff{ b.hndl }, type{ vk_resource_type::BUFFER }, timelineCounterVal{ counter } {}
+	vk_resource( const vk_image& i, u64 counter ) 
+		: img{ i.hndl }, type{ vk_resource_type::IMAGE }, timelineCounterVal{ counter } {}
+};
+
+struct vk_desc_handle
+{
+	u64 timelineCounterVal;
+	desc_handle hndl;
+};
+
+template<typename T, u64 MAX_CAP>
+using vk_deletion_queue = eastl::fixed_ring_buffer<T, MAX_CAP>;
+
+struct vk_context
+{
+	vk_deletion_queue<vk_desc_handle, 128> descriptroDeletionQueue{};
+	vk_deletion_queue<vk_resource, 128> resourceDeletionQueue{};
+
 	vk_swapchain    sc;
-	vk_desc_state   descState;
+	vk_frame_vector vrtFrames;
+	vk_descriptor_allocator   descAllocator;
 	vk_queue		gfxQueue;
+
+	vk_timeline frameTimeline;
+	vk_timeline uploadTimeline;
 
 	VmaAllocator    allocator;
 
@@ -92,11 +95,15 @@ struct vk_device_ctx
 	VkPhysicalDevice gpu;
 	VkDevice		device;
 	
+	VkInstance inst;
+	VkDebugUtilsMessengerEXT dbgMsg;
+	VkSurfaceKHR surf;
+
 	VkPipelineLayout globalPipelineLayout;
 
 	u32             deviceMask;
 	float           timestampPeriod;
-	u8				waveSize;
+	u32				waveSize;
 
 	vk_buffer CreateBuffer( const buffer_info& buffInfo );
 	vk_image CreateImage( const image_info& imgInfo );
@@ -110,23 +117,6 @@ struct vk_device_ctx
 		VkFormat								depthAttachmentFormat,
 		const vk_gfx_pipeline_state&			pipelineState );
 	VkPipeline CreateComptuePipeline( const vk_shader& shader, vk_specializations consts, const char* pName = "" );
-	inline vk_timeline CreateGpuTimeline( u64 intialValue )
-	{
-		VkSemaphoreTypeCreateInfo timelineInfo = { 
-			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-			.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-			.initialValue = intialValue,
-		};
-		VkSemaphoreCreateInfo timelineSemaInfo = { 
-			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
-			.pNext = &timelineInfo 
-		};
-
-		VkSemaphore timelineSema;
-		VK_CHECK( vkCreateSemaphore( device, &timelineSemaInfo, 0, &timelineSema ) );
-
-		return { .sema = timelineSema, .submitionCount = 0 };
-	}
 
 	unique_shader_ptr CreateShaderFromSpirv( std::span<const u8> spvByteCode );
 	inline void DestroyShaderModule( VkShaderModule module )
@@ -154,10 +144,17 @@ struct vk_device_ctx
 		}
 		return VK_SUCCESS;
 	}
-	inline void ResetCmdPool( VkCommandPool cmdPool )
+
+	inline vk_command_buffer GetFrameCmdBuff( u64 frameInFlightIdx )
 	{
-		VK_CHECK( vkResetCommandPool( device, cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+		HT_ASSERT( frameInFlightIdx < std::size( vrtFrames ) );
+		vk_virtual_frame& thisVrtFrame = vrtFrames[ frameInFlightIdx ];
+
+		VK_CHECK( vkResetCommandPool( device, thisVrtFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+
+		return { thisVrtFrame.cmdBuff, globalPipelineLayout, descAllocator.set };
 	}
+
 	inline void TransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
 	{
 		VK_CHECK( vkTransitionImageLayout( device, transitionCount, transitions ) );
@@ -188,16 +185,53 @@ struct vk_device_ctx
 		VK_CHECK( vkCopyMemoryToImage( device, &copyMemInfo ) );
 	}
 
-	void UpdateDescriptorIndices( std::span<const vk_descriptor_write> updateCache );
-
-	inline u32 AcquireNextSwapchainImageBlocking( VkSemaphore virtualFrameSema ) const
+	desc_handle AllocDescriptor( const vk_descriptor_info& rscDescInfo );
+	inline void EnqueueDescriptorFree( desc_handle handle, u64 frameIdx )
 	{
+		descriptroDeletionQueue.push_back( { frameIdx, handle } );
+	}
+
+	void FlushPendingDescriptorUpdates();
+
+	void FlushDeletionQueues();
+
+	inline u32 AcquireNextSwapchainImageBlocking( u64 frameInFlightIdx ) const
+	{
+		HT_ASSERT( frameInFlightIdx < std::size( vrtFrames ) );
+		const vk_virtual_frame& thisVrtFrame = vrtFrames[ frameInFlightIdx ];
+
 		u32 imgIdx;
-		VK_CHECK( vkAcquireNextImageKHR( device, sc.swapchain, UINT64_MAX, virtualFrameSema, 0, &imgIdx ) );
+		VK_CHECK( vkAcquireNextImageKHR( device, sc.swapchain, UINT64_MAX, thisVrtFrame.canGetImgSema, 0, &imgIdx ) );
 		return imgIdx;
+	}
+
+	// NOTE: queue submit has implicit host sync for trivial stuff, 
+	inline void QueueSubmit( 
+		const vk_queue& queue, 
+		std::span<VkSemaphoreSubmitInfo> waits,
+		std::span<VkSemaphoreSubmitInfo> signals, 
+		VkCommandBuffer cmdBuff 
+	) {
+		VkCommandBufferSubmitInfo cmdInfo = {
+			.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+			.commandBuffer = cmdBuff,
+		};
+
+		VkSubmitInfo2 submitInfo = {
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+			.waitSemaphoreInfoCount = ( u32 ) std::size( waits ),
+			.pWaitSemaphoreInfos = std::data( waits ),
+			.commandBufferInfoCount = 1,
+			.pCommandBufferInfos = &cmdInfo,
+			.signalSemaphoreInfoCount = ( u32 ) std::size( signals ),
+			.pSignalSemaphoreInfos = std::data( signals ),
+		};
+		VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, VK_NULL_HANDLE ) );
 	}
 	inline void QueuePresent( const vk_queue& queue, u32 imgIdx )
 	{
+		HT_ASSERT( queue.canPresent );
+
 		VkPresentInfoKHR presentInfo = { 
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 			.waitSemaphoreCount = 1,
@@ -210,6 +244,6 @@ struct vk_device_ctx
 	}
 };
 
-vk_device_ctx VkMakeDeviceContext( VkInstance vkInst, VkSurfaceKHR vkSurf, const renderer_config& cfg );
+vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_config& cfg );
 
 #endif // !__VK_DEVICE_H__

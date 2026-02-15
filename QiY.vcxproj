@@ -113,7 +113,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>D:\EichenRepos\QiY\QiY\3rdParty\EASTL\include;D:\EichenRepos\QiY\QiY\3rdParty\dds;D:\EichenRepos\QiY\QiY\HellPack;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
+    <IncludePath>D:\EichenRepos\QiY\QiY\3rdParty\EABase\include\Common;D:\EichenRepos\QiY\QiY\3rdParty\EASTL\include;D:\EichenRepos\QiY\QiY\3rdParty\dds;D:\EichenRepos\QiY\QiY\HellPack;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
     <CustomBuildBeforeTargets>
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
@@ -274,6 +274,16 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="3rdParty\EASTL\source\allocator_eastl.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\assert.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\atomic.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\fixed_pool.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\hashtable.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\intrusive_list.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\numeric_limits.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\red_black_tree.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\string.cpp" />
+    <ClCompile Include="3rdParty\EASTL\source\thread_support.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -282,7 +292,7 @@
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="vk_backend.cpp" />
     <None Include="r_dx12_backend.cpp" />
-    <ClCompile Include="r_vk_backend.cpp" />
+    <ClCompile Include="renderer.cpp" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
@@ -328,13 +338,16 @@
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\types.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp" />
     <ClInclude Include="vector_freelist.h" />
+    <ClInclude Include="vk_command_buffer.h" />
     <ClInclude Include="vk_descriptor.h" />
-    <ClInclude Include="vk_device.h" />
+    <ClInclude Include="vk_context.h" />
     <ClInclude Include="vk_error.h" />
     <ClInclude Include="vk_pso.h" />
     <ClInclude Include="vk_resources.h" />
     <ClInclude Include="vk_swapchain.h" />
     <ClInclude Include="vk_timer.h" />
+    <ClInclude Include="vk_types.h" />
+    <ClInclude Include="vk_types_internal.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">

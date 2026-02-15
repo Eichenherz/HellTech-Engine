@@ -66,7 +66,7 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 do{																						\
 	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR;							\
 	VkResult res = vk;																	\
-	if( res ) PrintErrAndDie( "{} \nERR: {}", DEV_ERR_STR, VkResErrorString( res ) );	\
+	if( res ) HtPrintErrAndDie( "{} \nERR: {}", DEV_ERR_STR, VkResErrorString( res ) );	\
 }while( 0 )	
 
 template<typename VKH>

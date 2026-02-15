@@ -14,7 +14,7 @@
 #define RUNTIME_ERR_LINE_FILE_STR ">>>RUNTIME_ERROR<<<\nLine: " LINE_STR", File: " __FILE__
 
 template<typename... Args>
-__forceinline void PrintErrAndDie( std::format_string<Args...> fmt, Args&&... args )
+__forceinline void HtPrintErrAndDie( std::format_string<Args...> fmt, Args&&... args )
 {
 	char dbgStr[ 2048 ] = {};
 	std::format_to_n( dbgStr, std::size( dbgStr ) - 1, fmt, std::forward<Args>( args )... );
@@ -25,7 +25,7 @@ __forceinline void PrintErrAndDie( std::format_string<Args...> fmt, Args&&... ar
 #define HT_ASSERT( boolExpr )														\
 do{																					\
 	constexpr char DEV_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR;						\
-	if( !( boolExpr ) ) PrintErrAndDie( "{}", DEV_ERR_STR );						\
+	if( !( boolExpr ) ) HtPrintErrAndDie( "{}", DEV_ERR_STR );						\
 }while( 0 )
 
 #endif // !__HT_ERROR_H__

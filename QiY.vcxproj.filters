@@ -18,7 +18,7 @@
     <ClCompile Include="sys_os_win.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="r_vk_backend.cpp">
+    <ClCompile Include="renderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="imgui\imgui.cpp">
@@ -43,6 +43,36 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="spirv_reflect.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\allocator_eastl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\assert.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\atomic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\fixed_pool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\hashtable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\intrusive_list.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\numeric_limits.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\red_black_tree.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\string.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdParty\EASTL\source\thread_support.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -104,7 +134,7 @@
     <ClInclude Include="ht_geometry.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_device.h">
+    <ClInclude Include="vk_context.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="dxc.h">
@@ -126,9 +156,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="vk_descriptor.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="vk_swapchain.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="3rdParty\vk_mem_alloc.h">
@@ -174,6 +201,18 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="vector_freelist.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_types.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_types_internal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_swapchain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_command_buffer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
