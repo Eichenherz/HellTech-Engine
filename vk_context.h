@@ -107,6 +107,10 @@ struct vk_context
 
 	vk_buffer CreateBuffer( const buffer_info& buffInfo );
 	vk_image CreateImage( const image_info& imgInfo );
+	inline void EnqueueResourceFree( const vk_resource& rsc )
+	{
+		resourceDeletionQueue.push_back( rsc );
+	}
 	// TODO: depth clamp ?
 	// VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 	VkPipeline CreateGfxPipeline(
@@ -115,7 +119,8 @@ struct vk_context
 		const VkFormat*							pColorAttachmentFormats,
 		u32										colorAttachmentCount,
 		VkFormat								depthAttachmentFormat,
-		const vk_gfx_pipeline_state&			pipelineState );
+		const vk_gfx_pipeline_state&			pipelineState,
+		VkPipelineLayout                        vkPipelineLayout = VK_NULL_HANDLE );
 	VkPipeline CreateComptuePipeline( const vk_shader& shader, vk_specializations consts, const char* pName = "" );
 
 	unique_shader_ptr CreateShaderFromSpirv( std::span<const u8> spvByteCode );

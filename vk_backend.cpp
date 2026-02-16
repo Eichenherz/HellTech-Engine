@@ -4,11 +4,20 @@
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
 
-#define VMA_IMPLEMENTATION
-#include <3rdParty/vk_mem_alloc.h>
-
 #define VOLK_IMPLEMENTATION 
 #include <Volk/volk.h>
+
+#include <format>
+
+#define VMA_IMPLEMENTATION
+
+//#define VMA_DEBUG_LOG( str ) do { std::fputs( std::format( "[VMA] {}\n", str ).c_str(), stdout ); } while ( 0 )
+
+//#define VMA_DEBUG_LOG_FORMAT( fmt, ... ) \
+//    do { std::fputs( std::format( "[VMA] " fmt "\n", __VA_ARGS__ ).c_str(), stdout ); } while ( 0 )
+
+#include <3rdParty/vk_mem_alloc.h>
+
 
 #include <array>
 
@@ -747,7 +756,7 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size = buffInfo.elemCount * buffInfo.stride,
+		.size = buffInfo.sizeInBytes,
 		.usage = buffInfo.usageFlags,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
@@ -770,17 +779,17 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 	VkBuffer vkBuffer;
 	VmaAllocation mem;
 	VmaAllocationInfo allocInfo;
-	VK_CHECK( vmaCreateBuffer( this->allocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &mem, &allocInfo ) );
+	VK_CHECK( vmaCreateBuffer( allocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &mem, &allocInfo ) );
 
 	if( buffInfo.name )
 	{
-		VkDbgNameObj( vkBuffer, this->device, buffInfo.name );
+		VkDbgNameObj( vkBuffer, device, buffInfo.name );
 	}
 
 	u64 devicePointer = 0;
 	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT )
 	{
-		devicePointer = VkGetBufferDeviceAddress( this->device, vkBuffer );
+		devicePointer = VkGetBufferDeviceAddress( device, vkBuffer );
 		assert( devicePointer );
 	}
 
@@ -796,7 +805,7 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
-	VkCheckFormatProperties( this->gpu, imgInfo.usg, imgInfo.format );
+	VkCheckFormatProperties( gpu, imgInfo.usg, imgInfo.format );
 
 	VkImageCreateInfo imageInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -818,15 +827,15 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 	VkImage img;
 	VmaAllocation mem;
 	VmaAllocationInfo allocInfo;
-	VK_CHECK( vmaCreateImage( this->allocator, &imageInfo, &allocCreateInfo, &img, &mem, &allocInfo ) );
+	VK_CHECK( vmaCreateImage( allocator, &imageInfo, &allocCreateInfo, &img, &mem, &allocInfo ) );
 
 	if( imgInfo.name )
 	{
-		VkDbgNameObj( img, this->device, imgInfo.name );
+		VkDbgNameObj( img, device, imgInfo.name );
 	}
 
 	VkImageView vkImgView = VkMakeImgView(
-		this->device, img, imageInfo.format, 0, imageInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
+		device, img, imageInfo.format, 0, imageInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
 
 	return {
 		.mem = mem,
@@ -847,7 +856,8 @@ VkPipeline vk_context::CreateGfxPipeline(
 	const VkFormat* pColorAttachmentFormats, 
 	u32 colorAttachmentCount, 
 	VkFormat depthAttachmentFormat, 
-	const vk_gfx_pipeline_state& pipelineState 
+	const vk_gfx_pipeline_state& pipelineState,
+	VkPipelineLayout vkPipelineLayout
 ) {
 	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -930,7 +940,7 @@ VkPipeline vk_context::CreateGfxPipeline(
 		.pDepthStencilState = &depthStencilState,
 		.pColorBlendState = &colorBlendStateInfo,
 		.pDynamicState = &dynamicStateInfo,
-		.layout = globalPipelineLayout,
+		.layout = vkPipelineLayout ? vkPipelineLayout : globalPipelineLayout,
 		.basePipelineIndex = -1
 	};
 

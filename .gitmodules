@@ -13,3 +13,6 @@
 [submodule "3rdParty/EABase"]
 	path = 3rdParty/EABase
 	url = https://github.com/electronicarts/EABase.git
+[submodule "3rdParty/imgui"]
+	path = 3rdParty/imgui
+	url = https://github.com/ocornut/imgui.git

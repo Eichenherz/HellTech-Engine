@@ -415,7 +415,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }						 
 
-#include "imgui/imgui.h"
+#include <imgui.h>
 
 static void EastlAssertFail( const char* expr, void* )
 {
@@ -500,15 +500,15 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	u16 mainViewIdx = 0;
 	u16 dbgViewIdx = 1;
 
-	VkBackendInit( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
-
-	ImGui::CreateContext();
+	ImGuiContext* imGuiCtx = ImGui::CreateContext();
+	ImGui::SetCurrentContext( imGuiCtx );
 	ImGui::StyleColorsDark();
 	ImGuiIO& io = ImGui::GetIO();
 	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
 	io.Fonts->AddFontDefault();
 	io.Fonts->Build();
 	
+	VkBackendInit( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
@@ -555,7 +555,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		frameData.dbgDraw = kbd.o;
 
 		ImGui::NewFrame();
-		std::string wndMsg( std::to_string( gpuData.timeMs ) );
+		std::string wndMsg( std::to_string( -1.0f ) );// gpuData.timeMs ) );
 		
 		ImGui::SetNextWindowPos( {} );
 		ImGui::SetNextWindowSize( { std::size( wndMsg ) * ImGui::GetFontSize(),50 } );
