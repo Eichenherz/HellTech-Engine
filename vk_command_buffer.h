@@ -44,7 +44,7 @@ struct vk_rendering_info
 	alignas( 8 ) VkViewport							viewport;
 	alignas( 8 ) VkRect2D							scissor;
 	std::span<const VkRenderingAttachmentInfo>	colorAttachments;
-	const VkRenderingAttachmentInfo const*			pDepthAttachment;
+	const VkRenderingAttachmentInfo*			pDepthAttachment;
 };
 
 

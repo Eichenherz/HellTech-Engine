@@ -52,7 +52,7 @@ layout( buffer_reference, buffer_reference_align = 4 ) writeonly buffer compacte
 
 shared uint workgrAtomicCounterShared;
 
-layout( local_size_x_id = 0 ) in;
+layout( local_size_x_id = 32 ) in;
 
 struct frustum_culling_result
 {

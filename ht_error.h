@@ -1,8 +1,11 @@
+#pragma once
+
 #ifndef __HT_ERROR_H__
 #define __HT_ERROR_H__
 
 #include "sys_os_api.h"
 #include <format>
+#include <cstdlib>
 
 //////////////////////////////////////
 // MACROS

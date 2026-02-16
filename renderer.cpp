@@ -6,21 +6,21 @@
 
 #include <Volk/volk.h>
 
+#include <cstdarg>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include <string_view>
-#include <charconv>
 #include <span>
 #include <format>
 #include <memory>
 
-#include <EASTL/bonus/ring_buffer.h>
+#include "sys_os_api.h"
 
 #include "vk_resources.h"
 #include "vk_descriptor.h"
 #include "vk_timer.h"
 #include "vk_error.h"
+#include "ht_utils.h"
 
 // NOTE: clang-cl on VS issue
 #ifdef __clang__
@@ -39,8 +39,6 @@
 #include <DirectXPackedVector.h>
 
 namespace DXPacked = DirectX::PackedVector;
-
-#include "sys_os_api.h"
 
 
 //====================CONSTS====================//
@@ -87,7 +85,7 @@ struct frame_resources
 
 #include "r_data_structs.h"
 
-// NOTE: clear depth to 0 bc we use RevZ
+// NOTE: clear depth to 0 bc we	use RevZ
 constexpr VkClearValue DEPTH_CLEAR_VAL = {};
 constexpr VkClearValue RT_CLEAR_VAL = {};
 
@@ -258,17 +256,6 @@ struct imgui_pass
 			.mipCount = 1,
 		} );
 
-		VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( fontAtlasImg.format );
-		VkHostImageLayoutTransitionInfo hostImgLayoutTransitionInfo = {
-			.sType = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO,
-			.image = fontAtlasImg.hndl,
-			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			.subresourceRange = {
-				.aspectMask = aspectFlags, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 
-		    },
-		};
-
 		//dc.TransitionImageLayout( &hostImgLayoutTransitionInfo, 1 );
 		//dc.CopyMemoryToImage( fontAtlasImg, pixels );
 	}
@@ -371,10 +358,10 @@ struct imgui_pass
 		vec2 clipScale = { drawData->FramebufferScale.x, drawData->FramebufferScale.y };
 
 		u32 vtxOffset = 0, idxOffset = 0;
-		for( u64 li = 0; li < drawData->CmdListsCount; ++li )
+		for( u32 li = 0u; li < ( u32 ) drawData->CmdListsCount; ++li )
 		{
 			const ImDrawList* cmdList = drawData->CmdLists[ li ];
-			for( u64 ci = 0; ci < cmdList->CmdBuffer.Size; ++ci )
+			for( u32 ci = 0u; ci < ( u32 ) cmdList->CmdBuffer.Size; ++ci )
 			{
 				const ImDrawCmd* pCmd = &cmdList->CmdBuffer[ ci ];
 				// Project scissor/clipping rectangles into framebuffer space
@@ -469,19 +456,21 @@ imgui_pass MakeImguiPass( vk_context& dc, VkFormat colDstFormat )
 	unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
 		SysReadFile( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
 
-	// TODO: add blend add
-	vk_gfx_pipeline_state guiState = {};
-	guiState.blendCol = VK_TRUE; 
-	guiState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-	guiState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-	guiState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-	guiState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-	guiState.depthWrite = VK_FALSE;
-	guiState.depthTestEnable = VK_FALSE;
-	guiState.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-	guiState.polyMode = VK_POLYGON_MODE_FILL;
-	guiState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	guiState.cullFlags = VK_CULL_MODE_NONE;
+	vk_gfx_pso_config guiState = {
+		.polyMode = VK_POLYGON_MODE_FILL,
+		.cullFlags = VK_CULL_MODE_NONE,
+		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+		.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+		.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.colorBlendOp = VK_BLEND_OP_ADD,
+		.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+		.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.alphaBlendOp = VK_BLEND_OP_ADD,
+		.depthWrite = false,
+		.depthTestEnable = false,
+		.blendCol = true
+	};
 
 	vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
 	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -535,7 +524,7 @@ struct debug_context
 		static_assert( worldLeftHanded );
 
 		{
-			vk_gfx_pipeline_state lineDrawPipelineState = {
+			vk_gfx_pso_config lineDrawPipelineState = {
 				.polyMode = VK_POLYGON_MODE_LINE,
 				.cullFlags = VK_CULL_MODE_NONE,
 				.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
@@ -552,7 +541,7 @@ struct debug_context
 		}
 		
 		{
-			vk_gfx_pipeline_state triDrawPipelineState = {
+			vk_gfx_pso_config triDrawPipelineState = {
 				.polyMode = VK_POLYGON_MODE_FILL,
 				.cullFlags = VK_CULL_MODE_NONE,
 				.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
@@ -712,7 +701,7 @@ struct culling_ctx
 	void Init( vk_context& dc )
 	{
 		unique_shader_ptr drawCull = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/c_draw_cull.comp.spv" ) );
-		compPipeline = dc.CreateComptuePipeline( *drawCull, { dc.waveSize }, "Pipeline_Comp_DrawCull" );
+		compPipeline = dc.CreateComptuePipeline( *drawCull, "Pipeline_Comp_DrawCull" );
 
 		//vk_shader clusterCull = dc.CreateShaderFromSpirv( "Shaders/c_meshlet_cull.comp.spv", dc.device );
 		//compClusterCullPipe = VkMakeComputePipeline( 
@@ -918,11 +907,11 @@ struct tonemapping_ctx
 	{
 		unique_shader_ptr avgLum = dc.CreateShaderFromSpirv( 
 			SysReadFile( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
-		compAvgLumPipe = dc.CreateComptuePipeline( *avgLum, {}, "Pipeline_Comp_AvgLum" );
+		compAvgLumPipe = dc.CreateComptuePipeline( *avgLum, "Pipeline_Comp_AvgLum" );
 
 		unique_shader_ptr toneMapper = dc.CreateShaderFromSpirv( 
 			SysReadFile( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
-		compTonemapPipe = dc.CreateComptuePipeline( *toneMapper, {}, "Pipeline_Comp_Tonemapping" );
+		compTonemapPipe = dc.CreateComptuePipeline( *toneMapper, "Pipeline_Comp_Tonemapping" );
 
 		VkBufferUsageFlags usageFlags = 
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -1017,10 +1006,10 @@ struct depth_pyramid_pass
 	{
 		unique_shader_ptr downsampler = vkCtx.CreateShaderFromSpirv( 
 			SysReadFile( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
-		pipeline = vkCtx.CreateComptuePipeline( *downsampler, {}, "Pipeline_Comp_HiZ" );
+		pipeline = vkCtx.CreateComptuePipeline( *downsampler, "Pipeline_Comp_HiZ" );
 
 		u16 squareDim = 512;
-		u8 hiZMipCount = GetImgMipCountForPow2( squareDim, squareDim, MAX_MIP_LEVELS );
+		u8 hiZMipCount = GetImgMipCount( squareDim, squareDim, MAX_MIP_LEVELS );
 
 		HT_ASSERT( MAX_MIP_LEVELS >= hiZMipCount );
 
@@ -1044,7 +1033,7 @@ struct depth_pyramid_pass
 
 		hizSrv = vkCtx.AllocDescriptor( vk_descriptor_info{ pHiZTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		for( u64 i = 0; i < pHiZTarget->mipCount; ++i )
+		for( u32 i = 0; i < pHiZTarget->mipCount; ++i )
 		{
 			hiZMipViews[ i ] = VkMakeImgView( 
 				vkCtx.device, pHiZTarget->hndl, hiZInfo.format, i, 1, VK_IMAGE_VIEW_TYPE_2D, 0, hiZInfo.layerCount );
@@ -1096,7 +1085,7 @@ struct depth_pyramid_pass
 
 		u32 mipLevel = 0;
 		u32 srcImg = depthIdx.slot;
-		for( u64 i = 0; i < pHiZTarget->mipCount; ++i )
+		for( u32 i = 0; i < pHiZTarget->mipCount; ++i )
 		{
 			if( i > 0 )
 			{
@@ -1160,8 +1149,6 @@ struct depth_pyramid_pass
 
 struct render_context
 {
-	vk_descriptor_allocator descAllocator;
-
 	imgui_pass   imguiCtx;
 	debug_context   dbgCtx;
 	culling_ctx     cullingCtx;
@@ -1181,8 +1168,6 @@ struct render_context
 	VkPipeline		gfxPipeline;
 	VkPipeline		gfxMeshletPipeline;
 	VkPipeline		gfxMergedPipeline;
-
-	
 
 	u64				vFrameIdx = 0;
 
@@ -1250,7 +1235,7 @@ void render_context::InitGlobalResources()
 static render_context rndCtx;
 
 // TODO: separate from render_context
-void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
+void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 {
 	rndCtx.pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, renderCfg ) );
 
@@ -1261,7 +1246,7 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
 		rndCtx.gfxZPrepass = rndCtx.pVkCtx->CreateGfxPipeline( 
-			shaderStages, dynamicStates, 0, 0, renderCfg.desiredDepthFormat, {} );
+			shaderStages, dynamicStates, 0, 0, renderCfg.desiredDepthFormat, DEFAULT_PSO );
 	}
 	//{
 	//	vk_shader vertBox = dc.CreateShaderFromSpirv( "Shaders/box_meshlet_draw.vert.spv", rndCtx.pDevice->device );
@@ -1293,13 +1278,12 @@ void VkBackendInit( uintptr_t hInst, uintptr_t hWnd )
 	{
 		unique_shader_ptr vtx = rndCtx.pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/vtx_merged.vert.spv" ) );
 		unique_shader_ptr frag = rndCtx.pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/pbr.frag.spv" ) );
-		vk_gfx_pipeline_state opaqueState = {};
-
+		
 		vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
 		rndCtx.gfxMergedPipeline = rndCtx.pVkCtx->CreateGfxPipeline( 
-			shaderStages, dynamicStates, &renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, opaqueState );
+			shaderStages, dynamicStates, &renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, DEFAULT_PSO );
 	}
 	//{
 	//	vk_shader vertMeshlet = dc.CreateShaderFromSpirv( "Shaders/meshlet.vert.spv", rndCtx.pDevice->device );
@@ -1365,7 +1349,7 @@ DrawIndexedIndirectMerged(
 	const vk_buffer&      drawCount,
 	u32 maxDrawCount,
 	const void* pPushData,
-	u64 pushDataSize
+	u32 pushDataSize
 ) {
 	vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Draw Indexed Indirect Pass", {} );
 
@@ -1394,7 +1378,7 @@ DepthPyramidMultiPass(
 
 struct drak_file_viewer
 {
-	const drak_file_footer const* fileFooter;
+	const drak_file_footer* fileFooter;
 	std::span<const u8> binaryData;
 
 	drak_file_viewer( std::span<const u8> data ) : binaryData{ data }
@@ -1488,80 +1472,7 @@ struct renderer_geometry
 		const drak_file_viewer& viewDrkFile, 
 		u64                     currentFrameId 
 	) {
-		std::vector<VkHostImageLayoutTransitionInfo> imageTransitions;
-		// NOTE: need this to append
-		const u64 texOffset = std::size( pTextures );
-
-		auto imgMetadataSpan = viewDrkFile.GetImagesMetadata();
-		for( const image_metadata& meta : imgMetadataSpan )
-		{
-			const image_info info = GetImageInfoFromMetadata( 
-				meta, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT );
-			auto img = std::make_shared<vk_image>( dc.CreateImage( info ) );
-			pTextures.push_back( img );
-
-			VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( img->format );
-			VkHostImageLayoutTransitionInfo hostImgLayoutTransitionInfo = {
-				.sType = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO,
-				.image = img->hndl,
-				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-				.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-				.subresourceRange = {
-					.aspectMask = aspectFlags,
-					.baseMipLevel = 0,
-					.levelCount = 1,
-					.baseArrayLayer = 0,
-					.layerCount = 1
-			},
-			};
-		}
-		dc.TransitionImageLayout( std::data( imageTransitions ), std::size( imageTransitions ) );
-
-		for( u64 i = 0; i < std::size( imgMetadataSpan ); ++i )
-		{
-			const image_metadata& meta = imgMetadataSpan[ i ];
-			auto texBinSpan = viewDrkFile.GetTextureBinaryData( meta );
-			dc.CopyMemoryToImage( *pTextures[ i ], std::data( texBinSpan ) );
-		}
-
-		// NOTE: we assume materials have an abs idx for the textures
-		std::vector<material_data> mtrls = {};
-		for( const material_data& m : viewDrkFile.GetMaterials() )
-		{
-			mtrls.push_back( m );
-			material_data& refM = mtrls[ std::size( mtrls ) - 1 ];
-
-			const auto& mBaseCol = pTextures[ m.baseColIdx + texOffset ];
-			const auto& mNormalMap = pTextures[ m.normalMapIdx + texOffset ];
-			const auto& mOccRoughMetal = pTextures[ m.occRoughMetalIdx + texOffset ];
-
-			//refM.baseColIdx = VkAllocDescriptorIdx( 
-			//	rndCtx.descAllocator, vk_descriptor_info{ mBaseCol->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
-			//refM.normalMapIdx = VkAllocDescriptorIdx( 
-			//	rndCtx.descAllocator, vk_descriptor_info{ mNormalMap->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
-			//refM.occRoughMetalIdx = VkAllocDescriptorIdx( 
-			//	rndCtx.descAllocator, vk_descriptor_info{ mOccRoughMetal->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL });
-		}
-		constexpr VkBufferUsageFlags usg =
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-
-		pMaterials = std::make_shared<vk_buffer>( dc.CreateBuffer( {
-			.name = "Buff_Mtrls",
-			.usageFlags = usg,
-			.sizeInBytes = ( u32 ) std::size( mtrls ) * sizeof( decltype( mtrls )::value_type ),
-			.usage = buffer_usage::GPU_ONLY
-																   } ) );
-
-		StagingManagerUploadBuffer( dc, stagingManager, cmdBuff, 
-									CastSpanAsU8ReadOnly( std::span<material_data>{mtrls} ), materialsBuff, currentFrameId );
-
-		VkBufferMemoryBarrier2 buffBarriers[] = {
-			VkMakeBufferBarrier2(
-				materialsBuff.hndl,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-				VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT )
-		};
-		cmdBuff.CmdPipelineBufferBarriers( buffBarriers );
+		
 	}
 
 	void UploadGeometry(
@@ -1770,8 +1681,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
 
-		u32 instCount = 1; instDescBuff.sizeInBytes / sizeof( instance_desc );
-		u32 mletCount = 1; meshletBuff.sizeInBytes / sizeof( meshlet );
+		u32 instCount = 1; //instDescBuff.sizeInBytes / sizeof( instance_desc );
+		u32 mletCount = 1; //meshletBuff.sizeInBytes / sizeof( meshlet );
 		rndCtx.cullingCtx.InitSceneDependentData( *rndCtx.pVkCtx, instCount, mletCount * instCount );
 
 		//rndCtx.dbgCtx.UploadDebugGeometry();
@@ -1803,8 +1714,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	VkViewport viewport = VkGetSwapchainViewport( rndCtx.pVkCtx->sc );
 	VkRect2D scissor = VkGetSwapchianScissor( rndCtx.pVkCtx->sc );
 
-	u32 instCount = instDescBuff.sizeInBytes / sizeof( instance_desc );
-	u32 mletCount = meshletBuff.sizeInBytes / sizeof( meshlet );
+	u32 instCount = ( u32 ) instDescBuff.sizeInBytes / sizeof( instance_desc );
+	u32 mletCount = ( u32 ) meshletBuff.sizeInBytes / sizeof( meshlet );
 	u32 meshletUpperBound = instCount * mletCount;
 
 	DirectX::XMMATRIX t = DirectX::XMMatrixMultiply( 

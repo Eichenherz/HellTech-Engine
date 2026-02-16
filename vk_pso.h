@@ -1,16 +1,14 @@
 #ifndef __VK_PSO_H__
 #define __VK_PSO_H__
 
-#define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
-#include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
-
-#include <Volk/volk.h>
 
 #include "vk_error.h"
 #include "core_types.h"
 
+#include <EASTL/fixed_string.h>
+#include <span>
 #include <SPIRV-Reflect/spirv_reflect.h>
 
 inline spv_reflect::ShaderModule SpvMakeReflectedShaderModule( std::span<const u8> spvByteCode )
@@ -22,12 +20,11 @@ inline spv_reflect::ShaderModule SpvMakeReflectedShaderModule( std::span<const u
 	return reflInfo;
 }
 
-// TODO: variable entry point
-constexpr char SHADER_ENTRY_POINT[] = "main";
-
 struct vk_shader
 {
-	std::string           entryPoint;
+	using shader_entry_point = eastl::fixed_string<char, 1024, false>;
+
+	shader_entry_point    entryPoint;
 	VkShaderModule        module;
 	VkShaderStageFlagBits stage;
 };
@@ -50,47 +47,37 @@ struct group_size
 	u32 z : 8;
 };
 
-
-// TODO: map spec consts ?
-using vk_specializations = std::initializer_list<u32>;
-
-inline static VkSpecializationInfo
-VkMakeSpecializationInfo(
-	std::vector<VkSpecializationMapEntry>& specializations,
-	const vk_specializations& consts
-) {
-	constexpr u64 sizeOfASpecConst = sizeof( std::decay_t<decltype( consts )>::value_type );
-
-	specializations.resize( std::size( consts ) );
-	for( u64 i = 0; i < std::size( consts ); ++i )
-	{
-		specializations[ i ] = { u32( i ), u32( i * sizeOfASpecConst ), u32( sizeOfASpecConst ) };
-	}
-
-	VkSpecializationInfo specInfo = {
-		.mapEntryCount = ( u32 ) std::size( specializations ),
-		.pMapEntries = std::data( specializations ),
-		.dataSize = std::size( consts ) * sizeOfASpecConst,
-		.pData = std::cbegin( consts )
-	};
-
-	return specInfo;
-}
-
-// TODO: store more stuff ?
-struct vk_gfx_pipeline_state
+struct vk_gfx_pso_config
 {
-	VkPolygonMode		polyMode = VK_POLYGON_MODE_FILL;
-	VkCullModeFlags		cullFlags = VK_CULL_MODE_BACK_BIT;
-	VkFrontFace			frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-	VkPrimitiveTopology primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-	VkBlendFactor       srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-	VkBlendFactor       dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-	VkBlendFactor       srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	VkBlendFactor       dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-	bool				depthWrite = true;
-	bool				depthTestEnable = true;
-	bool				blendCol = false;
+	VkPolygonMode		polyMode;
+	VkCullModeFlags		cullFlags;
+	VkFrontFace			frontFace;
+	VkPrimitiveTopology primTopology;
+	VkBlendFactor       srcColorBlendFactor;
+	VkBlendFactor       dstColorBlendFactor;
+	VkBlendOp           colorBlendOp;
+	VkBlendFactor       srcAlphaBlendFactor;
+	VkBlendFactor       dstAlphaBlendFactor;
+	VkBlendOp           alphaBlendOp;
+	bool				depthWrite;
+	bool				depthTestEnable;
+	bool				blendCol;
+};
+
+constexpr vk_gfx_pso_config DEFAULT_PSO = {
+	.polyMode = VK_POLYGON_MODE_FILL,
+	.cullFlags = VK_CULL_MODE_BACK_BIT,
+	.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+	.primTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+	.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+	.dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+	.colorBlendOp = VK_BLEND_OP_ADD,
+	.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+	.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+	.alphaBlendOp = VK_BLEND_OP_ADD,
+	.depthWrite = true,
+	.depthTestEnable = true,
+	.blendCol = false
 };
 
 #endif // !__VK_PSO_H__

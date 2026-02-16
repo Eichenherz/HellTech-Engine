@@ -28,7 +28,6 @@ struct vk_swapchain
 	u8					imgCount;
 };
 
-// TODO: more params ??
 inline VkViewport VkGetSwapchainViewport( const vk_swapchain& sc )
 {
 	return { 0.0f, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0.0f, 1.0f };

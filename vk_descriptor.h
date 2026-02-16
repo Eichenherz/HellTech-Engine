@@ -9,7 +9,7 @@
 
 #include "vector_freelist.h"
 
-#include "vk_error.h"
+#include "ht_error.h"
 #include "vk_types.h"
 #include "vk_resources.h"
 #include "core_types.h"

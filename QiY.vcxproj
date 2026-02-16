@@ -196,6 +196,7 @@
       <AdditionalIncludeDirectories>D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include\ankerl;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AdditionalOptions>/arch:AVX2 %(AdditionalOptions)</AdditionalOptions>
+      <ShowIncludes>false</ShowIncludes>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -340,7 +341,6 @@
     <ClInclude Include="vk_swapchain.h" />
     <ClInclude Include="vk_timer.h" />
     <ClInclude Include="vk_types.h" />
-    <ClInclude Include="vk_types_internal.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">

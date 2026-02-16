@@ -7,7 +7,10 @@
 #define VOLK_IMPLEMENTATION 
 #include <Volk/volk.h>
 
+#include <cstdarg>
 #include <format>
+#include <span>
+#include <array>
 
 #define VMA_IMPLEMENTATION
 
@@ -18,10 +21,12 @@
 
 #include <3rdParty/vk_mem_alloc.h>
 
-
-#include <array>
-
+#include "ht_error.h"
+#include "vk_error.h"
 #include "vk_context.h"
+#include "vk_pso.h"
+#include "vk_resources.h"
+#include "vk_swapchain.h"
 #include "vk_descriptor.h"
 
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
@@ -33,7 +38,7 @@ constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 };
 
 
-inline VkMemoryPropertyFlags VkChooseMemoryProperitesOnUsage( buffer_usage usage )
+inline static VkMemoryPropertyFlags VkChooseMemoryProperitesOnUsage( buffer_usage usage )
 {
 	using enum buffer_usage;
 	switch( usage )
@@ -47,7 +52,7 @@ inline VkMemoryPropertyFlags VkChooseMemoryProperitesOnUsage( buffer_usage usage
 	return 0;
 }
 
-inline void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
+inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
 {
 	VkFormatFeatureFlags formatFeatures = 0;
 	if( usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
@@ -107,6 +112,13 @@ static void VkMakeCreateQueueInfoWithProperties(
 
 	outCreateInfo = createInfo;
 	outQueueFlags = queueFlags;
+}
+
+inline static VkDeviceAddress VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
+{
+	VkBufferDeviceAddressInfo deviceAddrInfo = { 
+		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = hndl };
+	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
 }
 
 static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex, VkQueueFlags desiredProps, bool canPresent )
@@ -752,6 +764,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	};
 }
 
+
 vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
 	VkBufferCreateInfo bufferCreateInfo = { 
@@ -786,11 +799,11 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 		VkDbgNameObj( vkBuffer, device, buffInfo.name );
 	}
 
-	u64 devicePointer = 0;
+	VkDeviceAddress devicePointer = 0;
 	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT )
 	{
 		devicePointer = VkGetBufferDeviceAddress( device, vkBuffer );
-		assert( devicePointer );
+		HT_ASSERT( devicePointer );
 	}
 
 	return {
@@ -856,12 +869,12 @@ VkPipeline vk_context::CreateGfxPipeline(
 	const VkFormat* pColorAttachmentFormats, 
 	u32 colorAttachmentCount, 
 	VkFormat depthAttachmentFormat, 
-	const vk_gfx_pipeline_state& pipelineState,
+	const vk_gfx_pso_config& psoConfig,
 	VkPipelineLayout vkPipelineLayout
 ) {
 	VkPipelineInputAssemblyStateCreateInfo inAsmStateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-		.topology = pipelineState.primTopology,
+		.topology = psoConfig.primTopology,
 	};
 
 	VkPipelineViewportStateCreateInfo viewportInfo = { 
@@ -880,16 +893,16 @@ VkPipeline vk_context::CreateGfxPipeline(
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		.depthClampEnable = 0,
 		.rasterizerDiscardEnable = 0,
-		.polygonMode = pipelineState.polyMode,
-		.cullMode = pipelineState.cullFlags,
-		.frontFace = pipelineState.frontFace,
+		.polygonMode = psoConfig.polyMode,
+		.cullMode = psoConfig.cullFlags,
+		.frontFace = psoConfig.frontFace,
 		.lineWidth = 1.0f
 	};
 
 	VkPipelineDepthStencilStateCreateInfo depthStencilState = { 
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-		.depthTestEnable = pipelineState.depthTestEnable,
-		.depthWriteEnable = pipelineState.depthWrite,
+		.depthTestEnable = psoConfig.depthTestEnable,
+		.depthWriteEnable = psoConfig.depthWrite,
 		.depthCompareOp = VK_COMPARE_OP_GREATER,
 		.depthBoundsTestEnable = VK_TRUE,
 		.minDepthBounds = 0,
@@ -897,13 +910,13 @@ VkPipeline vk_context::CreateGfxPipeline(
 	};
 
 	VkPipelineColorBlendAttachmentState blendConfig = {
-		.blendEnable = pipelineState.blendCol,
-		.srcColorBlendFactor = pipelineState.srcColorBlendFactor,
-		.dstColorBlendFactor = pipelineState.dstColorBlendFactor,
-		.colorBlendOp = VK_BLEND_OP_ADD,
-		.srcAlphaBlendFactor = pipelineState.srcAlphaBlendFactor,
-		.dstAlphaBlendFactor = pipelineState.dstAlphaBlendFactor,
-		.alphaBlendOp = VK_BLEND_OP_ADD,
+		.blendEnable = psoConfig.blendCol,
+		.srcColorBlendFactor = psoConfig.srcColorBlendFactor,
+		.dstColorBlendFactor = psoConfig.dstColorBlendFactor,
+		.colorBlendOp = psoConfig.colorBlendOp,
+		.srcAlphaBlendFactor = psoConfig.srcAlphaBlendFactor,
+		.dstAlphaBlendFactor = psoConfig.dstAlphaBlendFactor,
+		.alphaBlendOp = psoConfig.alphaBlendOp,
 		.colorWriteMask =
 		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
 	};
@@ -950,11 +963,8 @@ VkPipeline vk_context::CreateGfxPipeline(
 	return vkGfxPipeline;
 }
 
-VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, vk_specializations consts, const char* pName )
+VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, const char* pName )
 {
-	std::vector<VkSpecializationMapEntry> specializations;
-	VkSpecializationInfo specInfo = VkMakeSpecializationInfo( specializations, consts );
-
 	VkPipelineShaderStageRequiredSubgroupSizeCreateInfo subgroupSizeInfo = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
 		.requiredSubgroupSize = waveSize
@@ -965,8 +975,7 @@ VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, vk_specia
 		.pNext = &subgroupSizeInfo,
 		.stage = VK_SHADER_STAGE_COMPUTE_BIT,
 		.module = shader.module,
-		.pName = shader.entryPoint.c_str(),
-		.pSpecializationInfo = &specInfo
+		.pName = shader.entryPoint.c_str()
 	};
 
 	VkComputePipelineCreateInfo compPipelineInfo = { 
@@ -1055,6 +1064,6 @@ void vk_context::FlushPendingDescriptorUpdates()
 		writes.push_back( writeEntryInfo );
 	}
 
-	vkUpdateDescriptorSets( device, std::size( writes ), std::data( writes ), 0, 0 );
+	vkUpdateDescriptorSets( device, ( u32 ) std::size( writes ), std::data( writes ), 0, 0 );
 	descAllocator.pendingUpdates.resize( 0 );
 }

@@ -1,24 +1,16 @@
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
 #include <hidusage.h>
-#include <shlwapi.h>
 #include <fileapi.h>
-#include <errhandlingapi.h>
-#include <strsafe.h>
 
 #include <assert.h>
-#include <stdlib.h>
 
-#include <io.h>
-#include <fcntl.h>
 #include <iostream>
-#include <charconv>
-#include <string>
 #include <algorithm>
 
+#include <vector>
+#include <string>
 #include <EASTL/internal/config.h>
-
-using namespace std;
 
 #include "sys_os_api.h"
 #include "core_types.h"
@@ -38,45 +30,25 @@ static inline void SysOsCreateConsole()
 	WIN_CHECK( !SetStdHandle( STD_OUTPUT_HANDLE, hConOut ) );
 	WIN_CHECK( !SetStdHandle( STD_ERROR_HANDLE, hConOut ) );
 
-	//Ensures FILE* object remapped to new console window
-	freopen("CONOUT$", "w", stdout );
-	freopen("CONOUT$", "w", stderr );
+	WIN_CHECK( nullptr == freopen( "CONOUT$", "w", stdout ) );
+	WIN_CHECK( nullptr == freopen( "CONOUT$", "w", stderr ) );
 
-	//Allows use of _write(1,...) & _write(2,...) to be redirected
-	freopen("CONOUT$", "w", _fdopen(1, "w" ) );
-	freopen("CONOUT$", "w", _fdopen(2, "w" ) );
-
-	std::wcout.clear();
+	std::ios::sync_with_stdio( true );
 	std::cout.clear();
-	std::wcerr.clear();
 	std::cerr.clear();
+	std::wcout.clear();
+	std::wcerr.clear();
 }
-static inline void SysOsKillConsole()
-{
-	FreeConsole();
-}
-static inline void SysDbgPrint( const char* str )
+void SysDbgPrint( const char* str )
 {
 	OutputDebugString( str );
 }
-inline void SysErrMsgBox( const char* str )
+void SysErrMsgBox( const char* str )
 {
 	UINT behaviour = MB_OK | MB_ICONERROR | MB_APPLMODAL;
 	MessageBox( 0, str, 0, behaviour );
 }
 
-// PLATOFRM_FILE_API
-// TODO: use own memory system 
-// TODO: multithreading
-// TODO: async
-// TODO: streaming
-// TODO: better file api
-// TODO: char vs wchar
-static inline u32 SysGetFileAbsPath( const char* fileName, char* buffer, u64 buffSize )
-{
-	static_assert( sizeof( DWORD ) == sizeof( u32 ) );
-	return GetFullPathNameA( fileName, buffSize, buffer, 0 );
-}
 static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
 {
 	DWORD accessMode = GENERIC_READ;
@@ -85,7 +57,7 @@ static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
 	DWORD flagsAndAttrs = FILE_ATTRIBUTE_READONLY;
 	return CreateFile( fileName, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
 }
-inline std::vector<u8> SysReadFile( const char* fileName )
+std::vector<u8> SysReadFile( const char* fileName )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( fileName );
 	if( hfile == INVALID_HANDLE_VALUE ) return{};
@@ -96,13 +68,13 @@ inline std::vector<u8> SysReadFile( const char* fileName )
 	std::vector<u8> fileData( fileSize.QuadPart );
 
 	OVERLAPPED asyncIo = {};
-	WIN_CHECK( !ReadFileEx( hfile, std::data( fileData ), fileSize.QuadPart, &asyncIo, 0 ) );
+	WIN_CHECK( !ReadFileEx( hfile, std::data( fileData ), ( DWORD ) fileSize.QuadPart, &asyncIo, 0 ) );
 	CloseHandle( hfile );
 
 	return fileData;
 }
 // TODO: can be any kind of handle
-inline u64 SysGetFileTimestamp( const char* filename )
+u64 SysGetFileTimestamp( const char* filename )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( filename );
 	FILETIME fileTime = {};
@@ -117,7 +89,7 @@ inline u64 SysGetFileTimestamp( const char* filename )
 	return u64( timestamp.QuadPart );
 }
 // TODO: might not want to crash when file can't be written/read
-inline bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
+bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
 {
 	DWORD accessMode = GENERIC_WRITE;
 	DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
@@ -288,7 +260,7 @@ static inline u64	SysTicks()
 {
 	LARGE_INTEGER tick;
 	QueryPerformanceCounter( &tick );
-	return double( tick.QuadPart );
+	return tick.QuadPart;
 }
 
 struct mouse
@@ -508,7 +480,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	io.Fonts->AddFontDefault();
 	io.Fonts->Build();
 	
-	VkBackendInit( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
+	RendererInit( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
@@ -572,7 +544,6 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	}
 
 	VkBackendKill();
-	SysOsKillConsole();
 
 	return 0;
 }

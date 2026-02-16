@@ -4,6 +4,7 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
+#include "core_types.h"
 
 // TODO:
 struct vk_renderer_config
@@ -21,13 +22,8 @@ struct vk_renderer_config
 	u8              framesInFlightCount = 2;
 	u8              swapchainImageCount = 3;
 };
-inline vk_renderer_config renderCfg = {};
 
-enum class vk_resource_type : u8
-{
-	BUFFER,
-	IMAGE
-};
+inline vk_renderer_config renderCfg = {};
 
 #endif // !__VK_TYPES_H__
 

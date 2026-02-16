@@ -1,3 +1,5 @@
+#pragma once 
+
 #ifndef __VK_DEVICE_H__
 #define __VK_DEVICE_H__
 
@@ -8,6 +10,7 @@
 
 #include <3rdParty/vk_mem_alloc.h>
 
+#include "ht_error.h"
 #include "vk_error.h"
 #include "vk_types.h"
 #include "vk_command_buffer.h"
@@ -16,10 +19,10 @@
 #include "vk_swapchain.h"
 #include "vk_pso.h"
 #include "core_types.h"
-#include "sys_os_api.h"
 
-#include <type_traits>
+#include <span>
 #include <functional>
+#include <memory>
 
 #include <EASTL/fixed_vector.h>
 #include <EASTL/bonus/fixed_ring_buffer.h>
@@ -50,6 +53,12 @@ using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
 
 using vk_frame_vector = eastl::fixed_vector<vk_virtual_frame, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
 
+struct vk_desc_handle
+{
+	u64 timelineCounterVal;
+	desc_handle hndl;
+};
+
 struct vk_resource
 {
 	union
@@ -65,12 +74,6 @@ struct vk_resource
 		: buff{ b.hndl }, type{ vk_resource_type::BUFFER }, timelineCounterVal{ counter } {}
 	vk_resource( const vk_image& i, u64 counter ) 
 		: img{ i.hndl }, type{ vk_resource_type::IMAGE }, timelineCounterVal{ counter } {}
-};
-
-struct vk_desc_handle
-{
-	u64 timelineCounterVal;
-	desc_handle hndl;
 };
 
 template<typename T, u64 MAX_CAP>
@@ -119,9 +122,9 @@ struct vk_context
 		const VkFormat*							pColorAttachmentFormats,
 		u32										colorAttachmentCount,
 		VkFormat								depthAttachmentFormat,
-		const vk_gfx_pipeline_state&			pipelineState,
-		VkPipelineLayout                        vkPipelineLayout = VK_NULL_HANDLE );
-	VkPipeline CreateComptuePipeline( const vk_shader& shader, vk_specializations consts, const char* pName = "" );
+		const vk_gfx_pso_config&				psoConfig,
+		VkPipelineLayout						vkPipelineLayout = VK_NULL_HANDLE );
+	VkPipeline CreateComptuePipeline( const vk_shader& shader, const char* pName );
 
 	unique_shader_ptr CreateShaderFromSpirv( std::span<const u8> spvByteCode );
 	inline void DestroyShaderModule( VkShaderModule module )

@@ -88,7 +88,7 @@ inline void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vec
 			XMStoreFloat3( &m12, XMVector3Normalize( XMVectorAdd( v1, v2 ) ) );
 			XMStoreFloat3( &m20, XMVector3Normalize( XMVectorAdd( v2, v0 ) ) );
 
-			u32 idxOffset = std::size( vtxCache ) - 1;
+			u32 idxOffset = ( u32 ) std::size( vtxCache ) - 1;
 
 			vtxCache.push_back( m01 );
 			vtxCache.push_back( m12 );

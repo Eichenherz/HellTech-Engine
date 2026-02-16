@@ -15,39 +15,6 @@
 
 constexpr u64 MAX_MIP_LEVELS = 12;
 
-struct vk_buffer
-{
-	VmaAllocation   mem;
-	VkBuffer		hndl;
-	u64				sizeInBytes; 
-	u8*             hostVisible;
-	u64				devicePointer;
-	VkBufferUsageFlags usgFlags;
-};
-
-inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
-{
-	return VkDescriptorBufferInfo{ b.hndl,0,b.sizeInBytes };
-}
-
-struct vk_image
-{
-	VmaAllocation   mem;
-	VkImage			hndl;
-	VkImageView     view;
-	VkImageUsageFlags usageFlags;
-	VkFormat		format;
-	u16				width;
-	u16				height;
-	u8				layerCount;
-	u8				mipCount;
-
-	inline VkExtent3D Extent3D() const
-	{
-		return { width,height,1 };
-	}
-};
-
 enum class buffer_usage : u8
 {
 	GPU_ONLY,
@@ -57,40 +24,68 @@ enum class buffer_usage : u8
 
 struct buffer_info
 {
-	const char* name;
+	const char*        name;
 	VkBufferUsageFlags usageFlags;
-	u64 sizeInBytes;
-	buffer_usage usage;
+	u64                sizeInBytes;
+	buffer_usage       usage;
 };
 
 struct image_info
 {
-	const char* name;
-	VkFormat		format;
+	const char*         name;
+	VkFormat		    format;
 	VkImageUsageFlags	usg;
-	u16				width;
-	u16				height;
-	u8				layerCount;
-	u8				mipCount;
+	u16					width;
+	u16					height;
+	u8					layerCount;
+	u8					mipCount;
 };
 
-inline u64 VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
+enum class vk_resource_type : u8
 {
-	static_assert( std::is_same<VkDeviceAddress, u64>::value );
+	BUFFER,
+	IMAGE
+};
 
-	VkBufferDeviceAddressInfo deviceAddrInfo = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
-	deviceAddrInfo.buffer = hndl;
+struct vk_buffer
+{
+	VmaAllocation		mem;
+	VkBuffer			hndl;
+	u64					sizeInBytes; 
+	u8*					hostVisible;
+	VkDeviceAddress		devicePointer;
+	VkBufferUsageFlags  usgFlags;
+};
 
-	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
+inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
+{
+	return VkDescriptorBufferInfo{ b.hndl, 0, b.sizeInBytes };
 }
 
+struct vk_image
+{
+	VmaAllocation		mem;
+	VkImage				hndl;
+	VkImageView			view;
+	VkImageUsageFlags   usageFlags;
+	VkFormat			format;
+	u16					width;
+	u16					height;
+	u8					layerCount;
+	u8					mipCount;
+
+	inline VkExtent3D Extent3D() const
+	{
+		return { width, height, 1 };
+	}
+};
 
 inline VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
 {
 	return ( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
-inline static VkImageView
+inline VkImageView
 VkMakeImgView(
 	VkDevice		vkDevice,
 	VkImage			vkImg,
@@ -120,38 +115,6 @@ VkMakeImgView(
 	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
 
 	return view;
-}
-
-inline VkImageMemoryBarrier
-VkMakeImgBarrier(
-	VkImage				image,
-	VkAccessFlags		srcAccessMask,
-	VkAccessFlags		dstAccessMask,
-	VkImageLayout		oldLayout,
-	VkImageLayout		newLayout,
-	VkImageAspectFlags	aspectMask,
-	u32					srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-	u32					dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-	u32					baseMipLevel = 0,
-	u32					mipCount = 0,
-	u32					baseArrayLayer = 0,
-	u32					layerCount = 0
-){
-	VkImageMemoryBarrier imgMemBarrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
-	imgMemBarrier.srcAccessMask = srcAccessMask;
-	imgMemBarrier.dstAccessMask = dstAccessMask;
-	imgMemBarrier.oldLayout = oldLayout;
-	imgMemBarrier.newLayout = newLayout;
-	imgMemBarrier.srcQueueFamilyIndex = srcQueueFamilyIndex;
-	imgMemBarrier.dstQueueFamilyIndex = dstQueueFamilyIndex;
-	imgMemBarrier.image = image;
-	imgMemBarrier.subresourceRange.aspectMask = aspectMask;
-	imgMemBarrier.subresourceRange.baseMipLevel = baseMipLevel;
-	imgMemBarrier.subresourceRange.levelCount = ( mipCount ) ? mipCount : VK_REMAINING_MIP_LEVELS;
-	imgMemBarrier.subresourceRange.baseArrayLayer = baseArrayLayer;
-	imgMemBarrier.subresourceRange.layerCount = ( layerCount ) ? layerCount : VK_REMAINING_ARRAY_LAYERS;
-
-	return imgMemBarrier;
 }
 
 inline static VkBufferMemoryBarrier2

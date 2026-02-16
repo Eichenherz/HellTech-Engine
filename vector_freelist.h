@@ -27,7 +27,7 @@ struct vector_freelist
 
     vector_freelist() = default;
 
-    inline vector_freelist( u64 maxSz )
+    inline vector_freelist( u32 maxSz )
     {
         HT_ASSERT( maxSz < MAX_CAP );
         maxSize = maxSz;
@@ -68,7 +68,7 @@ struct vector_freelist
         }
 
         HT_ASSERT( std::size( v ) < ( u64 ) maxSize );
-        u32 idx = std::size( v );
+        u32 idx = ( u32 ) std::size( v );
         v.push_back( { .val = MAX_CAP, .marker = 0u } );
         return idx;
     }

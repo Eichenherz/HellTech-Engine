@@ -1,15 +1,18 @@
 #ifndef __HT_UTILS_H__
 #define __HT_UTILS_H__
 
+#include <bit>
 #include <span>
 #include <algorithm>
 
 #include "core_types.h"
-#include <assert.h>
+#include "ht_error.h"
 
-#define GB (u64)( 1 << 30 )
-#define MB (u64)( 1 << 20 )
-#define KB (u64)( 1 << 10 )
+constexpr u64 GB = 1ull << 30;
+constexpr u64 MB = 1ull << 20;
+constexpr u64 KB = 1ull << 10;
+
+#define BYTE_COUNT( buffer ) std::size( buffer ) * sizeof( buffer[ 0 ] )
 
 inline bool IsPowOf2( u64 addr )
 {
@@ -17,7 +20,7 @@ inline bool IsPowOf2( u64 addr )
 }
 inline u64 FwdAlign( u64 addr, u64 alignment )
 {
-	assert( IsPowOf2( alignment ) );
+	HT_ASSERT( IsPowOf2( alignment ) );
 	return ( addr + ( alignment - 1 ) ) & ~( alignment - 1 );
 }
 // TODO: math_uitl file
@@ -27,29 +30,16 @@ inline u64 FloorPowOf2( u64 size )
 	constexpr u64 ONE_LEFT_MOST = u64( 1ULL << ( sizeof( u64 ) * 8 - 1 ) );
 	return ( size ) ? ONE_LEFT_MOST >> __lzcnt64( size ) : 0;
 }
-inline u64 GetImgMipCountForPow2( u64 width, u64 height, u64 mipLevels )
+inline u32 GetImgMipCount( u32 width, u32 height, u32 mipLevels )
 {
-	// NOTE: log2 == position of the highest bit set (or most significant bit set, MSB)
-	// NOTE: https://graphics.stanford.edu/~seander/bithacks.html#IntegerLogObvious
-	constexpr u64 TYPE_BIT_COUNT = sizeof( u64 ) * 8 - 1;
-
-	u64 maxDim = std::max( width, height );
-	assert( IsPowOf2( maxDim ) );
-	u64 log2MaxDim = TYPE_BIT_COUNT - __lzcnt64( maxDim );
-
-	return std::min( log2MaxDim, mipLevels );
-}
-inline u64 GetImgMipCount( u64 width, u64 height, u64 mipLevels )
-{
-	assert( width && height );
-	u64 maxDim = std::max( width, height );
-
-	return std::min( (u64) floor( log2( maxDim ) ), mipLevels );
+	HT_ASSERT( width && height );
+	// NOTE: floor( log2 () ) == bit_width -1 
+	return std::min( ( u32 ) std::bit_width( std::max( width, height ) ) - 1, mipLevels );
 }
 
 template <typename T>
 inline std::span<const u8> CastSpanAsU8ReadOnly( std::span<T> span )
 {
-	return { ( const uint8_t* )( std::data( span ) ), span.size_bytes() };
+	return { ( const u8* )( std::data( span ) ), span.size_bytes() };
 }
 #endif // !__HT_UTILS_H__
