@@ -7,6 +7,7 @@
 #define VOLK_IMPLEMENTATION 
 #include <Volk/volk.h>
 
+#include <vector>
 #include <cstdarg>
 #include <format>
 #include <span>
@@ -21,7 +22,9 @@
 
 #include <3rdParty/vk_mem_alloc.h>
 
+#include "core_types.h"
 #include "ht_error.h"
+#include "ht_mem_arena.h"
 #include "vk_error.h"
 #include "vk_context.h"
 #include "vk_pso.h"
@@ -70,48 +73,67 @@ inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsage
 	// Fallback to a different format or use other means of uploading data
 }
 
-static void VkMakeCreateQueueInfoWithProperties( 
-	std::span<VkQueueFamilyProperties> queueFamProps, 
-	VkQueueFlags desiredProps, 
-	bool canPresent,
+// NOTE: from Sascha Willems
+static u32 VkGetQueueFamilyIndex( 
+	std::span<const VkQueueFamilyProperties> queueFamProps, 
+	VkQueueFlags queueFlags,
+	VkBool32 mustPresent,
 	VkPhysicalDevice gpu,
-	VkSurfaceKHR vkSurf,
-	const float* pQueuePriorities,
-	VkDeviceQueueCreateInfo& outCreateInfo,
-	VkQueueFlags& outQueueFlags
+	VkSurfaceKHR vkSurf
 ) {
-	u32 desiredQueueIdx = -1;
-	VkQueueFlags queueFlags;
-
-	for( u32 qIdx = 0; qIdx < std::size( queueFamProps ); ++qIdx )
+	if( ( queueFlags & VK_QUEUE_TRANSFER_BIT ) == queueFlags )
 	{
-		if( queueFamProps[ qIdx ].queueCount == 0 ) continue;
-
-		VkQueueFlags familyFlags = queueFamProps[ qIdx ].queueFlags; 
-		if( ( familyFlags & desiredProps ) == desiredProps )
+		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
 		{
-			if( canPresent )
+			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
+			bool hasTransfer = queueFamProps[ qfi ].queueFlags & VK_QUEUE_TRANSFER_BIT;
+			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
+			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT; 
+			if( hasTransfer && !hasCompute && !hasGfx )
 			{
-				VkBool32 present = 0;
-				vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qIdx, vkSurf, &present );
-				HT_ASSERT( present );
+				return qfi;
 			}
-			desiredQueueIdx = qIdx;
-			queueFlags = familyFlags;
-			break;
 		}
 	}
 
-	HT_ASSERT( desiredQueueIdx != u32( -1 ) );
-	VkDeviceQueueCreateInfo createInfo = {
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = desiredQueueIdx,
-		.queueCount = 1,
-		.pQueuePriorities = pQueuePriorities
-	};
+	if( ( queueFlags & VK_QUEUE_COMPUTE_BIT ) == queueFlags )
+	{
+		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++)
+		{
+			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
+			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
+			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
+			if( hasCompute && !hasGfx )
+			{
+				if( mustPresent )
+				{
+					VkBool32 hasPresent = 0;
+					vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qfi, vkSurf, &hasPresent );
+					if( !hasPresent ) continue;
+				}
+				return qfi;
+			}
+		}
+	}
 
-	outCreateInfo = createInfo;
-	outQueueFlags = queueFlags;
+	// NOTE: For other queue types or if no separate compute queue is present,
+	// return the first one to support the requested flags
+	for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
+	{
+		if( ( queueFamProps[ qfi ].queueFlags & queueFlags ) == queueFlags )
+		{
+			if( mustPresent )
+			{
+				VkBool32 hasPresent = 0;
+				vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qfi, vkSurf, &hasPresent );
+				if( !hasPresent ) continue;
+			}
+			return qfi;
+		}
+	}
+
+	HT_ASSERT( 0 && "No queue found that matches the requirements !" );
+	return ~0u;
 }
 
 inline static VkDeviceAddress VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuffer hndl )
@@ -121,17 +143,35 @@ inline static VkDeviceAddress VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuf
 	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
 }
 
-static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex, VkQueueFlags desiredProps, bool canPresent )
-{
+static vk_queue VkCreateQueue( 
+	VkDevice        vkDevice, 
+	u32             queueFamilyIndex,
+	VkQueueFlags    desiredProps,
+	u64				initialTimelineVal 
+) {
 	VkQueue	hndl;
 	vkGetDeviceQueue( vkDevice, queueFamilyIndex, 0, &hndl );
 	HT_ASSERT( hndl );
 
+	VkSemaphoreTypeCreateInfo timelineInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+		.initialValue = initialTimelineVal,
+	};
+	VkSemaphoreCreateInfo timelineSemaInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
+		.pNext = &timelineInfo 
+	};
+
+	VkSemaphore timelineSema;
+	VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
+
 	return {
 		.hndl = hndl,
+		.timelineSema = timelineSema,
+		.submitionCount = 0,
 		.index = queueFamilyIndex,
-		.familyFlags = desiredProps,
-		.canPresent = canPresent
+		.familyFlags = desiredProps
 	};
 }
 
@@ -400,9 +440,11 @@ static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND h
 struct vk_device
 {
 	VkPhysicalDeviceProperties  gpuProps;
-	vk_queue                    gfxQueue;
 	VkPhysicalDevice			gpu;
 	VkDevice					logical;
+	u32                         gfxQueueFamIdx;
+	u32                         computeQueueFamIdx;
+	u32                         transferQueueFamIdx;
 	u32							deviceMask;
 	u32							waveSize;
 };
@@ -509,20 +551,34 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	std::vector<VkQueueFamilyProperties> queueFamProps( queueFamNum );
 	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, std::data( queueFamProps ) );
 
-	constexpr VkQueueFlags careAboutQueueTypes = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
+	constexpr float queuePriorities = 1.0f;
+	std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
 
-	float queuePriorities = 1.0f;
-	VkDeviceQueueCreateInfo queueCreateInfos[1] = {};
-	VkQueueFlags queueFlags;
-	VkMakeCreateQueueInfoWithProperties(
-		queueFamProps, careAboutQueueTypes, true, gpu, vkSurf, &queuePriorities, queueCreateInfos[ 0 ], queueFlags );
+	queueCreateInfos.push_back( {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = VkGetQueueFamilyIndex( queueFamProps, VK_QUEUE_GRAPHICS_BIT, VK_TRUE, gpu, vkSurf ),
+		.queueCount = 1, 
+		.pQueuePriorities = &queuePriorities
+	} );
+	queueCreateInfos.push_back( {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = VkGetQueueFamilyIndex( queueFamProps, VK_QUEUE_COMPUTE_BIT, VK_TRUE, gpu, vkSurf ),
+		.queueCount = 1, 
+		.pQueuePriorities = &queuePriorities
+	} );
+	queueCreateInfos.push_back( {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = VkGetQueueFamilyIndex( queueFamProps, VK_QUEUE_TRANSFER_BIT, VK_FALSE, gpu, vkSurf ),
+		.queueCount = 1, 
+		.pQueuePriorities = &queuePriorities
+	} );
 
 	VkDeviceCreateInfo deviceInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &gpuFeatures,
-		.queueCreateInfoCount = std::size( queueCreateInfos ),
-		.pQueueCreateInfos = &queueCreateInfos[ 0 ],
-		.enabledExtensionCount = std::size( ENABLED_DEVICE_EXTS ),
+		.queueCreateInfoCount = ( u32 ) std::size( queueCreateInfos ),
+		.pQueueCreateInfos = std::data( queueCreateInfos ),
+		.enabledExtensionCount = ( u32 ) std::size( ENABLED_DEVICE_EXTS ),
 		.ppEnabledExtensionNames = ENABLED_DEVICE_EXTS,
 	};
 
@@ -533,9 +589,11 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 
 	return {
 		.gpuProps = gpuProps2.properties,
-		.gfxQueue = VkCreateQueue( vkDevice, queueCreateInfos[ 0 ].queueFamilyIndex, queueFlags, true ),
 		.gpu = gpu,
 		.logical = vkDevice,
+		.gfxQueueFamIdx = queueCreateInfos[ 0 ].queueFamilyIndex,
+		.computeQueueFamIdx = queueCreateInfos[ 1 ].queueFamilyIndex,
+		.transferQueueFamIdx = queueCreateInfos[ 2 ].queueFamilyIndex,
 		.waveSize = waveProps.subgroupSize
 	};
 }
@@ -707,49 +765,30 @@ static vk_virtual_frame VkCreateVirtualFrame( VkDevice vkDevice, u32 queueFamIdx
 	};
 }
 
-static vk_timeline VkCreateGpuTimeline( VkDevice vkDevice, u64 intialValue )
-{
-	VkSemaphoreTypeCreateInfo timelineInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = intialValue,
-	};
-	VkSemaphoreCreateInfo timelineSemaInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
-		.pNext = &timelineInfo 
-	};
-
-	VkSemaphore timelineSema;
-	VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
-
-	return { .sema = timelineSema, .submitionCount = 0 };
-}
-
 vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_config& cfg )
 {
 	auto[ vkInst, vkDbgMsg ] = VkMakeInstance();
 	VkSurfaceKHR vkSurf = VkMakeWinSurface( vkInst, ( HINSTANCE ) hInst, ( HWND ) hWnd );
 	vk_device vkDevice = VkMakeDevice( vkInst, vkSurf );
 
+	// TODO: if presnet from async compute we need to put that index here
 	vk_swapchain vkSc = VkMakeSwapchain(
-		vkDevice.logical, vkDevice.gpu, vkSurf, vkDevice.gfxQueue.index, cfg.desiredSwapchainFormat, cfg.swapchainImageCount );
+		vkDevice.logical, vkDevice.gpu, vkSurf, vkDevice.gfxQueueFamIdx, cfg.desiredSwapchainFormat, cfg.swapchainImageCount );
 
 	vk_frame_vector frameVec;
 	for( u64 fi = 0; fi < cfg.framesInFlightCount; fi++ )
 	{
-		frameVec.push_back( VkCreateVirtualFrame( vkDevice.logical, vkDevice.gfxQueue.index ) );
+		frameVec.push_back( VkCreateVirtualFrame( vkDevice.logical, vkDevice.gfxQueueFamIdx ) );
 	}
 
 	vk_descriptor_allocator descAlloc = VkMakeDescriptorAllocator( 
 		vkDevice.logical, vkDevice.gpuProps, cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE );
-
 	return {
 		.sc = vkSc,
 		.vrtFrames = std::move( frameVec ),
 		.descAllocator = descAlloc,
-		.gfxQueue = vkDevice.gfxQueue,
-		.frameTimeline = VkCreateGpuTimeline( vkDevice.logical, 0 ),
-		.uploadTimeline = VkCreateGpuTimeline( vkDevice.logical, 0 ),
+		.gfxQueue = VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx, VK_QUEUE_GRAPHICS_BIT, 0 ),
+		.copyQueue = VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx, VK_QUEUE_TRANSFER_BIT, 0 ),
 		.allocator = MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
 		.gpuProps = vkDevice.gpuProps,
 		.gpu = vkDevice.gpu,
@@ -1066,4 +1105,39 @@ void vk_context::FlushPendingDescriptorUpdates()
 
 	vkUpdateDescriptorSets( device, ( u32 ) std::size( writes ), std::data( writes ), 0, 0 );
 	descAllocator.pendingUpdates.resize( 0 );
+}
+
+void vk_context::QueueSubmit( 
+	vk_queue& queue, 
+	std::span<VkSemaphoreSubmitInfo> waits, 
+	std::span<VkSemaphoreSubmitInfo> signals, 
+	VkCommandBuffer cmdBuff 
+) {
+	scoped_stack memScope = { scratchArena };
+	std::pmr::vector<VkSemaphoreSubmitInfo> vecSignals{ &memScope };
+	vecSignals.insert( std::end( vecSignals ), std::cbegin( signals ), std::cend( signals ) );
+
+	queue.submitionCount++;
+	vecSignals.push_back( {
+		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore = queue.timelineSema,
+		.value     = queue.submitionCount,
+		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		} );
+
+	VkCommandBufferSubmitInfo cmdInfo = {
+		.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+		.commandBuffer = cmdBuff,
+	};
+
+	VkSubmitInfo2 submitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+		.waitSemaphoreInfoCount = ( u32 ) std::size( waits ),
+		.pWaitSemaphoreInfos = std::data( waits ),
+		.commandBufferInfoCount = 1,
+		.pCommandBufferInfos = &cmdInfo,
+		.signalSemaphoreInfoCount = ( u32 ) std::size( vecSignals ),
+		.pSignalSemaphoreInfos = std::data( vecSignals ),
+	};
+	VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, VK_NULL_HANDLE ) );
 }

@@ -313,6 +313,7 @@
     <ClInclude Include="dxc.h" />
     <ClInclude Include="ht_error.h" />
     <ClInclude Include="ht_geometry.h" />
+    <ClInclude Include="ht_mem_arena.h" />
     <ClInclude Include="ht_utils.h" />
     <ClInclude Include="AssetCompiler\miniz.h" />
     <ClInclude Include="r_data_structs.h" />

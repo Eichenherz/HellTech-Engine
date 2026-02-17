@@ -191,6 +191,9 @@
     <ClInclude Include="vk_command_buffer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="ht_mem_arena.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />

@@ -10,7 +10,10 @@
 
 #include <3rdParty/vk_mem_alloc.h>
 
+#include "core_types.h"
+
 #include "ht_error.h"
+#include "ht_mem_arena.h"
 #include "vk_error.h"
 #include "vk_types.h"
 #include "vk_command_buffer.h"
@@ -18,8 +21,8 @@
 #include "vk_descriptor.h"
 #include "vk_swapchain.h"
 #include "vk_pso.h"
-#include "core_types.h"
 
+#include <vector>
 #include <span>
 #include <functional>
 #include <memory>
@@ -27,18 +30,14 @@
 #include <EASTL/fixed_vector.h>
 #include <EASTL/bonus/fixed_ring_buffer.h>
 
+// NOTE: this models an async queue
 struct vk_queue
 {
-	VkQueue	hndl;
-	u32	index;
-	VkQueueFlags familyFlags;
-	bool canPresent;
-};
-
-struct vk_timeline
-{
-	VkSemaphore     sema; // NOTE: timeline sema
+	VkQueue	        hndl;
+	VkSemaphore     timelineSema; // NOTE: timeline sema
 	u64             submitionCount;
+	u32				index;
+	VkQueueFlags	familyFlags;
 };
 
 struct vk_virtual_frame
@@ -84,13 +83,13 @@ struct vk_context
 	vk_deletion_queue<vk_desc_handle, 128> descriptroDeletionQueue{};
 	vk_deletion_queue<vk_resource, 128> resourceDeletionQueue{};
 
+	fixed_arena<2048> scratchArena;
+
 	vk_swapchain    sc;
 	vk_frame_vector vrtFrames;
 	vk_descriptor_allocator   descAllocator;
 	vk_queue		gfxQueue;
-
-	vk_timeline frameTimeline;
-	vk_timeline uploadTimeline;
+	vk_queue        copyQueue;
 
 	VmaAllocator    allocator;
 
@@ -130,27 +129,6 @@ struct vk_context
 	inline void DestroyShaderModule( VkShaderModule module )
 	{
 		vkDestroyShaderModule( device, module, 0 );
-	}
-
-	// NOTE: passing UINT64_MAX will block forever
-	inline VkResult TryWaitOnTimelineFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime )
-	{
-		u64 signalsCount = 0;
-		VK_CHECK( vkGetSemaphoreCounterValue( device, timeline.sema, &signalsCount ) );
-
-		if( timeline.submitionCount - signalsCount >= maxDiffAllowed )
-		{
-			u64 targetCount = timeline.submitionCount;
-			VkSemaphoreWaitInfo waitInfo = { 
-				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-				.semaphoreCount = 1,
-				.pSemaphores = &timeline.sema,
-				.pValues = &targetCount,
-			};
-
-			return vkWaitSemaphores( device, &waitInfo, waitTime );
-		}
-		return VK_SUCCESS;
 	}
 
 	inline vk_command_buffer GetFrameCmdBuff( u64 frameInFlightIdx )
@@ -213,33 +191,36 @@ struct vk_context
 		return imgIdx;
 	}
 
-	// NOTE: queue submit has implicit host sync for trivial stuff, 
-	inline void QueueSubmit( 
-		const vk_queue& queue, 
-		std::span<VkSemaphoreSubmitInfo> waits,
-		std::span<VkSemaphoreSubmitInfo> signals, 
-		VkCommandBuffer cmdBuff 
-	) {
-		VkCommandBufferSubmitInfo cmdInfo = {
-			.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-			.commandBuffer = cmdBuff,
-		};
+	// NOTE: passing UINT64_MAX will block forever
+	inline VkResult QueueTryWaitFor( const vk_queue& queue, u64 maxDiffAllowed, u64 waitTime )
+	{
+		u64 signalsCount = 0;
+		VK_CHECK( vkGetSemaphoreCounterValue( device, queue.timelineSema, &signalsCount ) );
 
-		VkSubmitInfo2 submitInfo = {
-			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-			.waitSemaphoreInfoCount = ( u32 ) std::size( waits ),
-			.pWaitSemaphoreInfos = std::data( waits ),
-			.commandBufferInfoCount = 1,
-			.pCommandBufferInfos = &cmdInfo,
-			.signalSemaphoreInfoCount = ( u32 ) std::size( signals ),
-			.pSignalSemaphoreInfos = std::data( signals ),
-		};
-		VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, VK_NULL_HANDLE ) );
+		if( queue.submitionCount - signalsCount >= maxDiffAllowed )
+		{
+			u64 targetCount = queue.submitionCount;
+			VkSemaphoreWaitInfo waitInfo = { 
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+				.semaphoreCount = 1,
+				.pSemaphores = &queue.timelineSema,
+				.pValues = &targetCount,
+			};
+
+			return vkWaitSemaphores( device, &waitInfo, waitTime );
+		}
+		return VK_SUCCESS;
 	}
+
+	// NOTE: queue submit has implicit host sync for trivial stuff, 
+	void QueueSubmit(
+		vk_queue& queue,
+		std::span<VkSemaphoreSubmitInfo> waits,
+		std::span<VkSemaphoreSubmitInfo> signals,
+		VkCommandBuffer cmdBuff
+	);
 	inline void QueuePresent( const vk_queue& queue, u32 imgIdx )
 	{
-		HT_ASSERT( queue.canPresent );
-
 		VkPresentInfoKHR presentInfo = { 
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 			.waitSemaphoreCount = 1,

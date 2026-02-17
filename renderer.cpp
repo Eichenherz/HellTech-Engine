@@ -68,20 +68,9 @@ static const DXPacked::XMCOLOR cyan = { 0u, 255u, 255u, 1 };
 static const DXPacked::XMCOLOR magenta = { 255u, 0u, 255u, 1 };
 
 
-
-
 #include "vk_context.h"
 
 #include "vk_pso.h"
-
-struct frame_resources
-{
-	//vk_gpu_timer gpuTimer;
-
-	std::shared_ptr<vk_buffer>		pViewData;
-
-	desc_handle viewDataIdx;
-};
 
 #include "r_data_structs.h"
 
@@ -1147,6 +1136,26 @@ struct depth_pyramid_pass
 	}
 };
 
+struct frame_resources
+{
+	//vk_gpu_timer gpuTimer;
+
+	std::shared_ptr<vk_buffer>		pViewData;
+
+	desc_handle viewDataIdx;
+
+	inline void Init( vk_context& vkCtx, u64 sizeInBytes )
+	{
+		pViewData = std::make_shared<vk_buffer>( vkCtx.CreateBuffer( {
+			.name = "Buff_VirtualFrame_ViewBuff",
+			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			.sizeInBytes = sizeInBytes,
+			.usage = buffer_usage::HOST_VISIBLE
+		} ) );
+		viewDataIdx = vkCtx.AllocDescriptor( vk_descriptor_info{ *pViewData } );
+	}
+};
+
 struct render_context
 {
 	imgui_pass   imguiCtx;
@@ -1171,13 +1180,13 @@ struct render_context
 
 	u64				vFrameIdx = 0;
 
-	desc_handle colSrv;
-	desc_handle depthSrv;
+	desc_handle		colSrv;
+	desc_handle		depthSrv;
 
-	u8				framesInFlight = 2;
+	const u8		framesInFlight = 2;
 	
-	VkSampler pbrSampler;
-	desc_handle pbrSamplerIdx;
+	VkSampler		pbrSampler;
+	desc_handle		pbrSamplerIdx;
 
 	eastl::fixed_vector<desc_handle, vk_renderer_config::MAX_SWAPCHAIN_IMG_ALLOWED, false> swapchainUavs;
 
@@ -1234,7 +1243,6 @@ void render_context::InitGlobalResources()
 
 static render_context rndCtx;
 
-// TODO: separate from render_context
 void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 {
 	rndCtx.pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, renderCfg ) );
@@ -1361,20 +1369,6 @@ DrawIndexedIndirectMerged(
 	cmdBuff.CmdDrawIndexedIndirectCount( indexBuff, indexType, drawCmds, drawCount, maxDrawCount );
 }
 
-inline static void
-DepthPyramidMultiPass(
-	vk_command_buffer		cmdBuff,
-	VkPipeline				vkPipeline,
-	
-	const vk_image&			depthPyramid,
-	u16                     hiZReadIdx,
-	const u16*              hiZMipWriteIndices,
-	u16                     samplerIdx,
-	VkPipelineLayout        pipelineLayout,
-	group_size              grSz
-) {
-	
-}
 
 struct drak_file_viewer
 {
@@ -1450,111 +1444,18 @@ struct drak_file_viewer
 
 struct renderer_geometry
 {
-	// TODO: use more vtxBuffers ?
 	std::shared_ptr<vk_buffer> pVertexBuffer;
 	std::shared_ptr<vk_buffer> pIdxBuffer;
-	// NOTE: will hold transforms
 	std::shared_ptr<vk_buffer> pNodeBuffer;
 	std::shared_ptr<vk_buffer> pInstanceBounds;
 	std::shared_ptr<vk_buffer> pMeshes;
 	std::shared_ptr<vk_buffer> pMaterials;
 	std::shared_ptr<vk_buffer> pLights;
 
-	// TODO: fix meshlet stuff
 	std::shared_ptr<vk_buffer> pMeshletBuffer;
 	std::shared_ptr<vk_buffer> pMeshletIdxBuffer;
 
 	std::vector<std::shared_ptr<vk_image>> pTextures;
-
-	void UploadMaterials( 
-		vk_command_buffer&      cmdBuff, 
-		vk_context&          dc, 
-		const drak_file_viewer& viewDrkFile, 
-		u64                     currentFrameId 
-	) {
-		
-	}
-
-	void UploadGeometry(
-		vk_command_buffer&      cmdBuff, 
-		vk_context&          dc, 
-		const drak_file_viewer& viewDrkFile, 
-		u64                     currentFrameId 
-	) {
-		std::vector<VkBufferMemoryBarrier2> buffBarriers;
-
-		auto vtxView = viewDrkFile.GetVertexMegaBuffer();
-		pVertexBuffer = std::make_shared<vk_buffer>( dc.CreateBuffer( {
-			.name = "Buff_Vtx",
-			.usageFlags = 
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-																	  .sizeInBytes = (u32) std::size( vtxView ),
-																	  .usage = buffer_usage::GPU_ONLY } ) );
-
-		StagingManagerUploadBuffer( dc, stagingManager, cmdBuff, vtxView, *pVertexBuffer, currentFrameId );
-
-		buffBarriers.push_back( VkMakeBufferBarrier2( 
-			pVertexBuffer->hndl, 
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ) );
-
-		auto idxView = viewDrkFile.GetVertexMegaBuffer();
-		pIdxBuffer = std::make_shared<vk_buffer>( dc.CreateBuffer( {
-			.name = "Buff_Idx",
-			.usageFlags = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			.sizeInBytes = ( u32 ) std::size( idxView ),
-			.usage = buffer_usage::GPU_ONLY } ) );
-
-		StagingManagerUploadBuffer( dc, stagingManager, cmdBuff, idxView, *pIdxBuffer, currentFrameId );
-
-		buffBarriers.push_back( VkMakeBufferBarrier2( 
-			pIdxBuffer->hndl, 
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_INDEX_READ_BIT, 
-			VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT ) );
-
-		pMeshes = std::make_shared<vk_buffer>( dc.CreateBuffer( {
-			.name = "Buff_MeshDesc",
-			.usageFlags = 
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-																.sizeInBytes = (u32) ( 1),//BYTE_COUNT( meshes ) ),
-																.usage = buffer_usage::GPU_ONLY } ) ); 
-
-		//StagingManagerUploadBuffer( dc, stagingManager, cmdBuff, CastSpanAsU8ReadOnly( meshes ), *pMeshes, currentFrameId );	 
-
-		buffBarriers.push_back( VkMakeBufferBarrier2(
-			pMeshes->hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT ) );
-
-		meshletDataBuff = dc.CreateBuffer( {
-			.name = "Buff_MeshletData",
-			.usageFlags = 
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-										   VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT ,
-										   .sizeInBytes = (u32) ( 10),//std::size( mletDataView ) ),
-										   .usage = buffer_usage::GPU_ONLY } );  
-
-		//StagingManagerUploadBuffer( dc, stagingManager, cmdBuff, mletDataView, meshletDataBuff, currentFrameId );
-
-		buffBarriers.push_back( VkMakeBufferBarrier2(
-			meshletDataBuff.hndl,
-			VK_ACCESS_2_TRANSFER_WRITE_BIT,
-			VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-			VK_ACCESS_2_SHADER_READ_BIT,
-			VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT ) );
-	}
-
-	void UploadSceneData(
-
-	) {
-
-	}
 };
 
 static inline void VkUploadResources( 
@@ -1648,23 +1549,18 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	const u64 currentFrameIdx = rndCtx.vFrameIdx++;
 	const u64 currentFrameInFlightIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
-	frame_resources& thisVFrame = rndCtx.vrtFrames[ currentFrameInFlightIdx ];
+	const frame_resources& thisVFrame = rndCtx.vrtFrames[ currentFrameInFlightIdx ];
 
 	// TODO: when we add async compute this must be adjusted to account for the extra singal(s)
-	VkResult timelineWaitResult = rndCtx.pVkCtx->TryWaitOnTimelineFor( 
-		rndCtx.pVkCtx->frameTimeline, rndCtx.framesInFlight, UINT64_MAX );
+	VkResult timelineWaitResult = rndCtx.pVkCtx->QueueTryWaitFor( 
+		rndCtx.pVkCtx->gfxQueue, rndCtx.framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
 
 	[[unlikely]]
 	if( currentFrameIdx < rndCtx.framesInFlight )
 	{
-		thisVFrame.pViewData = std::make_shared<vk_buffer>( rndCtx.pVkCtx->CreateBuffer( {
-			.name = "Buff_VirtualFrame_ViewBuff",
-			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			.sizeInBytes = std::size( frameData.views ) * sizeof( view_data ),
-			.usage = buffer_usage::HOST_VISIBLE
-		} ) );
-		thisVFrame.viewDataIdx = rndCtx.pVkCtx->AllocDescriptor( vk_descriptor_info{ *thisVFrame.pViewData } );
+		frame_resources& thisVFrame = rndCtx.vrtFrames[ currentFrameInFlightIdx ];
+		thisVFrame.Init( *rndCtx.pVkCtx, std::size( frameData.views ) * sizeof( view_data ) );
 	}
 	HT_ASSERT( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
 	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
@@ -1974,17 +1870,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		.semaphore = scImg.canPresentSema, 
 		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 	};
-
-	VkSemaphoreSubmitInfo signalTimeline = {
-		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = rndCtx.pVkCtx->frameTimeline.sema,
-		.value     = rndCtx.vFrameIdx,
-		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-	};
-	rndCtx.pVkCtx->frameTimeline.submitionCount++;
-
+	
 	VkSemaphoreSubmitInfo waits[] = { waitScImgAcquire };
-	VkSemaphoreSubmitInfo signals[] = { signalRenderFinished, signalTimeline };
+	VkSemaphoreSubmitInfo signals[] = { signalRenderFinished };
 	rndCtx.pVkCtx->QueueSubmit( rndCtx.pVkCtx->gfxQueue, waits, signals, thisFrameCmdBuffer.hndl );
 
 	rndCtx.pVkCtx->QueuePresent( rndCtx.pVkCtx->gfxQueue, scImgIdx );
