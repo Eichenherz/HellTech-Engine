@@ -88,8 +88,9 @@ inline constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
 	return COUNT;
 }
 
+// TODO: not here
 static_assert( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE == u64( u16( -1 ) ) );
-struct desc_handle
+struct desc_hndl32
 {
 	u32 slot : 16;
 	u32 type : 2;
@@ -100,7 +101,7 @@ struct desc_handle
 struct vk_descriptor_write
 {
 	vk_descriptor_info descInfo;
-	desc_handle hndl;
+	desc_hndl32 hndl;
 };
 
 using vk_desc_vector = eastl::fixed_vector<vector_freelist, vk_desc_binding_t::COUNT, false>;
@@ -114,7 +115,7 @@ struct vk_descriptor_allocator
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSet set;
 
-	inline void Free( desc_handle descIdx )
+	inline void Free( desc_hndl32 descIdx )
 	{
 		vector_freelist& slotAlloc = bindingSlotFreelist[ descIdx.type ];
 		slotAlloc.erase( descIdx.slot );

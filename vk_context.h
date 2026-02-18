@@ -23,6 +23,7 @@
 #include "vk_pso.h"
 
 #include <vector>
+#include <type_traits>
 #include <span>
 #include <functional>
 #include <memory>
@@ -52,36 +53,26 @@ using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
 
 using vk_frame_vector = eastl::fixed_vector<vk_virtual_frame, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
 
-struct vk_desc_handle
+struct vk_desc_deletion
 {
 	u64 timelineCounterVal;
-	desc_handle hndl;
+	desc_hndl32 hndl;
 };
 
-struct vk_resource
+struct vk_resc_deletion
 {
-	union
-	{
-		VkBuffer buff;
-		VkImage img;
-	};
+	vk_rsc_hndl64 rsc;
 	u64 timelineCounterVal;
-	vk_resource_type type;
 
-	vk_resource() = default;
-	vk_resource( const vk_buffer& b, u64 counter ) 
-		: buff{ b.hndl }, type{ vk_resource_type::BUFFER }, timelineCounterVal{ counter } {}
-	vk_resource( const vk_image& i, u64 counter ) 
-		: img{ i.hndl }, type{ vk_resource_type::IMAGE }, timelineCounterVal{ counter } {}
+	vk_resc_deletion() = default;
+	vk_resc_deletion( const vk_buffer& b, u64 counter ) : rsc{ b }, timelineCounterVal{ counter } {}
+	vk_resc_deletion( const vk_image& i, u64 counter ) : rsc{ i }, timelineCounterVal{ counter } {}
 };
-
-template<typename T, u64 MAX_CAP>
-using vk_deletion_queue = eastl::fixed_ring_buffer<T, MAX_CAP>;
 
 struct vk_context
 {
-	vk_deletion_queue<vk_desc_handle, 128> descriptroDeletionQueue{};
-	vk_deletion_queue<vk_resource, 128> resourceDeletionQueue{};
+	eastl::fixed_ring_buffer<vk_resc_deletion, 128> resourceDeletionQueue{};
+	eastl::fixed_ring_buffer<vk_desc_deletion, 128> descriptroDeletionQueue{};
 
 	fixed_arena<2048> scratchArena;
 
@@ -109,9 +100,19 @@ struct vk_context
 
 	vk_buffer CreateBuffer( const buffer_info& buffInfo );
 	vk_image CreateImage( const image_info& imgInfo );
-	inline void EnqueueResourceFree( const vk_resource& rsc )
+
+	template<typename VkDeletion>
+	inline void EnqueueResourceFree( const VkDeletion& rscDeletion )
 	{
-		resourceDeletionQueue.push_back( rsc );
+		if constexpr( std::is_same<VkDeletion, vk_desc_deletion>::value )
+		{
+			descriptroDeletionQueue.push_back( rscDeletion );
+		}
+		else if constexpr( std::is_same<VkDeletion, vk_resc_deletion>::value )
+		{
+			resourceDeletionQueue.push_back( rscDeletion );
+		}
+		else static_assert( 0 && "Wrong deletion type" );
 	}
 	// TODO: depth clamp ?
 	// VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -171,8 +172,8 @@ struct vk_context
 		VK_CHECK( vkCopyMemoryToImage( device, &copyMemInfo ) );
 	}
 
-	desc_handle AllocDescriptor( const vk_descriptor_info& rscDescInfo );
-	inline void EnqueueDescriptorFree( desc_handle handle, u64 frameIdx )
+	desc_hndl32 AllocDescriptor( const vk_descriptor_info& rscDescInfo );
+	inline void EnqueueDescriptorFree( desc_hndl32 handle, u64 frameIdx )
 	{
 		descriptroDeletionQueue.push_back( { frameIdx, handle } );
 	}

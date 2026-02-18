@@ -16,3 +16,5 @@ README.md
 packages/
 
 bin/*
+
+imgui.ini

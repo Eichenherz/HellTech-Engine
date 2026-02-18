@@ -194,6 +194,9 @@
     <ClInclude Include="ht_mem_arena.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="vk_sync.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
@@ -227,5 +230,18 @@
       <Filter>Source Files</Filter>
     </None>
     <None Include="Shaders\c_draw_cull.hlsl" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Benchmarks.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Best Practices.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Design.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL FAQ.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Glossary.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Gotchas.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Introduction.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Maintenance.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Modules.html" />
+    <None Include="3rdParty\EASTL\doc\EASTL-n2271.pdf" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="3rdParty\EASTL\doc\EASTL.natvis" />
   </ItemGroup>
 </Project>

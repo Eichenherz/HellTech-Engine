@@ -59,16 +59,16 @@ inline vk_gpu_timer VkMakeGpuTimer( VkDevice vkDevice, u32 timerRegionsCount, fl
 
 inline float VkCmdReadGpuTimeInMs( VkCommandBuffer cmdBuff, const vk_gpu_timer& vkTimer )
 {
-	auto readTimestampsBarrier = VkMakeBufferBarrier2(
-		vkTimer.resultBuff.hndl,
-		VK_ACCESS_2_TRANSFER_WRITE_BIT,
-		VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-		VK_ACCESS_2_HOST_READ_BIT,
-		VK_PIPELINE_STAGE_2_HOST_BIT );
-	VkDependencyInfo dependency = { .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	dependency.bufferMemoryBarrierCount = 1;
-	dependency.pBufferMemoryBarriers = &readTimestampsBarrier;
-	vkCmdPipelineBarrier2( cmdBuff, &dependency );
+	//auto readTimestampsBarrier = VkMakeBufferBarrier2(
+	//	vkTimer.resultBuff.hndl,
+	//	VK_ACCESS_2_TRANSFER_WRITE_BIT,
+	//	VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+	//	VK_ACCESS_2_HOST_READ_BIT,
+	//	VK_PIPELINE_STAGE_2_HOST_BIT );
+	//VkDependencyInfo dependency = { .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	//dependency.bufferMemoryBarrierCount = 1;
+	//dependency.pBufferMemoryBarriers = &readTimestampsBarrier;
+	//vkCmdPipelineBarrier2( cmdBuff, &dependency );
 
 	vkCmdCopyQueryPoolResults( 
 		cmdBuff, vkTimer.queryPool, 0, vkTimer.queryCount, vkTimer.resultBuff.hndl, 0, sizeof( u64 ),

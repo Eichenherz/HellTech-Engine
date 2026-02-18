@@ -291,6 +291,16 @@
     <ClCompile Include="3rdParty\imgui\imgui_widgets.cpp" />
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="vk_backend.cpp" />
+    <None Include="3rdParty\EASTL\doc\EASTL-n2271.pdf" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Benchmarks.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Best Practices.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Design.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL FAQ.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Glossary.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Gotchas.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Introduction.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Maintenance.html" />
+    <None Include="3rdParty\EASTL\doc\html\EASTL Modules.html" />
     <None Include="r_dx12_backend.cpp" />
     <ClCompile Include="renderer.cpp" />
     <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
@@ -340,6 +350,7 @@
     <ClInclude Include="vk_pso.h" />
     <ClInclude Include="vk_resources.h" />
     <ClInclude Include="vk_swapchain.h" />
+    <ClInclude Include="vk_sync.h" />
     <ClInclude Include="vk_timer.h" />
     <ClInclude Include="vk_types.h" />
   </ItemGroup>
@@ -440,6 +451,9 @@
     <None Include="Shaders\c_draw_cull.hlsl">
       <FileType>Document</FileType>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="3rdParty\EASTL\doc\EASTL.natvis" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -9,5 +9,6 @@ float4 ImGuiPsMain(
 	in float2 uv : TEXCOORD0
 ) : SV_Target
 {
-	return col * fontAtals.Sample(fontSampler, uv);
+    return col * float4(1.0f, 1.0f, 1.0f, 1.0f);
+    //fontAtals.Sample(fontSampler, uv);
 }

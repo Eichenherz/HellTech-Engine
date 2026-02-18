@@ -7,12 +7,12 @@
 #include <EASTL/fixed_vector.h>
 
 #include "core_types.h"
+#include "vk_resources.h"
 
 struct vk_swapchain_image
 {
-	VkImage			hndl;
-	VkImageView		view;
 	VkSemaphore		canPresentSema;
+	vk_image        img;
 };
 
 // TODO: don't hardcode 

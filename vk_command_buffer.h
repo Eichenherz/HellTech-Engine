@@ -144,7 +144,10 @@ struct vk_command_buffer
 		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, 0, drawCount.hndl, 0, maxDrawCount, sizeof( draw_command ) );
 	}
 
-	void CmdPipelineBarriers( std::span<VkBufferMemoryBarrier2> buffBarriers, std::span<VkImageMemoryBarrier2> imgBarriers ) 
+	void CmdPipelineBarriers( 
+		std::span<const VkBufferMemoryBarrier2> buffBarriers, 
+		std::span<const VkImageMemoryBarrier2> imgBarriers 
+	) const 
 	{
 		VkDependencyInfo dependency = {
 			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,

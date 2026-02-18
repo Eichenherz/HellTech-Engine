@@ -720,7 +720,18 @@ VkMakeSwapchain(
 		VkSemaphore canPresentSema;
 		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &canPresentSema ) );
 
-		scImgs.push_back( { .hndl = img, .view = view, .canPresentSema = canPresentSema } );
+		scImgs.push_back( { 
+			.canPresentSema = canPresentSema,
+			.img = { 
+				.hndl = img,
+				.view = view,
+				.usageFlags = scInfo.imageUsage,
+				.format = scInfo.imageFormat,
+				.width = scInfo.imageExtent.width,
+				.height = scInfo.imageExtent.height,
+			},
+			 
+		} );
 	}
 
 	HT_ASSERT( ( scInfo.imageExtent.width < u32( u16( -1 ) ) ) && ( scInfo.imageExtent.height < u32( u16( -1 ) ) ) );
@@ -1055,14 +1066,14 @@ unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByte
 	return { new vk_shader{ pEntryPointName, sm, shaderStage }, std::move( deleter ) };
 }
 
-desc_handle vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
+desc_hndl32 vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
 {
 	vk_desc_binding_t bindingSlot = VkDescTypeToBinding( rscDescInfo.descriptorType );
 	HT_ASSERT( std::size( descAllocator.bindingSlotFreelist ) > bindingSlot );
 
 	vector_freelist& slotAlloc = descAllocator.bindingSlotFreelist[ bindingSlot ];
 
-	desc_handle descIdx = { .slot = slotAlloc.push(), .type = bindingSlot };
+	desc_hndl32 descIdx = { .slot = slotAlloc.push(), .type = bindingSlot };
 	HT_ASSERT( INVALID_IDX != descIdx.slot );
 
 	descAllocator.pendingUpdates.push_back( { rscDescInfo, descIdx } );
