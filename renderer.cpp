@@ -25,9 +25,9 @@
 
 #include "vk_context.h"
 
-
 // NOTE: clang-cl on VS issue
 #ifdef __clang__
+
 #undef __clang__
 #define _XM_NO_XMVECTOR_OVERLOADS_
 #include <DirectXMath.h>
@@ -189,7 +189,7 @@ struct imgui_pass
 	VkDescriptorUpdateTemplate  descTemplate;
 	VkPipeline	                pipeline;
 
-	void Init( vk_context& dc )
+	void InitStaticResourcesSync( vk_context& dc, vk_command_buffer& cmdBuff, u64 frameIdx )
 	{
 		u8* pixels = 0;
 		i32 width = 0, height = 0;
@@ -206,8 +206,27 @@ struct imgui_pass
 			.mipCount = 1,
 		} );
 
-		//dc.TransitionImageLayout( &hostImgLayoutTransitionInfo, 1 );
-		//dc.CopyMemoryToImage( fontAtlasImg, pixels );
+		u64 sizeInBytes = width * height * 4;
+
+		vk_buffer stagingBuff = dc.CreateBuffer( {
+			.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			.sizeInBytes = sizeInBytes,
+			.usage = buffer_usage::STAGING
+		} );
+
+		std::memcpy( stagingBuff.hostVisible, pixels, sizeInBytes );
+
+		cmdBuff.CmdPipelineImageBarriers( VkMakeImageBarrier(
+			fontAtlasImg, {}, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT },
+			VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VkFullResource( fontAtlasImg )
+		) );
+		cmdBuff.CmdCopyBufferToImageSubresource( stagingBuff, 0, fontAtlasImg, VkFullResourceLayers( fontAtlasImg ) );
+		cmdBuff.CmdPipelineImageBarriers( VkMakeImageBarrier(
+			fontAtlasImg, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT }, {}, 
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VkFullResource( fontAtlasImg )
+		) );
+
+		dc.EnqueueResourceFree( vk_resc_deletion{ stagingBuff, frameIdx } );
 	}
 
 	// NOTE: it's mostly inspired by the official backend code
@@ -589,7 +608,6 @@ static vk_buffer indexBuff;
 static vk_buffer meshBuff;
 
 static vk_buffer meshletBuff;
-static vk_buffer meshletDataBuff;
 
 static vk_buffer materialsBuff;
 static vk_buffer instDescBuff;
@@ -597,41 +615,6 @@ static vk_buffer lightsBuff;
 
 constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
-
-// TODO: recycle_queue for more objects
-struct staging_manager
-{
-	struct upload_job
-	{
-		std::shared_ptr<vk_buffer>	buff;
-		u64			                frameId;
-	};
-	std::vector<upload_job>		pendingUploads;
-	u64							semaSignalCounter;
-
-	inline void PushForRecycle( std::shared_ptr<vk_buffer>& stagingBuff, u64 currentFrameId )
-	{
-		pendingUploads.push_back( { stagingBuff,currentFrameId } );
-	}
-};
-
-inline static void
-StagingManagerUploadBuffer( 
-	vk_context& dc,
-	staging_manager& stgMngr, 
-	vk_command_buffer& cmdBuff, 
-	std::span<const u8> dataIn,
-	const vk_buffer& dst,
-	u64 currentFrameId 
-) {
-
-	//tagingManagerPushForRecycle( stgMngr, stagingBuff, currentFrameId );
-
-
-}
-
-static staging_manager stagingManager;
-
 
 
 struct culling_ctx
@@ -1087,7 +1070,7 @@ struct render_context
 
 void render_context::InitGlobalResources()
 {
-	if( pDepthTarget == nullptr )
+	if( nullptr == pDepthTarget )
 	{
 		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 		image_info info = {
@@ -1105,7 +1088,7 @@ void render_context::InitGlobalResources()
 
 		rscSyncState.UseImage( *pDepthTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 	}
-	if( pColorTarget == nullptr )
+	if( nullptr == pColorTarget )
 	{
 		constexpr VkImageUsageFlags usgFlags =
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -1205,7 +1188,6 @@ void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 	//rndCtx.dbgCtx.InitData( *rndCtx.pDevice, 1 * KB, 1 * KB );
 
 	rndCtx.imguiCtx = MakeImguiPass( *rndCtx.pVkCtx, renderCfg.desiredSwapchainFormat );
-	rndCtx.imguiCtx.Init( *rndCtx.pVkCtx );
 }
 
 #if 0
@@ -1278,6 +1260,8 @@ struct renderer_geometry
 	std::shared_ptr<vk_buffer> pMeshletIdxBuffer;
 
 	std::vector<std::shared_ptr<vk_image>> pTextures;
+	// NOTE: we never deallocate samplers 
+	std::vector<VkSampler> samplers;
 };
 
 // TODO: in and out data
@@ -1291,6 +1275,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	VkResult timelineWaitResult = rndCtx.pVkCtx->QueueTryWaitFor( 
 		rndCtx.pVkCtx->gfxQueue, rndCtx.framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
+
+	rndCtx.pVkCtx->FlushDeletionQueues( currentFrameIdx );
 
 	[[unlikely]]
 	if( currentFrameIdx < rndCtx.framesInFlight )
@@ -1310,7 +1296,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	if( !initResources )
 	{
 		rndCtx.InitGlobalResources();
-
+		rndCtx.imguiCtx.InitStaticResourcesSync( *rndCtx.pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
 		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
 
 		u32 instCount = 1; //instDescBuff.sizeInBytes / sizeof( instance_desc );
@@ -1370,9 +1356,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			{ VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, HT_FRAGMENT_TESTS_STAGE }, 
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 		rndCtx.rscSyncState.UseImage( colorTarget, 
-			{ VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 
-			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
-			}, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+			{ VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT }, 
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
@@ -1523,7 +1508,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
-
 		VkViewport uiViewport = { 0, 0, ( float ) scImg.img.width, ( float ) scImg.img.height, 0, 1.0f };
 		vkCmdSetViewport( thisFrameCmdBuffer.hndl, 0, 1, &uiViewport );
 
@@ -1536,7 +1520,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
 		// NOTE: remove sc image to avoid handling this logic inside the tracker 
-		rndCtx.rscSyncState.StopTrackingResource( scImg.img );
+		rndCtx.rscSyncState.StopTrackingResource( ( u64 ) scImg.img.hndl );
 	}
 
 	//gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );

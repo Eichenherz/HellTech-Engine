@@ -72,6 +72,9 @@
     <ClCompile Include="3rdParty\imgui\imgui_widgets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="eastl_new.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core_types.h">
@@ -135,9 +138,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="vk_descriptor.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="3rdParty\vk_mem_alloc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AssetCompiler\cgltf.h">
@@ -243,5 +243,6 @@
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="3rdParty\EASTL\doc\EASTL.natvis" />
+    <Natvis Include="3rdParty\VulkanMemoryAllocator\src\vk_mem_alloc.natvis" />
   </ItemGroup>
 </Project>

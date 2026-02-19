@@ -11,7 +11,7 @@
 #include "sys_os_api.h"
 #include <type_traits>
 
-#include <3rdParty/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 
 constexpr u64 MAX_MIP_LEVELS = 12;
 
@@ -82,71 +82,30 @@ enum class vk_resource_type : u8
 	IMAGE
 };
 
-struct vk_rsc_hndl64
-{
-	static_assert( sizeof( VkBuffer ) == sizeof( VkImage ) );
-	static_assert( sizeof( VkBuffer ) == sizeof( u64 ) );
-	static_assert( alignof( VkBuffer ) == alignof( VkImage ) );
-	static_assert( alignof( VkBuffer ) == alignof( u64 ) );
-
-	union
-	{
-		VkBuffer buff;
-		VkImage img;
-	};
-	vk_resource_type type;
-
-	inline vk_rsc_hndl64() = default;
-	inline vk_rsc_hndl64( const vk_buffer& b ) : buff{ b.hndl }, type{ vk_resource_type::BUFFER } {}
-	inline vk_rsc_hndl64( const vk_image& i ) : img{ i.hndl }, type{ vk_resource_type::IMAGE } {}
-};
-
-inline bool operator==( const vk_rsc_hndl64& a, const vk_rsc_hndl64& b ) noexcept
-{
-	if( a.type != b.type ) return false;
-	if( vk_resource_type::BUFFER == a.type )
-	{
-		return (u64)a.buff == (u64)b.buff;
-	}
-	else if( vk_resource_type::IMAGE == a.type )
-	{
-		return (u64)a.img == (u64)b.img;
-	}
-	HT_ASSERT( 0 && "WRONG TYPE" );
-	return false;
-}
-
-inline bool operator!=( const vk_rsc_hndl64& a, const vk_rsc_hndl64& b ) noexcept
-{
-	return !(a == b);
-}
-
-namespace std
-{
-	template<>
-	struct hash<vk_rsc_hndl64>
-	{
-		u64 operator()( const vk_rsc_hndl64& h ) const noexcept
-		{
-			u64 hsh = 0;
-			if( vk_resource_type::BUFFER == h.type )
-			{
-				hsh = std::bit_cast< u64 >( h.buff );
-			}
-			else if( vk_resource_type::IMAGE == h.type )
-			{
-				hsh = std::bit_cast< u64 >( h.img );
-			}
-
-			return std::hash<u64>{}( hsh );
-		}
-	};
-}
-
-
 inline VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
 {
 	return ( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+}
+
+__forceinline VkImageSubresourceRange VkFullResource( const vk_image& img ) 
+{
+	return {
+		.aspectMask = VkSelectAspectMaskFromFormat( img.format ),
+		.baseMipLevel = 0,
+		.levelCount = VK_REMAINING_MIP_LEVELS,
+		.baseArrayLayer = 0,
+		.layerCount = VK_REMAINING_ARRAY_LAYERS
+	};
+}
+
+__forceinline VkImageSubresourceLayers VkFullResourceLayers( const vk_image& img ) 
+{
+	return {
+		.aspectMask = VkSelectAspectMaskFromFormat( img.format ),
+		.mipLevel = 0,
+		.baseArrayLayer = 0,
+		.layerCount = VK_REMAINING_ARRAY_LAYERS
+	};
 }
 
 inline VkImageView

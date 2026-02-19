@@ -4,11 +4,12 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
+#include "ht_error.h"
 #include "vk_error.h"
 #include "core_types.h"
 
-#include <EASTL/fixed_string.h>
 #include <span>
+#include <EASTL/fixed_string.h>
 #include <SPIRV-Reflect/spirv_reflect.h>
 
 inline spv_reflect::ShaderModule SpvMakeReflectedShaderModule( std::span<const u8> spvByteCode )
@@ -22,8 +23,7 @@ inline spv_reflect::ShaderModule SpvMakeReflectedShaderModule( std::span<const u
 
 struct vk_shader
 {
-	using shader_entry_point = eastl::fixed_string<char, 1024, false>;
-
+	using shader_entry_point = eastl::fixed_string<char, 128, false>;
 	shader_entry_point    entryPoint;
 	VkShaderModule        module;
 	VkShaderStageFlagBits stage;

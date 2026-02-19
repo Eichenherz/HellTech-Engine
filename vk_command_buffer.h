@@ -164,17 +164,15 @@ struct vk_command_buffer
 		vkCmdCopyBuffer( hndl, src.hndl, dst.hndl, 1, &copyRegion );
 	}
 
-	void CmdCopyBufferToSingleImageSubresource( const vk_buffer& src, u64 srcOffset, const vk_image& dst )
-	{
-		VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( dst.format );
+	void CmdCopyBufferToImageSubresource( 
+		const vk_buffer&					src, 
+		u64									srcOffset, 
+		const vk_image&						dst,
+		const VkImageSubresourceLayers&     dstSubresourceLayers
+	) {
 		VkBufferImageCopy imgCopyRegion = {
 			.bufferOffset = srcOffset,
-			.imageSubresource = {
-				.aspectMask = aspectFlags,
-				.mipLevel = 0,
-				.baseArrayLayer = 0,
-				.layerCount = 1
-		},
+			.imageSubresource = dstSubresourceLayers,
 			.imageOffset = {},
 			.imageExtent = { u32( dst.width ), u32( dst.height ), 1 }
 		};
@@ -192,12 +190,32 @@ struct vk_command_buffer
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
 
+	void CmdPipelineBufferBarriers( const VkBufferMemoryBarrier2& buffBarrier ) 
+	{
+		VkDependencyInfo dependency = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.bufferMemoryBarrierCount = 1,
+			.pBufferMemoryBarriers = &buffBarrier,
+		};
+		vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+
 	void CmdPipelineBufferBarriers( std::span<VkBufferMemoryBarrier2> buffBarriers ) 
 	{
 		VkDependencyInfo dependency = {
 			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
 			.bufferMemoryBarrierCount = ( u32 ) std::size( buffBarriers ),
 			.pBufferMemoryBarriers = std::data( buffBarriers ),
+		};
+		vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+
+	void CmdPipelineImageBarriers( const VkImageMemoryBarrier2& imgBarrier ) 
+	{
+		VkDependencyInfo dependency = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount = 1,
+			.pImageMemoryBarriers = &imgBarrier,
 		};
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}

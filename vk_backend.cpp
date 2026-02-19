@@ -20,7 +20,7 @@
 //#define VMA_DEBUG_LOG_FORMAT( fmt, ... ) \
 //    do { std::fputs( std::format( "[VMA] " fmt "\n", __VA_ARGS__ ).c_str(), stdout ); } while ( 0 )
 
-#include <3rdParty/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 
 #include "core_types.h"
 #include "ht_error.h"
@@ -53,24 +53,6 @@ inline static VkMemoryPropertyFlags VkChooseMemoryProperitesOnUsage( buffer_usag
 	default: assert( 0 && "Uknown memory type" );
 	}
 	return 0;
-}
-
-inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
-{
-	VkFormatFeatureFlags formatFeatures = 0;
-	if( usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-	if( usg & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-	if( usg & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) formatFeatures |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-	if( usg & VK_IMAGE_USAGE_SAMPLED_BIT ) formatFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-	if( usg & VK_IMAGE_USAGE_HOST_TRANSFER_BIT ) formatFeatures |= VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT;
-
-	VkFormatProperties3 formatProps3 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
-	VkFormatProperties2 fomratProps2 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &formatProps3 };
-
-	vkGetPhysicalDeviceFormatProperties2( vkGpu, format, &fomratProps2 );
-
-	HT_ASSERT( ( formatProps3.optimalTilingFeatures & formatFeatures ) == formatFeatures );
-	// Fallback to a different format or use other means of uploading data
 }
 
 // NOTE: from Sascha Willems
@@ -866,6 +848,25 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 	};
 }
 
+inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
+{
+	VkFormatFeatureFlags2 formatFeatures = 0;
+	if( usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT )         formatFeatures |= VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT;
+	if( usg & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT;
+	if( usg & VK_IMAGE_USAGE_TRANSFER_DST_BIT )             formatFeatures |= VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+	if( usg & VK_IMAGE_USAGE_SAMPLED_BIT )                  formatFeatures |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT;
+	if( usg & VK_IMAGE_USAGE_HOST_TRANSFER_BIT )            formatFeatures |= VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT;
+
+
+	VkFormatProperties3 formatProps3 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
+	VkFormatProperties2 fomratProps2 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &formatProps3 };
+
+	vkGetPhysicalDeviceFormatProperties2( vkGpu, format, &fomratProps2 );
+
+	HT_ASSERT( ( formatProps3.optimalTilingFeatures & formatFeatures ) == formatFeatures );
+	// Fallback to a different format or use other means of uploading data
+}
+
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
 	VkCheckFormatProperties( gpu, imgInfo.usg, imgInfo.format );
@@ -884,9 +885,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
 	};
 
-	VmaAllocationCreateInfo allocCreateInfo = {
-		.usage = VMA_MEMORY_USAGE_AUTO,
-	};
+	VmaAllocationCreateInfo allocCreateInfo = { .usage = VMA_MEMORY_USAGE_AUTO };
 	VkImage img;
 	VmaAllocation mem;
 	VmaAllocationInfo allocInfo;
@@ -989,7 +988,9 @@ VkPipeline vk_context::CreateGfxPipeline(
 		.depthAttachmentFormat = depthAttachmentFormat,
 	};
 
-	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	VkPipelineVertexInputStateCreateInfo vtxInCreateInfo = { 
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO 
+	};
 	VkGraphicsPipelineCreateInfo pipelineInfo = {
 		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 		.pNext = &renderingInfo,
@@ -1116,6 +1117,35 @@ void vk_context::FlushPendingDescriptorUpdates()
 
 	vkUpdateDescriptorSets( device, ( u32 ) std::size( writes ), std::data( writes ), 0, 0 );
 	descAllocator.pendingUpdates.resize( 0 );
+}
+
+void vk_context::FlushDeletionQueues( u64 frameIdx )
+{
+	// NOTE: since it's a queue/ring buff, we always start at begin() 
+	// and advance until there's an entry not deletable this frame
+	// NOTE: eastl::ring_buffer pop decreases the size 
+	while( std::size( resourceDeletionQueue ) != 0 )
+	{
+		vk_resc_deletion& rsc = resourceDeletionQueue.front();
+		if( rsc.timelineCounterVal >= frameIdx ) break;
+		if( vk_resource_type::BUFFER ==  rsc.type )
+		{
+			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.mem );
+		}
+		else if( vk_resource_type::IMAGE ==  rsc.type )
+		{
+			vkDestroyImageView( device, rsc.img.view, 0 );
+			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.mem );
+		}
+		resourceDeletionQueue.pop_front();
+	}
+	while( std::size( descriptroDeletionQueue ) != 0 )
+	{
+		auto[ timelineCounterVal, hndl ] = descriptroDeletionQueue.front();
+		if( timelineCounterVal >= frameIdx ) break;
+		descAllocator.Free( hndl );
+		descriptroDeletionQueue.pop_front();
+	}
 }
 
 void vk_context::QueueSubmit( 

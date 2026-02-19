@@ -7,7 +7,6 @@
 #include <vulkan.h>
 
 #include "core_types.h"
-#include "ht_error.h"
 #include "vk_resources.h"
 #include "vk_command_buffer.h"
 
@@ -158,19 +157,52 @@ struct vk_rsc_sync_state
 	u64			            perStageReaders;
 };
 
-
-
-__forceinline VkImageSubresourceRange VkFullResource( const vk_image& img ) 
-{
+inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
+	const vk_buffer& buff,
+	const vk_access_stage_masks& srcSync,
+	const vk_access_stage_masks& dstSync,
+	VkDeviceSize offset,
+	VkDeviceSize size
+) {
 	return {
-		.aspectMask = VkSelectAspectMaskFromFormat( img.format ),
-		.baseMipLevel = 0,
-		.levelCount = VK_REMAINING_MIP_LEVELS,
-		.baseArrayLayer = 0,
-		.layerCount = VK_REMAINING_ARRAY_LAYERS
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+		.srcStageMask = srcSync.stageFlags,
+		.srcAccessMask = srcSync.accessFlags,
+		.dstStageMask = dstSync.stageFlags,
+		.dstAccessMask = dstSync.accessFlags,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = buff.hndl,
+		.offset = offset,
+		.size = size
 	};
 }
 
+inline VkImageMemoryBarrier2 VkMakeImageBarrier(
+	const vk_image& img,
+	const vk_access_stage_masks& srcSync,
+	const vk_access_stage_masks& dstSync,
+	VkImageLayout srcLayout,
+	VkImageLayout dstLayout,
+	const VkImageSubresourceRange& subResource
+) {
+	return {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+		.srcStageMask = srcSync.stageFlags,
+		.srcAccessMask = srcSync.accessFlags,
+		.dstStageMask = dstSync.stageFlags,
+		.dstAccessMask = dstSync.accessFlags,
+		.oldLayout = srcLayout,
+		.newLayout = dstLayout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = img.hndl,
+		.subresourceRange = subResource
+	};
+}
+
+
+using vk_rsc_hndl64 = u64;
 struct vk_rsc_state_tracker
 {
 	ankerl::unordered_dense::map<vk_rsc_hndl64, vk_rsc_sync_state> resourceStateTracker;
@@ -184,10 +216,10 @@ struct vk_rsc_state_tracker
 		VkDeviceSize offset = 0, 
 		VkDeviceSize size = VK_WHOLE_SIZE
 	) {
-		auto it = resourceStateTracker.find( vk_rsc_hndl64{ rsc } );
+		auto it = resourceStateTracker.find( ( u64 ) rsc.hndl );
 		if( std::cend( resourceStateTracker ) == it )
 		{
-			resourceStateTracker.emplace( vk_rsc_hndl64{ rsc }, vk_rsc_sync_state{ dstMasks, VK_IMAGE_LAYOUT_MAX_ENUM } );
+			resourceStateTracker.emplace( ( u64 ) rsc.hndl, vk_rsc_sync_state{ dstMasks, VK_IMAGE_LAYOUT_MAX_ENUM } );
 			return;
 		}
 		
@@ -209,8 +241,7 @@ struct vk_rsc_state_tracker
 
 			if( hasPrevWrite && !syncReqScopeSawPrevWrite )
 			{
-				// NOTE: implicitly handle the layout trsnsition too 
-				EmitBarrier( rsc, currentLastWriteMask, dstMasks, offset, size );
+				buffBarrierCache.push_back( VkMakeBufferBarrier( rsc, currentLastWriteMask, dstMasks, offset, size ) );
 			}
 
 			it->second = {
@@ -225,7 +256,7 @@ struct vk_rsc_state_tracker
 				.stageFlags = currentLastWriteMask.stageFlags | currentReadMask.stageFlags
 			};
 
-			EmitBarrier( rsc, srcMask, dstMasks, offset, size );
+			buffBarrierCache.push_back( VkMakeBufferBarrier( rsc, srcMask, dstMasks, offset, size ) );
 			it->second = { .lastWriteMask = dstMasks, .perStageReaders = 0 };
 		}
 	}
@@ -242,10 +273,10 @@ struct vk_rsc_state_tracker
 		VkImageLayout dstLayout, 
 		const VkImageSubresourceRange& subResource 
 	) {
-		auto it = resourceStateTracker.find( vk_rsc_hndl64{ rsc } );
+		auto it = resourceStateTracker.find( ( u64 ) rsc.hndl );
 		if( std::cend( resourceStateTracker ) == it )
 		{
-			resourceStateTracker.emplace( vk_rsc_hndl64{ rsc }, vk_rsc_sync_state{ dstMasks, dstLayout } );
+			resourceStateTracker.emplace( ( u64 ) rsc.hndl, vk_rsc_sync_state{ dstMasks, dstLayout } );
 			return;
 		}
 
@@ -272,12 +303,14 @@ struct vk_rsc_state_tracker
 			if( hasPrevWrite && !syncReqScopeSawPrevWrite )
 			{
 				// NOTE: implicitly handle the layout trsnsition too 
-				EmitBarrier( rsc, currentLastWriteMask, dstMasks, currentImgLayout, dstLayout, subResource );
+				imgBarrierCache.push_back( VkMakeImageBarrier( 
+					rsc, currentLastWriteMask, dstMasks, currentImgLayout, dstLayout, subResource ) );
 			}
 			// NOTE: here we use the read flags bc there's no just change my layout barrier
 			if( !hasPrevWrite && isLayoutTransition )
 			{
-				EmitBarrier( rsc, currentReadMask, dstMasks, currentImgLayout, dstLayout, subResource );
+				imgBarrierCache.push_back( VkMakeImageBarrier(
+					rsc, currentReadMask, dstMasks, currentImgLayout, dstLayout, subResource ) );
 			}
 
 			it->second = {
@@ -292,7 +325,8 @@ struct vk_rsc_state_tracker
 				.accessFlags = currentLastWriteMask.accessFlags | currentReadMask.accessFlags,
 				.stageFlags = currentLastWriteMask.stageFlags | currentReadMask.stageFlags
 			};
-			EmitBarrier( rsc, srcMask, dstMasks, currentImgLayout, dstLayout, subResource );
+			imgBarrierCache.push_back( VkMakeImageBarrier(
+				rsc, srcMask, dstMasks, currentImgLayout, dstLayout, subResource ) );
 			it->second = { .lastWriteMask = dstMasks, .imgLayout = dstLayout, .perStageReaders = 0 };
 		}
 	}
@@ -300,53 +334,6 @@ struct vk_rsc_state_tracker
 	inline void StopTrackingResource( vk_rsc_hndl64 hndl )
 	{
 		resourceStateTracker.erase( hndl );
-	}
-
-	inline void EmitBarrier(
-		const vk_buffer& buff,
-		const vk_access_stage_masks& srcSync,
-		const vk_access_stage_masks& dstSync,
-		VkDeviceSize offset,
-		VkDeviceSize size
-	) {
-		buffBarrierCache.push_back( {
-			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-			.srcStageMask = srcSync.stageFlags,
-			.srcAccessMask = srcSync.accessFlags,
-			.dstStageMask = dstSync.stageFlags,
-			.dstAccessMask = dstSync.accessFlags,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.buffer = buff.hndl,
-			.offset = offset,
-			.size = size
-		} );
-	}
-
-	inline void EmitBarrier(
-		const vk_image& img,
-		const vk_access_stage_masks& srcSync,
-		const vk_access_stage_masks& dstSync,
-		VkImageLayout srcLayout,
-		VkImageLayout dstLayout,
-		const VkImageSubresourceRange& subResource
-	) {
-		HT_ASSERT( VK_IMAGE_LAYOUT_MAX_ENUM != dstLayout );
-
-		
-		imgBarrierCache.push_back( {
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-			.srcStageMask = srcSync.stageFlags,
-			.srcAccessMask = srcSync.accessFlags,
-			.dstStageMask = dstSync.stageFlags,
-			.dstAccessMask = dstSync.accessFlags,
-			.oldLayout = srcLayout,
-			.newLayout = dstLayout,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = img.hndl,
-			.subresourceRange = subResource
-			} );
 	}
 
 	inline void FlushBarriers( const vk_command_buffer& cmdBuff )

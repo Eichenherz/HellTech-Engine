@@ -8,7 +8,7 @@
 
 #include <Volk/volk.h>
 
-#include <3rdParty/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 
 #include "core_types.h"
 
@@ -48,71 +48,78 @@ struct vk_virtual_frame
 	VkSemaphore		canGetImgSema;
 };
 
+struct vk_desc_deletion
+{
+	u64				timelineCounterVal;
+	desc_hndl32		hndl;
+};
+
+struct vk_resc_deletion
+{
+	union
+	{
+		vk_buffer buff;
+		vk_image  img;
+	};
+	vk_resource_type type;
+	u64 timelineCounterVal;
+
+	inline vk_resc_deletion() = default;
+	inline vk_resc_deletion( const vk_buffer& b, u64 counter ) 
+		: buff{ b }, type{ vk_resource_type::BUFFER }, timelineCounterVal{ counter } {}
+	inline vk_resc_deletion( const vk_image& i, u64 counter ) 
+		: img{ i }, type{ vk_resource_type::IMAGE }, timelineCounterVal{ counter } {}
+};
+
+
 using PFN_VkShaderDestoryer = std::function<void( vk_shader* )>;
 using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
 
 using vk_frame_vector = eastl::fixed_vector<vk_virtual_frame, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
 
-struct vk_desc_deletion
-{
-	u64 timelineCounterVal;
-	desc_hndl32 hndl;
-};
-
-struct vk_resc_deletion
-{
-	vk_rsc_hndl64 rsc;
-	u64 timelineCounterVal;
-
-	vk_resc_deletion() = default;
-	vk_resc_deletion( const vk_buffer& b, u64 counter ) : rsc{ b }, timelineCounterVal{ counter } {}
-	vk_resc_deletion( const vk_image& i, u64 counter ) : rsc{ i }, timelineCounterVal{ counter } {}
-};
+template<typename T, u64 N>
+using ring_buff = eastl::fixed_ring_buffer<T, N>;
 
 struct vk_context
 {
-	eastl::fixed_ring_buffer<vk_resc_deletion, 128> resourceDeletionQueue{};
-	eastl::fixed_ring_buffer<vk_desc_deletion, 128> descriptroDeletionQueue{};
+	ring_buff<vk_resc_deletion, 128>		resourceDeletionQueue{};
+	ring_buff<vk_desc_deletion, 128>		descriptroDeletionQueue{};
 
-	fixed_arena<2048> scratchArena;
+	fixed_arena<2048>						scratchArena;
 
-	vk_swapchain    sc;
-	vk_frame_vector vrtFrames;
-	vk_descriptor_allocator   descAllocator;
-	vk_queue		gfxQueue;
-	vk_queue        copyQueue;
+	vk_swapchain							sc;
+	vk_frame_vector							vrtFrames;
+	vk_descriptor_allocator					descAllocator;
+	vk_queue								gfxQueue;
+	vk_queue								copyQueue;
 
-	VmaAllocator    allocator;
+	VmaAllocator							allocator;
 
-	VkPhysicalDeviceProperties gpuProps;
-	VkPhysicalDevice gpu;
-	VkDevice		device;
+	VkPhysicalDeviceProperties				gpuProps;
+	VkPhysicalDevice						gpu;
+	VkDevice								device;
 	
-	VkInstance inst;
-	VkDebugUtilsMessengerEXT dbgMsg;
-	VkSurfaceKHR surf;
+	VkInstance								inst;
+	VkDebugUtilsMessengerEXT				dbgMsg;
+	VkSurfaceKHR							surf;
 
-	VkPipelineLayout globalPipelineLayout;
+	VkPipelineLayout						globalPipelineLayout;
 
-	u32             deviceMask;
-	float           timestampPeriod;
-	u32				waveSize;
+	u32										deviceMask;
+	float									timestampPeriod;
+	u32										waveSize;
+
 
 	vk_buffer CreateBuffer( const buffer_info& buffInfo );
 	vk_image CreateImage( const image_info& imgInfo );
 
-	template<typename VkDeletion>
-	inline void EnqueueResourceFree( const VkDeletion& rscDeletion )
+	inline void EnqueueResourceFree( const vk_resc_deletion& rscDeletion )
 	{
-		if constexpr( std::is_same<VkDeletion, vk_desc_deletion>::value )
-		{
-			descriptroDeletionQueue.push_back( rscDeletion );
-		}
-		else if constexpr( std::is_same<VkDeletion, vk_resc_deletion>::value )
-		{
-			resourceDeletionQueue.push_back( rscDeletion );
-		}
-		else static_assert( 0 && "Wrong deletion type" );
+		resourceDeletionQueue.push_back( rscDeletion );
+	}
+	inline void EnqueueDescriptorFree( const vk_desc_deletion& rscDeletion )
+	{
+		descriptroDeletionQueue.push_back( rscDeletion );
 	}
 	// TODO: depth clamp ?
 	// VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -142,11 +149,11 @@ struct vk_context
 		return { thisVrtFrame.cmdBuff, globalPipelineLayout, descAllocator.set };
 	}
 
-	inline void TransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
+	inline void HostTransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
 	{
 		VK_CHECK( vkTransitionImageLayout( device, transitionCount, transitions ) );
 	}
-	inline void CopyMemoryToImage( const vk_image& dst, const void* pSrc )
+	inline void HostCopyMemoryToImage( const vk_image& dst, const void* pSrc )
 	{
 		VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( dst.format );
 		VkMemoryToImageCopy memToImgCopy = {
@@ -180,7 +187,7 @@ struct vk_context
 
 	void FlushPendingDescriptorUpdates();
 
-	void FlushDeletionQueues();
+	void FlushDeletionQueues( u64 frameIdx );
 
 	inline u32 AcquireNextSwapchainImageBlocking( u64 frameInFlightIdx ) const
 	{

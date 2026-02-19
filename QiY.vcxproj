@@ -113,7 +113,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>D:\EichenRepos\QiY\QiY\3rdParty\imgui;D:\EichenRepos\QiY\QiY\3rdParty\EABase\include\Common;D:\EichenRepos\QiY\QiY\3rdParty\EASTL\include;D:\EichenRepos\QiY\QiY\3rdParty\dds;D:\EichenRepos\QiY\QiY\HellPack;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
+    <IncludePath>D:\EichenRepos\QiY\QiY\3rdParty\VulkanMemoryAllocator\include;D:\EichenRepos\QiY\QiY\3rdParty\imgui;D:\EichenRepos\QiY\QiY\3rdParty\EABase\include\Common;D:\EichenRepos\QiY\QiY\3rdParty\EASTL\include;D:\EichenRepos\QiY\QiY\3rdParty\dds;D:\EichenRepos\QiY\QiY\HellPack;D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
     <CustomBuildBeforeTargets>
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
@@ -289,6 +289,7 @@
     <ClCompile Include="3rdParty\imgui\imgui_draw.cpp" />
     <ClCompile Include="3rdParty\imgui\imgui_tables.cpp" />
     <ClCompile Include="3rdParty\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="eastl_new.cpp" />
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="vk_backend.cpp" />
     <None Include="3rdParty\EASTL\doc\EASTL-n2271.pdf" />
@@ -314,7 +315,6 @@
   <ItemGroup>
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\stl.h" />
     <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h" />
-    <ClInclude Include="3rdParty\vk_mem_alloc.h" />
     <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="AssetCompiler\cgltf.h" />
     <ClInclude Include="AssetCompiler\lz4.h" />
@@ -454,6 +454,7 @@
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="3rdParty\EASTL\doc\EASTL.natvis" />
+    <Natvis Include="3rdParty\VulkanMemoryAllocator\src\vk_mem_alloc.natvis" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
