@@ -23,7 +23,14 @@ struct vk_renderer_config
 	u8              swapchainImageCount = 3;
 };
 
-inline vk_renderer_config renderCfg = {};
+enum vk_desc_binding_t : u32
+{
+	SAMPLER = 0,
+	STORAGE_BUFFER,
+	STORAGE_IMAGE,
+	SAMPLED_IMAGE,
+	COUNT
+};
 
 #endif // !__VK_TYPES_H__
 

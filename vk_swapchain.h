@@ -28,14 +28,14 @@ struct vk_swapchain
 	u8					imgCount;
 };
 
-inline VkViewport VkGetSwapchainViewport( const vk_swapchain& sc )
+inline VkViewport VkGetViewport( float width, float height )
 {
-	return { 0.0f, ( float ) sc.height, ( float ) sc.width, -( float ) sc.height, 0.0f, 1.0f };
+	return { 0.0f, height, width, -height, 0.0f, 1.0f };
 }
 
-inline VkRect2D VkGetSwapchianScissor( const vk_swapchain& sc )
+inline VkRect2D VkGetScissor( u32 width, u32 height )
 {
-	return { { 0, 0 }, { sc.width, sc.height } };
+	return { { 0, 0 }, { width, height } };
 }
 
 #endif // !__VK_SWAPCHAIN_H__

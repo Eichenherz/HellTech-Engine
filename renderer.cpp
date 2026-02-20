@@ -19,7 +19,6 @@
 
 #include "vk_error.h"
 #include "vk_resources.h"
-#include "vk_descriptor.h"
 #include "vk_sync.h"
 #include "vk_pso.h"
 
@@ -233,8 +232,7 @@ struct imgui_pass
 	void DrawUiPass(
 		vk_context& vkCtx,
 		VkCommandBuffer cmdBuff,
-		const VkRenderingAttachmentInfo& pColInfo,
-		const VkRect2D& scissor,
+		const vk_image& dstTarget,
 		u64 frameIdx,
 		u64 frameInFlightIdx
 	) {
@@ -307,12 +305,20 @@ struct imgui_pass
 
 		vk_scoped_label label = { cmdBuff,"Draw Imgui Pass",{} };
 
+		VkRect2D renderArea = VkGetScissor( dstTarget.width, dstTarget.height );
+
+		// NOTE: we need a different viewport since this is drawn directly to the screen
+		VkViewport uiViewport = { 0, 0, ( float ) dstTarget.width, ( float ) dstTarget.height, 0, 1.0f };
+		vkCmdSetViewport( cmdBuff, 0, 1, &uiViewport );
+
+		VkRenderingAttachmentInfo dstTargetAttachmentInfo = VkMakeAttachemntInfo( 
+			dstTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 		VkRenderingInfo renderInfo = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-			.renderArea = scissor,
+			.renderArea = renderArea,
 			.layerCount = 1,
 			.colorAttachmentCount = 1,
-			.pColorAttachments = &pColInfo,
+			.pColorAttachments = &dstTargetAttachmentInfo,
 		};
 		vk_scoped_renderpass renderPass = { cmdBuff, renderInfo };
 
@@ -339,8 +345,8 @@ struct imgui_pass
 
 				// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
 				clipMin = { std::max( clipMin.x, 0.0f ), std::max( clipMin.y, 0.0f ) };
-				clipMax = { std::min( clipMax.x, ( float ) scissor.extent.width ), 
-					std::min( clipMax.y, ( float ) scissor.extent.height ) };
+				clipMax = { std::min( clipMax.x, ( float ) renderArea.extent.width ), 
+					std::min( clipMax.y, ( float ) renderArea.extent.height ) };
 
 				if( clipMax.x < clipMin.x || clipMax.y < clipMin.y ) continue;
 
@@ -474,7 +480,7 @@ constexpr const char* ToString( debug_draw_type t )
 
 // TODO: use instancing for drawing ?
 // TODO: double buffer debug geometry ?
-struct debug_context
+struct debug_draw_passes
 {
 	std::shared_ptr<vk_buffer> pLinesBuff;
 	std::shared_ptr<vk_buffer> pTrisBuff;
@@ -617,7 +623,7 @@ constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
 
 
-struct culling_ctx
+struct culling_pass
 {
 	std::shared_ptr<vk_buffer> pInstanceOccludedCache;
 	std::shared_ptr<vk_buffer> pClusterOccludedCache;
@@ -786,7 +792,7 @@ struct culling_ctx
 	}
 };
 
-struct tonemapping_ctx
+struct tone_mapping_pass
 {
 	std::shared_ptr<vk_buffer> pAverageLuminanceBuffer;
 	std::shared_ptr<vk_buffer> pLuminanceHistogramBuffer;
@@ -1031,15 +1037,22 @@ struct frame_resources
 
 struct render_context
 {
-	imgui_pass   imguiCtx;
-	debug_context   dbgCtx;
-	culling_ctx     cullingCtx;
-	tonemapping_ctx tonemappingCtx;
-	depth_pyramid_pass hizbCtx;
+	static constexpr u64 MAX_FIF = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
+	static constexpr u64 MAX_SC_IMG = vk_renderer_config::MAX_SWAPCHAIN_IMG_ALLOWED;
+
+	alignas( 8 ) vk_renderer_config config = {};
+
+	imgui_pass          imguiPass;
+	debug_draw_passes   dbgPass;
+	culling_pass		cullingPass;
+	tone_mapping_pass	tonemapPass;
+	depth_pyramid_pass  hizbPass;
 
 	vk_rsc_state_tracker rscSyncState;
 
-	frame_resources	vrtFrames[ vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED ];
+	eastl::fixed_vector<desc_hndl32, MAX_SC_IMG, false> swapchainUavs;
+
+	eastl::fixed_vector<frame_resources, MAX_FIF, false> vrtFrames;
 
 	std::unique_ptr<vk_context> pVkCtx;
 
@@ -1062,20 +1075,17 @@ struct render_context
 	VkSampler		pbrSampler;
 	desc_hndl32		pbrSamplerIdx;
 
-	eastl::fixed_vector<desc_hndl32, vk_renderer_config::MAX_SWAPCHAIN_IMG_ALLOWED, false> swapchainUavs;
-
-
-	void InitGlobalResources();
+	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat );
 };
 
-void render_context::InitGlobalResources()
+void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat )
 {
 	if( nullptr == pDepthTarget )
 	{
 		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 		image_info info = {
 			.name = "Img_DepthTarget",
-			.format = renderCfg.desiredDepthFormat,
+			.format = desiredDepthFormat,
 			.usg = usgFlags,
 			.width = pVkCtx->sc.width,
 			.height = pVkCtx->sc.height,
@@ -1094,7 +1104,7 @@ void render_context::InitGlobalResources()
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 		image_info info = {
 			.name = "Img_ColorTarget",
-			.format = renderCfg.desiredColorFormat,
+			.format = desiredColorFormat,
 			.usg = usgFlags,
 			.width = pVkCtx->sc.width,
 			.height = pVkCtx->sc.height,
@@ -1123,7 +1133,7 @@ static render_context rndCtx;
 
 void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 {
-	rndCtx.pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, renderCfg ) );
+	rndCtx.pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, rndCtx.config ) );
 
 	{
 		unique_shader_ptr vtx = rndCtx.pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/v_z_prepass.vert.spv" ) );
@@ -1132,7 +1142,7 @@ void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
 		rndCtx.gfxZPrepass = rndCtx.pVkCtx->CreateGfxPipeline( 
-			shaderStages, dynamicStates, 0, 0, renderCfg.desiredDepthFormat, DEFAULT_PSO );
+			shaderStages, dynamicStates, 0, 0, rndCtx.config.desiredDepthFormat, DEFAULT_PSO );
 	}
 	//{
 	//	vk_shader vertBox = dc.CreateShaderFromSpirv( "Shaders/box_meshlet_draw.vert.spv", rndCtx.pDevice->device );
@@ -1159,8 +1169,8 @@ void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, vertBox.module, 0 );
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, normalCol.module, 0 );
 	//}
-	rndCtx.cullingCtx.Init( *rndCtx.pVkCtx );
-	rndCtx.tonemappingCtx.Init( *rndCtx.pVkCtx );
+	rndCtx.cullingPass.Init( *rndCtx.pVkCtx );
+	rndCtx.tonemapPass.Init( *rndCtx.pVkCtx );
 	{
 		unique_shader_ptr vtx = rndCtx.pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/vtx_merged.vert.spv" ) );
 		unique_shader_ptr frag = rndCtx.pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/pbr.frag.spv" ) );
@@ -1169,7 +1179,7 @@ void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
 		rndCtx.gfxMergedPipeline = rndCtx.pVkCtx->CreateGfxPipeline( 
-			shaderStages, dynamicStates, &renderCfg.desiredColorFormat, 1, renderCfg.desiredDepthFormat, DEFAULT_PSO );
+			shaderStages, dynamicStates, &rndCtx.config.desiredColorFormat, 1, rndCtx.config.desiredDepthFormat, DEFAULT_PSO );
 	}
 	//{
 	//	vk_shader vertMeshlet = dc.CreateShaderFromSpirv( "Shaders/meshlet.vert.spv", rndCtx.pDevice->device );
@@ -1182,12 +1192,14 @@ void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, vertMeshlet.module, 0 );
 	//	vkDestroyShaderModule( rndCtx.pDevice->device, fragCol.module, 0 );
 	//}
-	rndCtx.hizbCtx.Init( *rndCtx.pVkCtx );
+	rndCtx.hizbPass.Init( *rndCtx.pVkCtx );
 
 	//rndCtx.dbgCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout, renderCfg );
 	//rndCtx.dbgCtx.InitData( *rndCtx.pDevice, 1 * KB, 1 * KB );
 
-	rndCtx.imguiCtx = MakeImguiPass( *rndCtx.pVkCtx, renderCfg.desiredSwapchainFormat );
+	rndCtx.imguiPass = MakeImguiPass( *rndCtx.pVkCtx, rndCtx.config.desiredSwapchainFormat );
+
+	rndCtx.vrtFrames.resize( rndCtx.framesInFlight );
 }
 
 #if 0
@@ -1271,7 +1283,6 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	const u64 currentFrameInFlightIdx = currentFrameIdx % VK_MAX_FRAMES_IN_FLIGHT_ALLOWED;
 	const frame_resources& thisVFrame = rndCtx.vrtFrames[ currentFrameInFlightIdx ];
 
-	// TODO: when we add async compute this must be adjusted to account for the extra singal(s)
 	VkResult timelineWaitResult = rndCtx.pVkCtx->QueueTryWaitFor( 
 		rndCtx.pVkCtx->gfxQueue, rndCtx.framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
@@ -1295,28 +1306,28 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	static bool initResources = false;
 	if( !initResources )
 	{
-		rndCtx.InitGlobalResources();
-		rndCtx.imguiCtx.InitStaticResourcesSync( *rndCtx.pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
+		rndCtx.InitGlobalResources( rndCtx.config.desiredDepthFormat, rndCtx.config.desiredColorFormat );
+		rndCtx.imguiPass.InitStaticResourcesSync( *rndCtx.pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
 		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
 
 		u32 instCount = 1; //instDescBuff.sizeInBytes / sizeof( instance_desc );
 		u32 mletCount = 1; //meshletBuff.sizeInBytes / sizeof( meshlet );
-		rndCtx.cullingCtx.InitSceneDependentData( *rndCtx.pVkCtx, instCount, mletCount * instCount );
+		rndCtx.cullingPass.InitSceneDependentData( *rndCtx.pVkCtx, instCount, mletCount * instCount );
 
 		//rndCtx.dbgCtx.UploadDebugGeometry();
 
 		rndCtx.rscSyncState.UseBuffer(
-			*rndCtx.tonemappingCtx.pAverageLuminanceBuffer, 
+			*rndCtx.tonemapPass.pAverageLuminanceBuffer, 
 			{ VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT} );
 
-		thisFrameCmdBuffer.CmdFillVkBuffer( *rndCtx.tonemappingCtx.pAverageLuminanceBuffer, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( *rndCtx.tonemapPass.pAverageLuminanceBuffer, 0u );
 
-		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemappingCtx.pAverageLuminanceBuffer, 
+		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemapPass.pAverageLuminanceBuffer, 
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT} );
 
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
-		rndCtx.rscSyncState.UseImage( *rndCtx.hizbCtx.pHiZTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
+		rndCtx.rscSyncState.UseImage( *rndCtx.hizbPass.pHiZTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 
 		initResources = true;
 	}
@@ -1331,8 +1342,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	auto colorWrite = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
 	auto colorRead = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 
-	VkViewport viewport = VkGetSwapchainViewport( rndCtx.pVkCtx->sc );
-	VkRect2D scissor = VkGetSwapchianScissor( rndCtx.pVkCtx->sc );
+	VkViewport viewport = VkGetViewport( colorTarget.width, colorTarget.height );
+	VkRect2D scissor = VkGetScissor( colorTarget.width, colorTarget.height );
 
 	u32 instCount = ( u32 ) instDescBuff.sizeInBytes / sizeof( instance_desc );
 	u32 mletCount = ( u32 ) meshletBuff.sizeInBytes / sizeof( meshlet );
@@ -1349,8 +1360,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	{
 		//vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
-		rndCtx.cullingCtx.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, *rndCtx.hizbCtx.pHiZTarget, 
-			instCount, thisVFrame.viewDataIdx.slot, rndCtx.hizbCtx.hizSrv.slot, rndCtx.hizbCtx.quadMinSamplerIdx.slot, false );
+		rndCtx.cullingPass.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, *rndCtx.hizbPass.pHiZTarget, 
+			instCount, thisVFrame.viewDataIdx.slot, rndCtx.hizbPass.hizSrv.slot, rndCtx.hizbPass.quadMinSamplerIdx.slot, false );
 
 		rndCtx.rscSyncState.UseImage( depthTarget, 
 			{ VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, HT_FRAGMENT_TESTS_STAGE }, 
@@ -1366,7 +1377,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		} shadingPush = { 
 				.vtxAddr = globVertexBuff.devicePointer, 
 				.transfAddr = instDescBuff.devicePointer, 
-				.compactedArgsAddr = rndCtx.cullingCtx.pCompactedDrawArgs->devicePointer,
+				.compactedArgsAddr = rndCtx.cullingPass.pCompactedDrawArgs->devicePointer,
 				.mtrlsAddr = materialsBuff.devicePointer, 
 				.lightsAddr = lightsBuff.devicePointer,
 				.camIdx = thisVFrame.viewDataIdx.slot,
@@ -1387,33 +1398,33 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			colorPassInfo,
 			indexBuff,
 			VK_INDEX_TYPE_UINT32,
-			*rndCtx.cullingCtx.pDrawCmds,
-			*rndCtx.cullingCtx.pDrawCount,
+			*rndCtx.cullingPass.pDrawCmds,
+			*rndCtx.cullingPass.pDrawCount,
 			meshletUpperBound,
 			&shadingPush,
 			sizeof(shadingPush)
 		);
 
-		vk_rendering_info zDgbInfo = {
-			.viewport = viewport,
-			.scissor = scissor,
-			.colorAttachments = {},
-			.pDepthAttachment = &depthRead
-		};
+		//vk_rendering_info zDgbInfo = {
+		//	.viewport = viewport,
+		//	.scissor = scissor,
+		//	.colorAttachments = {},
+		//	.pDepthAttachment = &depthRead
+		//};
 		//rndCtx.dbgCtx.DrawCPU( thisFrameCmdBuffer, zDgbInfo, "Draw Occluder-Depth", debug_draw_type::TRIANGLE, 
 		//					   thisVFrame.pViewData->devicePointer, 0, debugOcclusionWallTransf, 0 );
 
-		rndCtx.hizbCtx.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, depthTarget, rndCtx.depthSrv );
+		rndCtx.hizbPass.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, depthTarget, rndCtx.depthSrv );
 
-		rndCtx.rscSyncState.UseBuffer( *rndCtx.cullingCtx.pDrawCount, 
+		rndCtx.rscSyncState.UseBuffer( *rndCtx.cullingPass.pDrawCount, 
 			{ VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
-		rndCtx.rscSyncState.UseBuffer( *rndCtx.cullingCtx.pAtomicWgCounter, 
+		rndCtx.rscSyncState.UseBuffer( *rndCtx.cullingPass.pAtomicWgCounter, 
 			{ VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
 
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
-		rndCtx.cullingCtx.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, *rndCtx.hizbCtx.pHiZTarget,
-			instCount, thisVFrame.viewDataIdx.slot, rndCtx.hizbCtx.hizSrv.slot, rndCtx.hizbCtx.quadMinSamplerIdx.slot, true );
+		rndCtx.cullingPass.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, *rndCtx.hizbPass.pHiZTarget,
+			instCount, thisVFrame.viewDataIdx.slot, rndCtx.hizbPass.hizSrv.slot, rndCtx.hizbPass.quadMinSamplerIdx.slot, true );
 
 		rndCtx.rscSyncState.UseImage( depthTarget, 
 			{ VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT }, 
@@ -1428,34 +1439,34 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			colorPassInfo,
 			indexBuff,
 			VK_INDEX_TYPE_UINT32,
-			*rndCtx.cullingCtx.pDrawCmds,
-			*rndCtx.cullingCtx.pDrawCount,
+			*rndCtx.cullingPass.pDrawCmds,
+			*rndCtx.cullingPass.pDrawCount,
 			meshletUpperBound,
 			&shadingPush,
 			sizeof(shadingPush)
 		);
 
-		rndCtx.hizbCtx.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, depthTarget, rndCtx.depthSrv );
+		rndCtx.hizbPass.Execute( thisFrameCmdBuffer, rndCtx.rscSyncState, depthTarget, rndCtx.depthSrv );
 
-		VkRenderingAttachmentInfo attInfosDbg[] = { colorRead };
-		vk_rendering_info colDgbInfo = {
-			.viewport = viewport,
-			.scissor = scissor,
-			.colorAttachments = attInfosDbg,
-			.pDepthAttachment = 0
-		};
+		//VkRenderingAttachmentInfo attInfosDbg[] = { colorRead };
+		//vk_rendering_info colDgbInfo = {
+		//	.viewport = viewport,
+		//	.scissor = scissor,
+		//	.colorAttachments = attInfosDbg,
+		//	.pDepthAttachment = 0
+		//};
 		//rndCtx.dbgCtx.DrawCPU( thisFrameCmdBuffer, colDgbInfo, "Draw Occluder-Color", debug_draw_type::TRIANGLE, 
 		//					   thisVFrame.pViewData->devicePointer, 1, debugOcclusionWallTransf, cyan );
 
 		if( frameData.freezeMainView )
 		{
-			VkRenderingAttachmentInfo attInfosDbg[] = { colorRead };
-			vk_rendering_info colDgbInfo = {
-				.viewport = viewport,
-				.scissor = scissor,
-				.colorAttachments = attInfosDbg,
-				.pDepthAttachment = 0
-			};
+			//VkRenderingAttachmentInfo attInfosDbg[] = { colorRead };
+			//vk_rendering_info colDgbInfo = {
+			//	.viewport = viewport,
+			//	.scissor = scissor,
+			//	.colorAttachments = attInfosDbg,
+			//	.pDepthAttachment = 0
+			//};
 			//rndCtx.dbgCtx.DrawCPU( thisFrameCmdBuffer, colDgbInfo, "Draw Frustum", debug_draw_type::LINE, 
 			//					   thisVFrame.pViewData->devicePointer, 1, frameData.frustTransf, yellow );
 		}
@@ -1472,18 +1483,18 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			//				  frameData.activeProjView, scissor );
 		}
 
-		thisFrameCmdBuffer.CmdFillVkBuffer( *rndCtx.tonemappingCtx.pLuminanceHistogramBuffer, 0u );
-		thisFrameCmdBuffer.CmdFillVkBuffer( *rndCtx.tonemappingCtx.pAtomicWgCounterBuff, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( *rndCtx.tonemapPass.pLuminanceHistogramBuffer, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( *rndCtx.tonemapPass.pAtomicWgCounterBuff, 0u );
 
-		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemappingCtx.pLuminanceHistogramBuffer, 
+		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemapPass.pLuminanceHistogramBuffer, 
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
-		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemappingCtx.pAtomicWgCounterBuff, 
+		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemapPass.pAtomicWgCounterBuff, 
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
 		rndCtx.rscSyncState.UseImage( colorTarget, 
 			{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
-		rndCtx.tonemappingCtx.AverageLuminancePass(
+		rndCtx.tonemapPass.AverageLuminancePass(
 			thisFrameCmdBuffer, frameData.elapsedSeconds, rndCtx.colSrv.slot, colorTargetSize );
 
 		// NOTE: we need an exec dependency between AcquireNextSwapchainImageBlocking and the Tonemapping pass write
@@ -1493,13 +1504,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rndCtx.rscSyncState.UseImage( scImg.img, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, 
 			VK_IMAGE_LAYOUT_GENERAL );
 
-		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemappingCtx.pAverageLuminanceBuffer, 
+		rndCtx.rscSyncState.UseBuffer( *rndCtx.tonemapPass.pAverageLuminanceBuffer, 
 			{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 		
 		HT_ASSERT( ( colorTarget.width == scImg.img.width ) && ( colorTarget.height == scImg.img.height ) );
 
-		rndCtx.tonemappingCtx.TonemappingGammaPass( 
+		rndCtx.tonemapPass.TonemappingGammaPass( 
 			thisFrameCmdBuffer, rndCtx.colSrv.slot, rndCtx.swapchainUavs[ scImgIdx ].slot, colorTargetSize );
 
 		rndCtx.rscSyncState.UseImage( colorTarget, { 0, 0 }, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
@@ -1508,13 +1519,8 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
-		VkViewport uiViewport = { 0, 0, ( float ) scImg.img.width, ( float ) scImg.img.height, 0, 1.0f };
-		vkCmdSetViewport( thisFrameCmdBuffer.hndl, 0, 1, &uiViewport );
-
-		auto swapchainUIRW = VkMakeAttachemntInfo( 
-			scImg.img.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
-		rndCtx.imguiCtx.DrawUiPass( 
-			*rndCtx.pVkCtx, thisFrameCmdBuffer.hndl, swapchainUIRW, scissor, currentFrameIdx, currentFrameInFlightIdx );
+		rndCtx.imguiPass.DrawUiPass( 
+			*rndCtx.pVkCtx, thisFrameCmdBuffer.hndl, scImg.img, currentFrameIdx, currentFrameInFlightIdx );
 
 		rndCtx.rscSyncState.UseImage( scImg.img, { 0, 0 }, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR );
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );

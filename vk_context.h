@@ -18,7 +18,6 @@
 #include "vk_types.h"
 #include "vk_command_buffer.h"
 #include "vk_resources.h"
-#include "vk_descriptor.h"
 #include "vk_swapchain.h"
 #include "vk_pso.h"
 
@@ -27,6 +26,8 @@
 #include <span>
 #include <functional>
 #include <memory>
+
+#include "vector_freelist.h"
 
 #include <EASTL/fixed_vector.h>
 #include <EASTL/bonus/fixed_ring_buffer.h>
@@ -72,13 +73,15 @@ struct vk_resc_deletion
 };
 
 
-using PFN_VkShaderDestoryer = std::function<void( vk_shader* )>;
-using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
+template<typename T, u64 N>
+using ring_buff = eastl::fixed_ring_buffer<T, N>;
 
 using vk_frame_vector = eastl::fixed_vector<vk_virtual_frame, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
 
-template<typename T, u64 N>
-using ring_buff = eastl::fixed_ring_buffer<T, N>;
+using vk_desc_vector = eastl::fixed_vector<vector_freelist, vk_desc_binding_t::COUNT, false>;
+
+using PFN_VkShaderDestoryer = std::function<void( vk_shader* )>;
+using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
 
 struct vk_context
 {
@@ -89,11 +92,18 @@ struct vk_context
 
 	vk_swapchain							sc;
 	vk_frame_vector							vrtFrames;
-	vk_descriptor_allocator					descAllocator;
+
+	vk_desc_vector                          descBindingSlotFreelist;
+	std::vector<vk_descriptor_write>        descPendingUpdates;
+
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
 
 	VmaAllocator							allocator;
+
+	VkDescriptorPool						descPool;
+	VkDescriptorSetLayout					descSetLayout;
+	VkDescriptorSet							descSet;
 
 	VkPhysicalDeviceProperties				gpuProps;
 	VkPhysicalDevice						gpu;
@@ -146,7 +156,7 @@ struct vk_context
 
 		VK_CHECK( vkResetCommandPool( device, thisVrtFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
 
-		return { thisVrtFrame.cmdBuff, globalPipelineLayout, descAllocator.set };
+		return { thisVrtFrame.cmdBuff, globalPipelineLayout, descSet };
 	}
 
 	inline void HostTransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
@@ -180,6 +190,11 @@ struct vk_context
 	}
 
 	desc_hndl32 AllocDescriptor( const vk_descriptor_info& rscDescInfo );
+	inline void FreeDescriptor( desc_hndl32 descIdx )
+	{
+		vector_freelist& slotAlloc = descBindingSlotFreelist[ descIdx.type ];
+		slotAlloc.erase( descIdx.slot );
+	}
 	inline void EnqueueDescriptorFree( desc_hndl32 handle, u64 frameIdx )
 	{
 		descriptroDeletionQueue.push_back( { frameIdx, handle } );

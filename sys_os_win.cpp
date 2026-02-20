@@ -530,7 +530,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		std::string wndMsg( std::to_string( -1.0f ) );// gpuData.timeMs ) );
 		
 		ImGui::SetNextWindowPos( {} );
-		ImGui::SetNextWindowSize( { std::size( wndMsg ) * ImGui::GetFontSize(),50 } );
+		ImGui::SetNextWindowSize( { std::size( wndMsg ) * ImGui::GetFontSize(), 50 } );
 		constexpr ImGuiWindowFlags wndFlag = 
 			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
 		ImGui::Begin( "GPU ms:", 0, wndFlag );

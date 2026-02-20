@@ -137,9 +137,6 @@
     <ClInclude Include="Shaders\r_data_structs2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="vk_descriptor.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="AssetCompiler\cgltf.h">
       <Filter>Header Files</Filter>
     </ClInclude>

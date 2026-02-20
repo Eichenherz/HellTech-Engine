@@ -7,9 +7,8 @@
 #include <vulkan.h>
 
 #include "vk_error.h"
+#include "vk_types.h"
 #include "core_types.h"
-#include "sys_os_api.h"
-#include <type_traits>
 
 #include <vk_mem_alloc.h>
 
@@ -139,5 +138,58 @@ VkMakeImgView(
 
 	return view;
 }
+
+
+struct vk_descriptor_info
+{
+	union
+	{
+		VkDescriptorBufferInfo buff;
+		VkDescriptorImageInfo img;
+	};
+	VkDescriptorType descriptorType;
+	vk_resource_type rscType;
+
+	vk_descriptor_info() = default;
+	vk_descriptor_info( const vk_buffer& vkBuff ) : buff{ vkBuff.hndl, 0, vkBuff.sizeInBytes }
+	{
+		descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		rscType = vk_resource_type::BUFFER;
+	}
+	vk_descriptor_info( VkBuffer buff, u64 offset, u64 range ) : buff{ buff, offset, range }
+	{
+		descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		rscType = vk_resource_type::BUFFER;
+	}
+	vk_descriptor_info( VkImageView view, VkImageLayout imgLayout ) : img{ .imageView = view, .imageLayout = imgLayout }
+	{
+		descriptorType = ( imgLayout == VK_IMAGE_LAYOUT_GENERAL ) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
+			VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+		rscType = vk_resource_type::IMAGE;
+	}
+	vk_descriptor_info( VkSampler sampler ) : img{ .sampler = sampler, .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED }
+	{
+		descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+		rscType = vk_resource_type::IMAGE;
+	}
+
+	vk_descriptor_info( VkDescriptorBufferInfo buffInfo ) : buff{ buffInfo }{}
+	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo }{}
+};
+
+// TODO: not here
+static_assert( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE == u64( u16( -1 ) ) );
+struct desc_hndl32
+{
+	u32 slot : 16;
+	u32 type : 2;
+	u32 unused : 14;
+};
+
+struct vk_descriptor_write
+{
+	vk_descriptor_info descInfo;
+	desc_hndl32 hndl;
+};
 
 #endif // !__VK_RESOURCES_H__

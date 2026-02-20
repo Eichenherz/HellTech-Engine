@@ -344,7 +344,6 @@
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp" />
     <ClInclude Include="vector_freelist.h" />
     <ClInclude Include="vk_command_buffer.h" />
-    <ClInclude Include="vk_descriptor.h" />
     <ClInclude Include="vk_context.h" />
     <ClInclude Include="vk_error.h" />
     <ClInclude Include="vk_pso.h" />

@@ -30,7 +30,6 @@
 #include "vk_pso.h"
 #include "vk_resources.h"
 #include "vk_swapchain.h"
-#include "vk_descriptor.h"
 
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
@@ -184,33 +183,51 @@ static VmaAllocator MakeVmaAllocator( VkPhysicalDevice vkGpu, VkDevice vkDevice,
 	return vmaAllocator;
 }
 
-static vk_descriptor_allocator VkMakeDescriptorAllocator( 
-	VkDevice vkDevice, 
-	const VkPhysicalDeviceProperties& gpuProps, 
-	u32 maxSize 
-) {
+inline constexpr VkDescriptorType VkDescBindingToType( vk_desc_binding_t binding )
+{
+	using enum vk_desc_binding_t;
+	switch( binding )
+	{
+	case SAMPLER: return VK_DESCRIPTOR_TYPE_SAMPLER;
+	case STORAGE_BUFFER: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	case STORAGE_IMAGE: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	case SAMPLED_IMAGE: return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
+	}
+	return VK_DESCRIPTOR_TYPE_MAX_ENUM;
+}
+
+inline constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
+{
+	using enum vk_desc_binding_t;
+	switch( type )
+	{
+	case VK_DESCRIPTOR_TYPE_SAMPLER: return SAMPLER;
+	case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return STORAGE_BUFFER;
+	case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return STORAGE_IMAGE;
+	case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return SAMPLED_IMAGE;
+	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
+	}
+	return COUNT;
+}
+
+struct vk_descriptor_set
+{
+	VkDescriptorPool pool;
+	VkDescriptorSetLayout setLayout;
+	VkDescriptorSet set;
+};
+static vk_descriptor_set VkMakeDescriptorAllocator( VkDevice vkDevice, std::span<const VkDescriptorPoolSize> descPoolSizes ) 
+{
 	constexpr u32 maxSetCount = 1;
 
-	std::array<u32, vk_desc_binding_t::COUNT>  bindingSlotDescCount = {
-		std::min( maxSize, gpuProps.limits.maxDescriptorSetSamplers ),
-		std::min( maxSize, gpuProps.limits.maxDescriptorSetStorageBuffers ),
-		std::min( maxSize, gpuProps.limits.maxDescriptorSetStorageImages ),
-		std::min( maxSize, gpuProps.limits.maxDescriptorSetSampledImages )
-	};
-
-	VkDescriptorPoolSize poolSizes[ vk_desc_binding_t::COUNT ] = {};
-	for( u32 i = 0; i < vk_desc_binding_t::COUNT; ++i )
-	{
-		poolSizes[ i ] = { .type = VkDescBindingToType( vk_desc_binding_t( i ) ), .descriptorCount = bindingSlotDescCount[ i ] };
-	}
-
 	VkDescriptorPool vkDescPool;
-	VkDescriptorPoolCreateInfo descPoolInfo = { 
+	VkDescriptorPoolCreateInfo descPoolInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 		.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
 		.maxSets = maxSetCount,
-		.poolSizeCount = std::size( poolSizes ),
-		.pPoolSizes = poolSizes
+		.poolSizeCount = ( u32 ) std::size( descPoolSizes ),
+		.pPoolSizes = std::data( descPoolSizes )
 	};
 	VK_CHECK( vkCreateDescriptorPool( vkDevice, &descPoolInfo, 0, &vkDescPool ) );
 
@@ -218,11 +235,11 @@ static vk_descriptor_allocator VkMakeDescriptorAllocator(
 	constexpr VkDescriptorBindingFlags flag =
 		VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
 
-	VkDescriptorBindingFlags bindingFlags[ vk_desc_binding_t::COUNT ] = {};
-	VkDescriptorSetLayoutBinding descSetLayout[ vk_desc_binding_t::COUNT ] = {};
+	std::vector<VkDescriptorBindingFlags> bindingFlags( std::size( descPoolSizes ) );
+	std::vector<VkDescriptorSetLayoutBinding> descSetLayout( std::size( descPoolSizes ) );
 	for( u32 i = 0; i < vk_desc_binding_t::COUNT; ++i )
 	{
-		auto[ type, count ] = poolSizes[ i ];
+		auto[ type, count ] = descPoolSizes[ i ];
 
 		descSetLayout[ i ] = {
 			.binding = i,
@@ -235,15 +252,15 @@ static vk_descriptor_allocator VkMakeDescriptorAllocator(
 
 	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFalgs = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-		.bindingCount = std::size( bindingFlags ),
-		.pBindingFlags = bindingFlags
+		.bindingCount = ( u32 ) std::size( bindingFlags ),
+		.pBindingFlags = std::data( bindingFlags )
 	};
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.pNext = &descSetFalgs,
 		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-		.bindingCount = std::size( descSetLayout ),
-		.pBindings = descSetLayout
+		.bindingCount = ( u32 ) std::size( descSetLayout ),
+		.pBindings = std::data( descSetLayout )
 	};
 
 	VkDescriptorSetLayout vkDescSetLayout;
@@ -259,14 +276,7 @@ static vk_descriptor_allocator VkMakeDescriptorAllocator(
 	VkDescriptorSet vkDescSet;
 	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &vkDescSet ) );
 
-	vk_desc_vector bindingSlotFreelist;
-	for( u32 descMaxCount : bindingSlotDescCount )
-	{
-		bindingSlotFreelist.emplace_back( ( u64 ) descMaxCount );
-	}
-
 	return {
-		.bindingSlotFreelist = bindingSlotFreelist,
 		.pool = vkDescPool,
 		.setLayout = vkDescSetLayout,
 		.set = vkDescSet
@@ -774,22 +784,51 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		frameVec.push_back( VkCreateVirtualFrame( vkDevice.logical, vkDevice.gfxQueueFamIdx ) );
 	}
 
-	vk_descriptor_allocator descAlloc = VkMakeDescriptorAllocator( 
-		vkDevice.logical, vkDevice.gpuProps, cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE );
+	const VkPhysicalDeviceLimits& vkGpuLimits = vkDevice.gpuProps.limits;
+	std::array<VkDescriptorPoolSize, vk_desc_binding_t::COUNT> poolSizes = {
+		VkDescriptorPoolSize { 
+			.type = VkDescBindingToType( vk_desc_binding_t::SAMPLER ), 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetSamplers ) 
+		},
+		VkDescriptorPoolSize { 
+			.type = VkDescBindingToType( vk_desc_binding_t::STORAGE_BUFFER ), 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetStorageBuffers ) 
+		},
+		VkDescriptorPoolSize { 
+			.type = VkDescBindingToType( vk_desc_binding_t::STORAGE_IMAGE ), 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetStorageImages ) 
+		},
+		VkDescriptorPoolSize { 
+			.type = VkDescBindingToType( vk_desc_binding_t::SAMPLED_IMAGE ), 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetSampledImages ) 
+		}
+	};
+
+	auto[ descPool, descSetLayout, descSet ] = VkMakeDescriptorAllocator( vkDevice.logical, poolSizes );
+
+	vk_desc_vector bindingSlotFreelist;
+	for( auto[ _, descCount ] : poolSizes )
+	{
+		bindingSlotFreelist.emplace_back( ( u64 ) descCount );
+	}
+
 	return {
 		.sc = vkSc,
 		.vrtFrames = std::move( frameVec ),
-		.descAllocator = descAlloc,
+		.descBindingSlotFreelist = bindingSlotFreelist,
 		.gfxQueue = VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx, VK_QUEUE_GRAPHICS_BIT, 0 ),
 		.copyQueue = VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx, VK_QUEUE_TRANSFER_BIT, 0 ),
 		.allocator = MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
+		.descPool = descPool,
+		.descSetLayout = descSetLayout,
+		.descSet = descSet,
 		.gpuProps = vkDevice.gpuProps,
 		.gpu = vkDevice.gpu,
 		.device = vkDevice.logical,
 		.inst = vkInst,
 		.dbgMsg = vkDbgMsg,
 		.surf = vkSurf,
-		.globalPipelineLayout = VkMakeGlobalPipelineLayout( vkDevice.logical, descAlloc.setLayout, vkDevice.gpuProps ),
+		.globalPipelineLayout = VkMakeGlobalPipelineLayout( vkDevice.logical, descSetLayout, vkDevice.gpuProps ),
 		.deviceMask = vkDevice.deviceMask,
 		.timestampPeriod = vkDevice.gpuProps.limits.timestampPeriod,
 		.waveSize = vkDevice.waveSize
@@ -1070,24 +1109,24 @@ unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByte
 desc_hndl32 vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
 {
 	vk_desc_binding_t bindingSlot = VkDescTypeToBinding( rscDescInfo.descriptorType );
-	HT_ASSERT( std::size( descAllocator.bindingSlotFreelist ) > bindingSlot );
+	HT_ASSERT( std::size( descBindingSlotFreelist ) > bindingSlot );
 
-	vector_freelist& slotAlloc = descAllocator.bindingSlotFreelist[ bindingSlot ];
+	vector_freelist& slotAlloc = descBindingSlotFreelist[ bindingSlot ];
 
 	desc_hndl32 descIdx = { .slot = slotAlloc.push(), .type = bindingSlot };
 	HT_ASSERT( INVALID_IDX != descIdx.slot );
 
-	descAllocator.pendingUpdates.push_back( { rscDescInfo, descIdx } );
+	descPendingUpdates.push_back( { rscDescInfo, descIdx } );
 
 	return descIdx;
 }
 
 void vk_context::FlushPendingDescriptorUpdates()
 {
-	if( !std::size( descAllocator.pendingUpdates ) ) return;
+	if( !std::size( descPendingUpdates ) ) return;
 
 	std::vector<VkWriteDescriptorSet> writes;
-	for( const auto& update : descAllocator.pendingUpdates )
+	for( const auto& update : descPendingUpdates )
 	{
 		const VkDescriptorImageInfo* pImageInfo = 0;
 		const VkDescriptorBufferInfo* pBufferInfo = 0;
@@ -1104,7 +1143,7 @@ void vk_context::FlushPendingDescriptorUpdates()
 		VkDescriptorType descType = update.descInfo.descriptorType;
 		VkWriteDescriptorSet writeEntryInfo = {
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descAllocator.set,
+			.dstSet = descSet,
 			.dstBinding = VkDescTypeToBinding( descType ),
 			.dstArrayElement = update.hndl.slot,
 			.descriptorCount = 1,
@@ -1116,7 +1155,7 @@ void vk_context::FlushPendingDescriptorUpdates()
 	}
 
 	vkUpdateDescriptorSets( device, ( u32 ) std::size( writes ), std::data( writes ), 0, 0 );
-	descAllocator.pendingUpdates.resize( 0 );
+	descPendingUpdates.resize( 0 );
 }
 
 void vk_context::FlushDeletionQueues( u64 frameIdx )
@@ -1143,7 +1182,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 	{
 		auto[ timelineCounterVal, hndl ] = descriptroDeletionQueue.front();
 		if( timelineCounterVal >= frameIdx ) break;
-		descAllocator.Free( hndl );
+		FreeDescriptor( hndl );
 		descriptroDeletionQueue.pop_front();
 	}
 }
