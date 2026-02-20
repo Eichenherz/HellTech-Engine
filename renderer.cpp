@@ -842,7 +842,7 @@ struct tone_mapping_pass
 	void AverageLuminancePass( 
 		vk_command_buffer&  cmdBuff,
 		float               dt, 
-		u16				    hdrColSrcIdx,
+		desc_hndl32		    hdrColSrcDesc,
 		DirectX::XMUINT2	hdrTrgSize
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Averge Lum Pass", {} );
@@ -864,15 +864,15 @@ struct tone_mapping_pass
 			uint				lumHistoIdx;
 			uint				atomicWorkGrCounterIdx;
 			uint				avgLumIdx;
-		} pushConst = { avgLumInfo, hdrColSrcIdx, lumHistoIdx.slot, atomicWgCounterIdx.slot, avgLumIdx.slot };
+		} pushConst = { avgLumInfo, hdrColSrcDesc.slot, lumHistoIdx.slot, atomicWgCounterIdx.slot, avgLumIdx.slot };
 		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 		cmdBuff.CmdDispatch( numWorkGrs );
 	}
 
 	void TonemappingGammaPass(
 		vk_command_buffer& cmdBuff,
-		u16                 hdrColIdx,
-		u16                 sdrColIdx,
+		desc_hndl32         hdrColDesc,
+		desc_hndl32         sdrColDesc,
 		DirectX::XMUINT2	hdrTrgSize
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Tonemapping Gamma Pass", {} );
@@ -885,7 +885,7 @@ struct tone_mapping_pass
 			uint hdrColIdx;
 			uint sdrColIdx;
 			uint avgLumIdx;
-		} pushConst = { hdrColIdx, sdrColIdx, avgLumIdx.slot };
+		} pushConst = { hdrColDesc.slot, sdrColDesc.slot, avgLumIdx.slot };
 		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 		cmdBuff.CmdDispatch( numWorkGrs );
 	}
@@ -1038,9 +1038,8 @@ struct frame_resources
 struct render_context
 {
 	static constexpr u64 MAX_FIF = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
-	static constexpr u64 MAX_SC_IMG = vk_renderer_config::MAX_SWAPCHAIN_IMG_ALLOWED;
 
-	alignas( 8 ) vk_renderer_config config = {};
+	alignas( 8 ) vk_renderer_config config = { .renderWidth = SCREEN_WIDTH, .rednerHeight = SCREEN_HEIGHT };
 
 	imgui_pass          imguiPass;
 	debug_draw_passes   dbgPass;
@@ -1049,8 +1048,6 @@ struct render_context
 	depth_pyramid_pass  hizbPass;
 
 	vk_rsc_state_tracker rscSyncState;
-
-	eastl::fixed_vector<desc_hndl32, MAX_SC_IMG, false> swapchainUavs;
 
 	eastl::fixed_vector<frame_resources, MAX_FIF, false> vrtFrames;
 
@@ -1075,10 +1072,10 @@ struct render_context
 	VkSampler		pbrSampler;
 	desc_hndl32		pbrSamplerIdx;
 
-	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat );
+	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height );
 };
 
-void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat )
+void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height )
 {
 	if( nullptr == pDepthTarget )
 	{
@@ -1087,8 +1084,8 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 			.name = "Img_DepthTarget",
 			.format = desiredDepthFormat,
 			.usg = usgFlags,
-			.width = pVkCtx->sc.width,
-			.height = pVkCtx->sc.height,
+			.width = width,
+			.height = height,
 			.layerCount = 1,
 			.mipCount = 1,
 		};
@@ -1106,8 +1103,8 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 			.name = "Img_ColorTarget",
 			.format = desiredColorFormat,
 			.usg = usgFlags,
-			.width = pVkCtx->sc.width,
-			.height = pVkCtx->sc.height,
+			.width = width,
+			.height = height,
 			.layerCount = 1,
 			.mipCount = 1,
 		};
@@ -1121,11 +1118,6 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 		pbrSamplerIdx = pVkCtx->AllocDescriptor( vk_descriptor_info{ pbrSampler } );
 
 		rscSyncState.UseImage( *pColorTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
-	}
-
-	for( const auto&[ _, scImg ] : pVkCtx->sc.imgs )
-	{
-		swapchainUavs.push_back( pVkCtx->AllocDescriptor( vk_descriptor_info{ scImg.view, VK_IMAGE_LAYOUT_GENERAL } ) );
 	}
 }
 
@@ -1197,7 +1189,7 @@ void RendererInit( uintptr_t hInst, uintptr_t hWnd )
 	//rndCtx.dbgCtx.Init( *rndCtx.pDevice, rndCtx.globalLayout, renderCfg );
 	//rndCtx.dbgCtx.InitData( *rndCtx.pDevice, 1 * KB, 1 * KB );
 
-	rndCtx.imguiPass = MakeImguiPass( *rndCtx.pVkCtx, rndCtx.config.desiredSwapchainFormat );
+	rndCtx.imguiPass = MakeImguiPass( *rndCtx.pVkCtx, rndCtx.pVkCtx->scConfig.format );
 
 	rndCtx.vrtFrames.resize( rndCtx.framesInFlight );
 }
@@ -1300,13 +1292,13 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 
 	vk_command_buffer thisFrameCmdBuffer = rndCtx.pVkCtx->GetFrameCmdBuff( currentFrameInFlightIdx );
 
-	u32 scImgIdx = rndCtx.pVkCtx->AcquireNextSwapchainImageBlocking( currentFrameInFlightIdx );
-	const vk_swapchain_image& scImg = rndCtx.pVkCtx->sc.imgs[ scImgIdx ];
-
 	static bool initResources = false;
 	if( !initResources )
 	{
-		rndCtx.InitGlobalResources( rndCtx.config.desiredDepthFormat, rndCtx.config.desiredColorFormat );
+		rndCtx.pVkCtx->CreateSwapchin();
+
+		rndCtx.InitGlobalResources( rndCtx.config.desiredDepthFormat, rndCtx.config.desiredColorFormat, 
+			rndCtx.config.renderWidth, rndCtx.config.rednerHeight );
 		rndCtx.imguiPass.InitStaticResourcesSync( *rndCtx.pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
 		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
 
@@ -1333,6 +1325,9 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 	}
 
 	rndCtx.pVkCtx->FlushPendingDescriptorUpdates();
+
+	u32 scImgIdx = rndCtx.pVkCtx->AcquireNextSwapchainImageBlocking( currentFrameInFlightIdx );
+	const vk_swapchain_image& scImg = rndCtx.pVkCtx->scImgs[ scImgIdx ];
 
 	const vk_image& depthTarget = *rndCtx.pDepthTarget;
 	const vk_image& colorTarget = *rndCtx.pColorTarget;
@@ -1495,7 +1490,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		rndCtx.rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
 		rndCtx.tonemapPass.AverageLuminancePass(
-			thisFrameCmdBuffer, frameData.elapsedSeconds, rndCtx.colSrv.slot, colorTargetSize );
+			thisFrameCmdBuffer, frameData.elapsedSeconds, rndCtx.colSrv, colorTargetSize );
 
 		// NOTE: we need an exec dependency between AcquireNextSwapchainImageBlocking and the Tonemapping pass write
 		constexpr VkPipelineStageFlags2 execDep = 
@@ -1511,7 +1506,7 @@ void HostFrames( const frame_data& frameData, gpu_data& gpuData )
 		HT_ASSERT( ( colorTarget.width == scImg.img.width ) && ( colorTarget.height == scImg.img.height ) );
 
 		rndCtx.tonemapPass.TonemappingGammaPass( 
-			thisFrameCmdBuffer, rndCtx.colSrv.slot, rndCtx.swapchainUavs[ scImgIdx ].slot, colorTargetSize );
+			thisFrameCmdBuffer, rndCtx.colSrv, scImg.writeDescIdx, colorTargetSize );
 
 		rndCtx.rscSyncState.UseImage( colorTarget, { 0, 0 }, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 		rndCtx.rscSyncState.UseImage( scImg.img, 

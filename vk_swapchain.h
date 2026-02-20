@@ -4,29 +4,7 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
-#include <EASTL/fixed_vector.h>
-
 #include "core_types.h"
-#include "vk_resources.h"
-
-struct vk_swapchain_image
-{
-	VkSemaphore		canPresentSema;
-	vk_image        img;
-};
-
-// TODO: don't hardcode 
-using vk_image_vector = eastl::fixed_vector<vk_swapchain_image, 3, false>;
-
-struct vk_swapchain
-{
-	vk_image_vector     imgs;
-	VkSwapchainKHR		swapchain;
-	VkFormat			imgFormat;
-	u16					width;
-	u16					height;
-	u8					imgCount;
-};
 
 inline VkViewport VkGetViewport( float width, float height )
 {

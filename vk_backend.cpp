@@ -151,7 +151,7 @@ static vk_queue VkCreateQueue(
 		.hndl = hndl,
 		.timelineSema = timelineSema,
 		.submitionCount = 0,
-		.index = queueFamilyIndex,
+		.familyIdx = queueFamilyIndex,
 		.familyFlags = desiredProps
 	};
 }
@@ -590,26 +590,40 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	};
 }
 
-// TODO: sep initial validation form sc creation when resize ?
-static vk_swapchain
-VkMakeSwapchain(
-	VkDevice			vkDevice,
+
+struct vk_swapchain
+{
+	std::vector<vk_swapchain_image>     imgs;
+	VkSwapchainKHR		                swapchain;
+};
+
+
+struct vk_surface_info
+{
+	VkFormat                         format;
+	VkColorSpaceKHR                  colorSpace;
+	VkSurfaceTransformFlagBitsKHR    currentTransform;
+	VkCompositeAlphaFlagBitsKHR      surfaceAlphaCompositeFlags;
+	VkExtent2D                       currentExtent;
+};
+
+static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 	VkPhysicalDevice	vkPhysicalDevice,
 	VkSurfaceKHR		vkSurf,
-	u32					queueFamIdx,
 	VkFormat			scDesiredFormat,
-	u32                 numImages
+	VkPresentModeKHR    desiredPresentMode,
+	VkImageUsageFlags   scImgUsage,
+	u32                 minNumIngs
 ) {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkPhysicalDevice, vkSurf, &surfaceCaps ) );
 	HT_ASSERT( surfaceCaps.maxImageArrayLayers >= 1 );
 
-	u32 scImgCount = numImages;
-	HT_ASSERT( ( scImgCount > surfaceCaps.minImageCount ) && ( scImgCount < surfaceCaps.maxImageCount ) );
+	HT_ASSERT( ( minNumIngs > surfaceCaps.minImageCount ) && ( minNumIngs < surfaceCaps.maxImageCount ) );
 	HT_ASSERT( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
-			   ( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
+		( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
 
-	VkCompositeAlphaFlagBitsKHR surfaceComposite =
+	VkCompositeAlphaFlagBitsKHR surfaceAlphaCompositeFlags =
 		( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR )
 		? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
 		: ( surfaceCaps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR )
@@ -644,7 +658,6 @@ VkMakeSwapchain(
 		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( 
 			vkPhysicalDevice, vkSurf, &numPresentModes, std::data( presentModes ) ) );
 
-		constexpr VkPresentModeKHR desiredPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 		for( u32 j = 0; j < numPresentModes; ++j )
 		{
 			if( presentModes[ j ] == desiredPresentMode )
@@ -656,85 +669,25 @@ VkMakeSwapchain(
 		HT_ASSERT( presentMode );
 	}
 
-	VkImageUsageFlags scImgUsage =
-		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
 	HT_ASSERT( ( surfaceCaps.supportedUsageFlags & scImgUsage ) == scImgUsage );
 
-
-	VkSwapchainCreateInfoKHR scInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-		.surface = vkSurf,
-		.minImageCount = scImgCount,
-		.imageFormat = scFormatAndColSpace.format,
-		.imageColorSpace = scFormatAndColSpace.colorSpace,
-		.imageExtent = surfaceCaps.currentExtent,
-		.imageArrayLayers = 1,
-		.imageUsage = scImgUsage,
-		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.queueFamilyIndexCount = 1,
-		.pQueueFamilyIndices = &queueFamIdx,
-		.preTransform = surfaceCaps.currentTransform,
-		.compositeAlpha = surfaceComposite,
-		.presentMode = presentMode,
-		.clipped = VK_TRUE,
-		.oldSwapchain = 0
+	VkPhysicalDeviceImageFormatInfo2 imgFormatInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+		.format = scFormatAndColSpace.format,
+		.type = VK_IMAGE_TYPE_2D,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = scImgUsage,
 	};
 
-	VkImageFormatProperties scImageProps = {};
-	VK_CHECK( vkGetPhysicalDeviceImageFormatProperties( 
-		vkPhysicalDevice, scInfo.imageFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, scInfo.imageUsage,
-		scInfo.flags, &scImageProps ) );
+	VkImageFormatProperties2 imageFormatProperties = { .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2 };
+	VK_CHECK( vkGetPhysicalDeviceImageFormatProperties2( vkPhysicalDevice, &imgFormatInfo, &imageFormatProperties ) );
 
-	VkSwapchainKHR swapchain;
-	VK_CHECK( vkCreateSwapchainKHR( vkDevice, &scInfo, 0, &swapchain ) );
-
-	u32 scImgsNum = 0;
-	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, swapchain, &scImgsNum, 0 ) ); 
-	HT_ASSERT( scImgsNum == scInfo.minImageCount );
-
-	std::vector<VkImage> vkScImgs( scImgsNum );
-	VK_CHECK( vkGetSwapchainImagesKHR( vkDevice, swapchain, &scImgsNum, std::data( vkScImgs ) ) );
-
-	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( scInfo.imageFormat );
-
-	vk_image_vector scImgs;
-	for( u64 scii = 0; scii < scImgsNum; ++scii )
-	{
-		VkImage img = vkScImgs[ scii ];
-
-		// NOTE: yeah yeah, multiple allocs, this is fine for init !
-		std::string name = std::format( "Img_Swapchain{}", scii );
-		VkDbgNameObj( img, vkDevice, name.c_str() );
-
-		VkImageView view = VkMakeImgView( vkDevice, img, scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
-
-		VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		VkSemaphore canPresentSema;
-		VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &canPresentSema ) );
-
-		scImgs.push_back( { 
-			.canPresentSema = canPresentSema,
-			.img = { 
-				.hndl = img,
-				.view = view,
-				.usageFlags = scInfo.imageUsage,
-				.format = scInfo.imageFormat,
-				.width = scInfo.imageExtent.width,
-				.height = scInfo.imageExtent.height,
-			},
-			 
-		} );
-	}
-
-	HT_ASSERT( ( scInfo.imageExtent.width < u32( u16( -1 ) ) ) && ( scInfo.imageExtent.height < u32( u16( -1 ) ) ) );
-
-	return {
-		.imgs = scImgs,
-		.swapchain = swapchain,
-		.imgFormat = scInfo.imageFormat,
-		.width = ( u16 ) scInfo.imageExtent.width,
-		.height = ( u16 ) scInfo.imageExtent.height,
-		.imgCount = ( u8 ) scInfo.minImageCount
+	return { 
+		.format						= scFormatAndColSpace.format, 
+		.colorSpace					= scFormatAndColSpace.colorSpace, 
+		.currentTransform			= surfaceCaps.currentTransform,
+		.surfaceAlphaCompositeFlags = surfaceAlphaCompositeFlags,
+		.currentExtent				= surfaceCaps.currentExtent
 	};
 }
 
@@ -774,10 +727,6 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	VkSurfaceKHR vkSurf = VkMakeWinSurface( vkInst, ( HINSTANCE ) hInst, ( HWND ) hWnd );
 	vk_device vkDevice = VkMakeDevice( vkInst, vkSurf );
 
-	// TODO: if presnet from async compute we need to put that index here
-	vk_swapchain vkSc = VkMakeSwapchain(
-		vkDevice.logical, vkDevice.gpu, vkSurf, vkDevice.gfxQueueFamIdx, cfg.desiredSwapchainFormat, cfg.swapchainImageCount );
-
 	vk_frame_vector frameVec;
 	for( u64 fi = 0; fi < cfg.framesInFlightCount; fi++ )
 	{
@@ -813,7 +762,6 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	}
 
 	return {
-		.sc = vkSc,
 		.vrtFrames = std::move( frameVec ),
 		.descBindingSlotFreelist = bindingSlotFreelist,
 		.gfxQueue = VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx, VK_QUEUE_GRAPHICS_BIT, 0 ),
@@ -831,7 +779,8 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		.globalPipelineLayout = VkMakeGlobalPipelineLayout( vkDevice.logical, descSetLayout, vkDevice.gpuProps ),
 		.deviceMask = vkDevice.deviceMask,
 		.timestampPeriod = vkDevice.gpuProps.limits.timestampPeriod,
-		.waveSize = vkDevice.waveSize
+		.waveSize = vkDevice.waveSize,
+		.scConfig = cfg.scConfig
 	};
 }
 
@@ -1184,6 +1133,83 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		if( timelineCounterVal >= frameIdx ) break;
 		FreeDescriptor( hndl );
 		descriptroDeletionQueue.pop_front();
+	}
+}
+
+void vk_context::CreateSwapchin()
+{
+	// NOTE: rn we can't recreate the swapchian
+	HT_ASSERT( !std::size( scImgs ) && ( VK_NULL_HANDLE == swapchain ) );
+
+	u32 minNumImgs = scConfig.minNumImgs;
+	VkFormat format = scConfig.format;
+	VkPresentModeKHR presentMode = scConfig.presentMode;
+	VkImageUsageFlags imgUsage = scConfig.imgUsage;
+
+	vk_surface_info surfInfo = VkCheckSwapchainRequirementsAgainstSurface( 
+		gpu, surf, format, presentMode, imgUsage, minNumImgs );
+
+	HT_ASSERT( format == surfInfo.format );
+
+	VkSwapchainCreateInfoKHR scInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = surf,
+		.minImageCount = minNumImgs,
+		.imageFormat = surfInfo.format,
+		.imageColorSpace = surfInfo.colorSpace,
+		.imageExtent = surfInfo.currentExtent, // NOTE: will make "full screen"
+		.imageArrayLayers = 1,
+		.imageUsage = imgUsage,
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 1,
+		.pQueueFamilyIndices = &gfxQueue.familyIdx,
+		.preTransform = surfInfo.currentTransform,
+		.compositeAlpha = surfInfo.surfaceAlphaCompositeFlags,
+		.presentMode = presentMode,
+		.clipped = VK_TRUE,
+		.oldSwapchain = this->swapchain
+	};
+
+	VK_CHECK( vkCreateSwapchainKHR( device, &scInfo, 0, &this->swapchain ) );
+
+	u32 scImgsNum = 0;
+	VK_CHECK( vkGetSwapchainImagesKHR( device, this->swapchain, &scImgsNum, 0 ) ); 
+
+	std::vector<VkImage> vkScImgs( scImgsNum );
+	VK_CHECK( vkGetSwapchainImagesKHR( device, this->swapchain, &scImgsNum, std::data( vkScImgs ) ) );
+
+	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( scInfo.imageFormat );
+
+	scImgs.reserve( scImgsNum );
+	scImgs.resize( 0 );
+
+	std::array<char,64> imgNameStr;
+	for( u64 scii = 0; scii < scImgsNum; ++scii )
+	{
+		VkImage img = vkScImgs[ scii ];
+
+		imgNameStr = {};
+		std::format_to_n( std::begin( imgNameStr ), std::size( imgNameStr ), "Img_Swapchain{}", scii );
+		VkDbgNameObj( img, device, std::data( imgNameStr ) );
+
+		VkImageView view = VkMakeImgView( device, img, scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
+
+		VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		VkSemaphore canPresentSema;
+		VK_CHECK( vkCreateSemaphore( device, &semaInfo, 0, &canPresentSema ) );
+
+		scImgs.push_back( { 
+			.canPresentSema = canPresentSema,
+			.img = { 
+				.hndl = img,
+				.view = view,
+				.usageFlags = scInfo.imageUsage,
+				.format = scInfo.imageFormat,
+				.width = scInfo.imageExtent.width,
+				.height = scInfo.imageExtent.height,
+			},
+			.writeDescIdx = AllocDescriptor( vk_descriptor_info{ view, VK_IMAGE_LAYOUT_GENERAL } )
+		} );
 	}
 }
 

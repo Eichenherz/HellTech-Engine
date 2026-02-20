@@ -32,13 +32,19 @@
 #include <EASTL/fixed_vector.h>
 #include <EASTL/bonus/fixed_ring_buffer.h>
 
-// NOTE: this models an async queue
+struct vk_swapchain_image
+{
+	VkSemaphore		canPresentSema;
+	vk_image        img;
+	desc_hndl32     writeDescIdx;
+};
+
 struct vk_queue
 {
 	VkQueue	        hndl;
 	VkSemaphore     timelineSema; // NOTE: timeline sema
 	u64             submitionCount;
-	u32				index;
+	u32				familyIdx;
 	VkQueueFlags	familyFlags;
 };
 
@@ -90,8 +96,9 @@ struct vk_context
 
 	fixed_arena<2048>						scratchArena;
 
-	vk_swapchain							sc;
 	vk_frame_vector							vrtFrames;
+
+	std::vector<vk_swapchain_image>			scImgs;
 
 	vk_desc_vector                          descBindingSlotFreelist;
 	std::vector<vk_descriptor_write>        descPendingUpdates;
@@ -100,6 +107,8 @@ struct vk_context
 	vk_queue								copyQueue;
 
 	VmaAllocator							allocator;
+
+	VkSwapchainKHR		                    swapchain;
 
 	VkDescriptorPool						descPool;
 	VkDescriptorSetLayout					descSetLayout;
@@ -119,6 +128,7 @@ struct vk_context
 	float									timestampPeriod;
 	u32										waveSize;
 
+	vk_swapchain_config                     scConfig;
 
 	vk_buffer CreateBuffer( const buffer_info& buffInfo );
 	vk_image CreateImage( const image_info& imgInfo );
@@ -204,13 +214,15 @@ struct vk_context
 
 	void FlushDeletionQueues( u64 frameIdx );
 
+	void CreateSwapchin();
+
 	inline u32 AcquireNextSwapchainImageBlocking( u64 frameInFlightIdx ) const
 	{
 		HT_ASSERT( frameInFlightIdx < std::size( vrtFrames ) );
 		const vk_virtual_frame& thisVrtFrame = vrtFrames[ frameInFlightIdx ];
 
 		u32 imgIdx;
-		VK_CHECK( vkAcquireNextImageKHR( device, sc.swapchain, UINT64_MAX, thisVrtFrame.canGetImgSema, 0, &imgIdx ) );
+		VK_CHECK( vkAcquireNextImageKHR( device, swapchain, UINT64_MAX, thisVrtFrame.canGetImgSema, 0, &imgIdx ) );
 		return imgIdx;
 	}
 
@@ -247,9 +259,9 @@ struct vk_context
 		VkPresentInfoKHR presentInfo = { 
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 			.waitSemaphoreCount = 1,
-			.pWaitSemaphores = &sc.imgs[ imgIdx ].canPresentSema,
+			.pWaitSemaphores = &scImgs[ imgIdx ].canPresentSema,
 			.swapchainCount = 1,
-			.pSwapchains = &sc.swapchain,
+			.pSwapchains = &swapchain,
 			.pImageIndices = &imgIdx
 		};
 		VK_CHECK( vkQueuePresentKHR( queue.hndl, &presentInfo ) );
