@@ -29,7 +29,6 @@
 #include "vk_context.h"
 #include "vk_pso.h"
 #include "vk_resources.h"
-#include "vk_swapchain.h"
 
 constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
@@ -183,41 +182,13 @@ static VmaAllocator MakeVmaAllocator( VkPhysicalDevice vkGpu, VkDevice vkDevice,
 	return vmaAllocator;
 }
 
-inline constexpr VkDescriptorType VkDescBindingToType( vk_desc_binding_t binding )
-{
-	using enum vk_desc_binding_t;
-	switch( binding )
-	{
-	case SAMPLER: return VK_DESCRIPTOR_TYPE_SAMPLER;
-	case STORAGE_BUFFER: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	case STORAGE_IMAGE: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	case SAMPLED_IMAGE: return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
-	}
-	return VK_DESCRIPTOR_TYPE_MAX_ENUM;
-}
-
-inline constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
-{
-	using enum vk_desc_binding_t;
-	switch( type )
-	{
-	case VK_DESCRIPTOR_TYPE_SAMPLER: return SAMPLER;
-	case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return STORAGE_BUFFER;
-	case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return STORAGE_IMAGE;
-	case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return SAMPLED_IMAGE;
-	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
-	}
-	return COUNT;
-}
-
 struct vk_descriptor_set
 {
 	VkDescriptorPool pool;
 	VkDescriptorSetLayout setLayout;
 	VkDescriptorSet set;
 };
-static vk_descriptor_set VkMakeDescriptorAllocator( VkDevice vkDevice, std::span<const VkDescriptorPoolSize> descPoolSizes ) 
+static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const VkDescriptorPoolSize> descPoolSizes ) 
 {
 	constexpr u32 maxSetCount = 1;
 
@@ -753,17 +724,17 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		}
 	};
 
-	auto[ descPool, descSetLayout, descSet ] = VkMakeDescriptorAllocator( vkDevice.logical, poolSizes );
+	auto[ descPool, descSetLayout, descSet ] = VkMakeDescriptorSet( vkDevice.logical, poolSizes );
 
-	vk_desc_vector bindingSlotFreelist;
-	for( auto[ _, descCount ] : poolSizes )
+	std::array<vk_desc_binding, vk_desc_binding_t::COUNT> bindingSlots;
+	for( u64 bi = 0; bi < std::size( poolSizes ); ++bi )
 	{
-		bindingSlotFreelist.emplace_back( ( u64 ) descCount );
+		bindingSlots[ bi ] = { poolSizes[ bi ] };
 	}
 
 	return {
 		.vrtFrames = std::move( frameVec ),
-		.descBindingSlotFreelist = bindingSlotFreelist,
+		.descBindingSlots = bindingSlots,
 		.gfxQueue = VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx, VK_QUEUE_GRAPHICS_BIT, 0 ),
 		.copyQueue = VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx, VK_QUEUE_TRANSFER_BIT, 0 ),
 		.allocator = MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
@@ -1058,13 +1029,9 @@ unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByte
 desc_hndl32 vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
 {
 	vk_desc_binding_t bindingSlot = VkDescTypeToBinding( rscDescInfo.descriptorType );
-	HT_ASSERT( std::size( descBindingSlotFreelist ) > bindingSlot );
+	HT_ASSERT( std::size( descBindingSlots ) > bindingSlot );
 
-	vector_freelist& slotAlloc = descBindingSlotFreelist[ bindingSlot ];
-
-	desc_hndl32 descIdx = { .slot = slotAlloc.push(), .type = bindingSlot };
-	HT_ASSERT( INVALID_IDX != descIdx.slot );
-
+	desc_hndl32 descIdx = descBindingSlots[ bindingSlot ].AllocSlot();
 	descPendingUpdates.push_back( { rscDescInfo, descIdx } );
 
 	return descIdx;

@@ -18,8 +18,8 @@
 #include "vk_types.h"
 #include "vk_command_buffer.h"
 #include "vk_resources.h"
-#include "vk_swapchain.h"
 #include "vk_pso.h"
+#include "vk_utils.h"
 
 #include <vector>
 #include <type_traits>
@@ -27,10 +27,10 @@
 #include <functional>
 #include <memory>
 
-#include "vector_freelist.h"
-
 #include <EASTL/fixed_vector.h>
 #include <EASTL/bonus/fixed_ring_buffer.h>
+#include <EASTL/bonus/ring_buffer.h>
+#include <EASTL/bitvector.h>
 
 struct vk_swapchain_image
 {
@@ -84,13 +84,56 @@ using ring_buff = eastl::fixed_ring_buffer<T, N>;
 
 using vk_frame_vector = eastl::fixed_vector<vk_virtual_frame, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
 
-using vk_desc_vector = eastl::fixed_vector<vector_freelist, vk_desc_binding_t::COUNT, false>;
+using eastl_bitvector = eastl::bitvector<EASTLAllocatorType, u64>;
+
+struct vk_desc_binding
+{
+	// NOTE: eastl::ring_buffer is no sized without .resize or push_back !!!!
+	eastl::ring_buffer<desc_hndl32> slots;
+	eastl_bitvector inUseMasks;
+
+	VkDescriptorType type;
+
+	vk_desc_binding() = default;
+	inline vk_desc_binding( VkDescriptorPoolSize bindingInfo ) : 
+		slots{ bindingInfo.descriptorCount }, 
+		inUseMasks{ bindingInfo.descriptorCount, 0 }, 
+		type{ bindingInfo.type }
+	{
+		vk_desc_binding_t bindingType = VkDescTypeToBinding( type );
+		for( u64 si = 0; si < bindingInfo.descriptorCount; ++si )
+		{
+			slots.push_back( { .slot = ( u16 ) si, .type = bindingType } );
+		}
+	}
+
+	inline desc_hndl32 AllocSlot()
+	{
+		HT_ASSERT( std::size( slots ) != 0 );
+		desc_hndl32 hDesc = slots.front();
+		slots.pop_front();
+
+		inUseMasks[ hDesc.slot ] = 1;
+		return hDesc;
+	}
+
+	inline void FreeSlot( desc_hndl32 hDesc )
+	{
+		HT_ASSERT( hDesc.slot < std::size( inUseMasks ) );
+		HT_ASSERT( hDesc.slot < slots.capacity() );
+		HT_ASSERT( !inUseMasks[ hDesc.slot ] );
+
+		slots.push_back( hDesc );
+		inUseMasks[ hDesc.slot ] = 0;
+	}
+};
 
 using PFN_VkShaderDestoryer = std::function<void( vk_shader* )>;
 using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
 
 struct vk_context
 {
+	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
 	ring_buff<vk_resc_deletion, 128>		resourceDeletionQueue{};
 	ring_buff<vk_desc_deletion, 128>		descriptroDeletionQueue{};
 
@@ -100,7 +143,7 @@ struct vk_context
 
 	std::vector<vk_swapchain_image>			scImgs;
 
-	vk_desc_vector                          descBindingSlotFreelist;
+	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	std::vector<vk_descriptor_write>        descPendingUpdates;
 
 	vk_queue								gfxQueue;
@@ -200,10 +243,9 @@ struct vk_context
 	}
 
 	desc_hndl32 AllocDescriptor( const vk_descriptor_info& rscDescInfo );
-	inline void FreeDescriptor( desc_hndl32 descIdx )
+	inline void FreeDescriptor( desc_hndl32 hDesc )
 	{
-		vector_freelist& slotAlloc = descBindingSlotFreelist[ descIdx.type ];
-		slotAlloc.erase( descIdx.slot );
+		descBindingSlots[ hDesc.type ].FreeSlot( hDesc );
 	}
 	inline void EnqueueDescriptorFree( desc_hndl32 handle, u64 frameIdx )
 	{

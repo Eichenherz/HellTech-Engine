@@ -342,16 +342,15 @@
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\tools.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\types.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp" />
-    <ClInclude Include="vector_freelist.h" />
     <ClInclude Include="vk_command_buffer.h" />
     <ClInclude Include="vk_context.h" />
     <ClInclude Include="vk_error.h" />
     <ClInclude Include="vk_pso.h" />
     <ClInclude Include="vk_resources.h" />
-    <ClInclude Include="vk_swapchain.h" />
     <ClInclude Include="vk_sync.h" />
     <ClInclude Include="vk_timer.h" />
     <ClInclude Include="vk_types.h" />
+    <ClInclude Include="vk_utils.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\c_draw_cull.comp.glsl">

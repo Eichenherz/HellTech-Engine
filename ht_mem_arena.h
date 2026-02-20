@@ -7,16 +7,7 @@
 
 #include "core_types.h"
 #include "ht_error.h"
-
-inline bool IsPowOf2( u64 addr )
-{
-	return !( addr & ( addr - 1 ) );
-}
-inline u64 FwdAlign( u64 addr, u64 alignment )
-{
-	HT_ASSERT( IsPowOf2( alignment ) );
-	return ( addr + ( alignment - 1 ) ) & ~( alignment - 1 );
-}
+#include "ht_utils.h"
 
 template<u64 BYTE_COUNT>
 struct fixed_arena

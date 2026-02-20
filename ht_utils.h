@@ -14,6 +14,15 @@ constexpr u64 KB = 1ull << 10;
 
 #define BYTE_COUNT( buffer ) std::size( buffer ) * sizeof( buffer[ 0 ] )
 
+inline bool IsPowOf2( u64 addr )
+{
+	return !( addr & ( addr - 1 ) );
+}
+inline u64 FwdAlign( u64 addr, u64 alignment )
+{
+	HT_ASSERT( IsPowOf2( alignment ) );
+	return ( addr + ( alignment - 1 ) ) & ~( alignment - 1 );
+}
 // TODO: math_uitl file
 inline u64 FloorPowOf2( u64 size )
 {

@@ -7,6 +7,7 @@
 
 #include <cstdarg>
 #include <vector>
+#include <memory>
 
 //////////////////////////////////////
 // MACROS
@@ -39,12 +40,16 @@ constexpr u32 SCREEN_HEIGHT = 640;
 //////////////////////////////////////
 // ENGINE -> PLATFORM
 //////////////////////////////////////
+struct renderer_interface
+{
+	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) = 0;
+	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) = 0;
+};
+
+std::unique_ptr<renderer_interface> MakeRenderer();
+
 void		CoreLoop();
 
-void		RendererInit( uintptr_t hInst, uintptr_t hWnd );
-void		HostFrames( const frame_data& frameData, gpu_data& gpuData );
-void		VkBackendKill();
-void        Dx12BackendInit();
 //////////////////////////////////////
 // PLATFORM -> ENGINE
 //////////////////////////////////////

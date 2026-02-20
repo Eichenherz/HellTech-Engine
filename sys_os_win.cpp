@@ -263,6 +263,7 @@ static inline u64	SysTicks()
 	return tick.QuadPart;
 }
 
+// TODO: delete
 struct mouse
 {
 	float dx, dy;
@@ -480,7 +481,9 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	io.Fonts->AddFontDefault();
 	io.Fonts->Build();
 	
-	RendererInit( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
+	auto pRenderer = MakeRenderer();
+
+	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
@@ -540,10 +543,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		ImGui::Render();
 		ImGui::EndFrame();
 
-		HostFrames( frameData, gpuData );
+		pRenderer->HostFrames( frameData, gpuData );
 	}
-
-	VkBackendKill();
 
 	return 0;
 }
