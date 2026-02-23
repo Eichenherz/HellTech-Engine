@@ -681,14 +681,9 @@ static vk_virtual_frame VkCreateVirtualFrame( VkDevice vkDevice, u32 queueFamIdx
 	VkCommandBuffer cmdBuff;
 	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
 
-	VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-	VkSemaphore canGetImgSema;
-	VK_CHECK( vkCreateSemaphore( vkDevice, &semaInfo, 0, &canGetImgSema ) );
-
 	return {
 		.cmdPool = cmdPool,
 		.cmdBuff = cmdBuff,
-		.canGetImgSema = canGetImgSema
 	};
 }
 

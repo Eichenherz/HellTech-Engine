@@ -118,42 +118,6 @@ inline static VkRenderingAttachmentInfo VkMakeAttachemntInfo(
 //	return vkSamplerInfo;
 //}
 
-#define HTVK_NO_SAMPLER_REDUCTION VK_SAMPLER_REDUCTION_MODE_MAX_ENUM
-
-// TODO: AddrMode ?
-inline VkSampler VkMakeSampler(
-	VkDevice				vkDevice,
-	VkSamplerReductionMode	reductionMode = HTVK_NO_SAMPLER_REDUCTION,
-	VkFilter				filter = VK_FILTER_LINEAR,
-	VkSamplerAddressMode	addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-	VkSamplerMipmapMode		mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST
-) {
-	VkSamplerReductionModeCreateInfo reduxInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
-		.reductionMode = reductionMode,
-	};
-
-	VkSamplerCreateInfo samplerInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-		.pNext = ( reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX_ENUM ) ? 0 : &reduxInfo,
-		.magFilter = filter,
-		.minFilter = filter,
-		.mipmapMode = mipmapMode,
-		.addressModeU = addressMode,
-		.addressModeV = addressMode,
-		.addressModeW = addressMode,
-		.maxAnisotropy = 1.0f,
-		.minLod = 0,
-		.maxLod = VK_LOD_CLAMP_NONE,
-		.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-		.unnormalizedCoordinates = VK_FALSE,
-	};
-
-	VkSampler sampler;
-	VK_CHECK( vkCreateSampler( vkDevice, &samplerInfo, 0, &sampler ) );
-	return sampler;
-}
-
 #include "ht_geometry.h"
 
 
@@ -363,8 +327,22 @@ struct imgui_pass
 
 imgui_pass MakeImguiPass( vk_context& dc, VkFormat colDstFormat )
 {
-	VkSampler fontSampler = VkMakeSampler( 
-		dc.device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+	VkSamplerCreateInfo samplerCreateInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.magFilter = VK_FILTER_LINEAR,
+		.minFilter = VK_FILTER_LINEAR,
+		.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+		.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.maxAnisotropy = 1.0f,
+		.minLod = 0,
+		.maxLod = VK_LOD_CLAMP_NONE,
+		.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+		.unnormalizedCoordinates = VK_FALSE,
+	};
+
+	VkSampler fontSampler = dc.CreateSampler( samplerCreateInfo );
 
 	VkDescriptorSetLayoutBinding descSetBindings[ 2 ] = {};
 	descSetBindings[ 0 ].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -941,9 +919,28 @@ struct depth_pyramid_pass
 			hizMipUavs[ i ] = vkCtx.AllocDescriptor( vk_descriptor_info{ hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL } );
 		}
 
-		quadMinSampler =
-			VkMakeSampler( vkCtx.device, VK_SAMPLER_REDUCTION_MODE_MIN, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE );
+		VkSamplerReductionModeCreateInfo reduxInfo = { 
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
+			.reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN,
+		};
 
+		VkSamplerCreateInfo samplerCreateInfo = { 
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.pNext = &reduxInfo,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.maxAnisotropy = 1.0f,
+			.minLod = 0,
+			.maxLod = VK_LOD_CLAMP_NONE,
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+
+		quadMinSampler = vkCtx.CreateSampler( samplerCreateInfo );
 		quadMinSamplerIdx = vkCtx.AllocDescriptor( vk_descriptor_info{ quadMinSampler } );
 	}
 
@@ -1096,13 +1093,14 @@ struct renderer_geometry
 struct frame_resources
 {
 	//vk_gpu_timer gpuTimer;
-
+	VkSemaphore canGetImgSema;
 	std::shared_ptr<vk_buffer>		pViewData;
 
 	desc_hndl32 viewDataIdx;
 
 	inline void Init( vk_context& vkCtx, u64 sizeInBytes )
 	{
+		canGetImgSema = vkCtx.CreateBinarySemaphore();
 		pViewData = std::make_shared<vk_buffer>( vkCtx.CreateBuffer( {
 			.name = "Buff_VirtualFrame_ViewBuff",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -1203,9 +1201,22 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 
 		colSrv = pVkCtx->AllocDescriptor( vk_descriptor_info{ pColorTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		pbrSampler = 
-			VkMakeSampler( pVkCtx->device, HTVK_NO_SAMPLER_REDUCTION, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT );
+		VkSamplerCreateInfo samplerCreateInfo = { 
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.maxAnisotropy = 1.0f,
+			.minLod = 0,
+			.maxLod = VK_LOD_CLAMP_NONE,
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
 
+		pbrSampler = pVkCtx->CreateSampler( samplerCreateInfo );
 		pbrSamplerIdx = pVkCtx->AllocDescriptor( vk_descriptor_info{ pbrSampler } );
 
 		rscSyncState.UseImage( *pColorTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
@@ -1338,7 +1349,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 	pVkCtx->FlushPendingDescriptorUpdates();
 
-	u32 scImgIdx = pVkCtx->AcquireNextSwapchainImageBlocking( currentFrameInFlightIdx );
+	u32 scImgIdx = pVkCtx->AcquireNextSwapchainImageBlocking( thisVFrame.canGetImgSema );
 	const vk_swapchain_image& scImg = pVkCtx->scImgs[ scImgIdx ];
 
 	const vk_image& depthTarget = *pDepthTarget;
@@ -1539,7 +1550,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	// NOTE: with all these cool stage masks we can only let the gpu run until it need the sc image THEN wait
 	VkSemaphoreSubmitInfo waitScImgAcquire[] = { {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = pVkCtx->vrtFrames[ currentFrameInFlightIdx ].canGetImgSema,
+		.semaphore = thisVFrame.canGetImgSema,
 		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 	} };
 	VkSemaphoreSubmitInfo signalRenderFinished[] = { {

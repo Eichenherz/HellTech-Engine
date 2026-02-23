@@ -52,7 +52,6 @@ struct vk_virtual_frame
 {
 	VkCommandPool	cmdPool;
 	VkCommandBuffer cmdBuff;
-	VkSemaphore		canGetImgSema;
 };
 
 struct vk_desc_deletion
@@ -202,6 +201,22 @@ struct vk_context
 		vkDestroyShaderModule( device, module, 0 );
 	}
 
+	inline VkSampler CreateSampler( const VkSamplerCreateInfo& samplerCreateInfo )
+	{
+		VkSampler sampler;
+		VK_CHECK( vkCreateSampler( device, &samplerCreateInfo, 0, &sampler ) );
+		return sampler;
+	}
+
+	inline VkSemaphore CreateBinarySemaphore()
+	{
+		VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		VkSemaphore sema;
+		VK_CHECK( vkCreateSemaphore( device, &semaInfo, 0, &sema ) );
+
+		return sema;
+	}
+
 	inline vk_command_buffer GetFrameCmdBuff( u64 frameInFlightIdx )
 	{
 		HT_ASSERT( frameInFlightIdx < std::size( vrtFrames ) );
@@ -258,13 +273,10 @@ struct vk_context
 
 	void CreateSwapchin();
 
-	inline u32 AcquireNextSwapchainImageBlocking( u64 frameInFlightIdx ) const
+	inline u32 AcquireNextSwapchainImageBlocking( VkSemaphore canGetImgSema ) const
 	{
-		HT_ASSERT( frameInFlightIdx < std::size( vrtFrames ) );
-		const vk_virtual_frame& thisVrtFrame = vrtFrames[ frameInFlightIdx ];
-
 		u32 imgIdx;
-		VK_CHECK( vkAcquireNextImageKHR( device, swapchain, UINT64_MAX, thisVrtFrame.canGetImgSema, 0, &imgIdx ) );
+		VK_CHECK( vkAcquireNextImageKHR( device, swapchain, UINT64_MAX, canGetImgSema, 0, &imgIdx ) );
 		return imgIdx;
 	}
 
