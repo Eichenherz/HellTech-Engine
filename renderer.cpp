@@ -1090,13 +1090,14 @@ struct renderer_geometry
 	std::vector<VkSampler> samplers;
 };
 
-struct frame_resources
+struct virtual_frame
 {
 	//vk_gpu_timer gpuTimer;
-	VkSemaphore canGetImgSema;
-	std::shared_ptr<vk_buffer>		pViewData;
+	VkSemaphore                 canGetImgSema;
+	std::shared_ptr<vk_buffer>	pViewData;
+	desc_hndl32                 viewDataIdx;
 
-	desc_hndl32 viewDataIdx;
+	vk_cb_hndl32                hCmdBuff;
 
 	inline void Init( vk_context& vkCtx, u64 sizeInBytes )
 	{
@@ -1108,13 +1109,14 @@ struct frame_resources
 			.usage = buffer_usage::HOST_VISIBLE
 		} ) );
 		viewDataIdx = vkCtx.AllocDescriptor( vk_descriptor_info{ *pViewData } );
+		hCmdBuff = vkCtx.AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 	}
 };
 
 template<typename T, u64 N>
 using ht_fixed_vector = eastl::fixed_vector<T, N, false>;
 
-struct render_context : renderer_interface
+struct render_context final : renderer_interface
 {
 	static constexpr u64 MAX_FIF = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
 
@@ -1129,7 +1131,7 @@ struct render_context : renderer_interface
 
 	vk_rsc_state_tracker						rscSyncState;
 
-	ht_fixed_vector<frame_resources, MAX_FIF>   vrtFrames;
+	ht_fixed_vector<virtual_frame, MAX_FIF>     vrtFrames;
 
 	std::unique_ptr<vk_context>                 pVkCtx;
 
@@ -1293,14 +1295,14 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	vrtFrames.resize( framesInFlight );
 }
 
-// TODO: in and out data
+// TODO: use a queue timeline or smth to check if we can get a cmd buffer instead of vFrameIdx
 void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	const u64 currentFrameIdx = vFrameIdx++;
 	const u64 currentFrameInFlightIdx = currentFrameIdx % framesInFlight;
-	const frame_resources& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
+	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
-	VkResult timelineWaitResult = pVkCtx->QueueTryWaitFor( pVkCtx->gfxQueue, framesInFlight, UINT64_MAX );
+	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
 
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
@@ -1308,13 +1310,14 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	[[unlikely]]
 	if( currentFrameIdx < framesInFlight )
 	{
-		frame_resources& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
+		virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 		thisVFrame.Init( *pVkCtx, std::size( frameData.views ) * sizeof( view_data ) );
 	}
 	HT_ASSERT( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
 	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	vk_command_buffer thisFrameCmdBuffer = pVkCtx->GetFrameCmdBuff( currentFrameInFlightIdx );
+	vk_command_buffer thisFrameCmdBuffer = { pVkCtx->GetCmdBuff( thisVFrame.hCmdBuff ), 
+		pVkCtx->globalPipelineLayout, pVkCtx->descSet };
 
 	static bool initResources = false;
 	if( !initResources )
@@ -1559,6 +1562,8 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 	} };
 	
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, waitScImgAcquire, signalRenderFinished, thisFrameCmdBuffer.hndl );
+	pVkCtx->gpuFrameTimeline.submitsIssuedCount++;
+	pVkCtx->QueueSubmitToTimeline( 
+		pVkCtx->gfxQueue, pVkCtx->gpuFrameTimeline, waitScImgAcquire, signalRenderFinished, thisFrameCmdBuffer.hndl );
 	pVkCtx->QueuePresent( pVkCtx->gfxQueue, scImgIdx );
 }

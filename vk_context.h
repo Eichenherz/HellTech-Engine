@@ -16,21 +16,25 @@
 #include "ht_mem_arena.h"
 #include "vk_error.h"
 #include "vk_types.h"
-#include "vk_command_buffer.h"
 #include "vk_resources.h"
 #include "vk_pso.h"
 #include "vk_utils.h"
 
+#include <array>
 #include <vector>
-#include <type_traits>
 #include <span>
 #include <functional>
 #include <memory>
 
-#include <EASTL/fixed_vector.h>
 #include <EASTL/bonus/fixed_ring_buffer.h>
 #include <EASTL/bonus/ring_buffer.h>
 #include <EASTL/bitvector.h>
+
+struct vk_timeline
+{
+	VkSemaphore sema;
+	u64 submitsIssuedCount;
+};
 
 struct vk_swapchain_image
 {
@@ -39,19 +43,35 @@ struct vk_swapchain_image
 	desc_hndl32     writeDescIdx;
 };
 
-struct vk_queue
+enum class vk_queue_t : u32
 {
-	VkQueue	        hndl;
-	VkSemaphore     timelineSema; // NOTE: timeline sema
-	u64             submitionCount;
-	u32				familyIdx;
-	VkQueueFlags	familyFlags;
+	GFX = 0,
+	COPY,
+	COMP,
+	COUNT
 };
 
-struct vk_virtual_frame
+struct vk_queue
 {
-	VkCommandPool	cmdPool;
-	VkCommandBuffer cmdBuff;
+	VkQueue									hndl;
+	VkSemaphore								timelineSema;
+	u64										submitionCount;
+	u32										familyIdx;
+};
+
+struct vk_cmd_pool_buff
+{
+	VkCommandPool		pool;
+	VkCommandBuffer		buff;
+	VkSemaphore			timelineSema;
+	u64				    submissionIdx;
+	vk_queue_t			parentQueueFamType;
+};
+
+struct vk_cb_hndl32
+{
+	u32 idx : 16;
+	u32 type : 2;
 };
 
 struct vk_desc_deletion
@@ -79,9 +99,7 @@ struct vk_resc_deletion
 
 
 template<typename T, u64 N>
-using ring_buff = eastl::fixed_ring_buffer<T, N>;
-
-using vk_frame_vector = eastl::fixed_vector<vk_virtual_frame, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
+using fixed_ring_buff = eastl::fixed_ring_buffer<T, N>;
 
 using eastl_bitvector = eastl::bitvector<EASTLAllocatorType, u64>;
 
@@ -133,20 +151,25 @@ using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
 struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
-	ring_buff<vk_resc_deletion, 128>		resourceDeletionQueue{};
-	ring_buff<vk_desc_deletion, 128>		descriptroDeletionQueue{};
+
+	fixed_ring_buff<vk_resc_deletion, 128>	resourceDeletionQueue{};
+	fixed_ring_buff<vk_desc_deletion, 128>	descriptroDeletionQueue{};
 
 	fixed_arena<2048>						scratchArena;
-
-	vk_frame_vector							vrtFrames;
 
 	std::vector<vk_swapchain_image>			scImgs;
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	std::vector<vk_descriptor_write>        descPendingUpdates;
 
+	std::vector<vk_cmd_pool_buff>           gfxCmdPoolAndBuffs;
+	std::vector<vk_cmd_pool_buff>           computeCmdPoolAndBuffs;
+	std::vector<vk_cmd_pool_buff>           copyCmdPoolAndBuffs;
+
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
+
+	vk_timeline							    gpuFrameTimeline;
 
 	VmaAllocator							allocator;
 
@@ -183,6 +206,13 @@ struct vk_context
 	{
 		descriptroDeletionQueue.push_back( rscDeletion );
 	}
+
+	unique_shader_ptr CreateShaderFromSpirv( std::span<const u8> spvByteCode );
+	inline void DestroyShaderModule( VkShaderModule module )
+	{
+		vkDestroyShaderModule( device, module, 0 );
+	}
+
 	// TODO: depth clamp ?
 	// VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 	VkPipeline CreateGfxPipeline(
@@ -195,12 +225,6 @@ struct vk_context
 		VkPipelineLayout						vkPipelineLayout = VK_NULL_HANDLE );
 	VkPipeline CreateComptuePipeline( const vk_shader& shader, const char* pName );
 
-	unique_shader_ptr CreateShaderFromSpirv( std::span<const u8> spvByteCode );
-	inline void DestroyShaderModule( VkShaderModule module )
-	{
-		vkDestroyShaderModule( device, module, 0 );
-	}
-
 	inline VkSampler CreateSampler( const VkSamplerCreateInfo& samplerCreateInfo )
 	{
 		VkSampler sampler;
@@ -208,23 +232,27 @@ struct vk_context
 		return sampler;
 	}
 
-	inline VkSemaphore CreateBinarySemaphore()
+	VkSemaphore CreateBinarySemaphore();
+
+	// NOTE: passing UINT64_MAX will block forever
+	inline VkResult TimelineTryWaitFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime )
 	{
-		VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		VkSemaphore sema;
-		VK_CHECK( vkCreateSemaphore( device, &semaInfo, 0, &sema ) );
+		u64 submissionsCompleted = 0;
+		VK_CHECK( vkGetSemaphoreCounterValue( device, timeline.sema, &submissionsCompleted ) );
 
-		return sema;
-	}
+		if( timeline.submitsIssuedCount >= maxDiffAllowed + submissionsCompleted )
+		{
+			u64 targetCount = timeline.submitsIssuedCount;
+			VkSemaphoreWaitInfo waitInfo = { 
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+				.semaphoreCount = 1,
+				.pSemaphores = &timeline.sema,
+				.pValues = &targetCount,
+			};
 
-	inline vk_command_buffer GetFrameCmdBuff( u64 frameInFlightIdx )
-	{
-		HT_ASSERT( frameInFlightIdx < std::size( vrtFrames ) );
-		vk_virtual_frame& thisVrtFrame = vrtFrames[ frameInFlightIdx ];
-
-		VK_CHECK( vkResetCommandPool( device, thisVrtFrame.cmdPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
-
-		return { thisVrtFrame.cmdBuff, globalPipelineLayout, descSet };
+			return vkWaitSemaphores( device, &waitInfo, waitTime );
+		}
+		return VK_SUCCESS;
 	}
 
 	inline void HostTransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
@@ -280,30 +308,24 @@ struct vk_context
 		return imgIdx;
 	}
 
-	// NOTE: passing UINT64_MAX will block forever
-	inline VkResult QueueTryWaitFor( const vk_queue& queue, u64 maxDiffAllowed, u64 waitTime )
+	vk_cb_hndl32 AllocateCmdPoolAndBuff( vk_queue_t queueType );
+	inline VkCommandBuffer GetCmdBuff( vk_cb_hndl32 hndl )
 	{
-		u64 signalsCount = 0;
-		VK_CHECK( vkGetSemaphoreCounterValue( device, queue.timelineSema, &signalsCount ) );
-
-		if( queue.submitionCount - signalsCount >= maxDiffAllowed )
+		vk_queue_t queueType = ( vk_queue_t ) hndl.type;
+		using enum vk_queue_t;
+		switch( queueType )
 		{
-			u64 targetCount = queue.submitionCount;
-			VkSemaphoreWaitInfo waitInfo = { 
-				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-				.semaphoreCount = 1,
-				.pSemaphores = &queue.timelineSema,
-				.pValues = &targetCount,
-			};
-
-			return vkWaitSemaphores( device, &waitInfo, waitTime );
+			case GFX: return gfxCmdPoolAndBuffs[ hndl.idx ].buff;
+			case COPY: return copyCmdPoolAndBuffs[ hndl.idx ].buff;
+			default: HT_ASSERT( false ); return VK_NULL_HANDLE;
 		}
-		return VK_SUCCESS;
 	}
+	void DeferredRecycleCmdPoolAndBuff( vk_cb_hndl32 hndl, const vk_timeline& timeline );
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
-	void QueueSubmit(
-		vk_queue& queue,
+	void QueueSubmitToTimeline(
+		const vk_queue& queue,
+		const vk_timeline& timeline,
 		std::span<VkSemaphoreSubmitInfo> waits,
 		std::span<VkSemaphoreSubmitInfo> signals,
 		VkCommandBuffer cmdBuff

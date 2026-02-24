@@ -30,7 +30,7 @@
 #include "vk_pso.h"
 #include "vk_resources.h"
 
-constexpr VkValidationFeatureEnableEXT enabledValidationFeats[] = {
+constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
 	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
 	VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
@@ -123,16 +123,8 @@ inline static VkDeviceAddress VkGetBufferDeviceAddress( VkDevice vkDevice, VkBuf
 	return vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
 }
 
-static vk_queue VkCreateQueue( 
-	VkDevice        vkDevice, 
-	u32             queueFamilyIndex,
-	VkQueueFlags    desiredProps,
-	u64				initialTimelineVal 
-) {
-	VkQueue	hndl;
-	vkGetDeviceQueue( vkDevice, queueFamilyIndex, 0, &hndl );
-	HT_ASSERT( hndl );
-
+inline static VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
+{
 	VkSemaphoreTypeCreateInfo timelineInfo = { 
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
 		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
@@ -140,18 +132,26 @@ static vk_queue VkCreateQueue(
 	};
 	VkSemaphoreCreateInfo timelineSemaInfo = { 
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
-		.pNext = &timelineInfo 
+		.pNext = isTimeline ? &timelineInfo : 0
 	};
 
 	VkSemaphore timelineSema;
 	VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
 
+	return timelineSema;
+}
+
+inline static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex ) 
+{
+	VkQueue	hndl;
+	vkGetDeviceQueue( vkDevice, queueFamilyIndex, 0, &hndl );
+	HT_ASSERT( hndl );
+
 	return {
 		.hndl = hndl,
-		.timelineSema = timelineSema,
+		.timelineSema = VkMakeSemaphore( vkDevice, true, 0 ),
 		.submitionCount = 0,
 		.familyIdx = queueFamilyIndex,
-		.familyFlags = desiredProps
 	};
 }
 
@@ -358,8 +358,8 @@ static vk_instance VkMakeInstance()
 
 	VkValidationFeaturesEXT vkValidationFeatures = { 
 		.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
-		.enabledValidationFeatureCount = std::size( enabledValidationFeats ),
-		.pEnabledValidationFeatures = enabledValidationFeats,
+		.enabledValidationFeatureCount = std::size( VK_ENABLED_VALIDATION_FEATURES ),
+		.pEnabledValidationFeatures = VK_ENABLED_VALIDATION_FEATURES,
 	};
 
 	VkDebugUtilsMessengerCreateInfoEXT vkDbgExt = { 
@@ -662,42 +662,11 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 	};
 }
 
-static vk_virtual_frame VkCreateVirtualFrame( VkDevice vkDevice, u32 queueFamIdx )
-{
-	VkCommandPoolCreateInfo cmdPoolInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-		.queueFamilyIndex = queueFamIdx,
-	};
-	VkCommandPool cmdPool;
-	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
-
-	VkCommandBufferAllocateInfo cmdBuffAllocInfo = { 
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = cmdPool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1,
-	};
-	VkCommandBuffer cmdBuff;
-	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
-
-	return {
-		.cmdPool = cmdPool,
-		.cmdBuff = cmdBuff,
-	};
-}
-
 vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_config& cfg )
 {
 	auto[ vkInst, vkDbgMsg ] = VkMakeInstance();
 	VkSurfaceKHR vkSurf = VkMakeWinSurface( vkInst, ( HINSTANCE ) hInst, ( HWND ) hWnd );
 	vk_device vkDevice = VkMakeDevice( vkInst, vkSurf );
-
-	vk_frame_vector frameVec;
-	for( u64 fi = 0; fi < cfg.framesInFlightCount; fi++ )
-	{
-		frameVec.push_back( VkCreateVirtualFrame( vkDevice.logical, vkDevice.gfxQueueFamIdx ) );
-	}
 
 	const VkPhysicalDeviceLimits& vkGpuLimits = vkDevice.gpuProps.limits;
 	std::array<VkDescriptorPoolSize, vk_desc_binding_t::COUNT> poolSizes = {
@@ -728,10 +697,10 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	}
 
 	return {
-		.vrtFrames = std::move( frameVec ),
 		.descBindingSlots = bindingSlots,
-		.gfxQueue = VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx, VK_QUEUE_GRAPHICS_BIT, 0 ),
-		.copyQueue = VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx, VK_QUEUE_TRANSFER_BIT, 0 ),
+		.gfxQueue = VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
+		.copyQueue = VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx ),
+		.gpuFrameTimeline = { .sema = VkMakeSemaphore( vkDevice.logical, true, 0 ), .submitsIssuedCount = 0 },
 		.allocator = MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
 		.descPool = descPool,
 		.descSetLayout = descSetLayout,
@@ -866,6 +835,31 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 	};
 }
 
+unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
+{
+	spv_reflect::ShaderModule reflInfo = SpvMakeReflectedShaderModule( spvByteCode );
+	const char* pEntryPointName = reflInfo.GetEntryPointName();
+	VkShaderStageFlagBits shaderStage = ( VkShaderStageFlagBits ) reflInfo.GetShaderStage();
+
+	VkShaderModuleCreateInfo shaderModuleInfo = { 
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = std::size( spvByteCode ),
+		.pCode = ( const u32* ) std::data( spvByteCode ) 
+	};
+
+	VkShaderModule sm;
+	VK_CHECK( vkCreateShaderModule( device, &shaderModuleInfo, 0, &sm ) );
+
+	PFN_VkShaderDestoryer deleter = [ this ]( vk_shader* p )
+	{
+		if( !p ) return;
+		this->DestroyShaderModule( p->module );
+		delete p;
+	};
+
+	return { new vk_shader{ pEntryPointName, sm, shaderStage }, std::move( deleter ) };
+}
+
 VkPipeline vk_context::CreateGfxPipeline( 
 	std::span<const vk_gfx_shader_stage> shaderStages, 
 	std::span<const VkDynamicState> dynamicStates, 
@@ -996,29 +990,9 @@ VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, const cha
 	return pipeline;
 }
 
-unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
+VkSemaphore vk_context::CreateBinarySemaphore()
 {
-	spv_reflect::ShaderModule reflInfo = SpvMakeReflectedShaderModule( spvByteCode );
-	const char* pEntryPointName = reflInfo.GetEntryPointName();
-	VkShaderStageFlagBits shaderStage = ( VkShaderStageFlagBits ) reflInfo.GetShaderStage();
-
-	VkShaderModuleCreateInfo shaderModuleInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = std::size( spvByteCode ),
-		.pCode = ( const u32* ) std::data( spvByteCode ) 
-	};
-
-	VkShaderModule sm;
-	VK_CHECK( vkCreateShaderModule( device, &shaderModuleInfo, 0, &sm ) );
-
-	PFN_VkShaderDestoryer deleter = [ this ]( vk_shader* p )
-	{
-		if( !p ) return;
-		this->DestroyShaderModule( p->module );
-		delete p;
-	};
-
-	return { new vk_shader{ pEntryPointName, sm, shaderStage }, std::move( deleter ) };
+	return VkMakeSemaphore( device, false, -1 );
 }
 
 desc_hndl32 vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
@@ -1156,12 +1130,8 @@ void vk_context::CreateSwapchin()
 
 		VkImageView view = VkMakeImgView( device, img, scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
 
-		VkSemaphoreCreateInfo semaInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		VkSemaphore canPresentSema;
-		VK_CHECK( vkCreateSemaphore( device, &semaInfo, 0, &canPresentSema ) );
-
-		scImgs.push_back( { 
-			.canPresentSema = canPresentSema,
+		scImgs.push_back( {
+			.canPresentSema = VkMakeSemaphore( device, false, -1 ),
 			.img = { 
 				.hndl = img,
 				.view = view,
@@ -1175,8 +1145,117 @@ void vk_context::CreateSwapchin()
 	}
 }
 
-void vk_context::QueueSubmit( 
-	vk_queue& queue, 
+vk_cb_hndl32 vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
+{
+	u32 queueFamilyIdx = -1;
+	std::vector<vk_cmd_pool_buff>* pCmdPoolBuffs = 0;
+
+	using enum vk_queue_t;
+	switch( queueType )
+	{
+	case GFX:
+	{
+		queueFamilyIdx = gfxQueue.familyIdx;
+		pCmdPoolBuffs = &gfxCmdPoolAndBuffs;
+		break;
+	}
+	case COPY:
+	{
+		queueFamilyIdx = copyQueue.familyIdx;
+		pCmdPoolBuffs = &copyCmdPoolAndBuffs;
+		break;
+	}
+	default: HT_ASSERT( 0 && "Invalid queue type !" );
+	}
+
+	HT_ASSERT( u32( -1 ) != queueFamilyIdx );
+	HT_ASSERT( pCmdPoolBuffs );
+
+	std::vector<vk_cmd_pool_buff>& cmdPoolBuffs = *pCmdPoolBuffs;
+
+	for( u32 cbi = 0; cbi < std::size( cmdPoolBuffs ); ++cbi )
+	{
+		vk_cmd_pool_buff& cmdPoolAndBuff = cmdPoolBuffs[ cbi ];
+		if( VK_NULL_HANDLE == cmdPoolAndBuff.timelineSema ) continue;
+
+		u64 sumbissionsCompleted = 0;
+		VK_CHECK( vkGetSemaphoreCounterValue( device, cmdPoolAndBuff.timelineSema, &sumbissionsCompleted ) );
+		if( cmdPoolAndBuff.submissionIdx < sumbissionsCompleted )
+		{
+			cmdPoolAndBuff.timelineSema = VK_NULL_HANDLE;
+			cmdPoolAndBuff.submissionIdx = -1;
+			VK_CHECK( vkResetCommandPool( device, cmdPoolAndBuff.pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+			return { .idx = cbi, .type = ( u32 ) queueType };
+		}
+	}
+
+	VkCommandPoolCreateInfo cmdPoolInfo = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+		.queueFamilyIndex = queueFamilyIdx
+	};
+
+	VkCommandPool cmdPool;
+	VK_CHECK( vkCreateCommandPool( device, &cmdPoolInfo, 0, &cmdPool ) );
+
+	VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = cmdPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1
+	};
+
+	VkCommandBuffer cmdBuff;
+	VK_CHECK( vkAllocateCommandBuffers( device, &cmdBuffAllocInfo, &cmdBuff ) );
+
+	u32 idx = std::size( cmdPoolBuffs );
+
+	cmdPoolBuffs.push_back( {
+		.pool = cmdPool,
+		.buff = cmdBuff,
+		.timelineSema = VK_NULL_HANDLE,
+		.submissionIdx = u64( -1 ),
+		.parentQueueFamType = queueType 
+	} );
+
+	return { .idx = idx, .type = ( u32 ) queueType };
+}
+
+void vk_context::DeferredRecycleCmdPoolAndBuff( vk_cb_hndl32 hndl, const vk_timeline& timeline )
+{
+	std::vector<vk_cmd_pool_buff>* pCmdPoolBuffs = 0;
+
+	vk_queue_t queueType = ( vk_queue_t ) hndl.type;
+
+	using enum vk_queue_t;
+	switch( queueType )
+	{
+	case GFX:
+	{
+		pCmdPoolBuffs = &gfxCmdPoolAndBuffs;
+		break;
+	}
+	case COPY:
+	{
+		pCmdPoolBuffs = &copyCmdPoolAndBuffs;
+		break;
+	}
+	default: HT_ASSERT( 0 && "Invalid queue type !" );
+	}
+
+	HT_ASSERT( pCmdPoolBuffs );
+
+	vk_cmd_pool_buff& cmdPoolBuff = ( *pCmdPoolBuffs )[ hndl.idx ];
+	HT_ASSERT( VK_NULL_HANDLE == cmdPoolBuff.timelineSema );
+	HT_ASSERT( u64( -1 ) == cmdPoolBuff.submissionIdx );
+
+	cmdPoolBuff.timelineSema = timeline.sema;
+	cmdPoolBuff.submissionIdx = timeline.submitsIssuedCount; // NOTE: submit on current value
+}
+
+void vk_context::QueueSubmitToTimeline(
+	const vk_queue& queue,
+	const vk_timeline& timeline, 
 	std::span<VkSemaphoreSubmitInfo> waits, 
 	std::span<VkSemaphoreSubmitInfo> signals, 
 	VkCommandBuffer cmdBuff 
@@ -1185,13 +1264,12 @@ void vk_context::QueueSubmit(
 	std::pmr::vector<VkSemaphoreSubmitInfo> vecSignals{ &memScope };
 	vecSignals.insert( std::end( vecSignals ), std::cbegin( signals ), std::cend( signals ) );
 
-	queue.submitionCount++;
 	vecSignals.push_back( {
 		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = queue.timelineSema,
-		.value     = queue.submitionCount,
+		.semaphore = timeline.sema,
+		.value     = timeline.submitsIssuedCount,
 		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		} );
+	} );
 
 	VkCommandBufferSubmitInfo cmdInfo = {
 		.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
