@@ -24,6 +24,8 @@
 
 #include "vk_context.h"
 
+#include <HellPack/hell_pack.h>
+
 // NOTE: clang-cl on VS issue
 #ifdef __clang__
 
@@ -1071,23 +1073,56 @@ DrawIndexedIndirectMerged(
 	cmdBuff.CmdDrawIndexedIndirectCount( indexBuff, indexType, drawCmds, drawCount, maxDrawCount );
 }
 
+struct gpu_mesh_payload
+{
+	std::shared_ptr<vk_buffer> pMeshletBuffer;
+	std::shared_ptr<vk_buffer> pVertexBuffer;
+	std::shared_ptr<vk_buffer> pTriangleBuffer;
+};
+
+#include <HellPack/hp_mesh.h>
+#include <HellPack/hell_pack.h>
+
+struct gpu_instance
+{
+	packed_trs transform;
+	u16 meshIdx;
+	u16 materialIdx;
+};
+
+struct desc_gpu_mesh
+{
+	vec3 minAabb;
+	vec3 maxAabb;
+	desc_hndl32 hMeshletBuffer;
+	desc_hndl32 hVertexBuffer;
+	desc_hndl32 hTriangleBuffer;
+};
 
 struct renderer_geometry
 {
-	std::shared_ptr<vk_buffer> pVertexBuffer;
-	std::shared_ptr<vk_buffer> pIdxBuffer;
-	std::shared_ptr<vk_buffer> pNodeBuffer;
-	std::shared_ptr<vk_buffer> pInstanceBounds;
-	std::shared_ptr<vk_buffer> pMeshes;
+	std::vector<gpu_mesh_payload> gpuMeshes;
+	std::vector<desc_gpu_mesh> gpuMeshDescs; // NOTE: matches 1:1 the above buffers
+
+	std::shared_ptr<vk_buffer> pMeshes; // NOTE: contains the above table
 	std::shared_ptr<vk_buffer> pMaterials;
+
+	std::shared_ptr<vk_buffer> pInstanceBuffer;
+
 	std::shared_ptr<vk_buffer> pLights;
 
-	std::shared_ptr<vk_buffer> pMeshletBuffer;
-	std::shared_ptr<vk_buffer> pMeshletIdxBuffer;
-
 	std::vector<std::shared_ptr<vk_image>> pTextures;
-	// NOTE: we never deallocate samplers 
-	std::vector<VkSampler> samplers;
+
+	desc_hndl32 hInstanceBuffer;
+	
+	desc_hndl32 hMaterials;
+	desc_hndl32 hLights;
+
+	std::vector<desc_hndl32> hTextures;
+
+	//// NOTE: we never deallocate samplers 
+	//std::vector<VkSampler> samplers;
+	//std::vector<desc_hndl32> hSamplers;
 };
 
 struct virtual_frame
@@ -1158,6 +1193,7 @@ struct render_context final : renderer_interface
 	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height );
 
 	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) override;
+	virtual void UploadAsync( const hellpack_view& hellpackView ) override;
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
 };
 
@@ -1295,6 +1331,48 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	vrtFrames.resize( framesInFlight );
 }
 
+void render_context::UploadAsync( const hellpack_view& hellpackView )
+{
+	vk_buffer stagingBuff = pVkCtx->CreateBuffer( {
+		.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		.sizeInBytes = hellpackView.sizeInBytes, // NOTE: this includes the header and entry tables too WTF BRO ?!
+		.usage = buffer_usage::STAGING
+	} );
+
+	std::memcpy( stagingBuff.hostVisible, hellpackView.base, hellpackView.sizeInBytes );
+
+
+	vk_cb_hndl32 hCopyCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+	vk_command_buffer copyCmdBuff = { pVkCtx->GetCmdBuff( hCopyCmdBuff ), VK_NULL_HANDLE, VK_NULL_HANDLE };
+
+	{
+		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::INST );
+		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
+		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
+	}
+
+	{
+		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::MLET );
+		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
+		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
+	}
+
+	{
+		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::VTX );
+		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
+		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
+	}
+
+	{
+		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::TRI );
+		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
+		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
+	}
+
+	pVkCtx->copyQueue.submitionCount++;
+	pVkCtx->QueueSubmitToTimeline( pVkCtx->copyQueue, {}, {}, {}, copyCmdBuff.hndl );
+}
+
 // TODO: use a queue timeline or smth to check if we can get a cmd buffer instead of vFrameIdx
 void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
@@ -1305,7 +1383,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
 
-	pVkCtx->FlushDeletionQueues( currentFrameIdx );
+	//pVkCtx->FlushDeletionQueues( currentFrameIdx );
 
 	[[unlikely]]
 	if( currentFrameIdx < framesInFlight )

@@ -17,27 +17,27 @@ inline bool Win32IsHandleValid( HANDLE h )
 
 inline void Win32WriteLastErr( LPTSTR lpsLineFile )
 {
-	LPVOID lpMsgBuf;
-	DWORD dw = GetLastError();
+	char msg[ 2048 ] = {};
+	DWORD dwErr = GetLastError();
 
-	FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-				   0, dw,
-				   MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
-				   ( LPTSTR ) &lpMsgBuf, 0, 0 );
+	constexpr DWORD FORMAT_MSG_FLAGS = 
+		FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK;
+	DWORD bytesFormatted = FormatMessageA( FORMAT_MSG_FLAGS, nullptr, dwErr, MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
+		msg, ( DWORD ) std::size( msg ), nullptr );
 
-	LPVOID lpDisplayBuf =
-		( LPVOID ) LocalAlloc( LMEM_ZEROINIT, ( lstrlen( ( LPCTSTR ) lpMsgBuf ) + lstrlen( ( LPCTSTR ) lpsLineFile ) + 40 ) );
-	StringCchPrintf( ( LPTSTR ) lpDisplayBuf, LocalSize( lpDisplayBuf ), TEXT( "%s code %d: %s" ), lpsLineFile, dw, lpMsgBuf );
-	MessageBox( 0, ( LPCTSTR ) lpDisplayBuf, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
+	if( 0 == bytesFormatted )
+	{
+		std::memset( msg, 0, std::size( msg ) );
+		std::format_to_n( msg, std::size( msg ) - 1, "{} formated 0 bytes, exited with: {}", __func__, GetLastError() );
+	}
 
-	LocalFree( lpMsgBuf );
-	LocalFree( lpDisplayBuf );
+	MessageBoxA( nullptr, ( LPCTSTR ) msg, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
 }
 
-#define WIN_CHECK( win )													\
+#define WIN_CHECK( winExpr )												\
 do{																			\
 	constexpr char WIN_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";		\
-	if( win )																\
+	if( !bool( winExpr ) )													\
 	{																		\
 		Win32WriteLastErr( ( LPSTR ) WIN_ERR_STR );							\
 		abort();															\

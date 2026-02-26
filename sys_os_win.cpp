@@ -192,7 +192,7 @@ inline DirectX::XMMATRIX XM_CALLCONV FrustumMatrixFromViewProj( DirectX::XMMATRI
 	// NOTE: inv( A * B ) = inv B * inv A
 	XMMATRIX invFrustMat = viewXProj; //XMMatrixMultiply( view, proj );
 	XMVECTOR det = XMMatrixDeterminant( invFrustMat );
-	assert( XMVectorGetX( det ) );
+	HT_ASSERT( XMVectorGetX( det ) != 0 );
 	XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
 	return frustMat;
 }
@@ -243,7 +243,7 @@ inline u64	SysDllLoad( const char* name )
 inline void	SysDllUnload( u64 hDll )
 {
 	if( !hDll ) return;
-	WIN_CHECK( !FreeLibrary( (HMODULE) hDll ) );
+	WIN_CHECK( FreeLibrary( (HMODULE) hDll ) );
 }
 inline void*	SysGetProcAddr( u64 hDll, const char* procName )
 {
@@ -402,7 +402,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	input_state inputState = {};
 
 	eastl::SetAssertionFailureFunction(&EastlAssertFail, nullptr);
-	WIN_CHECK( !DirectX::XMVerifyCPUSupport() );
+	WIN_CHECK( DirectX::XMVerifyCPUSupport() );
 
 	SysOsCreateConsole();
 
@@ -416,7 +416,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		.hCursor = LoadCursor( 0, IDC_ARROW ),
 		.lpszClassName = ENGINE_NAME
 	};
-	WIN_CHECK( !RegisterClassEx( &wc ) );
+	WIN_CHECK( RegisterClassEx( &wc ) );
 	
 	RECT wr = {
 		.left = 350,
@@ -429,7 +429,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	AdjustWindowRect( &wr, windowStyle, 0 );
 	HWND hWnd = CreateWindow( 
 		wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, &inputState );
-	WIN_CHECK(  !hWnd );
+	WIN_CHECK( INVALID_HANDLE_VALUE != hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
@@ -446,7 +446,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	hid[ 1 ].hwndTarget = hWnd;
 	// NOTE: won't pass msgs like PtrSc
 	hid[ 1 ].dwFlags = 0;// RIDEV_NOLEGACY;
-	WIN_CHECK( !RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
+	WIN_CHECK( RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
 	keyboard kbd = {};
 
