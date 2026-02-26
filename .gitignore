@@ -14,4 +14,4 @@ int/*
 
 imgui.ini
 
-3rdParty/miniz/
+3rdParty/*
