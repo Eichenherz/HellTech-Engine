@@ -3,10 +3,6 @@
 
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
-#include <strsafe.h>
-
-#include "sys_os_api.h"
-#include "core_types.h"
 
 #include "ht_error.h"
 
@@ -22,8 +18,8 @@ inline void Win32WriteLastErr( LPTSTR lpsLineFile )
 
 	constexpr DWORD FORMAT_MSG_FLAGS = 
 		FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK;
-	DWORD bytesFormatted = FormatMessageA( FORMAT_MSG_FLAGS, nullptr, dwErr, MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
-		msg, ( DWORD ) std::size( msg ), nullptr );
+	DWORD bytesFormatted = FormatMessageA( FORMAT_MSG_FLAGS, nullptr, dwErr, 0, msg, 
+		( DWORD ) std::size( msg ), nullptr );
 
 	if( 0 == bytesFormatted )
 	{

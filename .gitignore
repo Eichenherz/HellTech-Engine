@@ -1,20 +1,15 @@
-
-x64/
-
 *.spv
 
 desktop.ini
 
-vk_generator.py
-
 Assets/
-
-README.md
 
 .vs/
 
 packages/
 
 bin/*
+
+int/*
 
 imgui.ini

@@ -30,49 +30,49 @@
     <ClCompile Include="spirv_reflect.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\allocator_eastl.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\assert.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\atomic.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\fixed_pool.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\hashtable.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\intrusive_list.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\numeric_limits.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\red_black_tree.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\string.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\EASTL\source\thread_support.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\imgui\imgui.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\imgui\imgui_tables.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\imgui\imgui_draw.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="3rdParty\imgui\imgui_widgets.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="eastl_new.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\allocator_eastl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\assert.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\atomic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\fixed_pool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\hashtable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\intrusive_list.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\numeric_limits.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\red_black_tree.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\string.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\thread_support.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_draw.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_tables.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_widgets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -170,12 +170,6 @@
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\util.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="3rdParty\unordered_dense\include\ankerl\stl.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="vk_types.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -189,6 +183,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="vk_utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="$(SolutionDir)3rdParty\unordered_dense\include\ankerl\stl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="$(SolutionDir)3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -224,19 +224,19 @@
       <Filter>Source Files</Filter>
     </None>
     <None Include="Shaders\c_draw_cull.hlsl" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Benchmarks.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Best Practices.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Design.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL FAQ.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Glossary.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Gotchas.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Introduction.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Maintenance.html" />
-    <None Include="3rdParty\EASTL\doc\html\EASTL Modules.html" />
-    <None Include="3rdParty\EASTL\doc\EASTL-n2271.pdf" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\EASTL-n2271.pdf" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Benchmarks.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Best Practices.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Design.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL FAQ.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Glossary.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Gotchas.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Introduction.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Maintenance.html" />
+    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Modules.html" />
   </ItemGroup>
   <ItemGroup>
-    <Natvis Include="3rdParty\EASTL\doc\EASTL.natvis" />
-    <Natvis Include="3rdParty\VulkanMemoryAllocator\src\vk_mem_alloc.natvis" />
+    <Natvis Include="$(SolutionDir)3rdParty\EASTL\doc\EASTL.natvis" />
+    <Natvis Include="$(SolutionDir)3rdParty\VulkanMemoryAllocator\src\vk_mem_alloc.natvis" />
   </ItemGroup>
 </Project>
