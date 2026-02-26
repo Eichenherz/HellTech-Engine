@@ -13,3 +13,5 @@ bin/*
 int/*
 
 imgui.ini
+
+3rdParty/miniz/
