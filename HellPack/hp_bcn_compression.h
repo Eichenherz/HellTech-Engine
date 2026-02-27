@@ -2,14 +2,12 @@
 #define __HP_BCN_COMPRESSION_H__
 
 #include "core_types.h"
-#include "hp_error.h"
+#include "ht_error.h"
 
 #include <bc7enc.h>
 #include <rgbcx.h>
 
-#include <atomic>
 #include <array>
-#include <thread>
 #include <span>
 #include <vector>
 
@@ -31,7 +29,7 @@ constexpr u32 BCnFormatToBlockSizeInBytes( bc_format_t fmt )
     {
     case BC7_RGBA: return BC7ENC_BLOCK_SIZE;
     case BC5_RG: return 16;
-    default: HP_ASSERT( false && "Not implemented yet" );
+    default: HT_ASSERT( false && "Not implemented yet" );
     }
 }
 
@@ -85,7 +83,7 @@ inline bcn_compression_result CompressRBGA8ToBC7( std::span<const u8> rgba8, u16
     
     bcn_compression_result bcn = { blocksX, blocksY, bcnBlockSzInBytes };
 
-    HP_ASSERT( std::size( bcn.data ) );
+    HT_ASSERT( std::size( bcn.data ) );
 
     // TODO: don't call these evey job ?
     bc7enc_compress_block_params bc7CmpParams;
@@ -115,7 +113,7 @@ inline bcn_compression_result CompressRBGA8ToBC5( std::span<const u8> rgba8, u16
 
     bcn_compression_result bcn = { blocksX, blocksY, bcnBlockSzInBytes };
 
-    HP_ASSERT( std::size( bcn.data ) );
+    HT_ASSERT( std::size( bcn.data ) );
 
     rgbcx::init( rgbcx::bc1_approx_mode::cBC1Ideal );
     for( u32 bi = 0; bi < blockCount; ++bi )
@@ -142,10 +140,9 @@ inline bcn_compression_result CompressRGBA8ToBCn( std::span<const u8> rgba8, u32
     {
         return CompressRBGA8ToBC5( rgba8, width, height );
     }
-    else
-    {
-        HP_ASSERT( false && "Unsupported type" );
-    }
+    
+    HT_ASSERT( false && "Unsupported type" );
+    return {};
 }
 
 #endif // !__HP_BCN_COMPRESSION_H__

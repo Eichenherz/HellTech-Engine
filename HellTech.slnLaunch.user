@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "New Profile",
+    "Projects": [
+      {
+        "Path": "Engine\\Engine.vcxproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "HellPack\\HellPack.vcxproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

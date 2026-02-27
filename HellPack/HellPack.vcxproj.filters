@@ -83,28 +83,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="core_types.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="hp_error.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="hp_math.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="hp_encoding.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="hp_bvh_builder.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="hp_mesh.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="mikkt_space.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="hp_material.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="hp_bcn_compression.h">
@@ -113,28 +95,16 @@
     <ClInclude Include="hp_serialization.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="range_utils.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="gltf_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="hp_types_internal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="hp_bvh.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="hell_pack.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="$(SolutionDir)3rdParty\meshoptimizer\src\meshoptimizer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="$(SolutionDir)3rdParty\miniz\miniz.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="zip_pack.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

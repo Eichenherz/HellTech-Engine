@@ -2,10 +2,11 @@
 #define __HELL_PACK_H__
 
 #include "core_types.h"
-#include "hp_error.h"
+#include "ht_error.h"
 
-#include "hp_mesh.h"
-#include "hp_material.h"
+#include "ht_utils.h"
+
+#include "ht_gfx_types.h"
 
 #include <span>
 
@@ -27,7 +28,7 @@ constexpr char HELLPACK_MESH_DIR[] = "Mesh/";
 // TODO: how to enforce these are dds ?
 constexpr char HELLPACK_TEX_DIR[] = "Tex/";
 
-enum hellpack_entry_t : u32
+enum class hellpack_entry_t : u32
 {
 	LEVEL = 0,
 	MESH,
@@ -56,8 +57,6 @@ struct hellpack_level
 	typed_view<material_desc> materials;
 };
 
-struct float3;
-
 using index_t = u8;
 struct hellpack_mesh_asset
 {
@@ -76,25 +75,25 @@ struct hellpack_texture_asset
 template<typename HPK_T>
 HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 {
-	HP_ASSERT( std::size( blob ) >= sizeof( hellpack_file_header ) );
+	HT_ASSERT( std::size( blob ) >= sizeof( hellpack_file_header ) );
 
 	const u8* base = std::data( blob );
 	const u64 sizeInBytes = std::size( blob );
 
 	const hellpack_file_header& h = ( const hellpack_file_header& ) ( *base );
 
-	HP_ASSERT( HELLPACK_MAGIC == h.magic );
-	HP_ASSERT( HELLPACK_VERSION == h.version );
-	HP_ASSERT( h.fileSizeBytes == sizeInBytes );
-	HP_ASSERT( h.entriesCount > 0 );
+	HT_ASSERT( HELLPACK_MAGIC == h.magic );
+	HT_ASSERT( HELLPACK_VERSION == h.version );
+	HT_ASSERT( h.fileSizeBytes == sizeInBytes );
+	HT_ASSERT( h.entriesCount > 0 );
 
-	u64 entryTableOffsetInBytes = AlignUp( sizeof( h ), alignof( hellpack_data_ref ) );
+	u64 entryTableOffsetInBytes = FwdAlign( sizeof( h ), alignof( hellpack_data_ref ) );
 	std::span<const hellpack_data_ref> entryTable = { ( const hellpack_data_ref* ) ( base + entryTableOffsetInBytes ), h.entriesCount };
 
 	if constexpr( std::is_same_v<HPK_T, hellpack_level> )
 	{
-		HP_ASSERT( hellpack_entry_t::LEVEL == h.type );
-		HP_ASSERT( 2 == h.entriesCount );
+		HT_ASSERT( hellpack_entry_t::LEVEL == h.type );
+		HT_ASSERT( 2 == h.entriesCount );
 
 		return hellpack_level{
 			.nodes = { 
@@ -109,8 +108,8 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 	}
 	else if constexpr( std::is_same_v<HPK_T, hellpack_mesh_asset> )
 	{
-		HP_ASSERT( hellpack_entry_t::MESH == h.type );
-		HP_ASSERT( 4 == h.entriesCount );
+		HT_ASSERT( hellpack_entry_t::MESH == h.type );
+		HT_ASSERT( 4 == h.entriesCount );
 
 		return hellpack_mesh_asset{
 			.vertices = { 
@@ -131,16 +130,9 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 	}
 	else if constexpr( std::is_same_v<HPK_T, hellpack_texture_asset> )
 	{
-		static_assert( false, "hellpack_texture_asset is currently unsupported use dds directly" );
-		HP_ASSERT( hellpack_entry_t::TEXTURE == h.type );
-		HP_ASSERT( 1 == h.entriesCount );
-
-		return hellpack_texture_asset{
-			.ddsData = { base + entryTable[ 0 ].offsetInBytes, ( u32 ) entryTable[ 0 ].sizeInBytes }
-		};
+		static_assert( false, "hellpack_texture_asset is used directly as a .dds" );
 	}
 	else static_assert( false, "Unsupported HPK_T" );
-	
 }
 
 #endif // !__HELL_PACK_H__

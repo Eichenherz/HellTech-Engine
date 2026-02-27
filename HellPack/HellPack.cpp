@@ -16,16 +16,14 @@ namespace fs = std::filesystem;
 #include <dds.h>
 
 #include "core_types.h"
-#include "hp_error.h"
+#include "ht_error.h"
 
 #include "zip_pack.h"
 
-// NOTE/TODO: float types are fwd def in mesh to be shared ! must use an internal folder or smth for math
-#include "hp_math.h"
-#include "hp_mesh.h"
-#include "hp_material.h"
 
+#include "ht_gfx_types.h"
 #include "hell_pack.h"
+#include "ht_math.h"
 
 #include "hp_encoding.h"
 #include "hp_bcn_compression.h"
@@ -38,11 +36,11 @@ namespace fs = std::filesystem;
 
 raw_mesh ValidateAndNormalizeRawMesh( const raw_mesh& inRawMesh )
 {
-	HP_ASSERT( std::size( inRawMesh.indices ) != 0 );
-	HP_ASSERT( ( std::size( inRawMesh.indices ) % 3 ) == 0 );
+	HT_ASSERT( std::size( inRawMesh.indices ) != 0 );
+	HT_ASSERT( ( std::size( inRawMesh.indices ) % 3 ) == 0 );
 	auto it = std::ranges::max_element( inRawMesh.indices );
-	HP_ASSERT( *it <= u16( -1 ) );
-	HP_ASSERT( inRawMesh.materialIdx <= i32( u16( -1 ) ) );
+	HT_ASSERT( *it <= u16( -1 ) );
+	HT_ASSERT( inRawMesh.materialIdx <= i32( u16( -1 ) ) );
 
 	raw_mesh outRawMesh = {
 		.name = std::move( inRawMesh.name ),
@@ -77,15 +75,6 @@ struct rt_cluster_config
 	u16		maxTriangles = 64;
 };
 
-template<typename T>
-concept IsMeshletCfg = std::same_as<T, meshlet_config>;
-
-template<typename T>
-concept IsRtClusterCfg = std::same_as<T, rt_cluster_config>;
-
-template<typename T>
-concept IsClusterConfig = IsMeshletCfg<T> || IsRtClusterCfg<T>;
-
 // TODO: no inplace remap !
 void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 {
@@ -104,7 +93,7 @@ void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 	u64 newVtxCount = meshopt_generateVertexRemapMulti(
 		std::data( remap ), std::data( indices ), idxCount, vtxCount, attrStreams, std::size( attrStreams ) );
 
-	HP_ASSERT( newVtxCount <= vtxCount );
+	HT_ASSERT( newVtxCount <= vtxCount );
 	if( newVtxCount != vtxCount )
 	{
 		meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( remap ) );
@@ -141,39 +130,21 @@ struct __meshopt_meshlets
 	std::vector<u8> triangles;
 };
 
-template<IsClusterConfig Cfg>
 __meshopt_meshlets MeshoptMakeClusters( 
 	std::span<const float3> pos, 
 	std::span<const u32> indices, 
-	Cfg cfg 
+	meshlet_config cfg 
 ) { 
 	const u64 indexCount = std::size( indices );
-
-	u64 triangleBound = cfg.maxTriangles;
-	if constexpr( IsRtClusterCfg<Cfg> )
-	{
-		// NOTE( meshoptimizer ): use minTriangles to compute worst case bound
-		triangleBound = cfg.minTriangles;
-	}
 	
-	const u64 maxMeshletCount = meshopt_buildMeshletsBound( indexCount, cfg.maxVertices, triangleBound );
+	const u64 maxMeshletCount = meshopt_buildMeshletsBound( indexCount, cfg.maxVertices, cfg.maxTriangles );
 	std::vector<meshopt_Meshlet> meshlets( maxMeshletCount );
 	std::vector<u32> mletVtx( indexCount );
 	std::vector<u8> mletTris( indexCount );
 
-	u64 meshletCount;
-	if constexpr( IsMeshletCfg<Cfg> )
-	{
-		meshletCount = meshopt_buildMeshlets(
-			&meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ], std::size( indices ),
-			&pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.maxTriangles, cfg.coneWeight );
-	}
-	else if constexpr( IsRtClusterCfg<Cfg> )
-	{
-		meshletCount = meshopt_buildMeshletsSpatial(
-			&meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ], std::size( indices ), &pos[ 0 ].x, 
-			std::size( pos ), sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles, cfg.fillWeight );
-	}
+	u64 meshletCount = meshopt_buildMeshlets(
+		&meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ], std::size( indices ),
+		&pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.maxTriangles, cfg.coneWeight );
 
 	const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
 
@@ -185,6 +156,42 @@ __meshopt_meshlets MeshoptMakeClusters(
 	{
 		meshopt_optimizeMeshlet( &mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ],
 								 m.triangle_count, m.vertex_count );
+	}
+
+	return { 
+		.info = std::move( meshlets ), 
+		.vertices = std::move( mletVtx ), 
+		.triangles = std::move( mletTris ) 
+	};
+}
+
+__meshopt_meshlets MeshoptMakeClusters( 
+	std::span<const float3> pos, 
+	std::span<const u32> indices, 
+	rt_cluster_config cfg 
+) { 
+	const u64 indexCount = std::size( indices );
+
+	// NOTE( meshoptimizer ): use minTriangles to compute worst case bound
+	const u64 maxMeshletCount = meshopt_buildMeshletsBound( indexCount, cfg.maxVertices, cfg.minTriangles );
+	std::vector<meshopt_Meshlet> meshlets( maxMeshletCount );
+	std::vector<u32> mletVtx( indexCount );
+	std::vector<u8> mletTris( indexCount );
+
+	u64 meshletCount = meshopt_buildMeshletsSpatial(
+		&meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ], std::size( indices ), &pos[ 0 ].x, 
+		std::size( pos ), sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles, cfg.fillWeight );
+
+	const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
+
+	meshlets.resize( meshletCount );
+	mletVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
+	mletTris.resize( ( u64 ) last.triangle_offset + ( ( ( u64 ) last.triangle_count * 3 + 3 ) & ~3 ) );
+
+	for( const meshopt_Meshlet& m : meshlets )
+	{
+		meshopt_optimizeMeshlet( &mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ],
+			m.triangle_count, m.vertex_count );
 	}
 
 	return { 
@@ -257,7 +264,7 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 
 		const aabb_t<float3> aabb = ComputeAabb( mletPosStream );
 
-		HP_ASSERT( ( m.vertex_count < u32( u8( -1 ) ) ) && ( m.triangle_count < u32( u8( -1 ) ) ) );
+		HT_ASSERT( ( m.vertex_count < u32( u8( -1 ) ) ) && ( m.triangle_count < u32( u8( -1 ) ) ) );
 
 		meshlet outMeshlet = {
 			.aabbMin = aabb.min,
@@ -360,7 +367,7 @@ std::vector<vertex_attrs> PackVertexAttributes(
 ) {
 	u64 vtxCount = std::size( normals );
 
-	HP_ASSERT( ( vtxCount == std::size( tans ) ) && ( vtxCount == std::size( uvs ) ) );
+	HT_ASSERT( ( vtxCount == std::size( tans ) ) && ( vtxCount == std::size( uvs ) ) );
 
 	std::vector<vertex_attrs> packedAttrs;
 	packedAttrs.resize( vtxCount );
@@ -405,7 +412,7 @@ constexpr bc_format_t DxgiToBcFormat( dds::DXGI_FORMAT dxgiFmt )
 		return bc_format_t::BC7_RGBA;
 
 	default:
-		HP_ASSERT( 0 && "Unimplement fmt" );
+		HT_ASSERT( 0 && "Unimplement fmt" );
 		return ( bc_format_t ) 0xFF;
 	}
 }
@@ -433,12 +440,8 @@ struct compression_job
 
 inline vfs_path MakeVfsPath( const std::string& str )
 {
-	vfs_path texPath = {};
-	HP_ASSERT( std::size( str ) + 1 /*for \0*/ <= std::size( texPath ) );
-
-	std::ranges::copy( str, std::begin( texPath ) );
-
-	return texPath;
+	HT_ASSERT( std::size( str ) < sizeof( vfs_path::chars ) );
+	return { str };
 }
 
 struct materials_jobs
@@ -449,7 +452,7 @@ struct materials_jobs
 
 materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> rawMaterials, std::span<const raw_image_view> imageViews )
 {
-	HP_ASSERT( std::size( imageViews ) < u16( INVALID_IDX ) );
+	HT_ASSERT( std::size( imageViews ) < u16( INVALID_IDX ) );
 
 	// NOTE: we use indices and vfs_path here bc we're deduping wrt to tinygltf's stuff which is index based
 	ankerl::unordered_dense::set<u16> jobsSet;
@@ -464,7 +467,7 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 		if( std::cend( jobsSet ) == jobsSet.find( idx ) )
 		{
 			const raw_image_view& imgView = imageViews[ idx ];
-			HP_ASSERT( std::size( imgView.data ) );
+			HT_ASSERT( std::size( imgView.data ) );
 
 			jobsSet.emplace( idx );
 
@@ -487,7 +490,7 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 	{
 		//ProcessImageView( material.occlusionIdx, bc_format_t::BC7_RGBA );
 		// NOTE: currently not suporting ambient occlusion which must be packed into MR
-		HP_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
+		HT_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
 
 		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, 
 			MakeVfsPath( mtrl.name + "_albedo.dds" ) );
@@ -503,12 +506,16 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 			.metallicRoughnessHash = metallicRoughnessHash,
 			.normalHash = normalHash,
 			.emissiveHash = emissiveHash,
+
 			.baseColFactor = mtrl.baseColFactor,
+			.emissiveFactor = mtrl.emissiveFactor,
 			.metallicFactor = mtrl.metallicFactor,
 			.roughnessFactor = mtrl.metallicFactor,
+
 			.alphaCutoff = mtrl.alphaCutoff,
-			.emissiveFactor = mtrl.emissiveFactor,
+
 			.samplerIdx = mtrl.samplerIdx,
+
 			.alphaMode = mtrl.alphaMode
 		} );
 	}
@@ -524,31 +531,31 @@ inline void WaitThreadPoolDone( std::vector<std::thread>& threadPool )
 inline void WriteFileBinary( const char* path, std::span<const u8> bytes )
 {
 	FILE* f = nullptr;
-	HP_ASSERT( ::fopen_s( &f, path, "wb" ) == 0 );
+	HT_ASSERT( ::fopen_s( &f, path, "wb" ) == 0 );
 
 	u64 written = ::fwrite( std::data( bytes ), 1, std::size( bytes ), f );
-	HP_ASSERT( std::size( bytes ) == written );
+	HT_ASSERT( std::size( bytes ) == written );
 
 	i32 rc = ::fclose( f );
-	HP_ASSERT( rc == 0 );
+	HT_ASSERT( rc == 0 );
 }
 
 inline std::vector<u8> ReadFileBinary( const char* path )
 {
 	FILE* f = nullptr;
-	HP_ASSERT( ::fopen_s( &f, path, "rb" ) == 0 );
-	HP_ASSERT( f );
+	HT_ASSERT( ::fopen_s( &f, path, "rb" ) == 0 );
+	HT_ASSERT( f );
 
-	HP_ASSERT( ::fseek( f, 0, SEEK_END ) == 0 );
+	HT_ASSERT( ::fseek( f, 0, SEEK_END ) == 0 );
 	i32 sz = ::ftell( f );
-	HP_ASSERT( sz >= 0 );
-	HP_ASSERT( ::fseek( f, 0, SEEK_SET ) == 0 );
+	HT_ASSERT( sz >= 0 );
+	HT_ASSERT( ::fseek( f, 0, SEEK_SET ) == 0 );
 
 	std::vector<u8> out( sz );
 	u64 read = ::fread( std::data( out ), 1, std::size( out ), f );
-	HP_ASSERT( std::size( out ) == read );
+	HT_ASSERT( std::size( out ) == read );
 
-	HP_ASSERT( ::fclose( f ) == 0 );
+	HT_ASSERT( ::fclose( f ) == 0 );
 	return out;
 }
 
@@ -558,7 +565,7 @@ int main()
 {
 	const std::string gltfFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.glb";
 
-	HP_ASSERT( fs::exists( gltfFilePath ) );
+	HT_ASSERT( fs::exists( gltfFilePath ) );
 
 	gltf_loader gltf = { gltfFilePath };
 
@@ -596,11 +603,7 @@ int main()
 
 		const raw_mesh& mesh = rawMeshes[ n.meshIdx ];
 
-		vfs_path assetPath = {};
-		HP_ASSERT( ( std::size( mesh.name ) + std::size( HELLPACK_MESH_DIR ) ) < std::size( assetPath ) );
-
-		std::format_to_n( std::begin( assetPath ), std::size( assetPath ) - 1, 
-			"{}{}.mesh", HELLPACK_MESH_DIR, std::data( mesh.name ) );
+		vfs_path assetPath = { "{}{}.mesh", HELLPACK_MESH_DIR, std::data( mesh.name ) };
 
 		// NOTE: it moves stuff
 		raw_mesh validatedRawMesh = ValidateAndNormalizeRawMesh( mesh );
@@ -616,40 +619,34 @@ int main()
 	}
 
 	const std::string hpkFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	zip_writer zipArchive = { hpkFilePath.c_str() };
-
-	HP_ASSERT( fs::exists( hpkFilePath ) );
-
 	{
-		hellpack_serializble_buffer buffs[] = { instances, materialTable };
-		std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::LEVEL );
-		zipArchive.WriteBytesToFile( { "world.lvl" }, bytes );
-	}
-	{
-		for( auto& [ filePath, meshAsset ] : meshAssetMap )
+		zip_writer zipArchive = { hpkFilePath.c_str() };
+
+		HT_ASSERT( fs::exists( hpkFilePath ) );
+
 		{
-			hellpack_serializble_buffer buffs[] = { 
-				meshAsset.vertices, meshAsset.triangles, meshAsset.meshlets, meshAsset.aabb };
-			std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::MESH );
-			zipArchive.WriteBytesToFile( filePath, bytes );
+			hellpack_serializble_buffer buffs[] = { instances, materialTable };
+			std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::LEVEL );
+			zipArchive.WriteBytesToFile( { "world.lvl" }, bytes );
+		}
+		{
+			for( auto& [ filePath, meshAsset ] : meshAssetMap )
+			{
+				hellpack_serializble_buffer buffs[] = { 
+					meshAsset.vertices, meshAsset.triangles, meshAsset.meshlets, meshAsset.aabb };
+				std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::MESH );
+				zipArchive.WriteBytesToFile( filePath, bytes );
+			}
+		}
+		WaitThreadPoolDone( tasks );
+
+		for( const compression_job& cmp : texCmpJobs )
+		{
+			HT_ASSERT( std::size( cmp.tex ) );
+			vfs_path texPath = { "{}{}", HELLPACK_TEX_DIR, std::data( cmp.filename ) };
+			zipArchive.WriteBytesToFile( texPath, cmp.tex );
 		}
 	}
-	WaitThreadPoolDone( tasks );
-
-	for( const compression_job& cmp : texCmpJobs )
-	{
-		HP_ASSERT( std::size( cmp.tex ) );
-
-		vfs_path texPath = {};
-		HP_ASSERT( ( std::strlen( std::data( cmp.filename ) ) + std::size( HELLPACK_TEX_DIR ) ) < std::size( texPath ) );
-		
-		std::format_to_n( std::begin( texPath ), std::size( texPath ) - 1, 
-			"{}{}", HELLPACK_TEX_DIR, std::data( cmp.filename ) );
-
-		zipArchive.WriteBytesToFile( texPath, cmp.tex );
-	}
-
-	zipArchive.~zip_writer();
 
 	if constexpr( CHECK_CORRECTNESS )
 	{
@@ -660,16 +657,16 @@ int main()
 		const auto& [ key, val ] = *std::cbegin( meshAssetMap );
 
 		std::vector<u8> mesh0Bin( vfsZipMem.GetFileSizeInBytes( key ), 0 );
-		HP_ASSERT( vfsZipMem.ReadFileToBufferNoAlloc( key, std::data( mesh0Bin ), std::size( mesh0Bin ) ) );
+		HT_ASSERT( vfsZipMem.ReadFileToBufferNoAlloc( key, std::data( mesh0Bin ), std::size( mesh0Bin ) ) );
 
 		const hellpack_mesh_asset hpkMeshAsset = HpkReadBinaryBlob<hellpack_mesh_asset>( mesh0Bin );
 
-		HP_ASSERT( ByteEqual( MakeByteView( hpkMeshAsset.vertices ), MakeByteView( val.vertices ) ) );
-		HP_ASSERT( ByteEqual( MakeByteView( hpkMeshAsset.triangles ), MakeByteView( val.triangles ) ) );
-		HP_ASSERT( ByteEqual( MakeByteView( hpkMeshAsset.meshlets ), MakeByteView( val.meshlets ) ) );
+		HT_ASSERT( ByteEqual( MakeByteView( hpkMeshAsset.vertices ), MakeByteView( val.vertices ) ) );
+		HT_ASSERT( ByteEqual( MakeByteView( hpkMeshAsset.triangles ), MakeByteView( val.triangles ) ) );
+		HT_ASSERT( ByteEqual( MakeByteView( hpkMeshAsset.meshlets ), MakeByteView( val.meshlets ) ) );
 
-		HP_ASSERT( hpkMeshAsset.aabbMin == val.aabb[ 0 ] );
-		HP_ASSERT( hpkMeshAsset.aabbMax == val.aabb[ 1 ] );
+		HT_ASSERT( hpkMeshAsset.aabbMin == val.aabb[ 0 ] );
+		HT_ASSERT( hpkMeshAsset.aabbMax == val.aabb[ 1 ] );
 	}
 
 	return 0;

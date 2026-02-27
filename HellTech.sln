@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Engine", "Engine\Engine.vcx
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HellPack", "HellPack\HellPack.vcxproj", "{DE2B4E66-787C-485C-99B3-434624C5E8E1}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Lib", "Lib\Lib.vcxitems", "{59D4FF8C-92BA-4507-B01F-1729110648DA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -32,5 +34,10 @@ Global
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {B6654640-D35D-4FCB-BE0E-2FE88C2F6544}
+	EndGlobalSection
+	GlobalSection(SharedMSBuildProjectFiles) = preSolution
+		Lib\Lib.vcxitems*{2992f6aa-0134-42cd-82ed-774882cf6f3c}*SharedItemsImports = 4
+		Lib\Lib.vcxitems*{59d4ff8c-92ba-4507-b01f-1729110648da}*SharedItemsImports = 9
+		Lib\Lib.vcxitems*{de2b4e66-787c-485c-99b3-434624c5e8e1}*SharedItemsImports = 4
 	EndGlobalSection
 EndGlobal

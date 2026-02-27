@@ -3,10 +3,20 @@
 #ifndef __HT_ERROR_H__
 #define __HT_ERROR_H__
 
-#include "sys_os_api.h"
+#include "core_types.h"
+
 #include <format>
 #include <cstdlib>
 
+#if defined(_WIN32) && !defined(_CONSOLE)
+void SysErrMsgBox( const char* str );
+#else
+#include <iostream>
+__forceinline void SysErrMsgBox( const char* str )
+{
+	std::cout << str << "\n";
+}
+#endif
 //////////////////////////////////////
 // MACROS
 //////////////////////////////////////
@@ -18,10 +28,10 @@
 
 constexpr u64 HT_LOG_BUFFER_SIZE = 2048;
 
-template<typename... Args>
+template<u64 BUFFER_SIZE = HT_LOG_BUFFER_SIZE, typename... Args>
 __forceinline void HtPrintErrAndDie( std::format_string<Args...> fmt, Args&&... args )
 {
-	char dbgStr[ HT_LOG_BUFFER_SIZE ] = {};
+	char dbgStr[ BUFFER_SIZE ] = {};
 	std::format_to_n( dbgStr, std::size( dbgStr ) - 1, fmt, std::forward<Args>( args )... );
 	SysErrMsgBox( dbgStr );
 	std::abort();

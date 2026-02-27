@@ -130,7 +130,7 @@ struct material_data
 };
 
 // TODO: should store lod
-struct meshlet
+struct meshlet_w_cone
 {
 	vec3	center;
 	vec3	extent;
@@ -247,9 +247,6 @@ const uint VK_GLOBAL_SLOT_UNIFORM_BUFFER = 1;
 const uint VK_GLOBAL_SLOT_SAMPLED_IMAGE = 2;
 const uint VK_GLOBAL_SLOT_SAMPLER = 3;
 const uint VK_GLOBAL_SLOT_STORAGE_IMAGE = 4;
-
-const uint VK_FRAME_DESC_SET = 0;
-const uint VK_GLOBAL_DESC_SET = 1;
 
 #ifndef __cplusplus
 

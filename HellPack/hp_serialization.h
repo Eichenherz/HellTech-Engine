@@ -2,9 +2,9 @@
 #define __HP_SERIALIZATION_H__
 
 #include "core_types.h"
-#include "hp_error.h"
+#include "ht_error.h"
 #include "range_utils.h"
-
+#include "ht_utils.h"
 #include "hell_pack.h"
 
 #include <span>
@@ -27,7 +27,7 @@ using hellpack_blob = std::vector<u8>;
 
 inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializble_buffer> buffs, hellpack_entry_t type )
 {
-	const u32 entriesCount = std::size( buffs );
+	const u32 entriesCount = ( u32 ) std::size( buffs );
 
 	hellpack_file_header h = {
 		.magic = HELLPACK_MAGIC,
@@ -40,7 +40,7 @@ inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializble_buf
 	entryTable.reserve( entriesCount );
 	
 	u64 entryTableSizeInBytes = entriesCount * sizeof( hellpack_data_ref );
-	u64 entryTableOffsetInBytes = AlignUp( sizeof( h ), alignof( hellpack_data_ref ) );
+	u64 entryTableOffsetInBytes = FwdAlign( sizeof( h ), alignof( hellpack_data_ref ) );
 
 	u64 cursor = entryTableOffsetInBytes + entryTableSizeInBytes;
 
@@ -48,9 +48,9 @@ inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializble_buf
 	{
 		u64 thisBuffSizeInBytes = std::size( hpkBuff.data );
 
-		HP_ASSERT( ( thisBuffSizeInBytes < u64( u32( -1 ) ) ) && ( cursor < u64( u32( -1 ) ) ) );
+		HT_ASSERT( ( thisBuffSizeInBytes < u64( u32( -1 ) ) ) && ( cursor < u64( u32( -1 ) ) ) );
 
-		cursor = AlignUp( cursor, hpkBuff.allignmentInBytes );
+		cursor = FwdAlign( cursor, hpkBuff.allignmentInBytes );
 		entryTable.push_back( { .offsetInBytes = cursor, .sizeInBytes = thisBuffSizeInBytes } );
 
 		cursor += thisBuffSizeInBytes;
@@ -68,9 +68,9 @@ inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializble_buf
 	{
 		const auto[ offset, size ] = entryTable[ ei ];
 		// NOTE: even if we can handle size == 0, there might be an external issue that results in a 0 sized buffer
-		HP_ASSERT( 0 != size );
+		HT_ASSERT( 0 != size );
 
-		HP_ASSERT( offset + size <= std::size( blob ) );
+		HT_ASSERT( offset + size <= std::size( blob ) );
 		std::memcpy( std::data( blob ) + offset, std::data( buffs[ ei ].data ), size );
 	}
 

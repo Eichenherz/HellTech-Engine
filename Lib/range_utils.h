@@ -1,8 +1,10 @@
 #ifndef __RANGE_UTILS_H__
 #define __RANGE_UTILS_H__
 
+#include "core_types.h"
+#include "ht_error.h"
+
 #include <ranges>
-#include <algorithm>
 #include <vector>
 
 template<typename T>
@@ -12,13 +14,13 @@ struct typed_view
 	u32 count = 0;
 
 	constexpr const T* data()  const { return ptr; }
-	constexpr u32      size()  const { return count; }
+	constexpr u64      size()  const { return count; }
 	constexpr const T* begin() const { return ptr; }
 	constexpr const T* end()   const { return ptr + count; }
-	constexpr std::span<const T> span() const { return { ptr, ( u64 ) count }; }
-	constexpr const T& operator[](u32 i) const noexcept
+	
+	constexpr const T& operator[]( u32 i ) const
 	{
-		assert( i < count );
+		HT_ASSERT( i < count );
 		return ptr[ i ];
 	}
 };
@@ -57,14 +59,14 @@ inline auto PermutedView( std::vector<T>& src, const std::vector<Idx>& remap )
 template<typename T, typename Idx>
 inline auto PermutedView( const std::vector<T>& src, const std::vector<Idx>& remap )
 {
-	return remap | std::views::transform( [&]( Idx oldIdx ) -> const T& { return src[ oldIdx ]; } );
+	return remap | std::views::transform( [ & ] ( Idx oldIdx ) -> const T& { return src[ oldIdx ]; } );
 }
 
 inline auto PermutedView( 
 	const std::ranges::random_access_range auto& src,
 	const std::ranges::random_access_range auto& remap 
 ) {
-	return remap | std::views::transform( [&] ( auto oldIdx ) { return src[ ( u32 ) oldIdx ]; } );
+	return remap | std::views::transform( [ & ] ( auto oldIdx ) { return src[ ( u32 ) oldIdx ]; } );
 }
 
 template<typename TriIdx, typename PrimIdx>
@@ -91,17 +93,17 @@ inline auto PermuteTrianglesByPrimitiveRemap( const std::vector<TriIdx>& oldIdx,
 template<typename Idx>
 inline auto BuildVertexRemapFromPermutedIndices( const std::vector<Idx>& permutedIndices, u64 vtxCount )
 {
-	constexpr auto INVALID_IDX = u32( -1 );
+	constexpr Idx invalidIdx = Idx{ INVALID_IDX };
 
-	HP_ASSERT( Idx( -1 ) >= vtxCount );
+	HP_ASSERT( invalidIdx >= vtxCount );
 
-	std::vector<Idx> remap( vtxCount, INVALID_IDX );
+	std::vector<Idx> remap( vtxCount, invalidIdx );
 	u32 next = 0;
 
 	for( Idx idx : permutedIndices )
 	{
 		Idx oldV = idx;
-		if( INVALID_IDX == remap[ oldV ] )
+		if( invalidIdx == remap[ oldV ] )
 		{
 			remap[ oldV ] = next++;
 		}

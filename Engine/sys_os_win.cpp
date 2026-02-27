@@ -89,7 +89,7 @@ u64 SysGetFileTimestamp( const char* filename )
 	return u64( timestamp.QuadPart );
 }
 // TODO: might not want to crash when file can't be written/read
-bool SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes )
+bool SysWriteToFile( const char* filename, const u8* data, u32 sizeInBytes )
 {
 	DWORD accessMode = GENERIC_WRITE;
 	DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;

@@ -14,10 +14,10 @@
 #include <ankerl/unordered_dense.h>
 
 #include "core_types.h"
-#include "hp_error.h"
-#include "hp_math.h"
-#include "hp_mesh.h"
-#include "hp_material.h"
+#include "ht_error.h"
+#include "ht_math.h"
+
+
 #include "hp_types_internal.h"
 
 constexpr u64 DEFAULT_SAMPLER_IDX = 0;
@@ -26,21 +26,13 @@ inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs a, packed_trs b )
 {
 	using namespace DirectX;
 
-	XMFLOAT3 aT = ToDX( a.t );
-	XMFLOAT4 aR = ToDX( a.r );
-	XMFLOAT3 aS = ToDX( a.s );
+	XMVECTOR xmA_T = XMLoadFloat3( &a.t );
+	XMVECTOR xmA_R = XMLoadFloat4( &a.r );
+	XMVECTOR xmA_S = XMLoadFloat3( &a.s );
 
-	XMFLOAT3 bT = ToDX( b.t );
-	XMFLOAT4 bR = ToDX( b.r );
-	XMFLOAT3 bS = ToDX( b.s );
-
-	XMVECTOR xmA_T = XMLoadFloat3( &aT );
-	XMVECTOR xmA_R = XMLoadFloat4( &aR );
-	XMVECTOR xmA_S = XMLoadFloat3( &aS );
-
-	XMVECTOR xmB_T = XMLoadFloat3( &bT );
-	XMVECTOR xmB_R = XMLoadFloat4( &bR );
-	XMVECTOR xmB_S = XMLoadFloat3( &bS );
+	XMVECTOR xmB_T = XMLoadFloat3( &b.t );
+	XMVECTOR xmB_R = XMLoadFloat4( &b.r );
+	XMVECTOR xmB_S = XMLoadFloat3( &b.s );
 
 	float3 outT = DX_XMStoreFloat3( XMVectorAdd( xmA_T, xmB_T ) );
 	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( xmA_R, xmB_R ) ); // World = Parent * Local
@@ -107,8 +99,8 @@ struct gltf_typed_attr_stream : gltf_raw_attr_stream
 	{
 		if( 0 == elemCount ) return { nullptr, strideBytes };
 
-		HP_ASSERT( sizeof( T ) == ( componentCount * componentByteSize ) );
-		HP_ASSERT( strideBytes >= sizeof( T ) );
+		HT_ASSERT( sizeof( T ) == ( componentCount * componentByteSize ) );
+		HT_ASSERT( strideBytes >= sizeof( T ) );
 		return { data, strideBytes };
 	}
 
@@ -116,8 +108,8 @@ struct gltf_typed_attr_stream : gltf_raw_attr_stream
 	{
 		if( 0 == elemCount ) return { nullptr, strideBytes };
 
-		HP_ASSERT( sizeof( T ) == ( componentCount * componentByteSize ) );
-		HP_ASSERT( strideBytes >= sizeof( T ) );
+		HT_ASSERT( sizeof( T ) == ( componentCount * componentByteSize ) );
+		HT_ASSERT( strideBytes >= sizeof( T ) );
 		return { data + elemCount * strideBytes, strideBytes };
 	}
 };
@@ -286,13 +278,13 @@ struct gltf_loader
 			}
 		}
 
-		HP_ASSERT( 1 == std::size( model.scenes ) );
+		HT_ASSERT( 1 == std::size( model.scenes ) );
 		std::cout << "Successfully loaded the file.\n";
 	}
 
 	std::vector<u32> GetIndexBufferFromStream( const tinygltf::Accessor& idxAccessor ) const
 	{
-		HP_ASSERT( TINYGLTF_TYPE_SCALAR == idxAccessor.type );
+		HT_ASSERT( TINYGLTF_TYPE_SCALAR == idxAccessor.type );
 
 		gltf_raw_attr_stream rawIdxStream = GetRawAttributeStream( idxAccessor );
 
@@ -408,19 +400,19 @@ struct gltf_loader
 				if( const tinygltf::Accessor* pAccessor = GetAccessorByName( "NORMAL", primMesh ); pAccessor )
 				{
 					const gltf_typed_attr_stream<float3> stream = { GetRawAttributeStream( *pAccessor ) };
-					HP_ASSERT( attrStreamCount == std::size( stream ) );
+					HT_ASSERT( std::size( stream ) == attrStreamCount );
 					mesh.normals = { std::cbegin( stream ), std::cend( stream ) };
 				}
 				if( const tinygltf::Accessor* pAccessor = GetAccessorByName( "TANGENT", primMesh ); pAccessor )
 				{
 					const gltf_typed_attr_stream<float4> stream = { GetRawAttributeStream( *pAccessor ) };
-					HP_ASSERT( attrStreamCount == std::size( stream ) );
+					HT_ASSERT( std::size( stream ) == attrStreamCount );
 					mesh.tans = { std::cbegin( stream ), std::cend( stream ) };
 				}
 				if( const tinygltf::Accessor* pAccessor = GetAccessorByName( "TEXCOORD_0", primMesh ); pAccessor )
 				{
 					const gltf_typed_attr_stream<float2> stream = { GetRawAttributeStream( *pAccessor ) };
-					HP_ASSERT( attrStreamCount == std::size( stream ) );
+					HT_ASSERT( std::size( stream ) == attrStreamCount );
 					mesh.uvs = { std::cbegin( stream ), std::cend( stream ) };
 				}
 				meshesOut.emplace_back( mesh );
@@ -509,7 +501,7 @@ struct gltf_loader
 			// if there's none, we'll use the default one
 
 			// NOTE: will have -1/DEFAULT and possibly other samplers, so at most size 2
-			HP_ASSERT( std::size( samplers ) <= 2 );
+			HT_ASSERT( std::size( samplers ) <= 2 );
 			auto it = std::ranges::find_if( samplers, []( i32 x ){ return x != -1; } );
 			metadata.samplerIdx = ( it != std::cend( samplers ) ) ? *it : ( u16 ) DEFAULT_SAMPLER_IDX;
 
@@ -525,7 +517,7 @@ struct gltf_loader
 		imgOut.reserve( std::size( model.images ) );
 		for( const tinygltf::Image& img : model.images )
 		{
-			HP_ASSERT( std::size( img.image ) );
+			HT_ASSERT( std::size( img.image ) );
 			imgOut.push_back( {
 				.data = { std::cbegin( img.image ), std::cend( img.image ) },
 				.metadata = GetGltfTextureMetadata( img )
@@ -541,7 +533,7 @@ struct gltf_loader
 		if( INVALID_IDX == texInfo.index ) return {};
 
 		// NOTE: bc we use TEXCOORD_0
-		HP_ASSERT( 0 == texInfo.texCoord );
+		HT_ASSERT( 0 == texInfo.texCoord );
 		const tinygltf::Texture& tex = model.textures[ texInfo.index ];
 		return { .imageIdx = tex.source, .samplerIdx = tex.sampler };
 	}
@@ -559,10 +551,10 @@ struct gltf_loader
 	gltf_raw_attr_stream GetRawAttributeStream( const tinygltf::Accessor& accessor ) const
 	{
 		const i32 viewIdx = accessor.bufferView;
-		HP_ASSERT( -1 != viewIdx );
+		HT_ASSERT( INVALID_IDX != viewIdx );
 		const tinygltf::BufferView& view = model.bufferViews[ viewIdx ];
 
-		HP_ASSERT( -1 != view.buffer );
+		HT_ASSERT( INVALID_IDX != view.buffer );
 		const tinygltf::Buffer& buff = model.buffers[ view.buffer ];
 
 		const u64 numComponents = tinygltf::GetNumComponentsInType( accessor.type );
@@ -573,21 +565,13 @@ struct gltf_loader
 		const u64 strideInBytes = ( view.byteStride == 0 ) ? elemSize : ( u64 ) view.byteStride;
 
 		// NOTE: If a stride is provided, it must be >= element size
-		HP_ASSERT( strideInBytes >= elemSize );
+		HT_ASSERT( strideInBytes >= elemSize );
 
 		const u64 baseOffset = ( u64 ) view.byteOffset + ( u64 ) accessor.byteOffset;
-		HP_ASSERT( baseOffset < ( u64 ) std::size( buff.data ) );
+		HT_ASSERT( baseOffset < ( u64 ) std::size( buff.data ) );
 
-		const u8* streamView = ( const u8* ) ( std::data( buff.data ) + baseOffset );
-
-		//// NOTE: avoid overflow, last element starts at (count-1)*stride, needs elemSize bytes
-		//if( accessor.count > 0 )
-		//{
-		//	const u64 last = baseOffset + ( u64 ) ( accessor.count - 1 ) * stride + elemSize;
-		//	HP_ASSERT( last <= ( u64 ) std::size( buff.data ) );
-		//}
-
-		return { streamView, accessor.count, numComponents, componentSizeInBytes, strideInBytes };
+		return { ( const u8* ) ( std::data( buff.data ) + baseOffset ), accessor.count, 
+			numComponents, componentSizeInBytes, strideInBytes };
 	}
 };
 

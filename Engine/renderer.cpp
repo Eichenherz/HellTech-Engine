@@ -24,22 +24,6 @@
 
 #include "vk_context.h"
 
-#include <HellPack/hell_pack.h>
-
-// NOTE: clang-cl on VS issue
-#ifdef __clang__
-
-#undef __clang__
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-#define __clang__
-
-#elif _MSC_VER >= 1916
-
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-
-#endif
 
 #include <DirectXPackedVector.h>
 
@@ -1080,8 +1064,9 @@ struct gpu_mesh_payload
 	std::shared_ptr<vk_buffer> pTriangleBuffer;
 };
 
-#include <HellPack/hp_mesh.h>
-#include <HellPack/hell_pack.h>
+#include "ht_gfx_types.h"
+#include "hell_pack.h"
+#include "ht_math.h"
 
 struct gpu_instance
 {

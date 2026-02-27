@@ -48,6 +48,7 @@
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
+    <Import Project="..\Lib\Lib.vcxitems" Label="Shared" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
@@ -58,14 +59,6 @@
     <Import Project="..\CommonBuildSheet.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>D:\EichenRepos\HellPack\3rdParty\miniz;D:\EichenRepos\HellPack\3rdParty\dds;D:\EichenRepos\HellPack\3rdParty\bc7enc_rdo;D:\EichenRepos\HellPack\3rdParty\unordered_dense\include;D:\EichenRepos\HellPack\3rdParty\madmannbvh\src;D:\EichenRepos\HellPack\3rdParty\MikkTSpace;D:\EichenRepos\HellPack\3rdParty\meshoptimizer\src;D:\EichenRepos\HellPack\3rdParty\tinygltf;$(IncludePath)</IncludePath>
-    <SourcePath>$(SourcePath)</SourcePath>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>D:\EichenRepos\HellPack\3rdParty\bc7enc_rdo;D:\EichenRepos\HellPack\3rdParty\unordered_dense\include;D:\EichenRepos\HellPack\3rdParty\madmannbvh\src;D:\EichenRepos\HellPack\3rdParty\MikkTSpace;D:\EichenRepos\HellPack\3rdParty\meshoptimizer\src;D:\EichenRepos\HellPack\3rdParty;$(IncludePath)</IncludePath>
-    <SourcePath>$(SourcePath)</SourcePath>
-  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -123,48 +116,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="$(SolutionDir)3rdParty\bc7enc_rdo\bc7enc.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\bc7enc_rdo\rgbcx.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\allocator.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\clusterizer.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\indexanalyzer.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\indexcodec.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\indexgenerator.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\meshletcodec.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\overdrawoptimizer.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\partition.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\quantization.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\rasterizer.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\simplifier.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\spatialorder.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\stripifier.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\vcacheoptimizer.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\vertexcodec.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\vertexfilter.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\meshoptimizer\src\vfetchoptimizer.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\MikkTSpace\mikktspace.c" />
-    <ClCompile Include="$(SolutionDir)3rdParty\miniz\miniz.c" />
     <ClCompile Include="HellPack.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="$(SolutionDir)3rdParty\meshoptimizer\src\meshoptimizer.h" />
     <ClInclude Include="$(SolutionDir)3rdParty\miniz\miniz.h" />
-    <ClInclude Include="core_types.h" />
     <ClInclude Include="gltf_loader.h" />
-    <ClInclude Include="hell_pack.h" />
     <ClInclude Include="hp_bcn_compression.h" />
-    <ClInclude Include="hp_bvh.h" />
-    <ClInclude Include="hp_bvh_builder.h" />
     <ClInclude Include="hp_encoding.h" />
-    <ClInclude Include="hp_error.h" />
-    <ClInclude Include="hp_material.h" />
-    <ClInclude Include="hp_math.h" />
-    <ClInclude Include="hp_mesh.h" />
     <ClInclude Include="hp_serialization.h" />
     <ClInclude Include="hp_types_internal.h" />
     <ClInclude Include="mikkt_space.h" />
-    <ClInclude Include="range_utils.h" />
-    <ClInclude Include="zip_pack.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -2,9 +2,8 @@
 #define __MIKKT_SPACE_H__
 
 #include "core_types.h"
-#include "hp_mesh.h"
-#include "hp_math.h"
-#include "hp_error.h"
+#include "ht_math.h"
+#include "ht_error.h"
 #include "hp_types_internal.h"
 
 #include <mikktspace.h>
@@ -87,7 +86,7 @@ inline auto ComputeMikkTSpaceTangentsInplace( const raw_mesh& rawMesh )
 	SMikkTSpaceContext ctx = { .m_pInterface = &iface, .m_pUserData = &userData };
 
 	// NOTE: Returns 1 on success, 0 on failure (degenerates etc.)
-	HP_ASSERT( 1 == genTangSpaceDefault( &ctx ) );
+	HT_ASSERT( 1 == genTangSpaceDefault( &ctx ) );
 
 	return tans;
 }

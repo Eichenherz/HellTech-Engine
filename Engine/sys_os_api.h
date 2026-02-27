@@ -64,7 +64,7 @@ void		SysErrMsgBox( const char* str );
 // FILE API--------------------------
 std::vector<u8> SysReadFile( const char* fileName );
 u64			SysGetFileTimestamp( const char* filename );
-bool		SysWriteToFile( const char* filename, const u8* data, u64 sizeInBytes );
+bool		SysWriteToFile( const char* filename, const u8* data, u32 sizeInBytes );
 
 struct sys_window
 {

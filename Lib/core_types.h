@@ -1,7 +1,10 @@
+#pragma once
+
 #ifndef __CORE_TYPES_H__
 #define __CORE_TYPES_H__
 
 #include <stdint.h>
+#include <concepts>
 
 using u8 = uint8_t;
 using u16 = uint16_t;
@@ -13,22 +16,16 @@ using i16 = int16_t;
 using i32 = int32_t;
 using i64 = int64_t;
 
-//template<typename T>
-struct range
-{
-	u64 offset;
-	u64 size;
+#define INVALID_IDX -1
 
-	//inline u64 OffsetInBytes() const
-	//{
-	//	return offset * sizeof( T );
-	//}
-	//inline u64 SizeInBytes() const
-	//{
-	//	return size * sizeof( T );
-	//}
-};
+template<typename T>
+concept UINT_T = std::integral<T> && std::is_unsigned_v<T>;
 
-constexpr u64 INVALID_IDX = -1;
+template<UINT_T T>
+inline bool IsIndexValid( T idx ) 
+{ 
+    constexpr T INVALID = T( INVALID_IDX );
+    return INVALID != idx;
+}
 
 #endif // !__CORE_TYPES_H__

@@ -1,67 +1,10 @@
-#ifndef __HP_MATH_H__
-#define __HP_MATH_H__
+#ifndef __HT_MATH_H__
+#define __HT_MATH_H__
 
-#ifdef __clang__
-// NOTE: clang-cl on VS issue
-#undef __clang__
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-#define __clang__
-
-#elif _MSC_VER >= 1916
-
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-
-#endif
-
-#include <cmath>
-
-struct float2 { float x, y; };
-struct float3 { float x, y, z; };
-struct float4 { float x, y, z, w; };
-
-constexpr bool operator==( const float2& a, const float2& b )
-{
-	return a.x == b.x && a.y == b.y;
-}
-constexpr bool operator!=( const float2& a, const float2& b )
-{
-	return !( a == b );
-}
-
-constexpr bool operator==( const float3& a, const float3& b )
-{
-	return a.x == b.x && a.y == b.y && a.z == b.z;
-}
-constexpr bool operator!=( const float3& a, const float3& b )
-{
-	return !( a == b );
-}
-
-constexpr bool operator==( const float4& a, const float4& b )
-{
-	return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
-}
-constexpr bool operator!=( const float4& a, const float4& b )
-{
-	return !( a == b );
-}
-
-static_assert( std::is_trivially_copyable_v<float2> );
-static_assert( std::is_trivially_copyable_v<float3> );
-static_assert( std::is_trivially_copyable_v<float4> );
-static_assert( sizeof( float2 ) == sizeof( DirectX::XMFLOAT2 ) );
-static_assert( sizeof( float3 ) == sizeof( DirectX::XMFLOAT3 ) );
-static_assert( sizeof( float4 ) == sizeof( DirectX::XMFLOAT4 ) );
-
-__forceinline DirectX::XMFLOAT2 ToDX( const float2& v ) noexcept { return std::bit_cast< DirectX::XMFLOAT2 >( v ); }
-__forceinline DirectX::XMFLOAT3 ToDX( const float3& v ) noexcept { return std::bit_cast< DirectX::XMFLOAT3 >( v ); }
-__forceinline DirectX::XMFLOAT4 ToDX( const float4& v ) noexcept { return std::bit_cast< DirectX::XMFLOAT4 >( v ); }
-
-__forceinline float2 FromDX( const DirectX::XMFLOAT2& v ) noexcept { return std::bit_cast< float2 >( v ); }
-__forceinline float3 FromDX( const DirectX::XMFLOAT3& v ) noexcept { return std::bit_cast< float3 >( v ); }
-__forceinline float4 FromDX( const DirectX::XMFLOAT4& v ) noexcept { return std::bit_cast< float4 >( v ); }
+#include "ht_vec_types.h"
+#include "core_types.h"
+#include <span>
+#include <math.h>
 
 inline float2 fminf( float2 a, float2 b )
 {
@@ -87,54 +30,6 @@ inline float3 fmaxf( float3 a, float3 b )
 inline float4 fmaxf( float4 a, float4 b )
 {
 	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ), fmaxf( a.w,b.w ) };
-}
-
-struct u16x3
-{
-	u16 x, y, z;
-};
-
-#include <immintrin.h>
-
-// NOTE: from https://stackoverflow.com/questions/17638487/minimum-of-4-sp-values-in-m128
-inline __m128 _mm_hmin_ps( __m128 v )
-{
-	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
-	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
-	return v;
-}
-
-inline __m128 _mm_hmax_ps( __m128 v )
-{
-	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
-	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
-	return v;
-}
-
-inline float MinF32x8_SIMD( __m256 a, __m256 b )
-{
-	__m256 laneMin_f32x8 = _mm256_min_ps( a, b );
-	__m128 lo = _mm256_castps256_ps128( laneMin_f32x8 );
-	__m128 hi = _mm256_extractf128_ps( laneMin_f32x8, 1 );
-
-	__m128 laneMin_f32x4 = _mm_min_ps( lo, hi );
-
-	__m128 min_f32x4 = _mm_hmin_ps( laneMin_f32x4 );
-
-	return _mm_cvtss_f32( min_f32x4 );
-}
-
-inline float MaxF32x8_SIMD( __m256 a, __m256 b )
-{
-	__m256 laneMax_f32x8 = _mm256_max_ps( a, b );
-	__m128 lo = _mm256_castps256_ps128( laneMax_f32x8 );
-	__m128 hi = _mm256_extractf128_ps( laneMax_f32x8, 1 );
-
-	__m128 laneMax_f32x4 = _mm_max_ps( lo, hi );
-
-	__m128 max_f32x4 = _mm_hmax_ps( laneMax_f32x4 );
-
-	return _mm_cvtss_f32( max_f32x4 );
 }
 
 template<typename Vec>
@@ -213,7 +108,7 @@ inline aabb_t<float3> MergeAabbs( const std::ranges::forward_range auto& aabbs )
 {
 	const u64 meshletCount = std::size( aabbs );
 
-	HP_ASSERT( meshletCount );
+	HT_ASSERT( meshletCount );
 	if( 1 == meshletCount )
 	{
 		return { .min = aabbs[ 0 ].min, .max = aabbs[ 0 ].max };
@@ -234,14 +129,14 @@ __forceinline float3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
 {
 	DirectX::XMFLOAT3 out;
 	DirectX::XMStoreFloat3( &out, v );
-	return FromDX( out );
+	return out;
 }
 
 __forceinline float4 XM_CALLCONV DX_XMStoreFloat4( DirectX::XMVECTOR v )
 {
 	DirectX::XMFLOAT4 out;
 	DirectX::XMStoreFloat4( &out, v );
-	return FromDX( out );
+	return out;
 }
 
 inline aabb_t<float3> TransformAABB( 
@@ -253,20 +148,14 @@ inline aabb_t<float3> TransformAABB(
 ) {
 	using namespace DirectX;
 
-	DirectX::XMFLOAT3 dxMin = ToDX( min );
-	DirectX::XMFLOAT3 dxMax = ToDX( max );
-	DirectX::XMFLOAT3 dxT = ToDX( t );
-	DirectX::XMFLOAT4 dxR = ToDX( r );
-	DirectX::XMFLOAT3 dxS = ToDX( s );
-
-	XMVECTOR xmMin = XMLoadFloat3( &dxMin );
-	XMVECTOR xmMax = XMLoadFloat3( &dxMax );
+	XMVECTOR xmMin = XMLoadFloat3( &min );
+	XMVECTOR xmMax = XMLoadFloat3( &max );
 
 	XMVECTOR xmCenter = XMVectorScale( XMVectorAdd( xmMax, xmMin ), 0.5f );
 	XMVECTOR xmExtent = XMVectorScale( XMVectorSubtract( xmMax, xmMin ), 0.5f );
 
 	XMMATRIX xmTRS = XMMatrixAffineTransformation(
-		XMLoadFloat3( &dxS ), XMVectorZero(), XMLoadFloat4( &dxR ), XMLoadFloat3( &dxT ) );
+		XMLoadFloat3( &s ), XMVectorZero(), XMLoadFloat4( &r ), XMLoadFloat3( &t ) );
 
 	XMVECTOR xmNewCenter = XMVector3Transform( xmCenter, xmTRS );
 	XMVECTOR xmNewExtent = XMVector3Transform( xmExtent, xmTRS );
@@ -286,6 +175,47 @@ __forceinline aabb_t<float3> TransformAABB(
 	return TransformAABB( aabb.min, aabb.max, t, r, s );
 }
 
-inline u64 AlignUp( u64 x, u64 a ) { return ( x + ( a - 1 ) ) & ~( a - 1 ); }
+#include <immintrin.h>
 
-#endif // !__HP_MATH_H__
+// NOTE: from https://stackoverflow.com/questions/17638487/minimum-of-4-sp-values-in-m128
+inline __m128 _mm_hmin_ps( __m128 v )
+{
+	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
+	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
+	return v;
+}
+
+inline __m128 _mm_hmax_ps( __m128 v )
+{
+	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 1, 0, 3 ) ) );
+	v = _mm_max_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
+	return v;
+}
+
+inline float MinF32x8_SIMD( __m256 a, __m256 b )
+{
+	__m256 laneMin_f32x8 = _mm256_min_ps( a, b );
+	__m128 lo = _mm256_castps256_ps128( laneMin_f32x8 );
+	__m128 hi = _mm256_extractf128_ps( laneMin_f32x8, 1 );
+
+	__m128 laneMin_f32x4 = _mm_min_ps( lo, hi );
+
+	__m128 min_f32x4 = _mm_hmin_ps( laneMin_f32x4 );
+
+	return _mm_cvtss_f32( min_f32x4 );
+}
+
+inline float MaxF32x8_SIMD( __m256 a, __m256 b )
+{
+	__m256 laneMax_f32x8 = _mm256_max_ps( a, b );
+	__m128 lo = _mm256_castps256_ps128( laneMax_f32x8 );
+	__m128 hi = _mm256_extractf128_ps( laneMax_f32x8, 1 );
+
+	__m128 laneMax_f32x4 = _mm_max_ps( lo, hi );
+
+	__m128 max_f32x4 = _mm_hmax_ps( laneMax_f32x4 );
+
+	return _mm_cvtss_f32( max_f32x4 );
+}
+
+#endif // !__HT_MATH_H__

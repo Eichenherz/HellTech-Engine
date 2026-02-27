@@ -1,7 +1,57 @@
-#ifndef __HP_MATERIAL_H__
-#define __HP_MATERIAL_H__
+#pragma once
+
+#ifndef __HT_GFX_TYPES_H__
+#define __HT_GFX_TYPES_H__
 
 #include "core_types.h"
+#include "ht_vec_types.h"
+
+struct alignas( 16 ) packed_trs
+{
+	float3 t;
+	float pad0;
+	float4 r;
+	float3 s;
+	float pad1;
+};
+
+struct packed_vtx
+{
+	float3 pos;
+	float2 octNormal;
+	float tanAngle;
+	float u, v;
+	u8 tanSign;
+};
+
+struct vertex_attrs
+{
+	float2 octNormal;
+	float tanAngle;
+	float u, v;
+	u8 tanSign;
+};
+
+struct meshlet
+{
+	float3	aabbMin;
+	float3	aabbMax;
+
+	u32		vtxOffset;
+	u32		triOffset;
+
+	u32		vtxCount : 8;
+	u32		triCount : 8;
+
+	u32		padding : 16;
+};
+
+struct world_node
+{
+	packed_trs toWorld;
+	u64 meshHash;
+	u16 materialIdx;
+};
 
 enum alpha_mode : u8
 {
@@ -62,14 +112,14 @@ struct material_desc
 	u64 emissiveHash;
 
 	float4 baseColFactor;
+	float3 emissiveFactor;
 	float metallicFactor;
 	float roughnessFactor;
 	float alphaCutoff;
-	float3 emissiveFactor;
 
 	u16 samplerIdx;
 
 	alpha_mode alphaMode;
 };
 
-#endif // !__HP_MATERIAL_H__
+#endif // !__HT_GFX_TYPES_H__

@@ -51,6 +51,7 @@
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
+    <Import Project="..\Lib\Lib.vcxitems" Label="Shared" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
@@ -67,7 +68,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>D:\EichenRepos\QiY\3rdParty\VulkanMemoryAllocator\include;D:\EichenRepos\QiY\3rdParty\imgui;D:\EichenRepos\QiY\3rdParty\EABase\include\Common;D:\EichenRepos\QiY\3rdParty\EASTL\include;D:\EichenRepos\QiY\3rdParty\dds;D:\EichenRepos\QiY\HellPack;D:\EichenRepos\QiY\3rdParty\unordered_dense\include;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
+    <IncludePath>D:\EichenRepos\QiY\HellPack;$(VULKAN_SDK)\Source;D:\EichenRepos\QiY\packages\Microsoft.Direct3D.D3D12.1.4.10\build\native\;$(VULKAN_SDK)\Include;$(VULKAN_SDK)\Include\vulkan;$(IncludePath)</IncludePath>
     <CustomBuildBeforeTargets>
     </CustomBuildBeforeTargets>
     <LibraryPath>$(LibraryPath)</LibraryPath>
@@ -107,7 +108,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>D:\EichenRepos\QiY\QiY\3rdParty\unordered_dense\include\ankerl;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AdditionalOptions>/arch:AVX2 %(AdditionalOptions)</AdditionalOptions>
       <ShowIncludes>false</ShowIncludes>
@@ -189,20 +190,6 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\allocator_eastl.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\assert.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\atomic.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\fixed_pool.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\hashtable.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\intrusive_list.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\numeric_limits.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\red_black_tree.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\string.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\thread_support.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_draw.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_tables.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_widgets.cpp" />
     <ClCompile Include="eastl_new.cpp" />
     <ClCompile Include="spirv_reflect.c" />
     <ClCompile Include="vk_backend.cpp" />
@@ -229,16 +216,10 @@
   <ItemGroup>
     <ClInclude Include="$(SolutionDir)3rdParty\unordered_dense\include\ankerl\stl.h" />
     <ClInclude Include="$(SolutionDir)3rdParty\unordered_dense\include\ankerl\unordered_dense.h" />
-    <ClInclude Include="asset_compiler.h" />
     <ClInclude Include="AssetCompiler\cgltf.h" />
     <ClInclude Include="AssetCompiler\lz4.h" />
     <ClInclude Include="AssetCompiler\spng.h" />
-    <ClInclude Include="core_types.h" />
     <ClInclude Include="dxc.h" />
-    <ClInclude Include="ht_error.h" />
-    <ClInclude Include="ht_geometry.h" />
-    <ClInclude Include="ht_mem_arena.h" />
-    <ClInclude Include="ht_utils.h" />
     <ClInclude Include="AssetCompiler\miniz.h" />
     <ClInclude Include="r_data_structs.h" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
@@ -247,7 +228,6 @@
     <ClInclude Include="System\sys_filesystem.h" />
     <ClInclude Include="System\Win32\win32_err.h" />
     <ClInclude Include="sys_os_api.h" />
-    <ClInclude Include="DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\base64.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\core.hpp" />
     <ClInclude Include="vcpkg_installed\vcpkg\pkgs\fastgltf_x64-windows\include\fastgltf\dxmath_element_traits.hpp" />
