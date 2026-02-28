@@ -13,7 +13,7 @@
 
 layout( push_constant, scalar ) uniform block{
 	uint64_t	instDescAddr;
-	uint64_t	meshletsAddr;
+	uint64_t	meshlet_w_conesAddr;
 	uint64_t	inMeshletsIdAddr;
 	uint64_t	inMeshletsCountAddr;
 	uint64_t	compactedDrawAddr;
@@ -26,8 +26,8 @@ layout( push_constant, scalar ) uniform block{
 };
 
 
-layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer meshlet_desc_ref{ 
-	meshlet meshlets[]; 
+layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer meshlet_w_cone_desc_ref{ 
+	meshlet_w_cone meshlet_w_cones[]; 
 };
 layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
@@ -35,7 +35,7 @@ layout( buffer_reference, std430, buffer_reference_align = 16 ) readonly buffer 
 
 
 layout( buffer_reference, buffer_reference_align = 8 ) readonly buffer u64_ref{ 
-	uint64_t meshletIdBuff[]; 
+	uint64_t meshlet_w_coneIdBuff[]; 
 };
 layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer u32_ref{ 
 	uint totalMeshletCount; 
@@ -58,9 +58,9 @@ layout( buffer_reference, buffer_reference_align = 4 ) coherent buffer coherent_
 
 shared uint workgrAtomicCounterShared = {};
 
-const uint meshletsPerWorkgr = 32;
+const uint meshlet_w_conesPerWorkgr = 32;
 
-// NOTE: meshlet occlusion culling bug
+// NOTE: meshlet_w_cone occlusion culling bug
 // NOTE: hack fix: workgr == 32 ( and in id_expander dstWorkGrSize )
 layout( local_size_x = 32, local_size_y = 1, local_size_z = 1 ) in;
 void main()
@@ -69,12 +69,12 @@ void main()
 
 	if( globalIdx < u32_ref( inMeshletsCountAddr ).totalMeshletCount )
 	{
-		uint64_t mid = u64_ref( inMeshletsIdAddr ).meshletIdBuff[ globalIdx ];
+		uint64_t mid = u64_ref( inMeshletsIdAddr ).meshlet_w_coneIdBuff[ globalIdx ];
 		uint parentInstId = uint( mid & uint( -1 ) );
-		uint meshletIdx = uint( mid >> 32 );
+		uint meshlet_w_coneIdx = uint( mid >> 32 );
 
 		instance_desc parentInst = inst_desc_ref( instDescAddr ).instDescs[ parentInstId ];
-		meshlet thisMeshlet = meshlet_desc_ref( meshletsAddr ).meshlets[ meshletIdx ];
+		meshlet_w_cone thisMeshlet = meshlet_w_cone_desc_ref( meshlet_w_conesAddr ).meshlet_w_cones[ meshlet_w_coneIdx ];
 
 		vec3 center = thisMeshlet.center;
 		vec3 extent = thisMeshlet.extent;
@@ -159,7 +159,7 @@ void main()
 			{	
 				compacted_args_ref( compactedDrawAddr ).compactedDrawArgs[ slotIdx ].nodeIdx = parentInstId; 
 				// NOTE: will add more as we progress
-				compacted_args_ref( drawCmdsAddr ).compactedDrawArgs[ slotIdx ].meshletIdx = uint(mid); 
+				compacted_args_ref( drawCmdsAddr ).compactedDrawArgs[ slotIdx ].meshlet_w_coneIdx = uint(mid); 
 
 				uint vtxOffset = thisMeshlet.dataOffset;
 				uint firstIdx = vtxOffset + uint( thisMeshlet.vertexCount );

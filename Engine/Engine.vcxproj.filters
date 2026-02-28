@@ -30,39 +30,6 @@
     <ClCompile Include="spirv_reflect.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="eastl_new.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\allocator_eastl.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\assert.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\atomic.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\fixed_pool.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\hashtable.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\intrusive_list.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\numeric_limits.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\red_black_tree.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\string.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\thread_support.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -73,6 +40,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_widgets.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="System\Win32\win32.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -170,6 +140,12 @@
     <ClInclude Include="$(SolutionDir)3rdParty\unordered_dense\include\ankerl\unordered_dense.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="System\sys_sync.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ht_mtx_queue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
@@ -203,19 +179,8 @@
       <Filter>Source Files</Filter>
     </None>
     <None Include="Shaders\c_draw_cull.hlsl" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\EASTL-n2271.pdf" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Benchmarks.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Best Practices.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Design.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL FAQ.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Glossary.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Gotchas.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Introduction.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Maintenance.html" />
-    <None Include="$(SolutionDir)3rdParty\EASTL\doc\html\EASTL Modules.html" />
   </ItemGroup>
   <ItemGroup>
-    <Natvis Include="$(SolutionDir)3rdParty\EASTL\doc\EASTL.natvis" />
     <Natvis Include="$(SolutionDir)3rdParty\VulkanMemoryAllocator\src\vk_mem_alloc.natvis" />
   </ItemGroup>
 </Project>

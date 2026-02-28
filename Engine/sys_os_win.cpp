@@ -3,14 +3,11 @@
 #include <hidusage.h>
 #include <fileapi.h>
 
-#include <assert.h>
-
 #include <iostream>
 #include <algorithm>
 
 #include <vector>
 #include <string>
-#include <EASTL/internal/config.h>
 
 #include "sys_os_api.h"
 #include "core_types.h"
@@ -21,17 +18,17 @@
 
 static inline void SysOsCreateConsole()
 {
-	WIN_CHECK( !AllocConsole() );
+	WIN_CHECK( AllocConsole() );
 	// NOTE: https://alexanderhoughton.co.uk/blog/redirect-all-stdout-stderr-to-console/
 	//WIN_CHECK( !AttachConsole( GetCurrentProcessId() ) );
 	HANDLE hConOut = CreateFileA(
 		"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr );
-	WIN_CHECK( INVALID_HANDLE_VALUE == hConOut );
-	WIN_CHECK( !SetStdHandle( STD_OUTPUT_HANDLE, hConOut ) );
-	WIN_CHECK( !SetStdHandle( STD_ERROR_HANDLE, hConOut ) );
+	WIN_CHECK( INVALID_HANDLE_VALUE != hConOut );
+	WIN_CHECK( SetStdHandle( STD_OUTPUT_HANDLE, hConOut ) );
+	WIN_CHECK( SetStdHandle( STD_ERROR_HANDLE, hConOut ) );
 
-	WIN_CHECK( nullptr == freopen( "CONOUT$", "w", stdout ) );
-	WIN_CHECK( nullptr == freopen( "CONOUT$", "w", stderr ) );
+	WIN_CHECK( nullptr != freopen( "CONOUT$", "w", stdout ) );
+	WIN_CHECK( nullptr != freopen( "CONOUT$", "w", stderr ) );
 
 	std::ios::sync_with_stdio( true );
 	std::cout.clear();
@@ -63,12 +60,12 @@ std::vector<u8> SysReadFile( const char* fileName )
 	if( hfile == INVALID_HANDLE_VALUE ) return{};
 
 	LARGE_INTEGER fileSize = {};
-	WIN_CHECK( !GetFileSizeEx( hfile, &fileSize ) );
+	WIN_CHECK( GetFileSizeEx( hfile, &fileSize ) );
 
 	std::vector<u8> fileData( fileSize.QuadPart );
 
 	OVERLAPPED asyncIo = {};
-	WIN_CHECK( !ReadFileEx( hfile, std::data( fileData ), ( DWORD ) fileSize.QuadPart, &asyncIo, 0 ) );
+	WIN_CHECK( ReadFileEx( hfile, std::data( fileData ), ( DWORD ) fileSize.QuadPart, &asyncIo, 0 ) );
 	CloseHandle( hfile );
 
 	return fileData;
@@ -78,7 +75,7 @@ u64 SysGetFileTimestamp( const char* filename )
 {
 	HANDLE hfile = WinGetReadOnlyFileHandle( filename );
 	FILETIME fileTime = {};
-	WIN_CHECK( !GetFileTime( hfile, 0, 0, &fileTime ) );
+	WIN_CHECK( GetFileTime( hfile, 0, 0, &fileTime ) );
 
 	ULARGE_INTEGER timestamp = {};
 	timestamp.LowPart = fileTime.dwLowDateTime;
@@ -390,18 +387,12 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 #include <imgui.h>
 
-static void EastlAssertFail( const char* expr, void* )
-{
-	HtPrintErrAndDie( "{}", expr );
-}
-
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
 
 	input_state inputState = {};
 
-	eastl::SetAssertionFailureFunction(&EastlAssertFail, nullptr);
 	WIN_CHECK( DirectX::XMVerifyCPUSupport() );
 
 	SysOsCreateConsole();
@@ -416,7 +407,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		.hCursor = LoadCursor( 0, IDC_ARROW ),
 		.lpszClassName = ENGINE_NAME
 	};
-	WIN_CHECK( RegisterClassEx( &wc ) );
+	WIN_CHECK( RegisterClassExA( &wc ) );
 	
 	RECT wr = {
 		.left = 350,
@@ -427,8 +418,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
-	HWND hWnd = CreateWindow( 
-		wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, &inputState );
+	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, 
+		wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, &inputState );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );

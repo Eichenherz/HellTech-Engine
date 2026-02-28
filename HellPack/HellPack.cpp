@@ -438,12 +438,6 @@ struct compression_job
 	}
 };
 
-inline vfs_path MakeVfsPath( const std::string& str )
-{
-	HT_ASSERT( std::size( str ) < sizeof( vfs_path::chars ) );
-	return { str };
-}
-
 struct materials_jobs
 {
 	std::vector<material_desc>   materials;
@@ -492,14 +486,10 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 		// NOTE: currently not suporting ambient occlusion which must be packed into MR
 		HT_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
 
-		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, 
-			MakeVfsPath( mtrl.name + "_albedo.dds" ) );
-		u64 metallicRoughnessHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, 
-			MakeVfsPath( mtrl.name + "_normal.dds" ) );
-		u64 normalHash = ProcessImageView( mtrl.metallicRoughnessIdx, dds::DXGI_FORMAT_BC7_UNORM, 
-			MakeVfsPath( mtrl.name + "_mro.dds" ) );
-		u64 emissiveHash = ProcessImageView( mtrl.emissiveIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, 
-			MakeVfsPath( mtrl.name + "_emissive.dds" ) );
+		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { mtrl.name + "_albedo.dds" } );
+		u64 metallicRoughnessHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, { mtrl.name + "_normal.dds" } );
+		u64 normalHash = ProcessImageView( mtrl.metallicRoughnessIdx, dds::DXGI_FORMAT_BC7_UNORM, { mtrl.name + "_mro.dds" } );
+		u64 emissiveHash = ProcessImageView( mtrl.emissiveIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { mtrl.name + "_emissive.dds" } );
 
 		materials.push_back( {
 			.baseColorHash = baseColorHash,

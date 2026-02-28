@@ -20,15 +20,18 @@
 #include "vk_pso.h"
 #include "vk_utils.h"
 
+#include <bit>
 #include <array>
 #include <vector>
 #include <span>
 #include <functional>
 #include <memory>
 
-#include <EASTL/bonus/fixed_ring_buffer.h>
-#include <EASTL/bonus/ring_buffer.h>
-#include <EASTL/bitvector.h>
+#include "System/sys_sync.h"
+
+#include "ht_mtx_queue.h"
+
+#include <plf_colony.h>
 
 struct vk_timeline
 {
@@ -53,10 +56,11 @@ enum class vk_queue_t : u32
 
 struct vk_queue
 {
-	VkQueue									hndl;
-	VkSemaphore								timelineSema;
-	u64										submitionCount;
-	u32										familyIdx;
+	copyable_srwlock    lock;
+	VkQueue				hndl;
+	VkSemaphore			timelineSema;
+	u64					submitionCount;
+	u32					familyIdx;
 };
 
 struct vk_cmd_pool_buff
@@ -68,11 +72,30 @@ struct vk_cmd_pool_buff
 	vk_queue_t			parentQueueFamType;
 };
 
-struct vk_cb_hndl32
+template<typename VK_T>
+struct vk_hndl64
 {
-	u32 idx : 16;
-	u32 type : 2;
+	u64                 addr;
+
+						vk_hndl64() : addr{ 0 } {}
+						vk_hndl64( VK_T* pVkT ) : addr{ std::bit_cast< u64 >( pVkT ) } {}
+
+	inline VK_T&		operator*()       { return *std::bit_cast<VK_T*>( addr ); }
+	inline const VK_T&	operator*() const { return *std::bit_cast<const VK_T*>( addr ); }
+
+	inline VK_T*		operator->()       { return &( *( *this ) ); }
+	inline const VK_T*	operator->() const { return &( *( *this ) ); }
 };
+
+template<typename VK_T>
+inline bool IsValidHandle( const vk_hndl64<VK_T> hvk )
+{
+	return 0 != hvk.addr;
+}
+
+using HVKCB = vk_hndl64<vk_cmd_pool_buff>;
+using HVKBUF = vk_hndl64<vk_buffer>;
+using HVKIMG = vk_hndl64<vk_image>;
 
 struct vk_desc_deletion
 {
@@ -82,66 +105,58 @@ struct vk_desc_deletion
 
 struct vk_resc_deletion
 {
+	//VkSemaphore			timelineSema = VK_NULL_HANDLE;
+	//u64					waitSignal = -1;
+	u64					frameTimelineVal;
 	union
 	{
-		vk_buffer buff;
-		vk_image  img;
+		HVKBUF			buff;
+		HVKIMG			img;
 	};
-	vk_resource_type type;
-	u64 timelineCounterVal;
+	vk_resource_type    type;
 
 	inline vk_resc_deletion() = default;
-	inline vk_resc_deletion( const vk_buffer& b, u64 counter ) 
-		: buff{ b }, type{ vk_resource_type::BUFFER }, timelineCounterVal{ counter } {}
-	inline vk_resc_deletion( const vk_image& i, u64 counter ) 
-		: img{ i }, type{ vk_resource_type::IMAGE }, timelineCounterVal{ counter } {}
+	inline vk_resc_deletion( HVKBUF b, u64 counter ) 
+		: buff{ b }, type{ vk_resource_type::BUFFER }, frameTimelineVal{ counter } {}
+	inline vk_resc_deletion( HVKIMG i, u64 counter ) 
+		: img{ i }, type{ vk_resource_type::IMAGE }, frameTimelineVal{ counter } {}
 };
-
-
-template<typename T, u64 N>
-using fixed_ring_buff = eastl::fixed_ring_buffer<T, N>;
-
-using eastl_bitvector = eastl::bitvector<EASTLAllocatorType, u64>;
 
 struct vk_desc_binding
 {
-	// NOTE: eastl::ring_buffer is no sized without .resize or push_back !!!!
-	eastl::ring_buffer<desc_hndl32> slots;
-	eastl_bitvector inUseMasks;
+	mtx_queue<desc_hndl32> slots;
 
 	VkDescriptorType type;
 
 	vk_desc_binding() = default;
+
 	inline vk_desc_binding( VkDescriptorPoolSize bindingInfo ) : 
-		slots{ bindingInfo.descriptorCount }, 
-		inUseMasks{ bindingInfo.descriptorCount, 0 }, 
-		type{ bindingInfo.type }
+		slots{ bindingInfo.descriptorCount }, type{ bindingInfo.type }
 	{
 		vk_desc_binding_t bindingType = VkDescTypeToBinding( type );
 		for( u64 si = 0; si < bindingInfo.descriptorCount; ++si )
 		{
-			slots.push_back( { .slot = ( u16 ) si, .type = bindingType } );
+			slots.TryPush( desc_hndl32{ .slot = ( u16 ) si, .type = bindingType, .inUse = false } );
 		}
 	}
 
 	inline desc_hndl32 AllocSlot()
 	{
-		HT_ASSERT( std::size( slots ) != 0 );
-		desc_hndl32 hDesc = slots.front();
-		slots.pop_front();
+		HT_ASSERT( 0 != slots.capacity() );
+		desc_hndl32 hDesc = {};
+		while( !slots.TryPop( hDesc ) );
 
-		inUseMasks[ hDesc.slot ] = 1;
+		hDesc.inUse = true;
 		return hDesc;
 	}
 
 	inline void FreeSlot( desc_hndl32 hDesc )
 	{
-		HT_ASSERT( hDesc.slot < std::size( inUseMasks ) );
 		HT_ASSERT( hDesc.slot < slots.capacity() );
-		HT_ASSERT( !inUseMasks[ hDesc.slot ] );
+		HT_ASSERT( !hDesc.inUse );
 
-		slots.push_back( hDesc );
-		inUseMasks[ hDesc.slot ] = 0;
+		hDesc.inUse = false;
+		while( !slots.TryPush( hDesc ) );
 	}
 };
 
@@ -152,8 +167,11 @@ struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
 
-	fixed_ring_buff<vk_resc_deletion, 128>	resourceDeletionQueue{};
-	fixed_ring_buff<vk_desc_deletion, 128>	descriptroDeletionQueue{};
+	fixed_mtx_queue<HVKCB, 128>				pendingCBRecycle;
+	// NOTE: we only alloc PERSISTENT resouces on other timelines; 
+	// only the main GPU timeline is to alloc and free TRANSIENTS
+	std::vector<vk_resc_deletion>			resourceDeletionQueue;
+	std::vector<vk_desc_deletion>			descriptroDeletionQueue;
 
 	fixed_arena<2048>						scratchArena;
 
@@ -162,9 +180,14 @@ struct vk_context
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	std::vector<vk_descriptor_write>        descPendingUpdates;
 
-	std::vector<vk_cmd_pool_buff>           gfxCmdPoolAndBuffs;
-	std::vector<vk_cmd_pool_buff>           computeCmdPoolAndBuffs;
-	std::vector<vk_cmd_pool_buff>           copyCmdPoolAndBuffs;
+	plf::colony<vk_buffer>                  buffPool;
+	plf::colony<vk_image>                   imgPool;
+
+	plf::colony<vk_cmd_pool_buff>           gfxCBPool;
+	plf::colony<vk_cmd_pool_buff>           copyCBPool;
+
+	fixed_mtx_queue<HVKCB, 128>             freeGfxCBs;
+	fixed_mtx_queue<HVKCB, 128>             freeCopyCBs;
 
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
@@ -195,8 +218,8 @@ struct vk_context
 
 	vk_swapchain_config                     scConfig;
 
-	vk_buffer CreateBuffer( const buffer_info& buffInfo );
-	vk_image CreateImage( const image_info& imgInfo );
+	HVKBUF CreateBuffer( const buffer_info& buffInfo );
+	HVKIMG CreateImage( const image_info& imgInfo );
 
 	inline void EnqueueResourceFree( const vk_resc_deletion& rscDeletion )
 	{
@@ -286,10 +309,6 @@ struct vk_context
 	}
 
 	desc_hndl32 AllocDescriptor( const vk_descriptor_info& rscDescInfo );
-	inline void FreeDescriptor( desc_hndl32 hDesc )
-	{
-		descBindingSlots[ hDesc.type ].FreeSlot( hDesc );
-	}
 	inline void EnqueueDescriptorFree( desc_hndl32 handle, u64 frameIdx )
 	{
 		descriptroDeletionQueue.push_back( { frameIdx, handle } );
@@ -308,19 +327,18 @@ struct vk_context
 		return imgIdx;
 	}
 
-	vk_cb_hndl32 AllocateCmdPoolAndBuff( vk_queue_t queueType );
-	inline VkCommandBuffer GetCmdBuff( vk_cb_hndl32 hndl )
+	HVKCB AllocateCmdPoolAndBuff( vk_queue_t queueType );
+	inline void DeferredRecycleCmdPoolAndBuff( HVKCB hcb, const vk_timeline& timeline )
 	{
-		vk_queue_t queueType = ( vk_queue_t ) hndl.type;
-		using enum vk_queue_t;
-		switch( queueType )
-		{
-			case GFX: return gfxCmdPoolAndBuffs[ hndl.idx ].buff;
-			case COPY: return copyCmdPoolAndBuffs[ hndl.idx ].buff;
-			default: HT_ASSERT( false ); return VK_NULL_HANDLE;
-		}
+		vk_cmd_pool_buff& cmdPoolBuff = *hcb;
+		HT_ASSERT( VK_NULL_HANDLE == cmdPoolBuff.timelineSema );
+		HT_ASSERT( u64( -1 ) == cmdPoolBuff.submissionIdx );
+
+		cmdPoolBuff.timelineSema = timeline.sema;
+		cmdPoolBuff.submissionIdx = timeline.submitsIssuedCount; // NOTE: submit on current value
+
+		while( !pendingCBRecycle.TryPush( hcb ) );
 	}
-	void DeferredRecycleCmdPoolAndBuff( vk_cb_hndl32 hndl, const vk_timeline& timeline );
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
 	void QueueSubmitToTimeline(

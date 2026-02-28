@@ -10,7 +10,8 @@
   <!-- 3rd-party include directories (shared across projects) -->
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)3rdParty\VulkanMemoryAllocator\include;$(SolutionDir)3rdParty\imgui;$(SolutionDir)3rdParty\EABase\include\Common;$(SolutionDir)3rdParty\EASTL\include;$(SolutionDir)3rdParty\dds;$(SolutionDir)3rdParty\unordered_dense\include;$(SolutionDir)3rdParty\miniz;$(SolutionDir)3rdParty\bc7enc_rdo;$(SolutionDir)3rdParty\MikkTSpace;$(SolutionDir)3rdParty\meshoptimizer\src;$(SolutionDir)3rdParty\tinygltf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)3rdParty\VulkanMemoryAllocator\include;$(SolutionDir)3rdParty\imgui;$(SolutionDir)3rdParty\dds;$(SolutionDir)3rdParty\unordered_dense\include;$(SolutionDir)3rdParty\miniz;$(SolutionDir)3rdParty\bc7enc_rdo;$(SolutionDir)3rdParty\MikkTSpace;$(SolutionDir)3rdParty\meshoptimizer\src;$(SolutionDir)3rdParty\tinygltf;$(SolutionDir)3rdParty\plf_colony;$(SolutionDir)3rdParty\MPMCQueue\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!--<AdditionalOptions>/analyze %(AdditionalOptions)</AdditionalOptions>-->
     </ClCompile>
   </ItemDefinitionGroup>
 
@@ -42,20 +43,17 @@
 
   <!-- Engine 3rd-party sources -->
   <ItemGroup Condition="'$(ProjectName)'=='Engine'">
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\allocator_eastl.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\assert.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\atomic.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\fixed_pool.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\hashtable.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\intrusive_list.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\numeric_limits.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\red_black_tree.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\string.cpp" />
-    <ClCompile Include="$(SolutionDir)3rdParty\EASTL\source\thread_support.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_draw.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_tables.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_widgets.cpp" />
+  </ItemGroup>
+
+  <!-- Suppress static analysis for all 3rd-party source files (must come after Include groups) -->
+  <ItemGroup>
+    <ClCompile Update="$(SolutionDir)3rdParty\**\*">
+      <AdditionalOptions>%(AdditionalOptions) /analyze-</AdditionalOptions>
+    </ClCompile>
   </ItemGroup>
 
 </Project>

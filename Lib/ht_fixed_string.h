@@ -5,88 +5,44 @@
 
 #include "core_types.h"
 #include "ht_error.h"
+#include "ht_fixed_vector.h"
 
 #include <format>
 #include <string_view>
-#include <cstring>
-#include <iterator>
 
 template<u64 N>
-struct fixed_string
+struct fixed_string : fixed_vector<char, N>
 {
-    using value_type             = char;
-    using size_type              = u64;
-    using difference_type        = i64;
-    using reference              = char&;
-    using const_reference        = const char&;
-    using pointer                = char*;
-    using const_pointer          = const char*;
-    using iterator               = char*;
-    using const_iterator         = const char*;
-    using reverse_iterator       = std::reverse_iterator<char*>;
-    using const_reverse_iterator = std::reverse_iterator<const char*>;
+    using base_t = fixed_vector<char, N>;
+    using base_t::elems;
+    using base_t::elemCount;
 
-    static constexpr u64 npos    = ~0ull;
+                    fixed_string() = default;
 
-    char chars[ N ]              = {};
-    u64  charCount               = 0;
+                    fixed_string( const char* s );
+                    fixed_string( std::string_view sv );
 
-  
-                            fixed_string() = default;
+                    template<typename... Args>
+                    fixed_string( std::format_string<Args...> fmt, Args&&... args );
 
-                            fixed_string( const char* s );
+                    fixed_string( const fixed_string& )            = default;
+                    fixed_string& operator=( const fixed_string& ) = default;
+                    fixed_string( fixed_string&& )                 = default;
+                    fixed_string& operator=( fixed_string&& )      = default;
 
-                            fixed_string( std::string_view sv );
+                    fixed_string& operator=( const char* s )       { return *this = fixed_string( s ); }
+                    fixed_string& operator=( std::string_view sv ) { return *this = fixed_string( sv ); }
 
-                            template<typename... Args>
-                            fixed_string( std::format_string<Args...> fmt, Args&&... args );
+    constexpr u64   capacity()  const { return N - 1; }
 
-                            fixed_string( const fixed_string& )            = default;
-                            fixed_string& operator=( const fixed_string& ) = default;
-                            fixed_string( fixed_string&& )                 = default;
-                            fixed_string& operator=( fixed_string&& )      = default;
+    void            push_back( char v );
+    template<typename... Args>
+    char&           emplace_back( Args&&... args );
+    void            pop_back();
+    void            resize( u64 n, char val = '\0' );
 
-    fixed_string&           operator=( std::string_view sv ) { return *this = fixed_string( sv ); }
-    fixed_string&           operator=( const char* s )       { return *this = fixed_string( s ); }
 
-    u64                     size()     const { return charCount; }
-    constexpr u64           capacity() const { return N - 1; }
-
-    void                    resize( u64 n, char ch = '\0' )
-    {
-        HT_ASSERT( n < N );
-        if( n > charCount )
-        {
-            std::memset( chars + charCount, ch, n - charCount );
-        }
-
-        charCount = n;
-        chars[ charCount ] = '\0';
-    }
-
-    reference               operator[]( u64 i ) { HT_ASSERT( i < N ); return chars[ i ]; }
-    const_reference         operator[]( u64 i ) const { HT_ASSERT( i < N ); return chars[ i ]; }
-
-    char*                   data()       { return chars; }
-    const char*             data() const { return chars; }
-
-    iterator                begin()        { return chars; }
-    const_iterator          begin()  const { return chars; }
-    const_iterator          cbegin() const { return chars; }
-
-    iterator                end()          { return chars + charCount; }
-    const_iterator          end()    const { return chars + charCount; }
-    const_iterator          cend()   const { return chars + charCount; }
-
-    reverse_iterator        rbegin()        { return reverse_iterator( end() ); }
-    const_reverse_iterator  rbegin()  const { return const_reverse_iterator( end() ); }
-    const_reverse_iterator  crbegin() const { return const_reverse_iterator( end() ); }
-
-    reverse_iterator        rend()          { return reverse_iterator( begin() ); }
-    const_reverse_iterator  rend()    const { return const_reverse_iterator( begin() ); }
-    const_reverse_iterator  crend()   const { return const_reverse_iterator( begin() ); }
-
-    operator std::string_view() const { return { chars, charCount }; }
+    operator std::string_view() const { return { base_t::data(), base_t::size() }; }
 };
 
 template<u64 N>
@@ -94,35 +50,72 @@ fixed_string<N>::fixed_string( const char* s )
 {
     u64 len = std::strlen( s );
     HT_ASSERT( len < N );
-    charCount = len;
-    std::memcpy( chars, s, charCount );
-    chars[ charCount ] = '\0';
+    std::memcpy( base_t::data(), s, len );
+    elemCount      = len;
+    elems[ len ]   = '\0';
 }
 
 template<u64 N>
 fixed_string<N>::fixed_string( std::string_view sv )
 {
-    HT_ASSERT( std::size( sv ) < N );
-    charCount = std::size( sv );
-    std::memcpy( chars, std::data( sv ), charCount );
-    chars[ charCount ] = '\0';
+    const u64 strSz = std::size( sv );
+    HT_ASSERT( strSz < N );
+    std::memcpy( base_t::data(), std::data( sv ), strSz );
+    elemCount          = strSz;
+    elems[ strSz ] = '\0';
 }
 
 template<u64 N>
 template<typename... Args>
 fixed_string<N>::fixed_string( std::format_string<Args...> fmt, Args&&... args )
 {
-    static_assert( N > 1, "fixed_string buffer too small to hold any content" );
-    auto res = std::format_to_n( chars, N - 1, fmt, std::forward<Args>( args )... );
+    static_assert( N > 1, "fixed_string buffer too small" );
+    auto res    = std::format_to_n( std::data( elems ), N - 1, fmt, std::forward<Args>( args )... );
     HT_ASSERT( res.size < N );
-    charCount = res.size;
-    chars[ charCount ] = '\0';
+    elemCount         = res.size;
+    elems[ res.size ] = '\0';
 }
+
+template<u64 N>
+void fixed_string<N>::push_back( char v )
+{
+    HT_ASSERT( elemCount < N - 1 );
+    elems[ elemCount++ ] = v;
+    elems[ elemCount ]   = '\0';
+}
+
+template<u64 N>
+template<typename... Args>
+char& fixed_string<N>::emplace_back( Args&&... args )
+{
+    HT_ASSERT( elemCount < N - 1 );
+    char& c            = elems[ elemCount++ ] = char{ std::forward<Args>( args )... };
+    elems[ elemCount ] = '\0';
+    return c;
+}
+
+template<u64 N>
+void fixed_string<N>::pop_back()
+{
+    HT_ASSERT( elemCount > 0 );
+    elems[ --elemCount ] = '\0';
+}
+
+template<u64 N>
+void fixed_string<N>::resize( u64 n, char val )
+{
+    HT_ASSERT( n < N );
+    for ( u64 i = elemCount; i < n; ++i ) elems[ i ] = val;
+    elemCount    = n;
+    elems[ n ]   = '\0';
+}
+
 
 template<u64 N>
 inline bool operator==( const fixed_string<N>& a, const fixed_string<N>& b )
 {
-    return ( std::size( a ) == std::size( b ) ) && ( std::memcmp( a.chars, b.chars, a.charCount ) == 0 );
+    return ( std::size( a ) == std::size( b ) ) && 
+        ( std::memcmp( std::data( a.elems ), std::data( b.elems ), std::size( a ) ) == 0 );
 }
 
 template<u64 N>
@@ -133,12 +126,21 @@ struct std::hash<fixed_string<N>>
         constexpr u64 kOffset = 14695981039346656037ull;
         constexpr u64 kPrime  = 1099511628211ull;
         u64 h = kOffset;
-        for ( u64 i = 0; i < s.charCount; ++i )
+        for( char c : s )
         {
-            h ^= ( u8 ) s.chars[i];
+            h ^= ( u8 ) c;
             h *= kPrime;
         }
         return h;
+    }
+};
+
+template<u64 N>
+struct std::formatter<fixed_string<N>> : std::formatter<std::string_view>
+{
+    auto format( const fixed_string<N>& s, std::format_context& ctx ) const
+    {
+        return std::formatter<std::string_view>::format( std::string_view( s ), ctx );
     }
 };
 

@@ -183,7 +183,8 @@ struct desc_hndl32
 {
 	u32 slot : 16;
 	u32 type : 2;
-	u32 unused : 14;
+	u32 inUse : 1;
+	u32 unused : 13;
 };
 
 struct vk_descriptor_write

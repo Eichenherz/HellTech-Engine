@@ -10,7 +10,7 @@
 #include "vk_resources.h"
 #include "vk_command_buffer.h"
 
-#include <EASTL/fixed_vector.h>
+#include "ht_fixed_vector.h"
 #include <ankerl/unordered_dense.h>
 
 constexpr VkAccessFlags2 HT_SHADER_ACCESS_READ_WRITE = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
@@ -206,8 +206,8 @@ using vk_rsc_hndl64 = u64;
 struct vk_rsc_state_tracker
 {
 	ankerl::unordered_dense::map<vk_rsc_hndl64, vk_rsc_sync_state> resourceStateTracker;
-	eastl::fixed_vector<VkBufferMemoryBarrier2, 16, false> buffBarrierCache;
-	eastl::fixed_vector<VkImageMemoryBarrier2, 16, false> imgBarrierCache;
+	fixed_vector<VkBufferMemoryBarrier2, 16> buffBarrierCache;
+	fixed_vector<VkImageMemoryBarrier2, 16> imgBarrierCache;
 
 	// NOTE: buffers will always be in VK_IMAGE_LAYOUT_MAX_ENUM aka INVALID
 	void UseBuffer( 

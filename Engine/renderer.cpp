@@ -1,7 +1,4 @@
-#define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
-
-#include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
 
 #include <Volk/volk.h>
@@ -24,6 +21,8 @@
 
 #include "vk_context.h"
 
+#include "ht_fixed_vector.h"
+#include "ht_fixed_string.h"
 
 #include <DirectXPackedVector.h>
 
@@ -31,7 +30,7 @@ namespace DXPacked = DirectX::PackedVector;
 
 
 //====================CONSTS====================//
-
+static constexpr u64 MAX_FIF = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
 //==============================================//
 // TODO: cvars
 //====================CVARS====================//
@@ -116,9 +115,6 @@ inline u32 GroupCount( u32 invocationCount, u32 workGroupSize )
 
 struct imgui_pass
 {
-	template<typename T>
-	using frame_vector = eastl::fixed_vector<T, vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED, false>;
-
 	using index_t = u16;
 
 	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
@@ -126,16 +122,15 @@ struct imgui_pass
 
 	static constexpr u64 DEFAULT_BUFF_SIZE = 2 * KB;
 
-	// NOTE: these are never shared
-	frame_vector<vk_buffer>		vtx{};
-	frame_vector<vk_buffer>		idx{};
-	vk_image                    fontAtlasImg;
-	VkSampler                   fontSampler;
+	fixed_vector<HVKBUF, MAX_FIF>		vtx;
+	fixed_vector<HVKBUF, MAX_FIF>		idx;
+	HVKIMG								fontAtlasImg;
+	VkSampler								fontSampler;
 
-	VkDescriptorSetLayout       descSetLayout;
-	VkPipelineLayout            pipelineLayout;
-	VkDescriptorUpdateTemplate  descTemplate;
-	VkPipeline	                pipeline;
+	VkDescriptorSetLayout					descSetLayout;
+	VkPipelineLayout						pipelineLayout;
+	VkDescriptorUpdateTemplate				descTemplate;
+	VkPipeline								pipeline;
 
 	void CreateUploadFontAtlasSync( vk_context& dc, vk_command_buffer& cmdBuff, u64 frameIdx )
 	{
@@ -156,25 +151,64 @@ struct imgui_pass
 
 		u64 sizeInBytes = width * height * 4;
 
-		vk_buffer stagingBuff = dc.CreateBuffer( {
+		HVKBUF stagingBuff = dc.CreateBuffer( {
 			.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			.sizeInBytes = sizeInBytes,
 			.usage = buffer_usage::STAGING
 		} );
 
-		std::memcpy( stagingBuff.hostVisible, pixels, sizeInBytes );
+		std::memcpy( stagingBuff->hostVisible, pixels, sizeInBytes );
 
 		cmdBuff.CmdPipelineImageBarriers( VkMakeImageBarrier(
-			fontAtlasImg, {}, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT },
-			VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VkFullResource( fontAtlasImg )
+			*fontAtlasImg, {}, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT },
+			VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VkFullResource( *fontAtlasImg )
 		) );
-		cmdBuff.CmdCopyBufferToImageSubresource( stagingBuff, 0, fontAtlasImg, VkFullResourceLayers( fontAtlasImg ) );
+		cmdBuff.CmdCopyBufferToImageSubresource( *stagingBuff, 0, *fontAtlasImg, VkFullResourceLayers( *fontAtlasImg ) );
 		cmdBuff.CmdPipelineImageBarriers( VkMakeImageBarrier(
-			fontAtlasImg, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT }, {}, 
-			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VkFullResource( fontAtlasImg )
+			*fontAtlasImg, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT }, {}, 
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VkFullResource( *fontAtlasImg )
 		) );
 
 		dc.EnqueueResourceFree( vk_resc_deletion{ stagingBuff, frameIdx } );
+	}
+
+	void ReallocBuffers(
+		vk_context& vkCtx, 
+		u64 frameIdx, 
+		u64 frameInFlightIdx, 
+		u64 vtxTotalSizeInBytes, 
+		u64 idxTotalSizeInBytes 
+	) {
+		[[unlikely]] while( std::size( vtx ) <= frameInFlightIdx ) vtx.push_back( {} );
+		[[unlikely]] while( std::size( idx ) <= frameInFlightIdx ) idx.push_back( {} );
+
+		if( IsValidHandle( vtx[ frameInFlightIdx ] ) &&
+			vtx[ frameInFlightIdx ]->sizeInBytes >= vtxTotalSizeInBytes ) return;
+
+		if( IsValidHandle( vtx[ frameInFlightIdx ] ) )
+		{
+			vkCtx.EnqueueResourceFree( vk_resc_deletion{ vtx[ frameInFlightIdx ], frameIdx } );
+		}
+
+		vtx[ frameInFlightIdx ] = vkCtx.CreateBuffer( {
+			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			.sizeInBytes = vtxTotalSizeInBytes,
+			.usage = buffer_usage::HOST_VISIBLE 
+		} );
+
+		if( IsValidHandle( idx[ frameInFlightIdx ] ) &&
+			idx[ frameInFlightIdx ]->sizeInBytes >= idxTotalSizeInBytes ) return;
+
+		if( IsValidHandle( idx[ frameInFlightIdx ] ) )
+		{
+			vkCtx.EnqueueResourceFree( vk_resc_deletion{ idx[ frameInFlightIdx ], frameIdx } );
+		}
+
+		idx[ frameInFlightIdx ] = vkCtx.CreateBuffer( {
+			.usageFlags = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			.sizeInBytes = idxTotalSizeInBytes,
+			.usage = buffer_usage::HOST_VISIBLE 
+		} );
 	}
 
 	// NOTE: it's mostly inspired by the official backend code
@@ -202,41 +236,14 @@ struct imgui_pass
 			u64 vtxTotalSizeInBytes = std::bit_ceil( drawData->TotalVtxCount * sizeof( imgui_vertex ) );
 			u64 idxTotalSizeInBytes = std::bit_ceil( drawData->TotalVtxCount * sizeof( index_t ) );
 
-			[[unlikely]] while( std::size( vtx ) <= frameInFlightIdx ) vtx.push_back( {} );
-			[[unlikely]] while( std::size( idx ) <= frameInFlightIdx ) idx.push_back( {} );
-
-			if( vtx[ frameInFlightIdx ].sizeInBytes < vtxTotalSizeInBytes )
-			{
-				if( VK_NULL_HANDLE != vtx[ frameInFlightIdx ].hndl )
-				{
-					vkCtx.EnqueueResourceFree( vk_resc_deletion{ vtx[ frameInFlightIdx ], frameIdx } );
-				}
-				vtx[ frameInFlightIdx ] = vkCtx.CreateBuffer( {
-					.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-					.sizeInBytes = vtxTotalSizeInBytes,
-					.usage = buffer_usage::HOST_VISIBLE 
-				} );
-			}
-
-			if( idx[ frameInFlightIdx ].sizeInBytes < idxTotalSizeInBytes )
-			{
-				if( VK_NULL_HANDLE != idx[ frameInFlightIdx ].hndl )
-				{
-					vkCtx.EnqueueResourceFree( vk_resc_deletion{ idx[ frameInFlightIdx ], frameIdx } );
-				}
-				idx[ frameInFlightIdx ] = vkCtx.CreateBuffer( {
-					.usageFlags = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-					.sizeInBytes = idxTotalSizeInBytes,
-					.usage = buffer_usage::HOST_VISIBLE 
-				} );
-			}
+			ReallocBuffers( vkCtx, frameIdx, frameInFlightIdx, vtxTotalSizeInBytes, idxTotalSizeInBytes );
 		}
 
-		const vk_buffer& vtxBuff = vtx[ frameInFlightIdx ];
-		const vk_buffer& idxBuff = idx[ frameInFlightIdx ];
+		const vk_buffer& vtxBuff = *vtx[ frameInFlightIdx ];
+		const vk_buffer& idxBuff = *idx[ frameInFlightIdx ];
 
-		ImDrawVert* vtxDst = ( ImDrawVert* ) vtx[ frameInFlightIdx ].hostVisible;
-		ImDrawIdx* idxDst = ( ImDrawIdx* ) idx[ frameInFlightIdx ].hostVisible;
+		ImDrawVert* vtxDst = ( ImDrawVert* ) vtxBuff.hostVisible;
+		ImDrawIdx* idxDst = ( ImDrawIdx* ) idxBuff.hostVisible;
 		for( const ImDrawList* cmdList : drawData->CmdLists )
 		{
 			std::memcpy( vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof( imgui_vertex ) );
@@ -249,7 +256,7 @@ struct imgui_pass
 		vec2 move = { -1.0f - drawData->DisplayPos.x * scale.x, -1.0f - drawData->DisplayPos.y * scale.y };
 		vec4 pushConst = { scale.x, scale.y, move.x, move.y };
 
-		VkDescriptorImageInfo descImgInfo = { fontSampler, fontAtlasImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL };
+		VkDescriptorImageInfo descImgInfo = { fontSampler, fontAtlasImg->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL };
 		vk_descriptor_info pushDescs[] = { Descriptor( vtxBuff ), descImgInfo };
 
 		vk_scoped_label label = { cmdBuff,"Draw Imgui Pass",{} };
@@ -390,9 +397,9 @@ imgui_pass MakeImguiPass( vk_context& dc, VkFormat colDstFormat )
 	VK_CHECK( vkCreateDescriptorUpdateTemplate( dc.device, &templateInfo, 0, &descTemplate ) );
 
 	unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
-		SysReadFile( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
+		SysReadFile( "../bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
 	unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
-		SysReadFile( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
+		SysReadFile( "../bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
 
 	vk_gfx_pso_config guiState = {
 		.polyMode = VK_POLYGON_MODE_FILL,
@@ -445,9 +452,9 @@ constexpr const char* ToString( debug_draw_type t )
 // TODO: double buffer debug geometry ?
 struct debug_draw_passes
 {
-	std::shared_ptr<vk_buffer> pLinesBuff;
-	std::shared_ptr<vk_buffer> pTrisBuff;
-	std::shared_ptr<vk_buffer> pDrawCount;
+	HVKBUF hLinesBuff;
+	HVKBUF hTrisBuff;
+	HVKBUF hDrawCount;
 
 	VkPipeline	drawAsLines;
 	VkPipeline	drawAsTriangles;
@@ -455,9 +462,9 @@ struct debug_draw_passes
 	void Init( vk_context& dc, VkPipelineLayout globalLayout, vk_renderer_config& rndCfg )
 	{
 		unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
-			SysReadFile( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
+			SysReadFile( "../Shaders/v_cpu_dbg_draw.vert.spv" ) );
 		unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
-			SysReadFile( "Shaders/f_pass_col.frag.spv" ) );
+			SysReadFile( "../Shaders/f_pass_col.frag.spv" ) );
 
 		static_assert( worldLeftHanded );
 
@@ -498,26 +505,26 @@ struct debug_draw_passes
 
 		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
 			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-		pDrawCount = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hDrawCount = dc.CreateBuffer( {
 			.name = "Buff_DbgDrawCount",
 			.usageFlags = usgFlags,
 			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } ) );  
+			.usage = buffer_usage::GPU_ONLY } );  
 	}
 
 	void InitData( vk_context& dc, u32 dbgLinesSizeInBytes, u32 dbgTrianglesSizeInBytes )
 	{
-		pLinesBuff = std::make_shared<vk_buffer>( dc.CreateBuffer( { 
+		hLinesBuff = dc.CreateBuffer( { 
 			.name = "Buff_DbgLines",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
 			.sizeInBytes = dbgLinesSizeInBytes, 
-			.usage = buffer_usage::HOST_VISIBLE } ) );
+			.usage = buffer_usage::HOST_VISIBLE } );
 
-		pTrisBuff = std::make_shared<vk_buffer>( dc.CreateBuffer( { 
+		hTrisBuff = dc.CreateBuffer( { 
 			.name = "Buff_DbgTris",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
 			.sizeInBytes = dbgTrianglesSizeInBytes, 
-			.usage = buffer_usage::HOST_VISIBLE } ) );
+			.usage = buffer_usage::HOST_VISIBLE } );
 	}
 
 	// NOTE: must be aligned properly to work
@@ -527,10 +534,10 @@ struct debug_draw_passes
 		auto lineVtxBuff = BoxVerticesAsLines( unitCube );
 		auto trisVtxBuff = BoxVerticesAsTriangles( unitCube );
 
-		HT_ASSERT( pLinesBuff->sizeInBytes >= BYTE_COUNT( lineVtxBuff ) );
-		HT_ASSERT( pTrisBuff->sizeInBytes >= BYTE_COUNT( trisVtxBuff ) );
-		std::memcpy( pLinesBuff->hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
-		std::memcpy( pTrisBuff->hostVisible, std::data( trisVtxBuff ), BYTE_COUNT( trisVtxBuff ) );
+		HT_ASSERT( hLinesBuff->sizeInBytes >= BYTE_COUNT( lineVtxBuff ) );
+		HT_ASSERT( hTrisBuff->sizeInBytes >= BYTE_COUNT( trisVtxBuff ) );
+		std::memcpy( hLinesBuff->hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
+		std::memcpy( hTrisBuff->hostVisible, std::data( trisVtxBuff ), BYTE_COUNT( trisVtxBuff ) );
 	}
 
 	// TODO: multi draw with params
@@ -554,7 +561,7 @@ struct debug_draw_passes
 
 		cmdBuff.CmdBindPipelineAndBindlessDesc( vkPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS );
 
-		u64 vtxAddr = ( ddType == debug_draw_type::TRIANGLE ) ? pTrisBuff->devicePointer : pLinesBuff->devicePointer;
+		u64 vtxAddr = ( ddType == debug_draw_type::TRIANGLE ) ? hTrisBuff->devicePointer : hLinesBuff->devicePointer;
 		u32 vertexCount = ( ddType == debug_draw_type::TRIANGLE ) ? std::size( boxTrisIndices ) : std::size( boxLineIndices );
 	#pragma pack(push, 1)
 		struct debug_cpu_push
@@ -588,20 +595,20 @@ constexpr char drakPath[] = "Assets/cyberbaron.drak";
 
 struct culling_pass
 {
-	std::shared_ptr<vk_buffer> pInstanceOccludedCache;
-	std::shared_ptr<vk_buffer> pClusterOccludedCache;
-	std::shared_ptr<vk_buffer> pCompactedDrawArgs;
-	std::shared_ptr<vk_buffer> pDrawCmds;
-	std::shared_ptr<vk_buffer> pDrawCount;
-	std::shared_ptr<vk_buffer> pAtomicWgCounter;
-	std::shared_ptr<vk_buffer> pDispatchIndirect;
+	HVKBUF hInstanceOccludedCache;
+	HVKBUF hClusterOccludedCache;
+	HVKBUF hCompactedDrawArgs;
+	HVKBUF hDrawCmds;
+	HVKBUF hDrawCount;
+	HVKBUF hAtomicWgCounter;
+	HVKBUF hDispatchIndirect;
 
 	VkPipeline		compPipeline;
 	VkPipeline      compClusterCullPipe;
 
 	void Init( vk_context& dc )
 	{
-		unique_shader_ptr drawCull = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/c_draw_cull.comp.spv" ) );
+		unique_shader_ptr drawCull = dc.CreateShaderFromSpirv( SysReadFile( "../Shaders/c_draw_cull.comp.spv" ) );
 		compPipeline = dc.CreateComptuePipeline( *drawCull, "Pipeline_Comp_DrawCull" );
 
 		//vk_shader clusterCull = dc.CreateShaderFromSpirv( "Shaders/c_meshlet_cull.comp.spv", dc.device );
@@ -609,52 +616,52 @@ struct culling_pass
 		//	dc.device, 0, pipelineLayout, clusterCull.module, {}, dc.waveSize, SHADER_ENTRY_POINT, "Pipeline_Comp_ClusterCull" );
 		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
 			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-		pDrawCount = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hDrawCount = dc.CreateBuffer( {
 			.name = "Buff_DrawCount",
 			.usageFlags = usgFlags,
 			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } ) );
+			.usage = buffer_usage::GPU_ONLY } );
 
-		pAtomicWgCounter = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hAtomicWgCounter = dc.CreateBuffer( {
 			.name = "Buff_AtomicWgCounter",
 			.usageFlags = 
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 																		 .sizeInBytes = 1 * sizeof( u32 ),
-																		 .usage = buffer_usage::GPU_ONLY } ) ); 
+																		 .usage = buffer_usage::GPU_ONLY } ); 
 
-		pDispatchIndirect = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hDispatchIndirect = dc.CreateBuffer( {
 			.name = "Buff_DispatchIndirect",
 			.usageFlags = 
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 																		  .sizeInBytes = 1 * sizeof( dispatch_command ),
-																		  .usage = buffer_usage::GPU_ONLY } ) );  
+																		  .usage = buffer_usage::GPU_ONLY } );  
 	}
 
 	void InitSceneDependentData( vk_context& dc, u32 instancesUpperBound, u32 meshletUpperBound )
 	{
 		constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-		pInstanceOccludedCache = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hInstanceOccludedCache = dc.CreateBuffer( {
 			.name = "Buff_InstanceVisibilityCache",
 			.usageFlags = usg | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes = instancesUpperBound * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } ) );
+			.usage = buffer_usage::GPU_ONLY } );
 
-		pClusterOccludedCache = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hClusterOccludedCache = dc.CreateBuffer( {
 			.name = "Buff_ClusterVisibilityCache",
 			.usageFlags = usg | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes = meshletUpperBound * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } ) );
+			.usage = buffer_usage::GPU_ONLY } );
 
-		pCompactedDrawArgs = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hCompactedDrawArgs = dc.CreateBuffer( {
 			.name = "Buff_CompactedDrawArgs",
 			.usageFlags = usg,
 			.sizeInBytes = meshletUpperBound * sizeof( compacted_draw_args ),
-			.usage = buffer_usage::GPU_ONLY } ) );
-		pDrawCmds = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+			.usage = buffer_usage::GPU_ONLY } );
+		hDrawCmds = dc.CreateBuffer( {
 			.name = "Buff_DrawCmds",
 			.usageFlags = usg | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT ,
 			.sizeInBytes = meshletUpperBound * sizeof( draw_command ),
-			.usage = buffer_usage::GPU_ONLY } ) );
+			.usage = buffer_usage::GPU_ONLY } );
 	}
 
 	void Execute(
@@ -677,20 +684,20 @@ struct culling_pass
 			//cmdBuff.CmdFillVkBuffer( *pInstanceOccludedCache, 0u );
 		}
 
-		rscTracker.UseBuffer( *pDrawCount, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
-		rscTracker.UseBuffer( *pAtomicWgCounter, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
+		rscTracker.UseBuffer( *hDrawCount, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
+		rscTracker.UseBuffer( *hAtomicWgCounter, { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
 
-		cmdBuff.CmdFillVkBuffer( *pDrawCount, 0u );
-		cmdBuff.CmdFillVkBuffer( *pAtomicWgCounter, 0u );
+		cmdBuff.CmdFillVkBuffer( *hDrawCount, 0u );
+		cmdBuff.CmdFillVkBuffer( *hAtomicWgCounter, 0u );
 
-		rscTracker.UseBuffer( *pDrawCmds, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
-		rscTracker.UseBuffer( *pDrawCount, { HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
-		rscTracker.UseBuffer( *pDispatchIndirect, 
+		rscTracker.UseBuffer( *hDrawCmds, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
+		rscTracker.UseBuffer( *hDrawCount, { HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
+		rscTracker.UseBuffer( *hDispatchIndirect, 
 			{ VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
-		rscTracker.UseBuffer( *pAtomicWgCounter, { HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
+		rscTracker.UseBuffer( *hAtomicWgCounter, { HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
 		if( !latePass )
 		{
-			rscTracker.UseBuffer( *pInstanceOccludedCache, 
+			rscTracker.UseBuffer( *hInstanceOccludedCache, 
 				{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
 		}
 		rscTracker.UseImage( depthPyramid,
@@ -727,12 +734,12 @@ struct culling_pass
 				u32 camIdx;
 				u32 latePass;
 			} pushConst = {
-				.drawCmdsAddr = pDrawCmds->devicePointer,
-				.compactedArgsAddr = pCompactedDrawArgs->devicePointer,
-				.instOccCacheAddr = pInstanceOccludedCache->devicePointer,
-				.atomicWorkgrCounterAddr = pAtomicWgCounter->devicePointer,
-				.visInstaceCounterAddr = pDrawCount->devicePointer,
-				.dispatchCmdAddr = pDispatchIndirect->devicePointer,
+				.drawCmdsAddr = hDrawCmds->devicePointer,
+				.compactedArgsAddr = hCompactedDrawArgs->devicePointer,
+				.instOccCacheAddr = hInstanceOccludedCache->devicePointer,
+				.atomicWorkgrCounterAddr = hAtomicWgCounter->devicePointer,
+				.visInstaceCounterAddr = hDrawCount->devicePointer,
+				.dispatchCmdAddr = hDispatchIndirect->devicePointer,
 				.hizBuffIdx = hizDesc.slot,
 				.hizSamplerIdx = samplerDesc.slot,
 				.instanceCount = instCount,
@@ -745,11 +752,11 @@ struct culling_pass
 			vkCmdDispatch( cmdBuff.hndl, GroupCount( instCount, 32 ), 1, 1 );
 		}
 
-		rscTracker.UseBuffer( *pDrawCmds, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
-		rscTracker.UseBuffer( *pCompactedDrawArgs, 
+		rscTracker.UseBuffer( *hDrawCmds, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
+		rscTracker.UseBuffer( *hCompactedDrawArgs, 
 			{ VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT, 
 			VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT } );
-		rscTracker.UseBuffer( *pDrawCount, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
+		rscTracker.UseBuffer( *hDrawCount, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
 
 		rscTracker.FlushBarriers( cmdBuff );
 	}
@@ -757,9 +764,9 @@ struct culling_pass
 
 struct tone_mapping_pass
 {
-	std::shared_ptr<vk_buffer>	pAverageLuminanceBuffer;
-	std::shared_ptr<vk_buffer>	pLuminanceHistogramBuffer;
-	std::shared_ptr<vk_buffer>	pAtomicWgCounterBuff;
+	HVKBUF	hAverageLuminanceBuffer;
+	HVKBUF	hLuminanceHistogramBuffer;
+	HVKBUF	hAtomicWgCounterBuff;
 
 	VkPipeline					compAvgLumPipe;
 	VkPipeline					compTonemapPipe;
@@ -771,35 +778,35 @@ struct tone_mapping_pass
 	void Init( vk_context& dc )
 	{
 		unique_shader_ptr avgLum = dc.CreateShaderFromSpirv( 
-			SysReadFile( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
+			SysReadFile( "../bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
 		compAvgLumPipe = dc.CreateComptuePipeline( *avgLum, "Pipeline_Comp_AvgLum" );
 
 		unique_shader_ptr toneMapper = dc.CreateShaderFromSpirv( 
-			SysReadFile( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
+			SysReadFile( "../bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
 		compTonemapPipe = dc.CreateComptuePipeline( *toneMapper, "Pipeline_Comp_Tonemapping" );
 
 		VkBufferUsageFlags usageFlags = 
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-		pAverageLuminanceBuffer = std::make_shared<vk_buffer>( dc.CreateBuffer( {
+		hAverageLuminanceBuffer = dc.CreateBuffer( {
 			.name = "Buff_AvgLum",
 			.usageFlags = usageFlags,
 			.sizeInBytes = 1 * sizeof( float ),
-			.usage = buffer_usage::GPU_ONLY } ) );
-		avgLumIdx = dc.AllocDescriptor( vk_descriptor_info{ *pAverageLuminanceBuffer } );
+			.usage = buffer_usage::GPU_ONLY } );
+		avgLumIdx = dc.AllocDescriptor( vk_descriptor_info{ *hAverageLuminanceBuffer } );
 
-		pAtomicWgCounterBuff = std::make_unique<vk_buffer>( dc.CreateBuffer( {
+		hAtomicWgCounterBuff = dc.CreateBuffer( {
 			.name = "Buff_TonemappingAtomicWgCounter",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } ) );
-		atomicWgCounterIdx = dc.AllocDescriptor( vk_descriptor_info{ *pAtomicWgCounterBuff } );
+			.usage = buffer_usage::GPU_ONLY } );
+		atomicWgCounterIdx = dc.AllocDescriptor( vk_descriptor_info{ *hAtomicWgCounterBuff } );
 
-		pLuminanceHistogramBuffer = std::make_unique<vk_buffer>( dc.CreateBuffer( {
+		hLuminanceHistogramBuffer = dc.CreateBuffer( {
 			.name = "Buff_LumHisto",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes = 4 * sizeof( u64 ),
-			.usage = buffer_usage::GPU_ONLY } ) ); 
-		lumHistoIdx = dc.AllocDescriptor( vk_descriptor_info{ *pLuminanceHistogramBuffer } );
+			.usage = buffer_usage::GPU_ONLY } ); 
+		lumHistoIdx = dc.AllocDescriptor( vk_descriptor_info{ *hLuminanceHistogramBuffer } );
 	}
 
 	void AverageLuminancePass( 
@@ -857,20 +864,20 @@ struct tone_mapping_pass
 struct depth_pyramid_pass
 {
 	VkPipeline		pipeline;
-	std::shared_ptr<vk_image> pHiZTarget;
-	VkImageView hiZMipViews[ MAX_MIP_LEVELS ];
+	HVKIMG			hHiZTarget;
+	VkImageView		hiZMipViews[ MAX_MIP_LEVELS ];
 
-	VkSampler quadMinSampler;
+	VkSampler       quadMinSampler;
 
-	desc_hndl32 hizSrv;
+	desc_hndl32     hizSrv;
 
-	desc_hndl32 hizMipUavs[ MAX_MIP_LEVELS ];
-	desc_hndl32 quadMinSamplerIdx;
+	desc_hndl32		hizMipUavs[ MAX_MIP_LEVELS ];
+	desc_hndl32		quadMinSamplerIdx;
 
 	void Init( vk_context& vkCtx )
 	{
 		unique_shader_ptr downsampler = vkCtx.CreateShaderFromSpirv( 
-			SysReadFile( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
+			SysReadFile( "../bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
 		pipeline = vkCtx.CreateComptuePipeline( *downsampler, "Pipeline_Comp_HiZ" );
 
 		u16 squareDim = 512;
@@ -894,14 +901,14 @@ struct depth_pyramid_pass
 			.mipCount = hiZMipCount
 		};
 
-		pHiZTarget = std::make_shared<vk_image>( vkCtx.CreateImage( hiZInfo ) );
+		hHiZTarget = vkCtx.CreateImage( hiZInfo );
 
-		hizSrv = vkCtx.AllocDescriptor( vk_descriptor_info{ pHiZTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		hizSrv = vkCtx.AllocDescriptor( vk_descriptor_info{ hHiZTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		for( u32 i = 0; i < pHiZTarget->mipCount; ++i )
+		for( u32 i = 0; i < hHiZTarget->mipCount; ++i )
 		{
 			hiZMipViews[ i ] = VkMakeImgView( 
-				vkCtx.device, pHiZTarget->hndl, hiZInfo.format, i, 1, VK_IMAGE_VIEW_TYPE_2D, 0, hiZInfo.layerCount );
+				vkCtx.device, hHiZTarget->hndl, hiZInfo.format, i, 1, VK_IMAGE_VIEW_TYPE_2D, 0, hiZInfo.layerCount );
 			hizMipUavs[ i ] = vkCtx.AllocDescriptor( vk_descriptor_info{ hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL } );
 		}
 
@@ -940,7 +947,7 @@ struct depth_pyramid_pass
 
 		rscTracker.UseImage( depthTarget, { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, 
 			VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
-		rscTracker.UseImage( *pHiZTarget, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, 
+		rscTracker.UseImage( *hHiZTarget, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, 
 			VK_IMAGE_LAYOUT_GENERAL );
 
 		cmdBuff.CmdBindPipelineAndBindlessDesc( pipeline, VK_PIPELINE_BIND_POINT_COMPUTE );
@@ -956,7 +963,7 @@ struct depth_pyramid_pass
 
 		u32 mipLevel = 0;
 		u32 srcImg = depthIdx.slot;
-		for( u32 i = 0; i < pHiZTarget->mipCount; ++i )
+		for( u32 i = 0; i < hHiZTarget->mipCount; ++i )
 		{
 			if( i > 0 )
 			{
@@ -965,8 +972,8 @@ struct depth_pyramid_pass
 			}
 			u32 dstImg = hizMipUavs[ i ].slot;
 
-			u32 levelWidth = std::max( 1u, u32( pHiZTarget->width ) >> i );
-			u32 levelHeight = std::max( 1u, u32( pHiZTarget->height ) >> i );
+			u32 levelWidth = std::max( 1u, u32( hHiZTarget->width ) >> i );
+			u32 levelHeight = std::max( 1u, u32( hHiZTarget->height ) >> i );
 
 			vec2 reduceData{ ( float ) levelWidth, ( float ) levelHeight };
 
@@ -995,7 +1002,7 @@ struct depth_pyramid_pass
 		rscTracker.UseImage( depthTarget, 
 			{  HT_DEPTH_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT }, 
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
-		rscTracker.UseImage( *pHiZTarget, 
+		rscTracker.UseImage( *hHiZTarget, 
 			{ VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, VK_IMAGE_LAYOUT_GENERAL );
 		rscTracker.FlushBarriers( cmdBuff );
 	}
@@ -1059,9 +1066,9 @@ DrawIndexedIndirectMerged(
 
 struct gpu_mesh_payload
 {
-	std::shared_ptr<vk_buffer> pMeshletBuffer;
-	std::shared_ptr<vk_buffer> pVertexBuffer;
-	std::shared_ptr<vk_buffer> pTriangleBuffer;
+	HVKBUF hMeshletBuffer;
+	HVKBUF hVertexBuffer;
+	HVKBUF hTriangleBuffer;
 };
 
 #include "ht_gfx_types.h"
@@ -1089,21 +1096,23 @@ struct renderer_geometry
 	std::vector<gpu_mesh_payload> gpuMeshes;
 	std::vector<desc_gpu_mesh> gpuMeshDescs; // NOTE: matches 1:1 the above buffers
 
-	std::shared_ptr<vk_buffer> pMeshes; // NOTE: contains the above table
-	std::shared_ptr<vk_buffer> pMaterials;
+	HVKBUF hMeshTable; // NOTE: contains the above table
+	HVKBUF hMaterialTable;
 
-	std::shared_ptr<vk_buffer> pInstanceBuffer;
+	HVKBUF hInstanceBuffer;
 
-	std::shared_ptr<vk_buffer> pLights;
+	HVKBUF hLights;
 
-	std::vector<std::shared_ptr<vk_image>> pTextures;
+	std::vector<HVKIMG> hTextures;
 
-	desc_hndl32 hInstanceBuffer;
+	desc_hndl32 meshTableDesc;
+	desc_hndl32 materialTableDesc;
+
+	desc_hndl32 instBuffDesc;
 	
-	desc_hndl32 hMaterials;
-	desc_hndl32 hLights;
+	desc_hndl32 lightsDesc;
 
-	std::vector<desc_hndl32> hTextures;
+	std::vector<desc_hndl32> texuresDesc;
 
 	//// NOTE: we never deallocate samplers 
 	//std::vector<VkSampler> samplers;
@@ -1113,33 +1122,27 @@ struct renderer_geometry
 struct virtual_frame
 {
 	//vk_gpu_timer gpuTimer;
+	HVKCB hCmdBuff;
 	VkSemaphore                 canGetImgSema;
-	std::shared_ptr<vk_buffer>	pViewData;
+	HVKBUF	                    hViewData;
 	desc_hndl32                 viewDataIdx;
+	u32                         fifIdx; // NOTE: for debug
 
-	vk_cb_hndl32                hCmdBuff;
-
-	inline void Init( vk_context& vkCtx, u64 sizeInBytes )
+	inline void Init( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
 	{
+		constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+		fixed_string<32> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
+
 		canGetImgSema = vkCtx.CreateBinarySemaphore();
-		pViewData = std::make_shared<vk_buffer>( vkCtx.CreateBuffer( {
-			.name = "Buff_VirtualFrame_ViewBuff",
-			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			.sizeInBytes = sizeInBytes,
-			.usage = buffer_usage::HOST_VISIBLE
-		} ) );
-		viewDataIdx = vkCtx.AllocDescriptor( vk_descriptor_info{ *pViewData } );
+		hViewData = vkCtx.CreateBuffer( { .name = std::data( name ), .usageFlags = usg, .sizeInBytes = sizeInBytes, 
+			.usage = buffer_usage::HOST_VISIBLE } );
+		viewDataIdx = vkCtx.AllocDescriptor( vk_descriptor_info{ *hViewData } );
 		hCmdBuff = vkCtx.AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 	}
 };
 
-template<typename T, u64 N>
-using ht_fixed_vector = eastl::fixed_vector<T, N, false>;
-
 struct render_context final : renderer_interface
 {
-	static constexpr u64 MAX_FIF = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
-
 	alignas( 8 ) vk_renderer_config             config = { 
 		.renderWidth = SCREEN_WIDTH, .rednerHeight = SCREEN_HEIGHT };
 
@@ -1151,12 +1154,12 @@ struct render_context final : renderer_interface
 
 	vk_rsc_state_tracker						rscSyncState;
 
-	ht_fixed_vector<virtual_frame, MAX_FIF>     vrtFrames;
+	fixed_vector<virtual_frame, MAX_FIF>        vrtFrames;
 
 	std::unique_ptr<vk_context>                 pVkCtx;
 
-	std::shared_ptr<vk_image>					pColorTarget;
-	std::shared_ptr<vk_image>					pDepthTarget;
+	HVKIMG										hColorTarget;
+	HVKIMG										hDepthTarget;
 
 	// TODO: move to appropriate technique/context
 	VkPipeline									gfxZPrepass;
@@ -1178,7 +1181,7 @@ struct render_context final : renderer_interface
 	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height );
 
 	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) override;
-	virtual void UploadAsync( const hellpack_view& hellpackView ) override;
+	//virtual void UploadAsync( const hellpack_view& hellpackView ) override;
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
 };
 
@@ -1189,7 +1192,7 @@ std::unique_ptr<renderer_interface> MakeRenderer()
 
 void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height )
 {
-	if( nullptr == pDepthTarget )
+	if( !IsValidHandle( hDepthTarget ) )
 	{
 		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 		image_info info = {
@@ -1201,13 +1204,13 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 			.layerCount = 1,
 			.mipCount = 1,
 		};
-		pDepthTarget = std::make_shared<vk_image>( pVkCtx->CreateImage( info ) );
+		hDepthTarget = pVkCtx->CreateImage( info );
 
-		depthSrv = pVkCtx->AllocDescriptor( vk_descriptor_info{ pDepthTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		depthSrv = pVkCtx->AllocDescriptor( vk_descriptor_info{ hDepthTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		rscSyncState.UseImage( *pDepthTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
+		rscSyncState.UseImage( *hDepthTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 	}
-	if( nullptr == pColorTarget )
+	if( !IsValidHandle( hColorTarget ) )
 	{
 		constexpr VkImageUsageFlags usgFlags =
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -1220,9 +1223,9 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 			.layerCount = 1,
 			.mipCount = 1,
 		};
-		pColorTarget = std::make_shared<vk_image>( pVkCtx->CreateImage( info ) );
+		hColorTarget = pVkCtx->CreateImage( info );
 
-		colSrv = pVkCtx->AllocDescriptor( vk_descriptor_info{ pColorTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		colSrv = pVkCtx->AllocDescriptor( vk_descriptor_info{ hColorTarget->view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
 		VkSamplerCreateInfo samplerCreateInfo = { 
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -1242,7 +1245,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 		pbrSampler = pVkCtx->CreateSampler( samplerCreateInfo );
 		pbrSamplerIdx = pVkCtx->AllocDescriptor( vk_descriptor_info{ pbrSampler } );
 
-		rscSyncState.UseImage( *pColorTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
+		rscSyncState.UseImage( *hColorTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 	}
 }
 
@@ -1251,7 +1254,7 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, config ) );
 
 	{
-		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/v_z_prepass.vert.spv" ) );
+		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "../Shaders/v_z_prepass.vert.spv" ) );
 
 		vk_gfx_shader_stage shaderStages[] = { *vtx };
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -1286,8 +1289,8 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	cullingPass.Init( *pVkCtx );
 	tonemapPass.Init( *pVkCtx );
 	{
-		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/vtx_merged.vert.spv" ) );
-		unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/pbr.frag.spv" ) );
+		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "../Shaders/vtx_merged.vert.spv" ) );
+		unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv( SysReadFile( "../Shaders/pbr.frag.spv" ) );
 		
 		vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -1313,9 +1316,10 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 
 	imguiPass = MakeImguiPass( *pVkCtx, pVkCtx->scConfig.format );
 
-	vrtFrames.resize( framesInFlight );
+	//vrtFrames.resize( framesInFlight );
 }
 
+/*
 void render_context::UploadAsync( const hellpack_view& hellpackView )
 {
 	vk_buffer stagingBuff = pVkCtx->CreateBuffer( {
@@ -1357,30 +1361,32 @@ void render_context::UploadAsync( const hellpack_view& hellpackView )
 	pVkCtx->copyQueue.submitionCount++;
 	pVkCtx->QueueSubmitToTimeline( pVkCtx->copyQueue, {}, {}, {}, copyCmdBuff.hndl );
 }
+*/
 
 // TODO: use a queue timeline or smth to check if we can get a cmd buffer instead of vFrameIdx
 void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	const u64 currentFrameIdx = vFrameIdx++;
 	const u64 currentFrameInFlightIdx = currentFrameIdx % framesInFlight;
-	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
 	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
 
-	//pVkCtx->FlushDeletionQueues( currentFrameIdx );
-
 	[[unlikely]]
 	if( currentFrameIdx < framesInFlight )
 	{
-		virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
-		thisVFrame.Init( *pVkCtx, std::size( frameData.views ) * sizeof( view_data ) );
+		vrtFrames.push_back( {} );
+		std::rbegin( vrtFrames )->Init( *pVkCtx, std::size( frameData.views ) * sizeof( view_data ), currentFrameInFlightIdx );
 	}
-	HT_ASSERT( thisVFrame.pViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
-	std::memcpy( thisVFrame.pViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	vk_command_buffer thisFrameCmdBuffer = { pVkCtx->GetCmdBuff( thisVFrame.hCmdBuff ), 
-		pVkCtx->globalPipelineLayout, pVkCtx->descSet };
+	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
+
+	HT_ASSERT( thisVFrame.hViewData->sizeInBytes == BYTE_COUNT( frameData.views ) );
+	std::memcpy( thisVFrame.hViewData->hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
+
+	pVkCtx->FlushDeletionQueues( currentFrameIdx );
+
+	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.hCmdBuff->buff, pVkCtx->globalPipelineLayout, pVkCtx->descSet };
 
 	static bool initResources = false;
 	if( !initResources )
@@ -1398,17 +1404,17 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 		//dbgCtx.UploadDebugGeometry();
 
-		rscSyncState.UseBuffer( *tonemapPass.pAverageLuminanceBuffer, 
+		rscSyncState.UseBuffer( *tonemapPass.hAverageLuminanceBuffer, 
 			{ VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT} );
 
-		thisFrameCmdBuffer.CmdFillVkBuffer( *tonemapPass.pAverageLuminanceBuffer, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( *tonemapPass.hAverageLuminanceBuffer, 0u );
 
-		rscSyncState.UseBuffer( *tonemapPass.pAverageLuminanceBuffer, 
+		rscSyncState.UseBuffer( *tonemapPass.hAverageLuminanceBuffer, 
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT} );
 
 		rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
-		rscSyncState.UseImage( *hizbPass.pHiZTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
+		rscSyncState.UseImage( *hizbPass.hHiZTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 
 		initResources = true;
 	}
@@ -1418,8 +1424,8 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	u32 scImgIdx = pVkCtx->AcquireNextSwapchainImageBlocking( thisVFrame.canGetImgSema );
 	const vk_swapchain_image& scImg = pVkCtx->scImgs[ scImgIdx ];
 
-	const vk_image& depthTarget = *pDepthTarget;
-	const vk_image& colorTarget = *pColorTarget;
+	const vk_image& depthTarget = *hDepthTarget;
+	const vk_image& colorTarget = *hColorTarget;
 
 	auto depthWrite = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
 	auto depthRead = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
@@ -1444,7 +1450,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 	{
 		//vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
-		cullingPass.Execute( thisFrameCmdBuffer, rscSyncState, *hizbPass.pHiZTarget, instCount, 
+		cullingPass.Execute( thisFrameCmdBuffer, rscSyncState, *hizbPass.hHiZTarget, instCount, 
 			thisVFrame.viewDataIdx, hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, false );
 
 		rscSyncState.UseImage( depthTarget, 
@@ -1461,7 +1467,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 		} shadingPush = { 
 				.vtxAddr = globVertexBuff.devicePointer, 
 				.transfAddr = instDescBuff.devicePointer, 
-				.compactedArgsAddr = cullingPass.pCompactedDrawArgs->devicePointer,
+				.compactedArgsAddr = cullingPass.hCompactedDrawArgs->devicePointer,
 				.mtrlsAddr = materialsBuff.devicePointer, 
 				.lightsAddr = lightsBuff.devicePointer,
 				.camIdx = thisVFrame.viewDataIdx.slot,
@@ -1482,8 +1488,8 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 			colorPassInfo,
 			indexBuff,
 			VK_INDEX_TYPE_UINT32,
-			*cullingPass.pDrawCmds,
-			*cullingPass.pDrawCount,
+			*cullingPass.hDrawCmds,
+			*cullingPass.hDrawCount,
 			meshletUpperBound,
 			&shadingPush,
 			sizeof(shadingPush)
@@ -1500,14 +1506,14 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscSyncState, depthTarget, depthSrv );
 
-		rscSyncState.UseBuffer( *cullingPass.pDrawCount, 
+		rscSyncState.UseBuffer( *cullingPass.hDrawCount, 
 			{ VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
-		rscSyncState.UseBuffer( *cullingPass.pAtomicWgCounter, 
+		rscSyncState.UseBuffer( *cullingPass.hAtomicWgCounter, 
 			{ VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT } );
 
 		rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 
-		cullingPass.Execute( thisFrameCmdBuffer, rscSyncState, *hizbPass.pHiZTarget,
+		cullingPass.Execute( thisFrameCmdBuffer, rscSyncState, *hizbPass.hHiZTarget,
 			instCount, thisVFrame.viewDataIdx, hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
 
 		rscSyncState.UseImage( depthTarget, 
@@ -1523,8 +1529,8 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 			colorPassInfo,
 			indexBuff,
 			VK_INDEX_TYPE_UINT32,
-			*cullingPass.pDrawCmds,
-			*cullingPass.pDrawCount,
+			*cullingPass.hDrawCmds,
+			*cullingPass.hDrawCount,
 			meshletUpperBound,
 			&shadingPush,
 			sizeof(shadingPush)
@@ -1567,12 +1573,12 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 			//				  frameData.activeProjView, scissor );
 		}
 
-		thisFrameCmdBuffer.CmdFillVkBuffer( *tonemapPass.pLuminanceHistogramBuffer, 0u );
-		thisFrameCmdBuffer.CmdFillVkBuffer( *tonemapPass.pAtomicWgCounterBuff, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( *tonemapPass.hLuminanceHistogramBuffer, 0u );
+		thisFrameCmdBuffer.CmdFillVkBuffer( *tonemapPass.hAtomicWgCounterBuff, 0u );
 
-		rscSyncState.UseBuffer( *tonemapPass.pLuminanceHistogramBuffer, 
+		rscSyncState.UseBuffer( *tonemapPass.hLuminanceHistogramBuffer, 
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
-		rscSyncState.UseBuffer( *tonemapPass.pAtomicWgCounterBuff, 
+		rscSyncState.UseBuffer( *tonemapPass.hAtomicWgCounterBuff, 
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
 		rscSyncState.UseImage( colorTarget, 
 			{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
@@ -1587,7 +1593,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 		rscSyncState.UseImage( scImg.img, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, 
 			VK_IMAGE_LAYOUT_GENERAL );
 
-		rscSyncState.UseBuffer( *tonemapPass.pAverageLuminanceBuffer, 
+		rscSyncState.UseBuffer( *tonemapPass.hAverageLuminanceBuffer, 
 			{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
 		rscSyncState.FlushBarriers( thisFrameCmdBuffer );
 		

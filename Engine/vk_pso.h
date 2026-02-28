@@ -9,7 +9,7 @@
 #include "core_types.h"
 
 #include <span>
-#include <EASTL/fixed_string.h>
+#include "ht_fixed_string.h"
 #include <SPIRV-Reflect/spirv_reflect.h>
 
 inline spv_reflect::ShaderModule SpvMakeReflectedShaderModule( std::span<const u8> spvByteCode )
@@ -23,8 +23,7 @@ inline spv_reflect::ShaderModule SpvMakeReflectedShaderModule( std::span<const u
 
 struct vk_shader
 {
-	using shader_entry_point = eastl::fixed_string<char, 128, false>;
-	shader_entry_point    entryPoint;
+	fixed_string<128>    entryPoint;
 	VkShaderModule        module;
 	VkShaderStageFlagBits stage;
 };
@@ -36,7 +35,7 @@ struct vk_gfx_shader_stage : VkPipelineShaderStageCreateInfo
 		this->sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		this->stage = shader.stage;
 		this->module = shader.module;
-		this->pName = shader.entryPoint.c_str();
+		this->pName = std::data( shader.entryPoint );
 	}
 };
 

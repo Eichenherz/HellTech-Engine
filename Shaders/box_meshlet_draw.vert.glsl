@@ -11,7 +11,7 @@ layout( push_constant ) uniform block{
 	vec4		col;
 	uint64_t	cmdAddr;
 	uint64_t	transfAddr;
-	uint64_t	meshletAddr;
+	uint64_t	meshlet_w_coneAddr;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 8 ) readonly buffer draw_indir_ref{
@@ -20,8 +20,8 @@ layout( buffer_reference, scalar, buffer_reference_align = 8 ) readonly buffer d
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer inst_desc_ref{
 	instance_desc instDescs[];
 };
-layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer meshlet_desc_ref{ 
-	meshlet meshlets[]; 
+layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer meshlet_w_cone_desc_ref{ 
+	meshlet_w_cone meshlet_w_cones[]; 
 };
 layout( buffer_reference, buffer_reference_align = 4 ) readonly buffer compacted_args_ref{
 	compacted_draw_args compactedDrawArgs[];
@@ -128,10 +128,10 @@ void main()
 	uint mi = uint( di >> 32 );
 
 	//instance_desc inst = instDescs[ ii ];
-	//meshlet m = meshlets[ mi ];
+	//meshlet_w_cone m = meshlet_w_cones[ mi ];
 	
 	instance_desc inst = inst_desc_ref( transfAddr ).instDescs[ ii ];
-	meshlet m = meshlet_desc_ref( meshletAddr ).meshlets[ mi ];
+	meshlet_w_cone m = meshlet_w_cone_desc_ref( meshlet_w_coneAddr ).meshlet_w_cones[ mi ];
 
 	vec3 pos = vtx.xyz * m.extent + m.center;
 	

@@ -697,7 +697,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	}
 
 	return {
-		.descBindingSlots = bindingSlots,
+		.descBindingSlots = std::move( bindingSlots ),
 		.gfxQueue = VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
 		.copyQueue = VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx ),
 		.gpuFrameTimeline = { .sema = VkMakeSemaphore( vkDevice.logical, true, 0 ), .submitsIssuedCount = 0 },
@@ -720,7 +720,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 }
 
 
-vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
+HVKBUF vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -761,14 +761,16 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 		HT_ASSERT( devicePointer );
 	}
 
-	return {
+	auto it = buffPool.insert( {
 		.mem = mem,
 		.hndl = vkBuffer,
 		.sizeInBytes = bufferCreateInfo.size,
 		.hostVisible = ( u8* ) allocInfo.pMappedData,
 		.devicePointer = devicePointer,
 		.usgFlags = bufferCreateInfo.usage
-	};
+	} );
+
+	return { &( *it ) };
 }
 
 inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
@@ -790,7 +792,7 @@ inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsage
 	// Fallback to a different format or use other means of uploading data
 }
 
-vk_image vk_context::CreateImage( const image_info& imgInfo )
+HVKIMG vk_context::CreateImage( const image_info& imgInfo )
 {
 	VkCheckFormatProperties( gpu, imgInfo.usg, imgInfo.format );
 
@@ -822,7 +824,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 	VkImageView vkImgView = VkMakeImgView(
 		device, img, imageInfo.format, 0, imageInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
 
-	return {
+	auto it = imgPool.insert( {
 		.mem = mem,
 		.hndl = img,
 		.view = vkImgView,
@@ -832,11 +834,14 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 		.height = ( u16 ) imageInfo.extent.height,
 		.layerCount = ( u8 ) imageInfo.arrayLayers,
 		.mipCount = ( u8 ) imageInfo.mipLevels,
-	};
+	} );
+
+	return { &( *it ) };
 }
 
 unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 {
+	HT_ASSERT( 0 != std::size( spvByteCode ) );
 	spv_reflect::ShaderModule reflInfo = SpvMakeReflectedShaderModule( spvByteCode );
 	const char* pEntryPointName = reflInfo.GetEntryPointName();
 	VkShaderStageFlagBits shaderStage = ( VkShaderStageFlagBits ) reflInfo.GetShaderStage();
@@ -974,7 +979,7 @@ VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, const cha
 		.pNext = &subgroupSizeInfo,
 		.stage = VK_SHADER_STAGE_COMPUTE_BIT,
 		.module = shader.module,
-		.pName = shader.entryPoint.c_str()
+		.pName = std::data( shader.entryPoint )
 	};
 
 	VkComputePipelineCreateInfo compPipelineInfo = { 
@@ -1045,30 +1050,68 @@ void vk_context::FlushPendingDescriptorUpdates()
 
 void vk_context::FlushDeletionQueues( u64 frameIdx )
 {
-	// NOTE: since it's a queue/ring buff, we always start at begin() 
+	for( HVKCB hcb = {}; pendingCBRecycle.TryPop( hcb ); )
+	{
+		vk_cmd_pool_buff& cb = *hcb;
+		HT_ASSERT( VK_NULL_HANDLE != cb.timelineSema );
+
+		u64 sumbissionsCompleted = 0;
+		VK_CHECK( vkGetSemaphoreCounterValue( device, cb.timelineSema, &sumbissionsCompleted ) );
+		if( cb.submissionIdx >= sumbissionsCompleted )
+		{
+			// NOTE: if we can't retire we put it back and break for this frame
+			while( !pendingCBRecycle.TryPush( hcb ) );
+			break;
+		}
+
+		VK_CHECK( vkResetCommandPool( device, cb.pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+		cb.timelineSema = VK_NULL_HANDLE;
+		cb.submissionIdx = -1;
+
+		using enum vk_queue_t;
+		switch( cb.parentQueueFamType )
+		{
+		case GFX:
+		{
+			while( !freeGfxCBs.TryPush( hcb ) );
+			break;
+		}
+		case COPY:
+		{
+			while( !freeCopyCBs.TryPush( hcb ) );
+			break;
+		}
+		default: HT_ASSERT( 0 && "Invalid queue type !" );
+		}
+	}
+	
+	u64 frameSubmissionsCompleted = 0;
+	VK_CHECK( vkGetSemaphoreCounterValue( device, gpuFrameTimeline.sema, &frameSubmissionsCompleted ) );
+
+	// NOTE: since it's queue-like, we always start at begin() 
 	// and advance until there's an entry not deletable this frame
 	// NOTE: eastl::ring_buffer pop decreases the size 
-	while( std::size( resourceDeletionQueue ) != 0 )
+	for( auto it = std::begin( resourceDeletionQueue ); std::end( resourceDeletionQueue ) != it; )
 	{
-		vk_resc_deletion& rsc = resourceDeletionQueue.front();
-		if( rsc.timelineCounterVal >= frameIdx ) break;
+		vk_resc_deletion& rsc = *it;
+		if( rsc.frameTimelineVal >= frameIdx ) break;
 		if( vk_resource_type::BUFFER ==  rsc.type )
 		{
-			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.mem );
+			vmaDestroyBuffer( allocator, rsc.buff->hndl, rsc.buff->mem );
 		}
 		else if( vk_resource_type::IMAGE ==  rsc.type )
 		{
-			vkDestroyImageView( device, rsc.img.view, 0 );
-			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.mem );
+			vkDestroyImageView( device, rsc.img->view, 0 );
+			vmaDestroyImage( allocator, rsc.img->hndl, rsc.img->mem );
 		}
-		resourceDeletionQueue.pop_front();
+		it = resourceDeletionQueue.erase( it );
 	}
-	while( std::size( descriptroDeletionQueue ) != 0 )
+	for( auto it = std::begin( descriptroDeletionQueue ); std::end( descriptroDeletionQueue ) != it; )
 	{
-		auto[ timelineCounterVal, hndl ] = descriptroDeletionQueue.front();
+		auto[ timelineCounterVal, hndl ] = *it;
 		if( timelineCounterVal >= frameIdx ) break;
-		FreeDescriptor( hndl );
-		descriptroDeletionQueue.pop_front();
+		descBindingSlots[ hndl.type ].FreeSlot( hndl );
+		it = descriptroDeletionQueue.erase( it );
 	}
 }
 
@@ -1145,50 +1188,8 @@ void vk_context::CreateSwapchin()
 	}
 }
 
-vk_cb_hndl32 vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
+inline vk_cmd_pool_buff VkMakeCmdPoolAndBuff( VkDevice vkDevice, u32 queueFamilyIdx, vk_queue_t queueType )
 {
-	u32 queueFamilyIdx = -1;
-	std::vector<vk_cmd_pool_buff>* pCmdPoolBuffs = 0;
-
-	using enum vk_queue_t;
-	switch( queueType )
-	{
-	case GFX:
-	{
-		queueFamilyIdx = gfxQueue.familyIdx;
-		pCmdPoolBuffs = &gfxCmdPoolAndBuffs;
-		break;
-	}
-	case COPY:
-	{
-		queueFamilyIdx = copyQueue.familyIdx;
-		pCmdPoolBuffs = &copyCmdPoolAndBuffs;
-		break;
-	}
-	default: HT_ASSERT( 0 && "Invalid queue type !" );
-	}
-
-	HT_ASSERT( u32( -1 ) != queueFamilyIdx );
-	HT_ASSERT( pCmdPoolBuffs );
-
-	std::vector<vk_cmd_pool_buff>& cmdPoolBuffs = *pCmdPoolBuffs;
-
-	for( u32 cbi = 0; cbi < std::size( cmdPoolBuffs ); ++cbi )
-	{
-		vk_cmd_pool_buff& cmdPoolAndBuff = cmdPoolBuffs[ cbi ];
-		if( VK_NULL_HANDLE == cmdPoolAndBuff.timelineSema ) continue;
-
-		u64 sumbissionsCompleted = 0;
-		VK_CHECK( vkGetSemaphoreCounterValue( device, cmdPoolAndBuff.timelineSema, &sumbissionsCompleted ) );
-		if( cmdPoolAndBuff.submissionIdx < sumbissionsCompleted )
-		{
-			cmdPoolAndBuff.timelineSema = VK_NULL_HANDLE;
-			cmdPoolAndBuff.submissionIdx = -1;
-			VK_CHECK( vkResetCommandPool( device, cmdPoolAndBuff.pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
-			return { .idx = cbi, .type = ( u32 ) queueType };
-		}
-	}
-
 	VkCommandPoolCreateInfo cmdPoolInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -1196,7 +1197,7 @@ vk_cb_hndl32 vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 	};
 
 	VkCommandPool cmdPool;
-	VK_CHECK( vkCreateCommandPool( device, &cmdPoolInfo, 0, &cmdPool ) );
+	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
 
 	VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1206,51 +1207,47 @@ vk_cb_hndl32 vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 	};
 
 	VkCommandBuffer cmdBuff;
-	VK_CHECK( vkAllocateCommandBuffers( device, &cmdBuffAllocInfo, &cmdBuff ) );
+	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
 
-	u32 idx = std::size( cmdPoolBuffs );
-
-	cmdPoolBuffs.push_back( {
+	return {
 		.pool = cmdPool,
 		.buff = cmdBuff,
 		.timelineSema = VK_NULL_HANDLE,
 		.submissionIdx = u64( -1 ),
 		.parentQueueFamType = queueType 
-	} );
-
-	return { .idx = idx, .type = ( u32 ) queueType };
+	};
 }
 
-void vk_context::DeferredRecycleCmdPoolAndBuff( vk_cb_hndl32 hndl, const vk_timeline& timeline )
+HVKCB vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 {
-	std::vector<vk_cmd_pool_buff>* pCmdPoolBuffs = 0;
-
-	vk_queue_t queueType = ( vk_queue_t ) hndl.type;
-
 	using enum vk_queue_t;
 	switch( queueType )
 	{
 	case GFX:
 	{
-		pCmdPoolBuffs = &gfxCmdPoolAndBuffs;
-		break;
+		if( HVKCB hndl = {}; freeGfxCBs.TryPop( hndl ) )
+		{
+			return hndl;
+		}
+
+		auto it = gfxCBPool.insert( VkMakeCmdPoolAndBuff( device, gfxQueue.familyIdx, queueType ) );
+		return { &( *it ) };
 	}
 	case COPY:
 	{
-		pCmdPoolBuffs = &copyCmdPoolAndBuffs;
-		break;
+		if( HVKCB hndl = {}; freeCopyCBs.TryPop( hndl ) )
+		{
+			return hndl;
+		}
+
+		auto it = copyCBPool.insert( VkMakeCmdPoolAndBuff( device, copyQueue.familyIdx, queueType ) );
+		return { &( *it ) };
 	}
 	default: HT_ASSERT( 0 && "Invalid queue type !" );
 	}
 
-	HT_ASSERT( pCmdPoolBuffs );
-
-	vk_cmd_pool_buff& cmdPoolBuff = ( *pCmdPoolBuffs )[ hndl.idx ];
-	HT_ASSERT( VK_NULL_HANDLE == cmdPoolBuff.timelineSema );
-	HT_ASSERT( u64( -1 ) == cmdPoolBuff.submissionIdx );
-
-	cmdPoolBuff.timelineSema = timeline.sema;
-	cmdPoolBuff.submissionIdx = timeline.submitsIssuedCount; // NOTE: submit on current value
+	HT_ASSERT( 0 && "Smth defs went wrong !" );
+	return {};
 }
 
 void vk_context::QueueSubmitToTimeline(
@@ -1260,6 +1257,8 @@ void vk_context::QueueSubmitToTimeline(
 	std::span<VkSemaphoreSubmitInfo> signals, 
 	VkCommandBuffer cmdBuff 
 ) {
+	std::lock_guard lockGuard{ queue.lock };
+
 	scoped_stack memScope = { scratchArena };
 	std::pmr::vector<VkSemaphoreSubmitInfo> vecSignals{ &memScope };
 	vecSignals.insert( std::end( vecSignals ), std::cbegin( signals ), std::cend( signals ) );
