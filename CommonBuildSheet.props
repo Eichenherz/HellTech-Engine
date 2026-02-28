@@ -10,7 +10,7 @@
   <!-- 3rd-party include directories (shared across projects) -->
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)3rdParty\VulkanMemoryAllocator\include;$(SolutionDir)3rdParty\imgui;$(SolutionDir)3rdParty\dds;$(SolutionDir)3rdParty\unordered_dense\include;$(SolutionDir)3rdParty\miniz;$(SolutionDir)3rdParty\bc7enc_rdo;$(SolutionDir)3rdParty\MikkTSpace;$(SolutionDir)3rdParty\meshoptimizer\src;$(SolutionDir)3rdParty\tinygltf;$(SolutionDir)3rdParty\plf_colony;$(SolutionDir)3rdParty\MPMCQueue\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)3rdParty\VulkanMemoryAllocator\include;$(SolutionDir)3rdParty\imgui;$(SolutionDir)3rdParty\ImGuiFileDialog;$(SolutionDir)3rdParty\dds;$(SolutionDir)3rdParty\unordered_dense\include;$(SolutionDir)3rdParty\miniz;$(SolutionDir)3rdParty\bc7enc_rdo;$(SolutionDir)3rdParty\MikkTSpace;$(SolutionDir)3rdParty\meshoptimizer\src;$(SolutionDir)3rdParty\tinygltf;$(SolutionDir)3rdParty\plf_colony;$(SolutionDir)3rdParty\MPMCQueue\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <!--<AdditionalOptions>/analyze %(AdditionalOptions)</AdditionalOptions>-->
     </ClCompile>
   </ItemDefinitionGroup>
@@ -47,6 +47,7 @@
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_draw.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_tables.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="$(SolutionDir)3rdParty\ImGuiFileDialog\ImGuiFileDialog.cpp" />
   </ItemGroup>
 
   <!-- Suppress static analysis for all 3rd-party source files (must come after Include groups) -->

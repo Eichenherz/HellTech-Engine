@@ -1094,7 +1094,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 	for( auto it = std::begin( resourceDeletionQueue ); std::end( resourceDeletionQueue ) != it; )
 	{
 		vk_resc_deletion& rsc = *it;
-		if( rsc.frameTimelineVal >= frameIdx ) break;
+		if( frameSubmissionsCompleted <= rsc.frameTimelineVal ) break;
 		if( vk_resource_type::BUFFER ==  rsc.type )
 		{
 			vmaDestroyBuffer( allocator, rsc.buff->hndl, rsc.buff->mem );
@@ -1109,7 +1109,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 	for( auto it = std::begin( descriptroDeletionQueue ); std::end( descriptroDeletionQueue ) != it; )
 	{
 		auto[ timelineCounterVal, hndl ] = *it;
-		if( timelineCounterVal >= frameIdx ) break;
+		if( frameSubmissionsCompleted <= timelineCounterVal ) break;
 		descBindingSlots[ hndl.type ].FreeSlot( hndl );
 		it = descriptroDeletionQueue.erase( it );
 	}

@@ -1,5 +1,6 @@
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
+#include <windowsx.h>
 #include <hidusage.h>
 #include <fileapi.h>
 
@@ -260,25 +261,13 @@ static inline u64	SysTicks()
 	return tick.QuadPart;
 }
 
-// TODO: delete
-struct mouse
-{
-	float dx, dy;
-};
-
-struct keyboard
-{
-	bool w, a, s, d;
-	bool c;
-	bool space, lctrl;
-	bool f, o;
-	bool esc;
-};
 
 struct alignas( 4 ) input_state
 {
+	vec2 posMouse;
 	vec2 dMouse;
-	u8 keyStates[ 512 ];
+	bool keyStates[ 512 ];
+	bool mouseButtons[ 5 ];
 };
 
 struct move_cam_action
@@ -336,6 +325,13 @@ static void Win32ProcessRawInput( const RAWINPUT& ri, input_state& inputState )
 	if( ( ri.header.dwType == RIM_TYPEMOUSE ) )
 	{
 		inputState.dMouse = { ( float ) ri.data.mouse.lLastX, ( float ) ri.data.mouse.lLastY };
+		USHORT usButtonFlags =  ri.data.mouse.usButtonFlags;
+		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN )   inputState.mouseButtons[ 0 ] = 1;
+		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_UP )     inputState.mouseButtons[ 0 ] = 0;
+		if( usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN )  inputState.mouseButtons[ 1 ] = 1;
+		if( usButtonFlags & RI_MOUSE_RIGHT_BUTTON_UP )    inputState.mouseButtons[ 1 ] = 0;
+		if( usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_DOWN ) inputState.mouseButtons[ 2 ] = 1;
+		if( usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_UP )   inputState.mouseButtons[ 2 ] = 0;
 	}
 }
 
@@ -351,6 +347,16 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 	}
 	// TODO: this will exit the Loop immediately. 
 	case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); return 0; // NOTE: no more def handling 
+	case WM_MOUSEMOVE:
+	{
+		LONG_PTR pUserData = GetWindowLongPtr( hwnd, GWLP_USERDATA );
+		if( pUserData )
+		{
+			( ( input_state* ) pUserData )->posMouse = { ( float ) GET_X_LPARAM( lParam ), 
+				( float ) GET_Y_LPARAM( lParam ) };
+		}
+		break;
+	}
 		
 	case WM_INPUT:
 	{
@@ -386,6 +392,124 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 }						 
 
 #include <imgui.h>
+#include <ImGuiFileDialog.h>
+#include "ht_fixed_string.h"
+
+using imgui_widget_name = fixed_string<16>;
+
+using imgui_window_name = fixed_string<32>;
+
+enum class imgui_widget_type : u32
+{
+	BUTTON,
+	CHECKBOX,
+	RADIO,
+	TEXT,           // ImGui::Text (read-only label)
+	INPUT_TEXT,     // ImGui::InputText
+	INPUT_INT,
+	INPUT_FLOAT,
+	DRAG_INT,
+	DRAG_FLOAT,
+	DRAG_FLOAT2,
+	DRAG_FLOAT3,
+	DRAG_FLOAT4,
+	SLIDER_INT,
+	SLIDER_FLOAT,
+	COLOR3,         // ColorEdit3
+	COLOR4,         // ColorEdit4
+	COMBO,          // dropdown
+	LISTBOX,
+	TREE_NODE,
+	COLLAPSING_HEADER,
+	SEPARATOR,
+	IMAGE,          // ImGui::Image
+	PROGRESS_BAR,
+	COUNT
+};
+
+using PFN_ImGuiWidgetAction = void( * )( const void* );
+
+void ImGuiLoadFileAction( const void* )
+{
+	ImGuiFileDialog::Instance()->OpenDialog( "loadFileDlg", "Choose File", ".hpk" );
+}
+
+struct imgui_widget
+{
+	imgui_widget_name name;
+	const void* pData;
+	PFN_ImGuiWidgetAction Action;
+	imgui_widget_type type;
+};
+
+struct imgui_window
+{
+	std::vector<imgui_widget> widgets;
+	imgui_window_name name;
+	ImGuiWindowFlags flags;
+};
+
+void ImGuiHandleWidget( const imgui_widget& widget )
+{
+	using enum imgui_widget_type;
+	switch( widget.type )
+	{
+	case BUTTON:
+	{
+		if( ImGui::Button( std::data( widget.name ) ) )
+		{
+			widget.Action( widget.pData ); 
+		}
+		
+		break;
+	}
+	case TEXT:    
+	{
+		ImGui::Text( std::data( widget.name ) );         
+		break;
+	}
+	default: break;
+	}
+}
+
+inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds )
+{
+	static bool initialPosSet = false;
+
+	ImGui::NewFrame();
+
+	for( const imgui_window& imguiWnd : imguiWnds )
+	{
+		if( !initialPosSet )
+		{
+			ImGui::SetNextWindowPos( { std::size( imguiWnd.name ) * ImGui::GetFontSize(), ImGui::GetFontSize() },
+				ImGuiCond_FirstUseEver );
+			ImGui::SetNextWindowSize( {}, ImGuiCond_FirstUseEver );
+			initialPosSet = true;
+		}
+	
+		ImGui::Begin( std::data( imguiWnd.name ), 0, imguiWnd.flags );
+		for( const imgui_widget& widget : imguiWnd.widgets )
+		{
+			ImGuiHandleWidget( widget );
+		}
+		ImGui::End();
+	}
+
+	if( ImGuiFileDialog::Instance()->Display( "loadFileDlg" ) )
+	{
+		if( ImGuiFileDialog::Instance()->IsOk() )
+		{
+			const char* path = ImGuiFileDialog::Instance()->GetFilePathName().c_str();
+			// load your mesh
+		}
+		ImGuiFileDialog::Instance()->Close();
+	}
+
+	ImGui::Render();
+
+	ImGui::EndFrame();
+}
 
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
@@ -439,8 +563,6 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	hid[ 1 ].dwFlags = 0;// RIDEV_NOLEGACY;
 	WIN_CHECK( RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
-	keyboard kbd = {};
-
 	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
 	float mouseSensitivity = 0.1f;
 	float camSpeed = 1.5f;
@@ -467,11 +589,37 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	ImGuiContext* imGuiCtx = ImGui::CreateContext();
 	ImGui::SetCurrentContext( imGuiCtx );
 	ImGui::StyleColorsDark();
-	ImGuiIO& io = ImGui::GetIO();
-	io.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
-	io.Fonts->AddFontDefault();
-	io.Fonts->Build();
+	ImGuiIO& imGuiIO = ImGui::GetIO();
+	imGuiIO.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
+	imGuiIO.Fonts->AddFontDefault();
+	imGuiIO.Fonts->Build();
 	
+
+	std::vector<imgui_window> imguiWnds;
+	imguiWnds.push_back( {
+		.widgets = { 
+			imgui_widget {
+				.name = "GPU ms: ",
+				.type = imgui_widget_type::TEXT
+			} 
+		},
+		.name = "Renderer Stats",
+		.flags = ImGuiWindowFlags_NoScrollbar
+	} );
+
+	imguiWnds.push_back( {
+		.widgets = { 
+			imgui_widget {
+			.name = "Load HPK",
+			.Action = ImGuiLoadFileAction,
+			.type = imgui_widget_type::BUTTON
+		} 
+		},
+		.name = "##bnt_load_hpk",
+		.flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | 
+		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse
+	} );
+
 	auto pRenderer = MakeRenderer();
 
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
@@ -503,7 +651,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		mainActiveCam.Move( camMove, dRot, elapsedSecs );
 		debugCam.Move( camMove, dRot, elapsedSecs );
 
-		if( !kbd.f )
+		if( !inputState.keyStates[ VK_F ] )
 		{
 			view_data mainViewData = mainActiveCam.GetViewData();
 			frameData.views[ mainViewIdx ] = mainViewData;
@@ -517,22 +665,17 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
 
 		frameData.elapsedSeconds = elapsedSecs;
-		frameData.freezeMainView = kbd.f;
-		frameData.dbgDraw = kbd.o;
+		frameData.freezeMainView = inputState.keyStates[ VK_F ];
+		frameData.dbgDraw = inputState.keyStates[ VK_O ];
 
-		ImGui::NewFrame();
-		std::string wndMsg( std::to_string( -1.0f ) );// gpuData.timeMs ) );
-		
-		ImGui::SetNextWindowPos( {} );
-		ImGui::SetNextWindowSize( { std::size( wndMsg ) * ImGui::GetFontSize(), 50 } );
-		constexpr ImGuiWindowFlags wndFlag = 
-			ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
-		ImGui::Begin( "GPU ms:", 0, wndFlag );
-		ImGui::Text( wndMsg.c_str() );
-		ImGui::End();
+		imGuiIO.DeltaTime = elapsedSecs;
+		imGuiIO.MousePos = { inputState.posMouse.x, inputState.posMouse.y };
+		imGuiIO.MouseDown[ 0 ] = inputState.mouseButtons[ 0 ];
+		imGuiIO.MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
+		imGuiIO.MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];
 
-		ImGui::Render();
-		ImGui::EndFrame();
+		ImGuiRenderUI( imguiWnds );
+
 
 		pRenderer->HostFrames( frameData, gpuData );
 	}

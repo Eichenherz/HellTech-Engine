@@ -15,6 +15,7 @@ call :clone "3rdParty/tinygltf"          "https://github.com/syoyo/tinygltf.git"
 call :clone "3rdParty/meshoptimizer"     "https://github.com/zeux/meshoptimizer.git"
 call :clone "3rdParty/MikkTSpace"        "https://github.com/mmikk/MikkTSpace.git"
 call :clone "3rdParty/bc7enc_rdo"        "https://github.com/Eichenherz/bc7enc_rdo.git"
+call :clone "3rdParty/ImGuiFileDialog"   "https://github.com/aiekick/ImGuiFileDialog.git"
 
 echo.
 if %FAILED%==0 (

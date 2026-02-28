@@ -178,6 +178,7 @@ struct vk_context
 	std::vector<vk_swapchain_image>			scImgs;
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
+	// NOTE: must be locked too
 	std::vector<vk_descriptor_write>        descPendingUpdates;
 
 	plf::colony<vk_buffer>                  buffPool;

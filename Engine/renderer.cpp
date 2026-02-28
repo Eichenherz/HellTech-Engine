@@ -120,7 +120,7 @@ struct imgui_pass
 	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
 	static_assert( sizeof( ImDrawIdx ) == sizeof( index_t ) );
 
-	static constexpr u64 DEFAULT_BUFF_SIZE = 2 * KB;
+	static constexpr u64 DEFAULT_BUFF_SIZE = 16 * KB;
 
 	fixed_vector<HVKBUF, MAX_FIF>		vtx;
 	fixed_vector<HVKBUF, MAX_FIF>		idx;
@@ -172,45 +172,6 @@ struct imgui_pass
 		dc.EnqueueResourceFree( vk_resc_deletion{ stagingBuff, frameIdx } );
 	}
 
-	void ReallocBuffers(
-		vk_context& vkCtx, 
-		u64 frameIdx, 
-		u64 frameInFlightIdx, 
-		u64 vtxTotalSizeInBytes, 
-		u64 idxTotalSizeInBytes 
-	) {
-		[[unlikely]] while( std::size( vtx ) <= frameInFlightIdx ) vtx.push_back( {} );
-		[[unlikely]] while( std::size( idx ) <= frameInFlightIdx ) idx.push_back( {} );
-
-		if( IsValidHandle( vtx[ frameInFlightIdx ] ) &&
-			vtx[ frameInFlightIdx ]->sizeInBytes >= vtxTotalSizeInBytes ) return;
-
-		if( IsValidHandle( vtx[ frameInFlightIdx ] ) )
-		{
-			vkCtx.EnqueueResourceFree( vk_resc_deletion{ vtx[ frameInFlightIdx ], frameIdx } );
-		}
-
-		vtx[ frameInFlightIdx ] = vkCtx.CreateBuffer( {
-			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-			.sizeInBytes = vtxTotalSizeInBytes,
-			.usage = buffer_usage::HOST_VISIBLE 
-		} );
-
-		if( IsValidHandle( idx[ frameInFlightIdx ] ) &&
-			idx[ frameInFlightIdx ]->sizeInBytes >= idxTotalSizeInBytes ) return;
-
-		if( IsValidHandle( idx[ frameInFlightIdx ] ) )
-		{
-			vkCtx.EnqueueResourceFree( vk_resc_deletion{ idx[ frameInFlightIdx ], frameIdx } );
-		}
-
-		idx[ frameInFlightIdx ] = vkCtx.CreateBuffer( {
-			.usageFlags = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			.sizeInBytes = idxTotalSizeInBytes,
-			.usage = buffer_usage::HOST_VISIBLE 
-		} );
-	}
-
 	// NOTE: it's mostly inspired by the official backend code
 	void DrawUiPass(
 		vk_context& vkCtx,
@@ -231,16 +192,33 @@ struct imgui_pass
 
 		// Textrues
 
-		if( drawData->TotalVtxCount > 0 )
-		{
-			u64 vtxTotalSizeInBytes = std::bit_ceil( drawData->TotalVtxCount * sizeof( imgui_vertex ) );
-			u64 idxTotalSizeInBytes = std::bit_ceil( drawData->TotalVtxCount * sizeof( index_t ) );
+		if( drawData->TotalVtxCount <= 0 ) return;
+		
+		u64 vtxTotalSizeInBytes = std::bit_ceil( drawData->TotalVtxCount * sizeof( imgui_vertex ) );
+		u64 idxTotalSizeInBytes = std::bit_ceil( drawData->TotalIdxCount * sizeof( index_t ) );
 
-			ReallocBuffers( vkCtx, frameIdx, frameInFlightIdx, vtxTotalSizeInBytes, idxTotalSizeInBytes );
+		[[unlikely]] while( std::size( vtx ) <= frameInFlightIdx ) vtx.push_back( {} );
+		[[unlikely]] while( std::size( idx ) <= frameInFlightIdx ) idx.push_back( {} );
+
+		HVKBUF hVtxBuff = vtx[ frameInFlightIdx ];
+		HVKBUF hIdxBuff = idx[ frameInFlightIdx ];
+
+		if( !IsValidHandle( hVtxBuff ) || hVtxBuff->sizeInBytes < vtxTotalSizeInBytes )
+		{
+			if( IsValidHandle( hVtxBuff ) ) vkCtx.EnqueueResourceFree( vk_resc_deletion{ hVtxBuff, frameIdx } );
+			hVtxBuff = vkCtx.CreateBuffer( { .usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+				.sizeInBytes = vtxTotalSizeInBytes, .usage = buffer_usage::HOST_VISIBLE } );
 		}
 
-		const vk_buffer& vtxBuff = *vtx[ frameInFlightIdx ];
-		const vk_buffer& idxBuff = *idx[ frameInFlightIdx ];
+		if( !IsValidHandle( hIdxBuff ) || hIdxBuff->sizeInBytes < idxTotalSizeInBytes )
+		{
+			if( IsValidHandle( hIdxBuff ) ) vkCtx.EnqueueResourceFree( vk_resc_deletion{ hIdxBuff, frameIdx } );
+			hIdxBuff = vkCtx.CreateBuffer( { .usageFlags = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+				.sizeInBytes = idxTotalSizeInBytes, .usage = buffer_usage::HOST_VISIBLE } );
+		}
+
+		const vk_buffer& vtxBuff = *hVtxBuff;
+		const vk_buffer& idxBuff = *hIdxBuff;
 
 		ImDrawVert* vtxDst = ( ImDrawVert* ) vtxBuff.hostVisible;
 		ImDrawIdx* idxDst = ( ImDrawIdx* ) idxBuff.hostVisible;
