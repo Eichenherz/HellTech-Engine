@@ -212,6 +212,7 @@
     <ClInclude Include="AssetCompiler\spng.h" />
     <ClInclude Include="dxc.h" />
     <ClInclude Include="AssetCompiler\miniz.h" />
+    <ClInclude Include="ht_stable_stretchy_buffer.h" />
     <ClInclude Include="System\sys_mem_arena.h" />
     <ClInclude Include="ht_mtx_queue.h" />
     <ClInclude Include="r_data_structs.h" />

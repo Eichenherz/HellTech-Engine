@@ -1,5 +1,6 @@
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
+#pragma comment( lib, "Synchronization.lib" )
 #include <windowsx.h>
 #include <hidusage.h>
 #include <fileapi.h>
@@ -472,7 +473,14 @@ void ImGuiHandleWidget( const imgui_widget& widget )
 	}
 }
 
-inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds )
+using sys_physical_path = fixed_string<MAX_PATH>;
+
+struct ht_load_hpk_req
+{
+	sys_physical_path path;
+};
+
+inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds, std::vector<ht_load_hpk_req>& loadHpkReqs )
 {
 	static bool initialPosSet = false;
 
@@ -500,8 +508,8 @@ inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds )
 	{
 		if( ImGuiFileDialog::Instance()->IsOk() )
 		{
-			const char* path = ImGuiFileDialog::Instance()->GetFilePathName().c_str();
-			// load your mesh
+			std::string path = ImGuiFileDialog::Instance()->GetFilePathName();
+			loadHpkReqs.push_back( { path.c_str() } );
 		}
 		ImGuiFileDialog::Instance()->Close();
 	}
@@ -511,19 +519,107 @@ inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds )
 	ImGui::EndFrame();
 }
 
+inline void SysNameThread( HANDLE hThread, const wchar_t* name )
+{
+	HT_ASSERT( SUCCEEDED( SetThreadDescription( hThread, name ) ) );
+}
+
+constexpr u64 CACHE_LINE_SZ = 64;
+
+#define CACHE_ALIGN alignas( CACHE_LINE_SZ ) volatile
+
+using atomic64 = u64;
+
+enum SYS_THREAD_SIGNAL : u64
+{
+	SYS_THREAD_SIGNAL_SLEEP = 0,
+	SYS_THREAD_SIGNAL_WAKEUP = 1,
+	SYS_THREAD_SIGNAL_EXIT = ~u64( 0 )
+};
+
+#include "System/sys_mem_arena.h"
+
+struct sys_thread_data
+{
+	CACHE_ALIGN volatile atomic64 signal;
+	virtual_arena			      arena;
+};
+
+struct sys_thread
+{
+	HANDLE					hndl;
+	const sys_thread_data*  pData;
+	DWORD			        threadId;
+};
+
+DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
+{
+	sys_thread_data& threadCtx = *( sys_thread_data* ) lpParam;
+
+	constexpr u64 undesiredVal = SYS_THREAD_SIGNAL_SLEEP;
+
+	for( ;; )
+	{
+		for( u64 capturedVal = threadCtx.signal; undesiredVal == capturedVal; )
+		{
+			static_assert( sizeof( threadCtx.signal ) == sizeof( undesiredVal ) );
+			WaitOnAddress( &threadCtx.signal, ( void* ) &undesiredVal, sizeof( threadCtx.signal ), INFINITE );
+			capturedVal = threadCtx.signal;
+
+			[[unlikely]] if( SYS_THREAD_SIGNAL_EXIT == capturedVal ) goto EXIT;
+		}
+	}
+	
+EXIT:
+	return 0;
+}
+
+#include "ht_stable_stretchy_buffer.h"
+
+sys_thread SysCreateThread( 
+	u64 stackSize, 
+	u64 maxScratchPadSize, 
+	const wchar_t* name, 
+	stable_stretchy_buffer<sys_thread_data>& threadDataBuff 
+) {
+	const sys_thread_data* pData = &threadDataBuff.push_back( { 
+		.signal = SYS_THREAD_SIGNAL_SLEEP,
+		.arena = virtual_arena{ maxScratchPadSize }
+	} );
+
+	DWORD threadId;
+	HANDLE hThread = CreateThread( NULL, stackSize, Win32ThreadLoop, ( LPVOID ) pData, 0, &threadId );
+	HT_ASSERT( INVALID_HANDLE_VALUE != hThread );
+
+	SysNameThread( hThread, name );
+
+	return {
+		.hndl = hThread,
+		.pData = pData,
+		.threadId = threadId
+	};
+}
+
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
 
-	input_state inputState = {};
+	SysOsCreateConsole();
+
+	SysNameThread( GetCurrentThread(), L"Main/Renderer Thread" );
 
 	WIN_CHECK( DirectX::XMVerifyCPUSupport() );
-
-	SysOsCreateConsole();
 
 	SYSTEM_INFO sysInfo = {};
 	GetSystemInfo( &sysInfo );
 	
+
+	stable_stretchy_buffer<sys_thread_data> threadDataBuff = { 2 * MB };
+
+	std::vector<sys_thread> threads;
+	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", threadDataBuff ) );
+
+
 	WNDCLASSEX wc = {
 		.cbSize = sizeof( WNDCLASSEX ),
 		.lpfnWndProc = MainWndProc,
@@ -539,6 +635,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		.right = ( LONG ) SCREEN_WIDTH + wr.left,
 		.bottom = ( LONG ) SCREEN_HEIGHT + wr.top
 	};
+
+	input_state inputState = {};
 
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
@@ -620,6 +718,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse
 	} );
 
+	std::vector<ht_load_hpk_req> loadHpkReqs;
+
 	auto pRenderer = MakeRenderer();
 
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
@@ -674,8 +774,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		imGuiIO.MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
 		imGuiIO.MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];
 
-		ImGuiRenderUI( imguiWnds );
-
+		ImGuiRenderUI( imguiWnds, loadHpkReqs );
 
 		pRenderer->HostFrames( frameData, gpuData );
 	}

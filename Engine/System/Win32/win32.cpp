@@ -32,9 +32,25 @@ virtual_arena::virtual_arena( u64 reservedBytesCount ) : reserved{ reservedBytes
     HT_ASSERT( base && "VirtualAlloc reserve failed" );
 }
 
-virtual_arena::~virtual_arena() 
+virtual_arena::~virtual_arena()
 {
     if( base ) VirtualFree( base, 0, MEM_RELEASE );
+}
+
+virtual_arena::virtual_arena( virtual_arena&& o )
+    : base{ std::exchange( o.base, nullptr ) }
+    , offset{ std::exchange( o.offset, 0 ) }
+    , committed{ std::exchange( o.committed, 0 ) }
+    , reserved{ std::exchange( o.reserved, 0 ) }
+{}
+
+virtual_arena& virtual_arena::operator=( virtual_arena&& o )
+{
+    base      = std::exchange( o.base, nullptr );
+    offset    = std::exchange( o.offset, 0 );
+    committed = std::exchange( o.committed, 0 );
+    reserved  = std::exchange( o.reserved, 0 );
+    return *this;
 }
 
 void virtual_arena::Rewind( u64 mark ) 
@@ -163,13 +179,13 @@ constexpr DWORD MakeAccessFalgs( file_access_flags accessFlags )
 	}
 }
 
-struct win32_mmaped_file_handle final : mmap_file
+struct win32_mmaped_file final : mmap_file
 {
 	std::span<u8> dataView;
 	HANDLE hFile = INVALID_HANDLE_VALUE;
 	HANDLE hFileMapping = INVALID_HANDLE_VALUE;
 
-	win32_mmaped_file_handle( 
+	win32_mmaped_file( 
 		LPCSTR fileName, 
 		DWORD filePermFlags, 
 		DWORD createFlags, 
@@ -193,7 +209,7 @@ struct win32_mmaped_file_handle final : mmap_file
 		dataView = { pData, qwFileSize };
 	}
 
-	virtual size_t size() const override
+	virtual u64 size() const override
 	{
 		return std::size( dataView );
 	}
@@ -222,7 +238,7 @@ struct win32_mmaped_file_handle final : mmap_file
 
 void Win32MmapFileDestroyer( mmap_file* pFile )
 {
-	win32_mmaped_file_handle* pWin32File = ( win32_mmaped_file_handle* ) pFile;
+	win32_mmaped_file* pWin32File = ( win32_mmaped_file* ) pFile;
 	if( pWin32File )
 	{
 		UnmapViewOfFile( std::data( pWin32File->dataView ) );
@@ -232,7 +248,7 @@ void Win32MmapFileDestroyer( mmap_file* pFile )
 	}
 }
 
-unique_mmap_file SysCreateFileSysCreateFile( 
+unique_mmap_file SysCreateFile( 
 	std::string_view path, 
 	file_permissions_flags permissionFlags,
 	file_create_flags createFlags,
@@ -243,7 +259,7 @@ unique_mmap_file SysCreateFileSysCreateFile(
 	DWORD dwAccessFalgs = MakeAccessFalgs( accessFalgs );
 	DWORD dwFileMappingAccess = MakeFileMappingFlags( permissionFlags );
 	DWORD dwDataViewAccess = MakeMapViewFlags( permissionFlags );
-	return { new win32_mmaped_file_handle{ std::data( path ), dwPermissionFlags, dwCreateFlags, 
+	return { new win32_mmaped_file{ std::data( path ), dwPermissionFlags, dwCreateFlags, 
 		dwAccessFalgs, dwFileMappingAccess, dwDataViewAccess }, Win32MmapFileDestroyer };
 }
 // ===============================================================================================================

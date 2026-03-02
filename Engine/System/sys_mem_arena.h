@@ -47,6 +47,9 @@ struct virtual_arena
             virtual_arena( const virtual_arena& ) = delete;
             virtual_arena& operator=( const virtual_arena& ) = delete;
 
+            virtual_arena( virtual_arena&& o );
+            virtual_arena& operator=( virtual_arena&& o );
+
     void    Rewind( u64 mark );
     void    Reset();
     void*   Alloc( u64 bytes, u64 alignment );

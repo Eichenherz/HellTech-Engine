@@ -33,12 +33,20 @@ struct ring_buffer : Storage_T
 
     using Storage_T::Storage_T; // NOTE: inherit ctor
 
-    template<std::convertible_to<T> TYPE_T>
-    inline bool TryPush( TYPE_T&& v )
+    inline bool TryPush( const T& v )
     {
         std::lock_guard lockGuard{ lock };
         if ( tail - head >= this->capacity() ) return false;
-        this->elems[ tail % this->capacity() ] = std::forward<TYPE_T>( v );
+        this->elems[ tail % this->capacity() ] = v;
+        ++tail;
+        return true;
+    }
+
+    inline bool TryPush( T&& v )
+    {
+        std::lock_guard lockGuard{ lock };
+        if ( tail - head >= this->capacity() ) return false;
+        this->elems[ tail % this->capacity() ] = std::move( v );
         ++tail;
         return true;
     }

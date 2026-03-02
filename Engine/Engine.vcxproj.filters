@@ -146,6 +146,9 @@
     <ClInclude Include="System\sys_mem_arena.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="ht_stable_stretchy_buffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="$(SolutionDir)Shaders\vtx_merged.vert.glsl" />
