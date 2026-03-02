@@ -10,7 +10,7 @@
   <!-- 3rd-party include directories (shared across projects) -->
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)3rdParty\VulkanMemoryAllocator\include;$(SolutionDir)3rdParty\imgui;$(SolutionDir)3rdParty\ImGuiFileDialog;$(SolutionDir)3rdParty\dds;$(SolutionDir)3rdParty\unordered_dense\include;$(SolutionDir)3rdParty\miniz;$(SolutionDir)3rdParty\bc7enc_rdo;$(SolutionDir)3rdParty\MikkTSpace;$(SolutionDir)3rdParty\meshoptimizer\src;$(SolutionDir)3rdParty\tinygltf;$(SolutionDir)3rdParty\plf_colony;$(SolutionDir)3rdParty\MPMCQueue\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)3rdParty\VulkanMemoryAllocator\include;$(SolutionDir)3rdParty\imgui;$(SolutionDir)3rdParty\ImGuiFileDialog;$(SolutionDir)3rdParty\dds;$(SolutionDir)3rdParty\unordered_dense\include;$(SolutionDir)3rdParty\miniz;$(SolutionDir)3rdParty\bc7enc_rdo;$(SolutionDir)3rdParty\MikkTSpace;$(SolutionDir)3rdParty\meshoptimizer\src;$(SolutionDir)3rdParty\tinygltf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <!--<AdditionalOptions>/analyze %(AdditionalOptions)</AdditionalOptions>-->
     </ClCompile>
   </ItemDefinitionGroup>

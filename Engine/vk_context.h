@@ -13,14 +13,12 @@
 #include "core_types.h"
 
 #include "ht_error.h"
-#include "ht_mem_arena.h"
 #include "vk_error.h"
 #include "vk_types.h"
 #include "vk_resources.h"
 #include "vk_pso.h"
 #include "vk_utils.h"
 
-#include <bit>
 #include <array>
 #include <vector>
 #include <span>
@@ -28,10 +26,9 @@
 #include <memory>
 
 #include "System/sys_sync.h"
+#include "System/sys_mem_arena.h"
 
 #include "ht_mtx_queue.h"
-
-#include <plf_colony.h>
 
 struct vk_timeline
 {
@@ -50,7 +47,7 @@ enum class vk_queue_t : u32
 {
 	GFX = 0,
 	COPY,
-	COMP,
+	//COMP,
 	COUNT
 };
 
@@ -67,35 +64,21 @@ struct vk_cmd_pool_buff
 {
 	VkCommandPool		pool;
 	VkCommandBuffer		buff;
-	VkSemaphore			timelineSema;
-	u64				    submissionIdx;
 	vk_queue_t			parentQueueFamType;
+}; 
+
+struct vk_cb_deletion
+{
+	VkSemaphore sema;
+	u64 waitVal;
+	vk_cmd_pool_buff hndl;
 };
 
-template<typename VK_T>
-struct vk_hndl64
+struct vk_cb_pool
 {
-	u64                 addr;
-
-						vk_hndl64() : addr{ 0 } {}
-						vk_hndl64( VK_T* pVkT ) : addr{ std::bit_cast< u64 >( pVkT ) } {}
-
-	inline VK_T&		operator*()       { return *std::bit_cast<VK_T*>( addr ); }
-	inline const VK_T&	operator*() const { return *std::bit_cast<const VK_T*>( addr ); }
-
-	inline VK_T*		operator->()       { return &( *( *this ) ); }
-	inline const VK_T*	operator->() const { return &( *( *this ) ); }
+	fixed_mtx_queue<vk_cmd_pool_buff, 128> free;
+	fixed_mtx_queue<vk_cb_deletion, 128> pending;
 };
-
-template<typename VK_T>
-inline bool IsValidHandle( const vk_hndl64<VK_T> hvk )
-{
-	return 0 != hvk.addr;
-}
-
-using HVKCB = vk_hndl64<vk_cmd_pool_buff>;
-using HVKBUF = vk_hndl64<vk_buffer>;
-using HVKIMG = vk_hndl64<vk_image>;
 
 struct vk_desc_deletion
 {
@@ -110,15 +93,15 @@ struct vk_resc_deletion
 	u64					frameTimelineVal;
 	union
 	{
-		HVKBUF			buff;
-		HVKIMG			img;
+		vk_buffer			buff;
+		vk_image			img;
 	};
 	vk_resource_type    type;
 
 	inline vk_resc_deletion() = default;
-	inline vk_resc_deletion( HVKBUF b, u64 counter ) 
+	inline vk_resc_deletion( const vk_buffer& b, u64 counter ) 
 		: buff{ b }, type{ vk_resource_type::BUFFER }, frameTimelineVal{ counter } {}
-	inline vk_resc_deletion( HVKIMG i, u64 counter ) 
+	inline vk_resc_deletion( const vk_image& i, u64 counter ) 
 		: img{ i }, type{ vk_resource_type::IMAGE }, frameTimelineVal{ counter } {}
 };
 
@@ -167,7 +150,6 @@ struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
 
-	fixed_mtx_queue<HVKCB, 128>				pendingCBRecycle;
 	// NOTE: we only alloc PERSISTENT resouces on other timelines; 
 	// only the main GPU timeline is to alloc and free TRANSIENTS
 	std::vector<vk_resc_deletion>			resourceDeletionQueue;
@@ -181,14 +163,7 @@ struct vk_context
 	// NOTE: must be locked too
 	std::vector<vk_descriptor_write>        descPendingUpdates;
 
-	plf::colony<vk_buffer>                  buffPool;
-	plf::colony<vk_image>                   imgPool;
-
-	plf::colony<vk_cmd_pool_buff>           gfxCBPool;
-	plf::colony<vk_cmd_pool_buff>           copyCBPool;
-
-	fixed_mtx_queue<HVKCB, 128>             freeGfxCBs;
-	fixed_mtx_queue<HVKCB, 128>             freeCopyCBs;
+	vk_cb_pool		                        cbPools[ ( u64 ) vk_queue_t::COUNT ];
 
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
@@ -219,8 +194,8 @@ struct vk_context
 
 	vk_swapchain_config                     scConfig;
 
-	HVKBUF CreateBuffer( const buffer_info& buffInfo );
-	HVKIMG CreateImage( const image_info& imgInfo );
+	vk_buffer CreateBuffer( const buffer_info& buffInfo );
+	vk_image CreateImage( const image_info& imgInfo );
 
 	inline void EnqueueResourceFree( const vk_resc_deletion& rscDeletion )
 	{
@@ -328,17 +303,11 @@ struct vk_context
 		return imgIdx;
 	}
 
-	HVKCB AllocateCmdPoolAndBuff( vk_queue_t queueType );
-	inline void DeferredRecycleCmdPoolAndBuff( HVKCB hcb, const vk_timeline& timeline )
+	vk_cmd_pool_buff AllocateCmdPoolAndBuff( vk_queue_t queueType );
+	inline void DeferredRecycleCmdPoolAndBuff( vk_cmd_pool_buff cb, const vk_timeline& timeline )
 	{
-		vk_cmd_pool_buff& cmdPoolBuff = *hcb;
-		HT_ASSERT( VK_NULL_HANDLE == cmdPoolBuff.timelineSema );
-		HT_ASSERT( u64( -1 ) == cmdPoolBuff.submissionIdx );
-
-		cmdPoolBuff.timelineSema = timeline.sema;
-		cmdPoolBuff.submissionIdx = timeline.submitsIssuedCount; // NOTE: submit on current value
-
-		while( !pendingCBRecycle.TryPush( hcb ) );
+		vk_cb_pool& cbPool = cbPools[ ( u64 ) cb.parentQueueFamType ];
+		HT_ASSERT( cbPool.pending.TryPush( vk_cb_deletion{ timeline.sema, timeline.submitsIssuedCount, cb } ) );
 	}
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 

@@ -21,9 +21,6 @@
     <ClCompile Include="renderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="System\Win32\win32_file.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="vk_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -146,19 +143,20 @@
     <ClInclude Include="ht_mtx_queue.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="System\sys_mem_arena.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="Shaders\depth_pyramid.comp.glsl" />
-    <CustomBuild Include="Shaders\c_draw_cull.comp.glsl" />
-    <CustomBuild Include="Shaders\avg_luminance.comp.glsl" />
-    <CustomBuild Include="Shaders\v_cpu_dbg_draw.vert.glsl" />
-    <CustomBuild Include="Shaders\pbr.frag.glsl" />
-    <CustomBuild Include="Shaders\box_meshlet_draw.vert.glsl" />
-    <CustomBuild Include="Shaders\vtx_merged.vert.glsl">
-      <Filter>Source Files</Filter>
-    </CustomBuild>
-    <CustomBuild Include="Shaders\v_z_prepass.vert.glsl" />
-    <CustomBuild Include="Shaders\meshlet.vert.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\vtx_merged.vert.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\c_draw_cull.comp.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\pbr.frag.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\depth_pyramid.comp.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\avg_luminance.comp.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\v_cpu_dbg_draw.vert.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\box_meshlet_draw.vert.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\v_z_prepass.vert.glsl" />
+    <CustomBuild Include="$(SolutionDir)Shaders\meshlet.vert.glsl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\imgui_vert.hlsl" />

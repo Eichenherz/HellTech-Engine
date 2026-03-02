@@ -17,14 +17,13 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)core_types.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)hell_pack.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)ht_bitset.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_error.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_fixed_string.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_fixed_vector.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_geometry.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_gfx_types.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_math.h" />
-    <ClInclude Include="$(MSBuildThisFileDirectory)ht_mem_arena.h" />
-    <ClInclude Include="$(MSBuildThisFileDirectory)ht_mtx_queue.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_utils.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_vec_types.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)range_utils.h" />

@@ -122,17 +122,17 @@
       <PreventDllBinding>false</PreventDllBinding>
     </Link>
     <CustomBuild>
-      <Command>"$(VULKAN_SDK)\Bin\glslangValidator" "%(FullPath)" -V -g --target-env vulkan1.4 -I"$(ProjectDir)Shaders" -I"$(ProjectDir)" -o $(SolutionDir)Shaders\%(Filename).spv</Command>
+      <Command>"$(VULKAN_SDK)\Bin\glslangValidator" "%(FullPath)" -V -g --target-env vulkan1.4 -I"$(ProjectDir)Shaders" -I"$(ProjectDir)" -o $(SolutionDir)bin\SpirV\%(Filename).spv</Command>
     </CustomBuild>
     <CustomBuild>
       <Message>Compile GLSL to SPV</Message>
     </CustomBuild>
     <CustomBuild>
-      <Outputs>$(SolutionDir)Shaders\%(Filename).spv</Outputs>
+      <Outputs>$(SolutionDir)bin\SpirV\%(Filename).spv</Outputs>
     </CustomBuild>
     <CustomBuild>
       <BuildInParallel>true</BuildInParallel>
-      <AdditionalInputs>%(FullPath);$(ProjectDir)r_data_structs.h</AdditionalInputs>
+      <AdditionalInputs>$(ProjectDir)r_data_structs.h</AdditionalInputs>
     </CustomBuild>
     <PostBuildEvent>
       <Command>
@@ -200,7 +200,6 @@
     <CustomBuild Include="$(SolutionDir)Shaders\vtx_merged.vert.glsl">
       <FileType>Document</FileType>
     </CustomBuild>
-    <ClCompile Include="System\Win32\win32_file.cpp" />
     <ClCompile Include="sys_os_win.cpp">
       <IncludeInUnityFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</IncludeInUnityFile>
     </ClCompile>
@@ -213,6 +212,7 @@
     <ClInclude Include="AssetCompiler\spng.h" />
     <ClInclude Include="dxc.h" />
     <ClInclude Include="AssetCompiler\miniz.h" />
+    <ClInclude Include="System\sys_mem_arena.h" />
     <ClInclude Include="ht_mtx_queue.h" />
     <ClInclude Include="r_data_structs.h" />
     <ClInclude Include="Shaders\glsl_func_lib.h" />
@@ -243,27 +243,27 @@
   <ItemGroup>
     <CustomBuild Include="$(SolutionDir)Shaders\c_draw_cull.comp.glsl">
       <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)Shaders\%(Filename).spv</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)bin\SpirV\%(Filename).spv</Outputs>
     </CustomBuild>
     <CustomBuild Include="$(SolutionDir)Shaders\pbr.frag.glsl">
       <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)Shaders\%(Filename).spv</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)bin\SpirV\%(Filename).spv</Outputs>
     </CustomBuild>
     <CustomBuild Include="$(SolutionDir)Shaders\depth_pyramid.comp.glsl">
       <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)Shaders\%(Filename).spv</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)bin\SpirV\%(Filename).spv</Outputs>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="$(SolutionDir)Shaders\avg_luminance.comp.glsl">
       <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)Shaders\%(Filename).spv</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)bin\SpirV\%(Filename).spv</Outputs>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="$(SolutionDir)Shaders\v_cpu_dbg_draw.vert.glsl">
       <FileType>Document</FileType>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)Shaders\%(Filename).spv</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)bin\SpirV\%(Filename).spv</Outputs>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>

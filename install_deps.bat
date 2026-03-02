@@ -8,8 +8,6 @@ set FAILED=0
 call :clone "3rdParty/unordered_dense"   "https://github.com/martinus/unordered_dense.git"
 call :clone "3rdParty/dds"               "https://github.com/turanszkij/dds.git"
 call :clone "3rdParty/imgui"             "https://github.com/ocornut/imgui.git"
-call :clone "3rdParty/plf_colony"        "https://github.com/mattreecebentley/plf_colony.git"
-call :clone "3rdParty/MPMCQueue"         "https://github.com/rigtorp/MPMCQueue.git"
 call :clone "3rdParty/VulkanMemoryAllocator" "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
 call :clone "3rdParty/tinygltf"          "https://github.com/syoyo/tinygltf.git"
 call :clone "3rdParty/meshoptimizer"     "https://github.com/zeux/meshoptimizer.git"

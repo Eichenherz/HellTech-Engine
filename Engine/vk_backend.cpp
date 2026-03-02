@@ -24,7 +24,6 @@
 
 #include "core_types.h"
 #include "ht_error.h"
-#include "ht_mem_arena.h"
 #include "vk_error.h"
 #include "vk_context.h"
 #include "vk_pso.h"
@@ -720,7 +719,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 }
 
 
-HVKBUF vk_context::CreateBuffer( const buffer_info& buffInfo )
+vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -761,16 +760,14 @@ HVKBUF vk_context::CreateBuffer( const buffer_info& buffInfo )
 		HT_ASSERT( devicePointer );
 	}
 
-	auto it = buffPool.insert( {
+	return {
 		.mem = mem,
 		.hndl = vkBuffer,
 		.sizeInBytes = bufferCreateInfo.size,
 		.hostVisible = ( u8* ) allocInfo.pMappedData,
 		.devicePointer = devicePointer,
 		.usgFlags = bufferCreateInfo.usage
-	} );
-
-	return { &( *it ) };
+	};
 }
 
 inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
@@ -792,7 +789,7 @@ inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsage
 	// Fallback to a different format or use other means of uploading data
 }
 
-HVKIMG vk_context::CreateImage( const image_info& imgInfo )
+vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
 	VkCheckFormatProperties( gpu, imgInfo.usg, imgInfo.format );
 
@@ -824,7 +821,7 @@ HVKIMG vk_context::CreateImage( const image_info& imgInfo )
 	VkImageView vkImgView = VkMakeImgView(
 		device, img, imageInfo.format, 0, imageInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
 
-	auto it = imgPool.insert( {
+	return {
 		.mem = mem,
 		.hndl = img,
 		.view = vkImgView,
@@ -834,9 +831,7 @@ HVKIMG vk_context::CreateImage( const image_info& imgInfo )
 		.height = ( u16 ) imageInfo.extent.height,
 		.layerCount = ( u8 ) imageInfo.arrayLayers,
 		.mipCount = ( u8 ) imageInfo.mipLevels,
-	} );
-
-	return { &( *it ) };
+	};
 }
 
 unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
@@ -1050,40 +1045,24 @@ void vk_context::FlushPendingDescriptorUpdates()
 
 void vk_context::FlushDeletionQueues( u64 frameIdx )
 {
-	for( HVKCB hcb = {}; pendingCBRecycle.TryPop( hcb ); )
+	for( vk_cb_pool& cbPool : cbPools )
 	{
-		vk_cmd_pool_buff& cb = *hcb;
-		HT_ASSERT( VK_NULL_HANDLE != cb.timelineSema );
+		for( vk_cb_deletion del = {}; cbPool.pending.TryPop( del ); )
+		{
+			u64 sumbissionsCompleted = 0;
+			VK_CHECK( vkGetSemaphoreCounterValue( device, del.sema, &sumbissionsCompleted ) );
+			if( del.waitVal >= sumbissionsCompleted )
+			{
+				// NOTE: if we can't retire we put it back and break for this frame
+				while( !cbPool.pending.TryPush( del ) );
+				break;
+			}
 
-		u64 sumbissionsCompleted = 0;
-		VK_CHECK( vkGetSemaphoreCounterValue( device, cb.timelineSema, &sumbissionsCompleted ) );
-		if( cb.submissionIdx >= sumbissionsCompleted )
-		{
-			// NOTE: if we can't retire we put it back and break for this frame
-			while( !pendingCBRecycle.TryPush( hcb ) );
-			break;
-		}
-
-		VK_CHECK( vkResetCommandPool( device, cb.pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
-		cb.timelineSema = VK_NULL_HANDLE;
-		cb.submissionIdx = -1;
-
-		using enum vk_queue_t;
-		switch( cb.parentQueueFamType )
-		{
-		case GFX:
-		{
-			while( !freeGfxCBs.TryPush( hcb ) );
-			break;
-		}
-		case COPY:
-		{
-			while( !freeCopyCBs.TryPush( hcb ) );
-			break;
-		}
-		default: HT_ASSERT( 0 && "Invalid queue type !" );
+			VK_CHECK( vkResetCommandPool( device, del.hndl.pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+			cbPool.free.TryPush( del.hndl );
 		}
 	}
+	
 	
 	u64 frameSubmissionsCompleted = 0;
 	VK_CHECK( vkGetSemaphoreCounterValue( device, gpuFrameTimeline.sema, &frameSubmissionsCompleted ) );
@@ -1097,12 +1076,12 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		if( frameSubmissionsCompleted <= rsc.frameTimelineVal ) break;
 		if( vk_resource_type::BUFFER ==  rsc.type )
 		{
-			vmaDestroyBuffer( allocator, rsc.buff->hndl, rsc.buff->mem );
+			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.mem );
 		}
 		else if( vk_resource_type::IMAGE ==  rsc.type )
 		{
-			vkDestroyImageView( device, rsc.img->view, 0 );
-			vmaDestroyImage( allocator, rsc.img->hndl, rsc.img->mem );
+			vkDestroyImageView( device, rsc.img.view, 0 );
+			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.mem );
 		}
 		it = resourceDeletionQueue.erase( it );
 	}
@@ -1212,42 +1191,27 @@ inline vk_cmd_pool_buff VkMakeCmdPoolAndBuff( VkDevice vkDevice, u32 queueFamily
 	return {
 		.pool = cmdPool,
 		.buff = cmdBuff,
-		.timelineSema = VK_NULL_HANDLE,
-		.submissionIdx = u64( -1 ),
 		.parentQueueFamType = queueType 
 	};
 }
 
-HVKCB vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
+vk_cmd_pool_buff vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 {
-	using enum vk_queue_t;
-	switch( queueType )
+	vk_cb_pool& cbPool = cbPools[ ( u64 ) queueType ];
+
+	vk_cmd_pool_buff cb = {};
+	if( !cbPool.free.TryPop( cb ) )
 	{
-	case GFX:
-	{
-		if( HVKCB hndl = {}; freeGfxCBs.TryPop( hndl ) )
+		using enum vk_queue_t;
+		switch( queueType )
 		{
-			return hndl;
+		case GFX: return VkMakeCmdPoolAndBuff( device, gfxQueue.familyIdx, queueType );
+		case COPY: return VkMakeCmdPoolAndBuff( device, copyQueue.familyIdx, queueType );
+		default: HT_ASSERT( 0 && "Invalid queue type !" );
 		}
-
-		auto it = gfxCBPool.insert( VkMakeCmdPoolAndBuff( device, gfxQueue.familyIdx, queueType ) );
-		return { &( *it ) };
-	}
-	case COPY:
-	{
-		if( HVKCB hndl = {}; freeCopyCBs.TryPop( hndl ) )
-		{
-			return hndl;
-		}
-
-		auto it = copyCBPool.insert( VkMakeCmdPoolAndBuff( device, copyQueue.familyIdx, queueType ) );
-		return { &( *it ) };
-	}
-	default: HT_ASSERT( 0 && "Invalid queue type !" );
 	}
 
-	HT_ASSERT( 0 && "Smth defs went wrong !" );
-	return {};
+	return cb;
 }
 
 void vk_context::QueueSubmitToTimeline(
@@ -1259,7 +1223,7 @@ void vk_context::QueueSubmitToTimeline(
 ) {
 	std::lock_guard lockGuard{ queue.lock };
 
-	scoped_stack memScope = { scratchArena };
+	stack_adaptor memScope = { scratchArena };
 	std::pmr::vector<VkSemaphoreSubmitInfo> vecSignals{ &memScope };
 	vecSignals.insert( std::end( vecSignals ), std::cbegin( signals ), std::cend( signals ) );
 
