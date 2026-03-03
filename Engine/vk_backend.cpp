@@ -791,18 +791,19 @@ inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsage
 
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
-	VkCheckFormatProperties( gpu, imgInfo.usg, imgInfo.format );
+	VkCheckFormatProperties( gpu, imgInfo.usgFlags, imgInfo.format );
 
 	VkImageCreateInfo imageInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.imageType = VK_IMAGE_TYPE_2D,
+		.flags = imageInfo.flags,
+		.imageType = imgInfo.type,
 		.format = imgInfo.format,
 		.extent = { imgInfo.width,  imgInfo.height, 1 },
 		.mipLevels = imgInfo.mipCount,
-		.arrayLayers = 1,
+		.arrayLayers = imgInfo.layerCount,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = imgInfo.usg,
+		.usage = imgInfo.usgFlags,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
 	};
@@ -825,6 +826,8 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 		.mem = mem,
 		.hndl = img,
 		.view = vkImgView,
+		.createFlags = imageInfo.flags,
+		.type = imageInfo.imageType,
 		.usageFlags = imageInfo.usage,
 		.format = imageInfo.format,
 		.width = ( u16 ) imageInfo.extent.width,

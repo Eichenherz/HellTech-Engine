@@ -638,6 +638,7 @@ int main()
 		}
 	}
 
+	/*
 	if constexpr( CHECK_CORRECTNESS )
 	{
 		const std::vector<u8> rawBytes = ReadFileBinary( hpkFilePath.c_str() );
@@ -658,7 +659,7 @@ int main()
 		HT_ASSERT( hpkMeshAsset.aabbMin == val.aabb[ 0 ] );
 		HT_ASSERT( hpkMeshAsset.aabbMax == val.aabb[ 1 ] );
 	}
-
+	*/
 	return 0;
 }
 

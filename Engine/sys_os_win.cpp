@@ -17,6 +17,10 @@
 #include "r_data_structs.h"
 
 #include <System/Win32/win32_err.h>
+#include <System/sys_file.h>
+#include "zip_pack.h"
+
+#include "ht_math.h"
 
 static inline void SysOsCreateConsole()
 {
@@ -526,47 +530,64 @@ inline void SysNameThread( HANDLE hThread, const wchar_t* name )
 
 constexpr u64 CACHE_LINE_SZ = 64;
 
-#define CACHE_ALIGN alignas( CACHE_LINE_SZ ) volatile
+#define CACHE_ALIGN alignas( CACHE_LINE_SZ )
 
-using atomic64 = u64;
+// NOTE: bc Win32 expects LONG64 
+using atomic64 = i64;
 
-enum SYS_THREAD_SIGNAL : u64
+enum sys_thread_signal : i64
 {
 	SYS_THREAD_SIGNAL_SLEEP = 0,
 	SYS_THREAD_SIGNAL_WAKEUP = 1,
-	SYS_THREAD_SIGNAL_EXIT = ~u64( 0 )
+	SYS_THREAD_SIGNAL_EXIT = -1
 };
 
 #include "System/sys_mem_arena.h"
+#include "ht_mtx_queue.h"
+
+// NOTE: for now, we're lazy and will use std::function
+
+using io_job = std::function<void()>;
 
 struct sys_thread_data
 {
 	CACHE_ALIGN volatile atomic64 signal;
-	virtual_arena			      arena;
+	CACHE_ALIGN virtual_arena     arena;
+	mtx_queue<io_job>             jobs;
+
 };
 
 struct sys_thread
 {
-	HANDLE					hndl;
-	const sys_thread_data*  pData;
-	DWORD			        threadId;
+	HANDLE			  hndl;
+	sys_thread_data*  pData;
+	DWORD			  threadId;
 };
 
 DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 {
 	sys_thread_data& threadCtx = *( sys_thread_data* ) lpParam;
 
-	constexpr u64 undesiredVal = SYS_THREAD_SIGNAL_SLEEP;
+	constexpr sys_thread_signal undesiredVal = SYS_THREAD_SIGNAL_SLEEP;
+	static_assert( sizeof( threadCtx.signal ) == sizeof( undesiredVal ) );
 
 	for( ;; )
 	{
-		for( u64 capturedVal = threadCtx.signal; undesiredVal == capturedVal; )
+		for( ;; )
 		{
-			static_assert( sizeof( threadCtx.signal ) == sizeof( undesiredVal ) );
 			WaitOnAddress( &threadCtx.signal, ( void* ) &undesiredVal, sizeof( threadCtx.signal ), INFINITE );
-			capturedVal = threadCtx.signal;
+			atomic64 capturedVal = InterlockedAddAcquire64( &threadCtx.signal, 0 );
 
 			[[unlikely]] if( SYS_THREAD_SIGNAL_EXIT == capturedVal ) goto EXIT;
+			if( undesiredVal != capturedVal ) break;
+		}
+		
+		// NOTE: win doesn't have exchRelase64
+		InterlockedExchange64( &threadCtx.signal, SYS_THREAD_SIGNAL_SLEEP );
+
+		for( io_job Job = {}; threadCtx.jobs.TryPop( Job ); )
+		{
+			std::cout << "Dikin'Baus\n";
 		}
 	}
 	
@@ -582,9 +603,10 @@ sys_thread SysCreateThread(
 	const wchar_t* name, 
 	stable_stretchy_buffer<sys_thread_data>& threadDataBuff 
 ) {
-	const sys_thread_data* pData = &threadDataBuff.push_back( { 
+	sys_thread_data* pData = &threadDataBuff.push_back( {
 		.signal = SYS_THREAD_SIGNAL_SLEEP,
-		.arena = virtual_arena{ maxScratchPadSize }
+		.arena = virtual_arena{ maxScratchPadSize },
+		.jobs = { 128 }
 	} );
 
 	DWORD threadId;
@@ -734,6 +756,14 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	//double				accumulator = 0;
 	u64					currentTicks = SysTicks();
 
+	// TODO: vfs
+	constexpr char assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	unique_mmap_file mmappedFile = SysCreateFile( assetFile, file_permissions_bits::READ,
+		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
+	vfs_zip_mem vfsFileSys = { *mmappedFile };
+
+	bool vfsMounted = false;
+
 	// TODO: QUIT immediately ?
 	while( isRunning )
 	{
@@ -745,6 +775,20 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		inputState.dMouse = {};
 
 		isRunning = SysPumpUserInput();
+
+
+		if( !vfsMounted )
+		{
+			sys_thread& ioThread = threads[ 0 ];
+			ioThread.pData->jobs.TryPush( [] () {} );
+
+			InterlockedExchange64( &ioThread.pData->signal, SYS_THREAD_SIGNAL_WAKEUP );
+
+			WakeByAddressSingle( ( void* ) &ioThread.pData->signal );
+
+			vfsMounted = true;
+		}
+
 
 		auto[ camMove, dRot ] = GetMoveCamAction( inputState );
 

@@ -142,7 +142,7 @@ struct imgui_pass
 		fontAtlasImg = dc.CreateImage( {
 			.name = "Img_ImGuiFonts",
 			.format = VK_FORMAT_R8G8B8A8_UNORM,
-			.usg = usgFlags,
+			.usgFlags = usgFlags,
 			.width = ( u16 ) width,
 			.height = ( u16 ) height,
 			.layerCount = 1,
@@ -875,7 +875,7 @@ struct depth_pyramid_pass
 		image_info hiZInfo = {
 			.name = "Img_HiZ",
 			.format = VK_FORMAT_R32_SFLOAT,
-			.usg = hiZUsg,
+			.usgFlags = hiZUsg,
 			.width = squareDim,
 			.height = squareDim,
 			.layerCount = 1,
@@ -1052,9 +1052,13 @@ struct gpu_mesh_payload
 	vk_buffer triangleBuffer;
 };
 
+#include "zip_pack.h"
+
 #include "ht_gfx_types.h"
 #include "hell_pack.h"
 #include "ht_math.h"
+
+#include <dds.h>
 
 struct gpu_instance
 {
@@ -1063,7 +1067,7 @@ struct gpu_instance
 	u16 materialIdx;
 };
 
-struct desc_gpu_mesh
+struct gpu_mesh
 {
 	vec3 minAabb;
 	vec3 maxAabb;
@@ -1074,8 +1078,10 @@ struct desc_gpu_mesh
 
 struct renderer_geometry
 {
-	std::vector<gpu_mesh_payload> gpuMeshes;
-	std::vector<desc_gpu_mesh> gpuMeshDescs; // NOTE: matches 1:1 the above buffers
+	std::vector<gpu_mesh_payload> gpuMeshesPayload;
+	std::vector<gpu_mesh> gpuMeshes; // NOTE: matches 1:1 the above buffers
+
+	std::vector<vk_image> textures;
 
 	vk_buffer meshTableBuff; // NOTE: contains the above table
 	vk_buffer materialTableBuff;
@@ -1084,8 +1090,6 @@ struct renderer_geometry
 
 	vk_buffer hLights;
 
-	std::vector<vk_image> textures;
-
 	desc_hndl32 meshTableDesc;
 	desc_hndl32 materialTableDesc;
 
@@ -1093,11 +1097,9 @@ struct renderer_geometry
 	
 	desc_hndl32 lightsDesc;
 
-	std::vector<desc_hndl32> texuresDesc;
-
-	//// NOTE: we never deallocate samplers 
-	//std::vector<VkSampler> samplers;
-	//std::vector<desc_hndl32> hSamplers;
+	// NOTE: we never deallocate samplers 
+	std::vector<VkSampler> samplers;
+	std::vector<desc_hndl32> hSamplers;
 };
 
 struct virtual_frame
@@ -1139,8 +1141,8 @@ struct render_context final : renderer_interface
 
 	std::unique_ptr<vk_context>                 pVkCtx;
 
-	vk_image								   colorTarget;
-	vk_image								   depthTarget;
+	vk_image								    colorTarget;
+	vk_image								    depthTarget;
 
 	// TODO: move to appropriate technique/context
 	VkPipeline									gfxZPrepass;
@@ -1162,7 +1164,7 @@ struct render_context final : renderer_interface
 	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height );
 
 	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) override;
-	//virtual void UploadAsync( const hellpack_view& hellpackView ) override;
+	virtual void UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena ) override;
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
 };
 
@@ -1178,7 +1180,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 	depthTarget = pVkCtx->CreateImage( {
 		.name = "Img_DepthTarget",
 		.format = desiredDepthFormat,
-		.usg = depthUsgFlags,
+		.usgFlags = depthUsgFlags,
 		.width = width,
 		.height = height,
 		.layerCount = 1,
@@ -1195,7 +1197,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 	colorTarget = pVkCtx->CreateImage( {
 		.name = "Img_ColorTarget",
 		.format = desiredColorFormat,
-		.usg = colUsgFlags,
+		.usgFlags = colUsgFlags,
 		.width = width,
 		.height = height,
 		.layerCount = 1,
@@ -1295,49 +1297,136 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	//vrtFrames.resize( framesInFlight );
 }
 
-/*
-void render_context::UploadAsync( const hellpack_view& hellpackView )
+void render_context::UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena )
 {
 	vk_buffer stagingBuff = pVkCtx->CreateBuffer( {
 		.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		.sizeInBytes = hellpackView.sizeInBytes, // NOTE: this includes the header and entry tables too WTF BRO ?!
+		// NOTE: this includes the header and entry tables too, but it's fine for a one off
+		.sizeInBytes = std::size( vfs.archiveBytesView ), 
 		.usage = buffer_usage::STAGING
 	} );
 
-	std::memcpy( stagingBuff.hostVisible, hellpackView.base, hellpackView.sizeInBytes );
+	// TODO: replace with our own buffer 
+	std::pmr::monotonic_buffer_resource stagingBuffPool = { stagingBuff.hostVisible, stagingBuff.sizeInBytes };
+	std::pmr::vector<u8> staginScratch{ &stagingBuffPool };
+	staginScratch.reserve( stagingBuff.sizeInBytes );
 
+	vk_cmd_pool_buff cb = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+	vk_command_buffer copyCmdBuff = { cb.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
 
-	vk_cb_hndl32 hCopyCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
-	vk_command_buffer copyCmdBuff = { pVkCtx->GetCmdBuff( hCopyCmdBuff ), VK_NULL_HANDLE, VK_NULL_HANDLE };
+	auto meshFiles = vfs.files | std::views::keys | std::views::filter( 
+		[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".mesh" ) ); } );
 
+	auto texFiles = vfs.files | std::views::keys | std::views::filter( 
+		[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".dds" ) ); } );
+
+	auto levelFiles = vfs.files | std::views::keys | std::views::filter( 
+	[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".lvl" ) ); } );
+
+	stack_adaptor vaStack = { arena };
+
+	ankerl::unordered_dense::pmr::map<u64, u32> meshIdMap{ &vaStack };
+	for( const vfs_path& vpath : meshFiles )
 	{
-		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::INST );
-		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
-		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
+		u64 offsetInBytes = std::size( staginScratch );
+
+		std::span<const u8> dataView = vfs.GetFileByteView( vpath );
+		hellpack_mesh_asset mesh = HpkReadBinaryBlob<hellpack_mesh_asset>( dataView );
+
+		// NOTE: bc we draw as meshlets but on the trad pipeline we need a merged index buffer
+		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+		fixed_string<256> nameMeshlets = { "{}_Buff_Meshlets", vpath };
+		fixed_string<256> nameVtx = { "{}_Buff_Vtx", vpath };
+		fixed_string<356> nameTris = { "{}_Buff_Tris", vpath };
+
+		gpu_mesh_payload gpuMeshPayload = {
+			.meshletBuffer = pVkCtx->CreateBuffer( {
+				.name = std::data( nameMeshlets ),
+				.usageFlags = usgFlags,
+				.sizeInBytes = std::size( mesh.meshlets ),
+				.usage = buffer_usage::GPU_ONLY } ),
+				.vertexBuffer = pVkCtx->CreateBuffer( {
+				.name = std::data( nameVtx ),
+				.usageFlags = usgFlags,
+				.sizeInBytes = std::size( mesh.vertices ),
+				.usage = buffer_usage::GPU_ONLY } ),
+				.triangleBuffer = pVkCtx->CreateBuffer( {
+				.name = std::data( nameTris ),
+				.usageFlags = usgFlags,
+				.sizeInBytes = std::size( mesh.triangles ),
+				.usage = buffer_usage::GPU_ONLY } ),
+		};
+
+		gpu_mesh desc = {
+			.minAabb = mesh.aabbMin,
+			.maxAabb = mesh.aabbMax,
+			.hMeshletBuffer = pVkCtx->AllocDescriptor( { gpuMeshPayload.meshletBuffer } ),
+			.hVertexBuffer = pVkCtx->AllocDescriptor( { gpuMeshPayload.vertexBuffer } ),
+			.hTriangleBuffer = pVkCtx->AllocDescriptor( { gpuMeshPayload.triangleBuffer } ),
+		};
+
+		{
+			staginScratch.resize( offsetInBytes + std::size( mesh.meshlets ) );
+			std::memcpy( std::data( staginScratch ) + offsetInBytes, std::data( mesh.meshlets ), std::size( mesh.meshlets ) );
+
+			VkBufferCopy copyRegion = { .srcOffset = offsetInBytes, .dstOffset = 0, .size = std::size( mesh.meshlets ) };
+			copyCmdBuff.CmdCopyBuffer( stagingBuff, gpuMeshPayload.meshletBuffer, copyRegion );
+
+			offsetInBytes += std::size( mesh.meshlets );
+		}
+
+		{
+			staginScratch.resize( offsetInBytes + std::size( mesh.vertices ) );
+			std::memcpy( std::data( staginScratch ) + offsetInBytes, std::data( mesh.vertices ), std::size( mesh.vertices ) );
+
+			VkBufferCopy copyRegion = { .srcOffset = offsetInBytes, .dstOffset = 0, .size = std::size( mesh.vertices ) };
+			copyCmdBuff.CmdCopyBuffer( stagingBuff, gpuMeshPayload.vertexBuffer, copyRegion );
+
+			offsetInBytes += std::size( mesh.vertices );
+		}
+
+		{
+			staginScratch.resize( offsetInBytes + std::size( mesh.triangles ) );
+			std::memcpy( std::data( staginScratch ) + offsetInBytes, std::data( mesh.triangles ), std::size( mesh.triangles ) );
+
+			VkBufferCopy copyRegion = { .srcOffset = offsetInBytes, .dstOffset = 0, .size = std::size( mesh.triangles ) };
+			copyCmdBuff.CmdCopyBuffer( stagingBuff, gpuMeshPayload.triangleBuffer, copyRegion );
+
+			offsetInBytes += std::size( mesh.triangles );
+		}
 	}
 
+	ankerl::unordered_dense::pmr::map<u64, u32> texIdMap{ &vaStack };
+	for( const vfs_path& vpath : texFiles )
 	{
-		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::MLET );
-		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
-		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
+		u64 offsetInBytes = std::size( staginScratch );
+
+		std::span<const u8> dataView = vfs.GetFileByteView( vpath );
+		byte_view texRawBytes = HpkReadBinaryBlob<byte_view>( dataView );
+		dds::Header header = dds::read_header( std::data( texRawBytes ), std::size( texRawBytes ) );
+		if( header.is_valid() )
+		{
+			fixed_string<256> name = { vpath };
+			vk_image tex = pVkCtx->CreateImage( ImageInfoFromDds( header, std::data( name ) ) );
+			desc_hndl32 hTex = pVkCtx->AllocDescriptor( { tex.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		}
 	}
 
+	for( const vfs_path& vpath : levelFiles )
 	{
-		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::VTX );
-		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
-		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
-	}
+		u64 offsetInBytes = std::size( staginScratch );
 
-	{
-		auto[ basePtr, size ] = hellpackView.Bytes( hellpack_entry_type::TRI );
-		VkBufferCopy copyRegion = { .srcOffset = basePtr - hellpackView.base, .dstOffset = 0, .size = size };
-		copyCmdBuff.CmdCopyBuffer( stagingBuff, instDescBuff, copyRegion );
+		std::span<const u8> dataView = vfs.GetFileByteView( vpath );
+
+		hellpack_level level = HpkReadBinaryBlob<hellpack_level>( dataView );
 	}
 
 	pVkCtx->copyQueue.submitionCount++;
 	pVkCtx->QueueSubmitToTimeline( pVkCtx->copyQueue, {}, {}, {}, copyCmdBuff.hndl );
 }
-*/
+
 
 // TODO: use a queue timeline or smth to check if we can get a cmd buffer instead of vFrameIdx
 void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )

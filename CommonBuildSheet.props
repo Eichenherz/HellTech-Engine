@@ -48,6 +48,7 @@
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_tables.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\imgui\imgui_widgets.cpp" />
     <ClCompile Include="$(SolutionDir)3rdParty\ImGuiFileDialog\ImGuiFileDialog.cpp" />
+     <ClCompile Include="$(SolutionDir)3rdParty\miniz\miniz.c" />
   </ItemGroup>
 
   <!-- Suppress static analysis for all 3rd-party source files (must come after Include groups) -->

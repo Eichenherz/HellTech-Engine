@@ -24,8 +24,6 @@ do{																\
 }while( 0 )                                                       
 
 
-using fixed_str = std::array<char, 256>;
-
 struct zip_writer
 {
 	ankerl::unordered_dense::set<vfs_path> files;
@@ -91,10 +89,9 @@ struct zip_writer
 // NOTE: not thread safe !
 struct vfs_zip_mem
 {
-	std::vector<u8> scratchBuff;
-	ankerl::unordered_dense::map<vfs_path, u32> files;
+	mutable ankerl::unordered_dense::map<vfs_path, u32> files;
 	std::span<const u8> archiveBytesView; 
-	mz_zip_archive za = {};
+	mutable mz_zip_archive za = {};
 
 
 	vfs_zip_mem( std::span<const u8> _archiveBytesView ) : archiveBytesView{ _archiveBytesView }
@@ -125,8 +122,6 @@ struct vfs_zip_mem
 			vfs_path path = { st.m_filename };
 			files.emplace( path, fi );
 		}
-
-		scratchBuff.resize( MZ_ZIP_MAX_IO_BUF_SIZE );
 	}
 
 	vfs_zip_mem( const vfs_zip_mem& ) = delete;
@@ -142,7 +137,7 @@ struct vfs_zip_mem
 		return std::cend( files ) != files.find( filepath );
 	}
 
-	u64 GetFileSizeInBytes( const vfs_path& filepath )
+	u64 GetFileSizeInBytes( const vfs_path& filepath ) const
 	{
 		if( !FileExists( filepath ) ) return {};
 
@@ -158,27 +153,50 @@ struct vfs_zip_mem
 		return st.m_uncomp_size;
 	}
 
-	// NOTE: user must query the size first
-	bool ReadFileToBufferNoAlloc( const vfs_path& filepath, void* pDst, u64 dstSize )
+	// NOTE: this is really a hack, so in the future we need our own pak file
+	std::span<const u8> ZipGetFileView( const void* base, u32 offset ) const
 	{
-		if( !FileExists( filepath ) ) return false;
+	#pragma pack( push, 1 )
+		struct zip_local_header 
+		{
+			u32 signature;    // 0x04034b50
+			u16 version;
+			u16 flags;
+			u16 compression;  // 0 == "stored"
+			u16 modTime;
+			u16 modDate;
+			u32 crc32;
+			u32 compressedSize;
+			u32 uncompressedSize;
+			u16 filenameLen;
+			u16 extraLen;
+		};
+	#pragma pack( pop )
+
+		const zip_local_header* h = ( const zip_local_header* ) ( ( u8* ) base + offset );
+		HT_ASSERT( 0x04034b50 == h->signature );
+		HT_ASSERT( 0 == h->compression );
+		HT_ASSERT( h->uncompressedSize == h->compressedSize );
+
+		return { ( u8* ) h + sizeof( zip_local_header ) + h->filenameLen + h->extraLen, h->uncompressedSize };
+	}
+
+	// NOTE: user must query the size first
+	std::span<const u8> GetFileByteView( const vfs_path& filepath ) const
+	{
+		if( !FileExists( filepath ) ) return {};
 
 		// NOTE: this is fine, won't insert empty bc we already checked
 		u32 minizEntryIdx = files[ filepath ];
 
 		mz_zip_archive_file_stat st = {};
-		if( mz_zip_reader_file_stat( &za, minizEntryIdx, &st ) == 0 ) return false;
+		if( mz_zip_reader_file_stat( &za, minizEntryIdx, &st ) == 0 ) return {};
 		HT_ASSERT( std::strcmp( st.m_filename, std::data( filepath ) ) == 0 );
 		HT_ASSERT( !st.m_is_directory );
 		HT_ASSERT( st.m_comp_size == st.m_uncomp_size );
 		HT_ASSERT( !st.m_is_encrypted );
-		HT_ASSERT( dstSize == st.m_uncomp_size );
-
-		HT_ASSERT( pDst );
-
-		std::memset( std::data( scratchBuff ), 0, std::size( scratchBuff ) );
-		return mz_zip_reader_extract_to_mem_no_alloc( &za, minizEntryIdx, pDst, dstSize, 0, 
-			std::data( scratchBuff ), std::size( scratchBuff ) );
+		
+		return ZipGetFileView( std::data( archiveBytesView ), st.m_local_header_ofs );
 	}
 };
 

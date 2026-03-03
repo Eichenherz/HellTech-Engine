@@ -30,6 +30,8 @@ struct gpu_data
 
 
 struct frame_data;
+struct vfs_zip_mem;
+struct virtual_arena;
 //////////////////////////////////////
 // CONSTS
 //////////////////////////////////////
@@ -42,7 +44,7 @@ constexpr u32 SCREEN_HEIGHT = 640;
 struct renderer_interface
 {
 	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) = 0;
-	//virtual void UploadAsync( const hellpack_view& hellpackView ) = 0;
+	virtual void UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena ) = 0;
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) = 0;
 };
 

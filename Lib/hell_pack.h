@@ -130,7 +130,8 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 	}
 	else if constexpr( std::is_same_v<HPK_T, hellpack_texture_asset> )
 	{
-		static_assert( false, "hellpack_texture_asset is used directly as a .dds" );
+		//NOTE: hellpack_texture_asset is used directly as a .dds
+		return byte_view{ blob };
 	}
 	else static_assert( false, "Unsupported HPK_T" );
 }

@@ -6,9 +6,12 @@
 #include "DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
 
+#include "vk_utils.h"
 #include "vk_error.h"
 #include "vk_types.h"
 #include "core_types.h"
+
+#include <dds.h>
 
 #include <vk_mem_alloc.h>
 
@@ -31,14 +34,35 @@ struct buffer_info
 
 struct image_info
 {
-	const char*         name;
-	VkFormat		    format;
-	VkImageUsageFlags	usg;
+	const char*			name;
+	VkFormat			format;
+	VkImageCreateFlags  createFlags;
+	VkImageType         type;
+	VkImageUsageFlags	usgFlags;
 	u16					width;
 	u16					height;
 	u8					layerCount;
 	u8					mipCount;
 };
+
+inline image_info ImageInfoFromDds( const dds::Header& h, const char* nameStr )
+{
+	VkImageType imgType = h.is_1d() ? VK_IMAGE_TYPE_1D : 
+		h.is_3d() ? VK_IMAGE_TYPE_3D :
+		VK_IMAGE_TYPE_2D;
+
+	return {
+		.name          = nameStr,
+		.format        = VkFromatFromDdsDxgi(h.format()),
+		.createFlags   = h.is_cubemap() ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u,
+		.type          = imgType,
+		.usgFlags      = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.width         = ( u16 ) h.width(),
+		.height        = ( u16 ) h.height(),
+		.layerCount    = ( u8 ) h.array_size(),
+		.mipCount      = ( u8 ) h.mip_levels(),
+	};
+}
 
 struct vk_buffer
 {
@@ -60,13 +84,15 @@ struct vk_image
 	VmaAllocation		mem;
 	VkImage				hndl;
 	VkImageView			view;
-	VkImageUsageFlags   usageFlags;
+	VkImageCreateFlags  createFlags;
+	VkImageType         type;
+	VkImageUsageFlags	usageFlags;
 	VkFormat			format;
 	u32					width : 16;
 	u32					height : 16;
 	u32					layerCount : 8;
 	u32					mipCount : 8;
-	u32                 padding : 16;
+	u32					padding : 16;
 
 	inline VkExtent3D Extent3D() const
 	{
@@ -172,9 +198,6 @@ struct vk_descriptor_info
 		descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
 		rscType = vk_resource_type::IMAGE;
 	}
-
-	vk_descriptor_info( VkDescriptorBufferInfo buffInfo ) : buff{ buffInfo }{}
-	vk_descriptor_info( VkDescriptorImageInfo imgInfo ) : img{ imgInfo }{}
 };
 
 // TODO: not here

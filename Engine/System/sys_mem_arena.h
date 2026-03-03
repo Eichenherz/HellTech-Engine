@@ -72,7 +72,7 @@ struct stack_adaptor : std::pmr::memory_resource
 
 	inline stack_adaptor( Arena& a ) : arena{ a }, baseFrameOffset{ a.offset }{}
 	inline ~stack_adaptor() { arena.Rewind( baseFrameOffset ); }
-
+	u8*    BasePtr() { return arena.base + baseFrameOffset; }
 protected: // NOTE: std::pmr::memory_resource's API
 	void*   do_allocate( size_t bytes, size_t alignment ) override { return arena.Alloc( bytes, alignment ); }
 	void	do_deallocate( void*, size_t, size_t ) override { /* no-op */ }
