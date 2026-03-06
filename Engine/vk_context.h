@@ -34,6 +34,27 @@ struct vk_timeline
 {
 	VkSemaphore sema;
 	u64 submitsIssuedCount;
+
+	inline VkSemaphoreSubmitInfo GetWaitAtPoint( VkPipelineStageFlags2 stage ) const
+	{
+		return {
+			.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+			.semaphore = sema,
+			.value     = submitsIssuedCount,
+			.stageMask = stage,
+		};
+	}
+
+	inline VkSemaphoreSubmitInfo GetSignalNextPoint( VkPipelineStageFlags2 stage )
+	{
+		submitsIssuedCount++;
+		return {
+			.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+			.semaphore = sema,
+			.value     = submitsIssuedCount,
+			.stageMask = stage,
+		};
+	}
 };
 
 struct vk_swapchain_image
@@ -56,7 +77,7 @@ struct vk_queue
 	copyable_srwlock    lock;
 	VkQueue				hndl;
 	VkSemaphore			timelineSema;
-	u64					submitionCount;
+	mutable u64			submitionCount;
 	u32					familyIdx;
 };
 
@@ -155,7 +176,7 @@ struct vk_context
 	std::vector<vk_resc_deletion>			resourceDeletionQueue;
 	std::vector<vk_desc_deletion>			descriptroDeletionQueue;
 
-	fixed_arena<2048>						scratchArena;
+	static_arena<2048>						scratchArena;
 
 	std::vector<vk_swapchain_image>			scImgs;
 
@@ -173,6 +194,9 @@ struct vk_context
 	VmaAllocator							allocator;
 
 	VkSwapchainKHR		                    swapchain;
+
+	// TODO: sync when doing parallel uplaods
+	std::vector<VkFence>                    copyFencesPool;
 
 	VkDescriptorPool						descPool;
 	VkDescriptorSetLayout					descSetLayout;
@@ -222,6 +246,7 @@ struct vk_context
 		VkFormat								depthAttachmentFormat,
 		const vk_gfx_pso_config&				psoConfig,
 		VkPipelineLayout						vkPipelineLayout = VK_NULL_HANDLE );
+
 	VkPipeline CreateComptuePipeline( const vk_shader& shader, const char* pName );
 
 	inline VkSampler CreateSampler( const VkSamplerCreateInfo& samplerCreateInfo )
@@ -252,6 +277,32 @@ struct vk_context
 			return vkWaitSemaphores( device, &waitInfo, waitTime );
 		}
 		return VK_SUCCESS;
+	}
+
+	inline VkFence GetOrCreateFence()
+	{
+		if( std::size( copyFencesPool ) != 0 )
+		{
+			VkFence fence = *std::rbegin( copyFencesPool );
+			copyFencesPool.pop_back();
+			return fence;
+		}
+
+		VkFenceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, };
+
+		VkFence fence;
+		vkCreateFence( device, &ci, NULL, &fence );
+
+		return fence;
+	}
+
+	inline void FenceWaitBlocking( VkFence vkFence )
+	{
+		VkResult vkRes = vkWaitForFences( device, 1, &vkFence, VK_TRUE, UINT64_MAX );
+		HT_ASSERT( vkRes < VK_TIMEOUT );
+		vkResetFences( device, 1, &vkFence );
+
+		copyFencesPool.push_back( vkFence );
 	}
 
 	inline void HostTransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const
@@ -304,20 +355,16 @@ struct vk_context
 	}
 
 	vk_cmd_pool_buff AllocateCmdPoolAndBuff( vk_queue_t queueType );
-	inline void DeferredRecycleCmdPoolAndBuff( vk_cmd_pool_buff cb, const vk_timeline& timeline )
-	{
-		vk_cb_pool& cbPool = cbPools[ ( u64 ) cb.parentQueueFamType ];
-		HT_ASSERT( cbPool.pending.TryPush( vk_cb_deletion{ timeline.sema, timeline.submitsIssuedCount, cb } ) );
-	}
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
-	void QueueSubmitToTimeline(
-		const vk_queue& queue,
-		const vk_timeline& timeline,
-		std::span<VkSemaphoreSubmitInfo> waits,
-		std::span<VkSemaphoreSubmitInfo> signals,
-		VkCommandBuffer cmdBuff
+	void QueueSubmit(
+		const vk_queue&                  queue,
+		const vk_cmd_pool_buff&          cb,
+		std::span<VkSemaphoreSubmitInfo> waits   = {},
+		std::span<VkSemaphoreSubmitInfo> signals = {},
+		VkFence                          vkFence = VK_NULL_HANDLE
 	);
+
 	inline void QueuePresent( const vk_queue& queue, u32 imgIdx )
 	{
 		VkPresentInfoKHR presentInfo = { 

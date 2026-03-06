@@ -795,7 +795,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 
 	VkImageCreateInfo imageInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.flags = imageInfo.flags,
+		.flags = imgInfo.createFlags,
 		.imageType = imgInfo.type,
 		.format = imgInfo.format,
 		.extent = { imgInfo.width,  imgInfo.height, 1 },
@@ -819,8 +819,8 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 		VkDbgNameObj( img, device, imgInfo.name );
 	}
 
-	VkImageView vkImgView = VkMakeImgView(
-		device, img, imageInfo.format, 0, imageInfo.mipLevels, VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
+	VkImageView vkImgView = VkMakeImgView( device, img, imageInfo.format, 0, imageInfo.mipLevels, 
+		VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
 
 	return {
 		.mem = mem,
@@ -1217,12 +1217,12 @@ vk_cmd_pool_buff vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 	return cb;
 }
 
-void vk_context::QueueSubmitToTimeline(
-	const vk_queue& queue,
-	const vk_timeline& timeline, 
-	std::span<VkSemaphoreSubmitInfo> waits, 
-	std::span<VkSemaphoreSubmitInfo> signals, 
-	VkCommandBuffer cmdBuff 
+void vk_context::QueueSubmit(
+	const vk_queue&                  queue,
+	const vk_cmd_pool_buff&          cb,
+	std::span<VkSemaphoreSubmitInfo> waits,
+	std::span<VkSemaphoreSubmitInfo> signals,
+	VkFence                          vkFence
 ) {
 	std::lock_guard lockGuard{ queue.lock };
 
@@ -1230,16 +1230,18 @@ void vk_context::QueueSubmitToTimeline(
 	std::pmr::vector<VkSemaphoreSubmitInfo> vecSignals{ &memScope };
 	vecSignals.insert( std::end( vecSignals ), std::cbegin( signals ), std::cend( signals ) );
 
+	// NOTE: always signal ourselves
+	queue.submitionCount++;
 	vecSignals.push_back( {
 		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = timeline.sema,
-		.value     = timeline.submitsIssuedCount,
+		.semaphore = queue.timelineSema,
+		.value     = queue.submitionCount,
 		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 	} );
 
 	VkCommandBufferSubmitInfo cmdInfo = {
 		.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-		.commandBuffer = cmdBuff,
+		.commandBuffer = cb.buff,
 	};
 
 	VkSubmitInfo2 submitInfo = {
@@ -1251,5 +1253,9 @@ void vk_context::QueueSubmitToTimeline(
 		.signalSemaphoreInfoCount = ( u32 ) std::size( vecSignals ),
 		.pSignalSemaphoreInfos = std::data( vecSignals ),
 	};
-	VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, VK_NULL_HANDLE ) );
+	VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, vkFence ) );
+
+	// NOTE: we always defer delete the cbs wrt to our timeline
+	vk_cb_pool& cbPool = cbPools[ ( u64 ) cb.parentQueueFamType ];
+	HT_ASSERT( cbPool.pending.TryPush( vk_cb_deletion{ queue.timelineSema, queue.submitionCount, cb } ) );
 }

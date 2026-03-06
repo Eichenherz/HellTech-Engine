@@ -48,4 +48,6 @@ constexpr bool operator!=( const float4& a, const float4& b )
 	return !( a == b );
 }
 
+using float4x4 = DirectX::XMFLOAT4X4A;
+
 #endif // !__HT_VEC_TYPES_H__

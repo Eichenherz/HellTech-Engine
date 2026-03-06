@@ -158,25 +158,42 @@ struct vk_rsc_sync_state
 };
 
 inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
-	const vk_buffer& buff,
-	const vk_access_stage_masks& srcSync,
-	const vk_access_stage_masks& dstSync,
-	VkDeviceSize offset,
-	VkDeviceSize size
+	VkBuffer                        buff,
+	VkPipelineStageFlags2			srcStageMask,
+	VkAccessFlags2					srcAccessMask,
+	VkPipelineStageFlags2			dstStageMask,
+	VkAccessFlags2					dstAccessMask,
+	VkDeviceSize					offset              = 0,
+	VkDeviceSize					size                = VK_WHOLE_SIZE,
+	u32								srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	u32								dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
 ) {
 	return {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-		.srcStageMask = srcSync.stageFlags,
-		.srcAccessMask = srcSync.accessFlags,
-		.dstStageMask = dstSync.stageFlags,
-		.dstAccessMask = dstSync.accessFlags,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.buffer = buff.hndl,
+		.srcStageMask = srcStageMask,
+		.srcAccessMask = srcAccessMask,
+		.dstStageMask = dstStageMask,
+		.dstAccessMask = dstAccessMask,
+		.srcQueueFamilyIndex = srcQueueFamilyIndex,
+		.dstQueueFamilyIndex = dstQueueFamilyIndex,
+		.buffer = buff,
 		.offset = offset,
 		.size = size
 	};
 }
+
+inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
+	const vk_buffer&                buff,
+	const vk_access_stage_masks&	srcSync,
+	const vk_access_stage_masks&	dstSync,
+	VkDeviceSize					offset	= 0,
+	VkDeviceSize					size	= VK_WHOLE_SIZE
+) {
+	return VkMakeBufferBarrier( buff.hndl, srcSync.stageFlags, srcSync.accessFlags, dstSync.stageFlags,
+		dstSync.accessFlags, offset, size, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED );
+}
+
+
 
 inline VkImageMemoryBarrier2 VkMakeImageBarrier(
 	const vk_image& img,

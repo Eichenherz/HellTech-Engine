@@ -89,7 +89,7 @@ struct zip_writer
 // NOTE: not thread safe !
 struct vfs_zip_mem
 {
-	mutable ankerl::unordered_dense::map<vfs_path, u32> files;
+	ankerl::unordered_dense::map<vfs_path, u32> files;
 	std::span<const u8> archiveBytesView; 
 	mutable mz_zip_archive za = {};
 
@@ -142,7 +142,7 @@ struct vfs_zip_mem
 		if( !FileExists( filepath ) ) return {};
 
 		// NOTE: this is fine, won't insert empty bc we already checked
-		u32 minizEntryIdx = files[ filepath ];
+		u32 minizEntryIdx = files.find( filepath )->second;
 
 		mz_zip_archive_file_stat st = {};
 		HT_ASSERT( mz_zip_reader_file_stat( &za, minizEntryIdx, &st ) );
@@ -154,7 +154,8 @@ struct vfs_zip_mem
 	}
 
 	// NOTE: this is really a hack, so in the future we need our own pak file
-	std::span<const u8> ZipGetFileView( const void* base, u32 offset ) const
+	// NOTE: this won're reliably give back file sizes
+	const u8* ZipGetFileView( const void* base, u32 offset ) const
 	{
 	#pragma pack( push, 1 )
 		struct zip_local_header 
@@ -176,9 +177,8 @@ struct vfs_zip_mem
 		const zip_local_header* h = ( const zip_local_header* ) ( ( u8* ) base + offset );
 		HT_ASSERT( 0x04034b50 == h->signature );
 		HT_ASSERT( 0 == h->compression );
-		HT_ASSERT( h->uncompressedSize == h->compressedSize );
 
-		return { ( u8* ) h + sizeof( zip_local_header ) + h->filenameLen + h->extraLen, h->uncompressedSize };
+		return ( u8* ) h + sizeof( zip_local_header ) + h->filenameLen + h->extraLen;
 	}
 
 	// NOTE: user must query the size first
@@ -187,7 +187,7 @@ struct vfs_zip_mem
 		if( !FileExists( filepath ) ) return {};
 
 		// NOTE: this is fine, won't insert empty bc we already checked
-		u32 minizEntryIdx = files[ filepath ];
+		u32 minizEntryIdx = files.find( filepath )->second;
 
 		mz_zip_archive_file_stat st = {};
 		if( mz_zip_reader_file_stat( &za, minizEntryIdx, &st ) == 0 ) return {};
@@ -195,8 +195,9 @@ struct vfs_zip_mem
 		HT_ASSERT( !st.m_is_directory );
 		HT_ASSERT( st.m_comp_size == st.m_uncomp_size );
 		HT_ASSERT( !st.m_is_encrypted );
-		
-		return ZipGetFileView( std::data( archiveBytesView ), st.m_local_header_ofs );
+		HT_ASSERT( st.m_uncomp_size == st.m_comp_size );
+
+		return { ZipGetFileView( std::data( archiveBytesView ), st.m_local_header_ofs ), st.m_uncomp_size };
 	}
 };
 

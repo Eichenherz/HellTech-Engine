@@ -17,7 +17,6 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)core_types.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)DEFS_WIN32_NO_BS.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)hell_pack.h" />
-    <ClInclude Include="$(MSBuildThisFileDirectory)ht_bitset.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_error.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_fixed_string.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ht_fixed_vector.h" />

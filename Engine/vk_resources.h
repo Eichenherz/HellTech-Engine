@@ -198,6 +198,12 @@ struct vk_descriptor_info
 		descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
 		rscType = vk_resource_type::IMAGE;
 	}
+	vk_descriptor_info( VkSampler sampler, VkImageView view, VkImageLayout imgLayout ) 
+		: img{ .sampler = sampler, .imageView = view, .imageLayout = imgLayout }
+	{
+		descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		rscType = vk_resource_type::IMAGE;
+	}
 };
 
 // TODO: not here

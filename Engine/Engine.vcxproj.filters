@@ -146,7 +146,16 @@
     <ClInclude Include="System\sys_mem_arena.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ht_stable_stretchy_buffer.h">
+    <ClInclude Include="ht_stretchy_buffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ht_bitset.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ht_slot_buffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="engine_types.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

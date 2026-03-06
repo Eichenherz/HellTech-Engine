@@ -51,7 +51,7 @@ inline constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
 	return COUNT;
 }
 
-VkFormat VkFromatFromDdsDxgi( dds::DXGI_FORMAT fmt )
+inline VkFormat VkFromatFromDdsDxgi( dds::DXGI_FORMAT fmt )
 {
     switch( fmt )
     {
@@ -125,6 +125,35 @@ VkFormat VkFromatFromDdsDxgi( dds::DXGI_FORMAT fmt )
     default:                                         return VK_FORMAT_UNDEFINED;
     }
 }
+
+struct vk_buffer_copy
+{
+    VkCopyBufferInfo2 cpyInfo2;
+    VkBufferCopy2     region;
+
+    inline vk_buffer_copy( 
+        VkBuffer        src, 
+        VkBuffer        dst, 
+        VkDeviceSize    srcOffset, 
+        VkDeviceSize    dstOffset, 
+        VkDeviceSize    size 
+    ) {
+        region = {
+            .sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
+            .srcOffset = srcOffset,
+            .dstOffset = dstOffset,
+            .size      = size,
+        };
+
+        cpyInfo2 = {
+            .sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+            .srcBuffer   = src,
+            .dstBuffer   = dst,
+            .regionCount = 1,
+            .pRegions    = &region,
+        };
+    }
+};
 
 #endif // !__VK_UTILS_H__
 

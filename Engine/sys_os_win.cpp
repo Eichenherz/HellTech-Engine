@@ -42,10 +42,7 @@ static inline void SysOsCreateConsole()
 	std::wcout.clear();
 	std::wcerr.clear();
 }
-void SysDbgPrint( const char* str )
-{
-	OutputDebugString( str );
-}
+
 void SysErrMsgBox( const char* str )
 {
 	UINT behaviour = MB_OK | MB_ICONERROR | MB_APPLMODAL;
@@ -76,21 +73,7 @@ std::vector<u8> SysReadFile( const char* fileName )
 
 	return fileData;
 }
-// TODO: can be any kind of handle
-u64 SysGetFileTimestamp( const char* filename )
-{
-	HANDLE hfile = WinGetReadOnlyFileHandle( filename );
-	FILETIME fileTime = {};
-	WIN_CHECK( GetFileTime( hfile, 0, 0, &fileTime ) );
 
-	ULARGE_INTEGER timestamp = {};
-	timestamp.LowPart = fileTime.dwLowDateTime;
-	timestamp.HighPart = fileTime.dwHighDateTime;
-
-	CloseHandle( hfile );
-
-	return u64( timestamp.QuadPart );
-}
 // TODO: might not want to crash when file can't be written/read
 bool SysWriteToFile( const char* filename, const u8* data, u32 sizeInBytes )
 {
@@ -239,19 +222,6 @@ inline DirectX::XMMATRIX PerspRevInfFovRH( float fovYRads, float aspectRatioWH, 
 	return proj;
 }
 
-inline u64	SysDllLoad( const char* name )
-{
-	return (u64) LoadLibrary( name );
-}
-inline void	SysDllUnload( u64 hDll )
-{
-	if( !hDll ) return;
-	WIN_CHECK( FreeLibrary( (HMODULE) hDll ) );
-}
-inline void*	SysGetProcAddr( u64 hDll, const char* procName )
-{
-	return (void*)GetProcAddress( (HMODULE) hDll, procName );
-}
 
 static inline u64	SysGetCpuFreq()
 {
@@ -542,19 +512,63 @@ enum sys_thread_signal : i64
 	SYS_THREAD_SIGNAL_EXIT = -1
 };
 
+void AtomicSingalSingleThread( volatile atomic64& signal, sys_thread_signal val )
+{
+	InterlockedExchange64( &signal, val );
+	WakeByAddressSingle( ( void* ) &signal );
+}
+
 #include "System/sys_mem_arena.h"
 #include "ht_mtx_queue.h"
 
-// NOTE: for now, we're lazy and will use std::function
 
-using io_job = std::function<void()>;
+struct renderer_upload_job
+{
+	std::vector<mesh_upload_req> reqs;
+	renderer_interface* pRI;
+
+	inline void operator()( virtual_arena& arena )
+	{
+		return pRI->UploadMeshes( reqs, arena );
+	}
+};
+
+struct io_job
+{
+	enum type_t : u8
+	{
+		UPLOAD
+	};
+
+	union
+	{
+		renderer_upload_job upload;
+	};
+	type_t type;
+
+	io_job() : upload{}, type{ UPLOAD } {}
+
+	inline io_job( const renderer_upload_job& up )
+		: upload{ up }, type{ UPLOAD } {}
+
+	inline io_job( renderer_upload_job&& up )
+		: upload{ std::move( up ) }, type{ UPLOAD } {}
+
+	~io_job() { upload.~renderer_upload_job(); }
+
+	io_job( const io_job& o ) : upload{ o.upload }, type{ o.type } {}
+	io_job( io_job&& o )      : upload{ std::move( o.upload ) }, type{ o.type } {}
+
+	io_job& operator=( const io_job& o ) { type = o.type; upload = o.upload;            return *this; }
+	io_job& operator=( io_job&& o )      { type = o.type; upload = std::move( o.upload ); return *this; }
+};
+
 
 struct sys_thread_data
 {
 	CACHE_ALIGN volatile atomic64 signal;
 	CACHE_ALIGN virtual_arena     arena;
 	mtx_queue<io_job>             jobs;
-
 };
 
 struct sys_thread
@@ -581,21 +595,24 @@ DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 			[[unlikely]] if( SYS_THREAD_SIGNAL_EXIT == capturedVal ) goto EXIT;
 			if( undesiredVal != capturedVal ) break;
 		}
-		
+
+		for( io_job jobData = {}; threadCtx.jobs.TryPop( jobData ); )
+		{
+			//jobData.upload( threadCtx.arena );
+		}
+
 		// NOTE: win doesn't have exchRelase64
 		InterlockedExchange64( &threadCtx.signal, SYS_THREAD_SIGNAL_SLEEP );
-
-		for( io_job Job = {}; threadCtx.jobs.TryPop( Job ); )
-		{
-			std::cout << "Dikin'Baus\n";
-		}
 	}
 	
 EXIT:
 	return 0;
 }
 
-#include "ht_stable_stretchy_buffer.h"
+#include "ht_stretchy_buffer.h"
+
+#include "ht_slot_buffer.h"
+
 
 sys_thread SysCreateThread( 
 	u64 stackSize, 
@@ -622,6 +639,10 @@ sys_thread SysCreateThread(
 	};
 }
 
+#include "engine_types.h"
+
+#include <ranges>
+
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
@@ -634,13 +655,6 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	SYSTEM_INFO sysInfo = {};
 	GetSystemInfo( &sysInfo );
-	
-
-	stable_stretchy_buffer<sys_thread_data> threadDataBuff = { 2 * MB };
-
-	std::vector<sys_thread> threads;
-	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", threadDataBuff ) );
-
 
 	WNDCLASSEX wc = {
 		.cbSize = sizeof( WNDCLASSEX ),
@@ -710,7 +724,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	ImGui::SetCurrentContext( imGuiCtx );
 	ImGui::StyleColorsDark();
 	ImGuiIO& imGuiIO = ImGui::GetIO();
-	imGuiIO.DisplaySize = { SCREEN_WIDTH,SCREEN_HEIGHT };
+	imGuiIO.DisplaySize = { SCREEN_WIDTH, SCREEN_HEIGHT };
 	imGuiIO.Fonts->AddFontDefault();
 	imGuiIO.Fonts->Build();
 	
@@ -730,10 +744,10 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	imguiWnds.push_back( {
 		.widgets = { 
 			imgui_widget {
-			.name = "Load HPK",
-			.Action = ImGuiLoadFileAction,
-			.type = imgui_widget_type::BUTTON
-		} 
+				.name = "Load HPK",
+				.Action = ImGuiLoadFileAction,
+				.type = imgui_widget_type::BUTTON
+		    } 
 		},
 		.name = "##bnt_load_hpk",
 		.flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | 
@@ -742,9 +756,18 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	std::vector<ht_load_hpk_req> loadHpkReqs;
 
+
 	auto pRenderer = MakeRenderer();
 
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
+
+
+	stable_stretchy_buffer<sys_thread_data> threadDataBuff = { 2 * MB };
+
+	std::vector<sys_thread> threads;
+	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", threadDataBuff ) );
+
+	sys_thread& ioThread = threads[ 0 ];
 
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
@@ -760,11 +783,13 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	constexpr char assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
 	unique_mmap_file mmappedFile = SysCreateFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
-	vfs_zip_mem vfsFileSys = { *mmappedFile };
+	vfs_zip_mem vfs = { *mmappedFile };
 
-	bool vfsMounted = false;
+	// NOTE: for now we only have gpu_instances data
+	slot_buffer<gpu_instance> instances = { 1'000'000 };
 
-	// TODO: QUIT immediately ?
+	bool vfsMounted = true;
+
 	while( isRunning )
 	{
 		const u64 newTicks = SysTicks();
@@ -779,13 +804,59 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 		if( !vfsMounted )
 		{
-			sys_thread& ioThread = threads[ 0 ];
-			ioThread.pData->jobs.TryPush( [] () {} );
+			auto meshFiles = vfs.files | std::views::keys | std::views::filter( 
+				[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".mesh" ) ); } );
 
-			InterlockedExchange64( &ioThread.pData->signal, SYS_THREAD_SIGNAL_WAKEUP );
+			auto texFiles = vfs.files | std::views::keys | std::views::filter( 
+				[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".dds" ) ); } );
 
-			WakeByAddressSingle( ( void* ) &ioThread.pData->signal );
+			auto levelFiles = vfs.files | std::views::keys | std::views::filter( 
+				[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".lvl" ) ); } );
 
+			ankerl::unordered_dense::map<u64, HRNDMESH32> meshIdMap;
+			std::vector<mesh_upload_req> uploads;
+			for( const vfs_path& vpath : meshFiles )
+			{
+				u64 pathHash = std::hash<vfs_path>{}( vpath );
+				// TODO: might wanna check on content hash too
+				if( std::cend( meshIdMap ) != meshIdMap.find( pathHash ) ) continue;
+
+				std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
+				HT_ASSERT( std::size( rawBytes ) );
+				hellpack_mesh_asset mesh = HpkReadBinaryBlob<hellpack_mesh_asset>( rawBytes );
+
+				HRNDMESH32 hMesh =  pRenderer->AllocMeshComponent();
+
+				uploads.push_back( { .filepath = vpath, .htAsset = mesh, .hSlot = hMesh } );
+
+				meshIdMap.emplace( pathHash, hMesh );
+			}
+
+			ioThread.pData->jobs.TryPush( renderer_upload_job{ .reqs = std::move( uploads ), .pRI = pRenderer.get() } );
+
+			AtomicSingalSingleThread( ioThread.pData->signal, SYS_THREAD_SIGNAL_WAKEUP );
+
+			//ankerl::unordered_dense::map<u64, u32> texIdMap;
+			//for( const vfs_path& vpath : texFiles )
+			//{
+			//	u64 pathHash = std::hash<vfs_path>{}( vpath );
+			//	// TODO: might wanna check on content hash too
+			//	if( std::cend( texIdMap ) != texIdMap.find( pathHash ) ) continue;
+			//}
+
+			for( const vfs_path& vpath : levelFiles )
+			{
+				std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
+				hellpack_level lvl = HpkReadBinaryBlob<hellpack_level>( rawBytes );
+
+				for( const world_node& node : lvl.nodes )
+				{
+					auto it = meshIdMap.find( node.meshHash );
+					if( std::cend( meshIdMap ) == it ) continue;
+					instances.PushEntry( { .transform = node.toWorld, .meshIdx = it->second } );
+				}
+			}
+			
 			vfsMounted = true;
 		}
 

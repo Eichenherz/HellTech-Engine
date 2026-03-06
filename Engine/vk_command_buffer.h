@@ -7,6 +7,7 @@
 
 #include "core_types.h"
 
+#include "vk_utils.h"
 #include "vk_resources.h"
 #include "r_data_structs.h"
 
@@ -164,6 +165,20 @@ struct vk_command_buffer
 		vkCmdCopyBuffer( hndl, src.hndl, dst.hndl, 1, &copyRegion );
 	}
 
+	void CmdCopyBuffer( const vk_buffer_copy& cpy )
+	{
+		vkCmdCopyBuffer2( hndl, &cpy.cpyInfo2 );
+	}
+
+	void CmdCopyBufferToImageMipsLayers( 
+		const vk_buffer&					src, 
+		const vk_image&						dst,
+		std::span<const VkBufferImageCopy>  mipsLayers
+	) {
+		vkCmdCopyBufferToImage( hndl, src.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+			std::size( mipsLayers ), std::data( mipsLayers ) );
+	}
+
 	void CmdCopyBufferToImageSubresource( 
 		const vk_buffer&					src, 
 		u64									srcOffset, 
@@ -235,7 +250,7 @@ struct vk_command_buffer
 		vkCmdFillBuffer( hndl, vkBuffer.hndl, 0, vkBuffer.sizeInBytes, fillValue );
 	}
 
-	void CmdEndCmbBuffer()
+	void CmdEndCmdBuffer()
 	{
 		VK_CHECK( vkEndCommandBuffer( hndl ) );
 	}

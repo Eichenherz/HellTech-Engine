@@ -24,6 +24,8 @@
 #include "ht_fixed_vector.h"
 #include "ht_fixed_string.h"
 
+#include "engine_types.h"
+
 #include <DirectXPackedVector.h>
 
 namespace DXPacked = DirectX::PackedVector;
@@ -142,6 +144,7 @@ struct imgui_pass
 		fontAtlasImg = dc.CreateImage( {
 			.name = "Img_ImGuiFonts",
 			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.type = VK_IMAGE_TYPE_2D,
 			.usgFlags = usgFlags,
 			.width = ( u16 ) width,
 			.height = ( u16 ) height,
@@ -235,8 +238,7 @@ struct imgui_pass
 		vec2 move = { -1.0f - drawData->DisplayPos.x * scale.x, -1.0f - drawData->DisplayPos.y * scale.y };
 		vec4 pushConst = { scale.x, scale.y, move.x, move.y };
 
-		VkDescriptorImageInfo descImgInfo = { fontSampler, fontAtlasImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL };
-		vk_descriptor_info pushDescs[] = { Descriptor( vtxBuff ), descImgInfo };
+		vk_descriptor_info pushDescs[] = { vtxBuff, { fontSampler, fontAtlasImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } };
 
 		vk_scoped_label label = { cmdBuff,"Draw Imgui Pass",{} };
 
@@ -773,21 +775,21 @@ struct tone_mapping_pass
 			.usageFlags = usageFlags,
 			.sizeInBytes = 1 * sizeof( float ),
 			.usage = buffer_usage::GPU_ONLY } );
-		avgLumIdx = dc.AllocDescriptor( vk_descriptor_info{ averageLuminanceBuffer } );
+		avgLumIdx = dc.AllocDescriptor( averageLuminanceBuffer );
 
 		atomicWgCounterBuff = dc.CreateBuffer( {
 			.name = "Buff_TonemappingAtomicWgCounter",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes = 1 * sizeof( u32 ),
 			.usage = buffer_usage::GPU_ONLY } );
-		atomicWgCounterIdx = dc.AllocDescriptor( vk_descriptor_info{ atomicWgCounterBuff } );
+		atomicWgCounterIdx = dc.AllocDescriptor( atomicWgCounterBuff );
 
 		luminanceHistogramBuffer = dc.CreateBuffer( {
 			.name = "Buff_LumHisto",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes = 4 * sizeof( u64 ),
 			.usage = buffer_usage::GPU_ONLY } ); 
-		lumHistoIdx = dc.AllocDescriptor( vk_descriptor_info{ luminanceHistogramBuffer } );
+		lumHistoIdx = dc.AllocDescriptor( luminanceHistogramBuffer );
 	}
 
 	void AverageLuminancePass( 
@@ -875,6 +877,7 @@ struct depth_pyramid_pass
 		image_info hiZInfo = {
 			.name = "Img_HiZ",
 			.format = VK_FORMAT_R32_SFLOAT,
+			.type = VK_IMAGE_TYPE_2D,
 			.usgFlags = hiZUsg,
 			.width = squareDim,
 			.height = squareDim,
@@ -884,13 +887,13 @@ struct depth_pyramid_pass
 
 		hiZTarget = vkCtx.CreateImage( hiZInfo );
 
-		hizSrv = vkCtx.AllocDescriptor( vk_descriptor_info{ hiZTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+		hizSrv = vkCtx.AllocDescriptor( { hiZTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
 		for( u32 i = 0; i < hiZTarget.mipCount; ++i )
 		{
 			hiZMipViews[ i ] = VkMakeImgView( 
 				vkCtx.device, hiZTarget.hndl, hiZInfo.format, i, 1, VK_IMAGE_VIEW_TYPE_2D, 0, hiZInfo.layerCount );
-			hizMipUavs[ i ] = vkCtx.AllocDescriptor( vk_descriptor_info{ hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL } );
+			hizMipUavs[ i ] = vkCtx.AllocDescriptor( { hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL } );
 		}
 
 		VkSamplerReductionModeCreateInfo reduxInfo = { 
@@ -915,7 +918,7 @@ struct depth_pyramid_pass
 		};
 
 		quadMinSampler = vkCtx.CreateSampler( samplerCreateInfo );
-		quadMinSamplerIdx = vkCtx.AllocDescriptor( vk_descriptor_info{ quadMinSampler } );
+		quadMinSamplerIdx = vkCtx.AllocDescriptor( { quadMinSampler } );
 	}
 
 	void Execute( 
@@ -1045,36 +1048,12 @@ DrawIndexedIndirectMerged(
 	cmdBuff.CmdDrawIndexedIndirectCount( indexBuff, indexType, drawCmds, drawCount, maxDrawCount );
 }
 
-struct gpu_mesh_payload
-{
-	vk_buffer meshletBuffer;
-	vk_buffer vertexBuffer;
-	vk_buffer triangleBuffer;
-};
-
-#include "zip_pack.h"
 
 #include "ht_gfx_types.h"
 #include "hell_pack.h"
-#include "ht_math.h"
 
 #include <dds.h>
 
-struct gpu_instance
-{
-	packed_trs transform;
-	u16 meshIdx;
-	u16 materialIdx;
-};
-
-struct gpu_mesh
-{
-	vec3 minAabb;
-	vec3 maxAabb;
-	desc_hndl32 hMeshletBuffer;
-	desc_hndl32 hVertexBuffer;
-	desc_hndl32 hTriangleBuffer;
-};
 
 struct renderer_geometry
 {
@@ -1083,15 +1062,9 @@ struct renderer_geometry
 
 	std::vector<vk_image> textures;
 
-	vk_buffer meshTableBuff; // NOTE: contains the above table
-	vk_buffer materialTableBuff;
-
 	vk_buffer instanceBuffer;
 
 	vk_buffer hLights;
-
-	desc_hndl32 meshTableDesc;
-	desc_hndl32 materialTableDesc;
 
 	desc_hndl32 instBuffDesc;
 	
@@ -1105,7 +1078,6 @@ struct renderer_geometry
 struct virtual_frame
 {
 	//vk_gpu_timer gpuTimer;
-	vk_cmd_pool_buff            hCmdBuff;
 	VkSemaphore                 canGetImgSema;
 	vk_buffer	                viewData;
 	desc_hndl32                 viewDataIdx;
@@ -1114,13 +1086,12 @@ struct virtual_frame
 	inline void Init( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
 	{
 		constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-		fixed_string<32> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
+		fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
 
 		canGetImgSema = vkCtx.CreateBinarySemaphore();
 		viewData = vkCtx.CreateBuffer( { .name = std::data( name ), .usageFlags = usg, .sizeInBytes = sizeInBytes, 
 			.usage = buffer_usage::HOST_VISIBLE } );
-		viewDataIdx = vkCtx.AllocDescriptor( vk_descriptor_info{ viewData } );
-		hCmdBuff = vkCtx.AllocateCmdPoolAndBuff( vk_queue_t::GFX );
+		viewDataIdx = vkCtx.AllocDescriptor( viewData );
 	}
 };
 
@@ -1129,13 +1100,17 @@ struct render_context final : renderer_interface
 	alignas( 8 ) vk_renderer_config             config = { 
 		.renderWidth = SCREEN_WIDTH, .rednerHeight = SCREEN_HEIGHT };
 
-	imgui_pass									imguiPass;
-	debug_draw_passes							dbgPass;
-	culling_pass								cullingPass;
-	tone_mapping_pass							tonemapPass;
-	depth_pyramid_pass							hizbPass;
-
 	vk_rsc_state_tracker						rscStateTracker;
+
+	culling_pass								cullingPass;
+	imgui_pass									imguiPass;
+	depth_pyramid_pass							hizbPass;
+	tone_mapping_pass							tonemapPass;
+	debug_draw_passes							dbgPass;
+
+	slot_buffer<renderer_mesh_component>        meshTable = { 10'000 };
+
+	mtx_queue<renderer_upload_resp>             copyToMainQueue = { 256 };
 
 	fixed_vector<virtual_frame, MAX_FIF>        vrtFrames;
 
@@ -1144,6 +1119,11 @@ struct render_context final : renderer_interface
 	vk_image								    colorTarget;
 	vk_image								    depthTarget;
 
+	vk_buffer                                   stagingBuff;
+
+	vk_buffer									gpuMeshSlotBuff;
+	vk_buffer									gpuMaterialSlotBuff;
+
 	// TODO: move to appropriate technique/context
 	VkPipeline									gfxZPrepass;
 	VkPipeline									gfxPipeline;
@@ -1151,6 +1131,9 @@ struct render_context final : renderer_interface
 	VkPipeline									gfxMergedPipeline;
 
 	u64											vFrameIdx = 0;
+
+	desc_hndl32									gpuMeshSlotBuffDesc;
+	desc_hndl32									gpuMaterialSlotBuffDesc;
 
 	desc_hndl32									colSrv;
 	desc_hndl32									depthSrv;
@@ -1164,8 +1147,17 @@ struct render_context final : renderer_interface
 	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height );
 
 	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) override;
-	virtual void UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena ) override;
+	//virtual void UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena ) override;
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
+
+	inline virtual HRNDMESH32 AllocMeshComponent() override
+	{
+		return meshTable.PushEntry( {} );
+	}
+
+	virtual void UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) override;
+	// TODO:
+	void RecordTextureUplaods( std::span<const tex_upload> meshAssets, virtual_arena& arena );
 };
 
 std::unique_ptr<renderer_interface> MakeRenderer()
@@ -1180,6 +1172,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 	depthTarget = pVkCtx->CreateImage( {
 		.name = "Img_DepthTarget",
 		.format = desiredDepthFormat,
+		.type = VK_IMAGE_TYPE_2D,
 		.usgFlags = depthUsgFlags,
 		.width = width,
 		.height = height,
@@ -1187,7 +1180,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 		.mipCount = 1,
 	} );
 
-	depthSrv = pVkCtx->AllocDescriptor( vk_descriptor_info{ depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+	depthSrv = pVkCtx->AllocDescriptor( { depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
 	rscStateTracker.UseImage( depthTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 
@@ -1197,6 +1190,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 	colorTarget = pVkCtx->CreateImage( {
 		.name = "Img_ColorTarget",
 		.format = desiredColorFormat,
+		.type = VK_IMAGE_TYPE_2D,
 		.usgFlags = colUsgFlags,
 		.width = width,
 		.height = height,
@@ -1204,7 +1198,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 		.mipCount = 1,
 	} );
 
-	colSrv = pVkCtx->AllocDescriptor( vk_descriptor_info{ colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+	colSrv = pVkCtx->AllocDescriptor( { colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
 	VkSamplerCreateInfo samplerCreateInfo = { 
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -1222,7 +1216,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 	};
 
 	pbrSampler = pVkCtx->CreateSampler( samplerCreateInfo );
-	pbrSamplerIdx = pVkCtx->AllocDescriptor( vk_descriptor_info{ pbrSampler } );
+	pbrSamplerIdx = pVkCtx->AllocDescriptor( { pbrSampler } );
 
 	rscStateTracker.UseImage( colorTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 }
@@ -1297,49 +1291,53 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	//vrtFrames.resize( framesInFlight );
 }
 
-void render_context::UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena )
+//void render_context::UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena ) {}
+
+void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads, virtual_arena& arena )
 {
-	vk_buffer stagingBuff = pVkCtx->CreateBuffer( {
-		.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		// NOTE: this includes the header and entry tables too, but it's fine for a one off
-		.sizeInBytes = std::size( vfs.archiveBytesView ), 
-		.usage = buffer_usage::STAGING
-	} );
+	if( VK_NULL_HANDLE == stagingBuff.hndl )
+	{
+		stagingBuff = pVkCtx->CreateBuffer( {
+			.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			.sizeInBytes = 256 * MB, 
+			.usage = buffer_usage::STAGING
+		} );
+	}
 
 	// TODO: replace with our own buffer 
 	std::pmr::monotonic_buffer_resource stagingBuffPool = { stagingBuff.hostVisible, stagingBuff.sizeInBytes };
 	std::pmr::vector<u8> staginScratch{ &stagingBuffPool };
 	staginScratch.reserve( stagingBuff.sizeInBytes );
 
-	vk_cmd_pool_buff cb = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
-	vk_command_buffer copyCmdBuff = { cb.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
-
-	auto meshFiles = vfs.files | std::views::keys | std::views::filter( 
-		[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".mesh" ) ); } );
-
-	auto texFiles = vfs.files | std::views::keys | std::views::filter( 
-		[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".dds" ) ); } );
-
-	auto levelFiles = vfs.files | std::views::keys | std::views::filter( 
-	[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".lvl" ) ); } );
+	vk_cmd_pool_buff copyCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+	vk_command_buffer copyCmdBuff = { copyCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
 
 	stack_adaptor vaStack = { arena };
 
-	ankerl::unordered_dense::pmr::map<u64, u32> meshIdMap{ &vaStack };
-	for( const vfs_path& vpath : meshFiles )
+	std::pmr::vector<renderer_upload_resp> meshesBuff{ &vaStack };
+	meshesBuff.reserve( std::size( meshUploads ) );
+
+	std::pmr::vector<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &vaStack };
+	buffInitCpyBarriers.reserve( std::size( meshUploads ) );
+
+	std::pmr::vector<vk_buffer_copy> buffCopies{ &vaStack };
+	buffCopies.reserve( std::size( meshUploads ) );
+
+	std::pmr::vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &vaStack };
+	buffEndCpyBarriers.reserve( std::size( meshUploads ) );
+
+	for( const mesh_upload_req& meshUpload : meshUploads )
 	{
-		u64 offsetInBytes = std::size( staginScratch );
+		u64 stagingOffsetInBytes = std::size( staginScratch );
 
-		std::span<const u8> dataView = vfs.GetFileByteView( vpath );
-		hellpack_mesh_asset mesh = HpkReadBinaryBlob<hellpack_mesh_asset>( dataView );
-
+		const hellpack_mesh_asset& mesh = meshUpload.htAsset;
 		// NOTE: bc we draw as meshlets but on the trad pipeline we need a merged index buffer
 		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
 			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
-		fixed_string<256> nameMeshlets = { "{}_Buff_Meshlets", vpath };
-		fixed_string<256> nameVtx = { "{}_Buff_Vtx", vpath };
-		fixed_string<356> nameTris = { "{}_Buff_Tris", vpath };
+		fixed_string<256> nameMeshlets = { "{}_Buff_Meshlets", meshUpload.filepath };
+		fixed_string<256> nameVtx = { "{}_Buff_Vtx", meshUpload.filepath };
+		fixed_string<356> nameTris = { "{}_Buff_Tris", meshUpload.filepath };
 
 		gpu_mesh_payload gpuMeshPayload = {
 			.meshletBuffer = pVkCtx->CreateBuffer( {
@@ -1347,12 +1345,14 @@ void render_context::UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena )
 				.usageFlags = usgFlags,
 				.sizeInBytes = std::size( mesh.meshlets ),
 				.usage = buffer_usage::GPU_ONLY } ),
-				.vertexBuffer = pVkCtx->CreateBuffer( {
+
+			.vertexBuffer = pVkCtx->CreateBuffer( {
 				.name = std::data( nameVtx ),
 				.usageFlags = usgFlags,
 				.sizeInBytes = std::size( mesh.vertices ),
 				.usage = buffer_usage::GPU_ONLY } ),
-				.triangleBuffer = pVkCtx->CreateBuffer( {
+
+			.triangleBuffer = pVkCtx->CreateBuffer( {
 				.name = std::data( nameTris ),
 				.usageFlags = usgFlags,
 				.sizeInBytes = std::size( mesh.triangles ),
@@ -1362,71 +1362,162 @@ void render_context::UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena )
 		gpu_mesh desc = {
 			.minAabb = mesh.aabbMin,
 			.maxAabb = mesh.aabbMax,
-			.hMeshletBuffer = pVkCtx->AllocDescriptor( { gpuMeshPayload.meshletBuffer } ),
-			.hVertexBuffer = pVkCtx->AllocDescriptor( { gpuMeshPayload.vertexBuffer } ),
-			.hTriangleBuffer = pVkCtx->AllocDescriptor( { gpuMeshPayload.triangleBuffer } ),
+			.hMeshletBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.meshletBuffer ),
+			.hVertexBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.vertexBuffer ),
+			.hTriangleBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.triangleBuffer )
 		};
 
+		meshesBuff.push_back( { .payload = gpuMeshPayload, .desc = desc, .hSlot = meshUpload.hSlot, 
+			.respType = upload_resp_t::MESH } );
+
 		{
-			staginScratch.resize( offsetInBytes + std::size( mesh.meshlets ) );
-			std::memcpy( std::data( staginScratch ) + offsetInBytes, std::data( mesh.meshlets ), std::size( mesh.meshlets ) );
+			staginScratch.resize( stagingOffsetInBytes + std::size( mesh.meshlets ) );
+			std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes, std::data( mesh.meshlets ), std::size( mesh.meshlets ) );
 
-			VkBufferCopy copyRegion = { .srcOffset = offsetInBytes, .dstOffset = 0, .size = std::size( mesh.meshlets ) };
-			copyCmdBuff.CmdCopyBuffer( stagingBuff, gpuMeshPayload.meshletBuffer, copyRegion );
+			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.meshletBuffer.hndl, 0, 0,
+				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT ) );
 
-			offsetInBytes += std::size( mesh.meshlets );
+			buffCopies.emplace_back( stagingBuff.hndl, gpuMeshPayload.meshletBuffer.hndl, stagingOffsetInBytes, 
+				0, std::size( mesh.meshlets ) );
+
+			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.meshletBuffer.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0, 0, VK_WHOLE_SIZE, pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
+
+			stagingOffsetInBytes += std::size( mesh.meshlets );
 		}
 
 		{
-			staginScratch.resize( offsetInBytes + std::size( mesh.vertices ) );
-			std::memcpy( std::data( staginScratch ) + offsetInBytes, std::data( mesh.vertices ), std::size( mesh.vertices ) );
+			staginScratch.resize( stagingOffsetInBytes + std::size( mesh.vertices ) );
+			std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes, std::data( mesh.vertices ), std::size( mesh.vertices ) );
 
-			VkBufferCopy copyRegion = { .srcOffset = offsetInBytes, .dstOffset = 0, .size = std::size( mesh.vertices ) };
-			copyCmdBuff.CmdCopyBuffer( stagingBuff, gpuMeshPayload.vertexBuffer, copyRegion );
+			buffCopies.emplace_back( stagingBuff.hndl, gpuMeshPayload.vertexBuffer.hndl, stagingOffsetInBytes, 
+				0, std::size( mesh.vertices ) );
+			
+			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.vertexBuffer.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0, 0, VK_WHOLE_SIZE, pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 
-			offsetInBytes += std::size( mesh.vertices );
+			stagingOffsetInBytes += std::size( mesh.vertices );
 		}
 
 		{
-			staginScratch.resize( offsetInBytes + std::size( mesh.triangles ) );
-			std::memcpy( std::data( staginScratch ) + offsetInBytes, std::data( mesh.triangles ), std::size( mesh.triangles ) );
+			staginScratch.resize( stagingOffsetInBytes + std::size( mesh.triangles ) );
+			std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes, std::data( mesh.triangles ), std::size( mesh.triangles ) );
 
-			VkBufferCopy copyRegion = { .srcOffset = offsetInBytes, .dstOffset = 0, .size = std::size( mesh.triangles ) };
-			copyCmdBuff.CmdCopyBuffer( stagingBuff, gpuMeshPayload.triangleBuffer, copyRegion );
+			buffCopies.emplace_back( stagingBuff.hndl, gpuMeshPayload.triangleBuffer.hndl, stagingOffsetInBytes, 
+				0, std::size( mesh.triangles ) );
+			
+			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.triangleBuffer.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0, 0, VK_WHOLE_SIZE, pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 
-			offsetInBytes += std::size( mesh.triangles );
+			stagingOffsetInBytes += std::size( mesh.triangles );
 		}
 	}
 
-	ankerl::unordered_dense::pmr::map<u64, u32> texIdMap{ &vaStack };
-	for( const vfs_path& vpath : texFiles )
+	copyCmdBuff.CmdPipelineBufferBarriers( buffInitCpyBarriers );
+	for( const vk_buffer_copy& buffCpy : buffCopies )
 	{
-		u64 offsetInBytes = std::size( staginScratch );
-
-		std::span<const u8> dataView = vfs.GetFileByteView( vpath );
-		byte_view texRawBytes = HpkReadBinaryBlob<byte_view>( dataView );
-		dds::Header header = dds::read_header( std::data( texRawBytes ), std::size( texRawBytes ) );
-		if( header.is_valid() )
-		{
-			fixed_string<256> name = { vpath };
-			vk_image tex = pVkCtx->CreateImage( ImageInfoFromDds( header, std::data( name ) ) );
-			desc_hndl32 hTex = pVkCtx->AllocDescriptor( { tex.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
-		}
+		copyCmdBuff.CmdCopyBuffer( buffCpy );
 	}
+	copyCmdBuff.CmdPipelineBufferBarriers( buffEndCpyBarriers );
 
-	for( const vfs_path& vpath : levelFiles )
+	copyCmdBuff.CmdEndCmdBuffer();
+
+	pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCB );
+
+	vk_cmd_pool_buff gfxCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+	vk_command_buffer gfxCmdBuff = { gfxCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
+
+	std::pmr::vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &vaStack };
+	buffTransferOwnershipBarriers.reserve( std::size( meshUploads ) );
+
+	for( const VkBufferMemoryBarrier2& barr : buffEndCpyBarriers )
 	{
-		u64 offsetInBytes = std::size( staginScratch );
-
-		std::span<const u8> dataView = vfs.GetFileByteView( vpath );
-
-		hellpack_level level = HpkReadBinaryBlob<hellpack_level>( dataView );
+		buffTransferOwnershipBarriers.push_back( VkMakeBufferBarrier( barr.buffer, 0, 0, 0, 0, 0, VK_WHOLE_SIZE,
+			pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 	}
 
-	pVkCtx->copyQueue.submitionCount++;
-	pVkCtx->QueueSubmitToTimeline( pVkCtx->copyQueue, {}, {}, {}, copyCmdBuff.hndl );
+	gfxCmdBuff.CmdPipelineBufferBarriers( buffTransferOwnershipBarriers );
+
+	gfxCmdBuff.CmdEndCmdBuffer();
+
+	VkSemaphoreSubmitInfo waitCpyDone[] = { {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore = pVkCtx->copyQueue.timelineSema,
+		.value = pVkCtx->copyQueue.submitionCount,
+		.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+	} };
+
+	VkSemaphore ownershipTransferComplete = pVkCtx->CreateBinarySemaphore();
+
+	VkFence fence = pVkCtx->GetOrCreateFence();
+	pVkCtx->QueueSubmit( pVkCtx->copyQueue, gfxCB, waitCpyDone, {}, fence );
+
+	pVkCtx->FenceWaitBlocking( fence );
+
+	for( const renderer_upload_resp& mesh : meshesBuff )
+	{
+		HT_ASSERT( copyToMainQueue.TryPush( mesh ) );
+	}
 }
 
+
+void render_context::RecordTextureUplaods( std::span<const tex_upload> meshAssets, virtual_arena& arena )
+{
+	//ankerl::unordered_dense::pmr::map<u64, u32> texIdMap{ &vaStack };
+	//for( const vfs_path& vpath : texFiles )
+	//{
+	//	u64 pathHash = std::hash<vfs_path>{}( vpath );
+	//	// TODO: might wanna check on content hash too
+	//	if( std::cend( texIdMap ) != texIdMap.find( pathHash ) ) continue;
+	//
+	//	u64 stagingOffsetInBytes = std::size( staginScratch );
+	//
+	//	std::span<const u8> dataView = vfs.GetFileByteView( vpath );
+	//	byte_view texRawBytes = HpkReadBinaryBlob<byte_view>( dataView );
+	//	dds::Header header = dds::read_header( std::data( texRawBytes ), std::size( texRawBytes ) );
+	//
+	//	if( !header.is_valid() ) /*log*/ continue;
+	//
+	//	fixed_string<256> name = { vpath };
+	//	vk_image tex = pVkCtx->CreateImage( ImageInfoFromDds( header, std::data( name ) ) );
+	//	desc_hndl32 hTex = pVkCtx->AllocDescriptor( { tex.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
+	//
+	//	staginScratch.reserve( stagingOffsetInBytes + header.data_size() );
+	//	std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes, 
+	//		std::data( texRawBytes ) + header.data_offset(), header.data_size() );
+	//
+	//	u32 mips   = header.mip_levels();
+	//	u32 layers = header.array_size();
+	//
+	//	stack_adaptor copyStack = { arena };
+	//
+	//	std::pmr::vector<VkBufferImageCopy> regions{ &copyStack };
+	//	regions.reserve( mips * layers );
+	//
+	//	for( u32 layer = 0; layer < layers; ++layer )
+	//	{
+	//		for( u32 mip = 0; mip < mips; ++mip )
+	//		{
+	//			u32 w = std::max( 1u, header.width() >> mip );
+	//			u32 d = std::max( 1u, header.depth() >> mip );
+	//
+	//			u64 mipLayerOffsetInBytes = header.mip_offset( mip, layer ) - header.data_offset();
+	//			regions.push_back( {
+	//				.bufferOffset       = stagingOffsetInBytes + mipLayerOffsetInBytes,
+	//				.imageSubresource   = {
+	//					.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+	//					.mipLevel       = mip,
+	//					.baseArrayLayer = layer,
+	//					.layerCount     = 1,
+	//				},
+	//				.imageExtent        = { w, std::max( 1u, header.height() >> mip ), d },
+	//				} );
+	//		}
+	//	}
+	//
+	//	copyCmdBuff.CmdCopyBufferToImageMipsLayers( stagingBuff, tex, regions );
+	//}
+}
 
 // TODO: use a queue timeline or smth to check if we can get a cmd buffer instead of vFrameIdx
 void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
@@ -1446,12 +1537,13 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
-	HT_ASSERT( thisVFrame.viewData.sizeInBytes == BYTE_COUNT( frameData.views ) );
+	HT_ASSERT( BYTE_COUNT( frameData.views ) == thisVFrame.viewData.sizeInBytes );
 	std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
 
-	vk_command_buffer thisFrameCmdBuffer = { thisVFrame.hCmdBuff.buff, pVkCtx->globalPipelineLayout, pVkCtx->descSet };
+	vk_cmd_pool_buff currentCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
+	vk_command_buffer thisFrameCmdBuffer = { currentCB.buff, pVkCtx->globalPipelineLayout, pVkCtx->descSet };
 
 	static bool initResources = false;
 	if( !initResources )
@@ -1501,10 +1593,10 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	u32 mletCount = ( u32 ) meshletBuff.sizeInBytes / sizeof( meshlet );
 	u32 meshletUpperBound = instCount * mletCount;
 
-	DirectX::XMMATRIX t = DirectX::XMMatrixMultiply( 
-		DirectX::XMMatrixScaling( 180.0f, 100.0f, 60.0f ), DirectX::XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
-	DirectX::XMFLOAT4X4A debugOcclusionWallTransf;
-	DirectX::XMStoreFloat4x4A( &debugOcclusionWallTransf, t );
+	//DirectX::XMMATRIX t = DirectX::XMMatrixMultiply( 
+	//	DirectX::XMMatrixScaling( 180.0f, 100.0f, 60.0f ), DirectX::XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
+	//DirectX::XMFLOAT4X4A debugOcclusionWallTransf;
+	//DirectX::XMStoreFloat4x4A( &debugOcclusionWallTransf, t );
 
 	DirectX::XMUINT2 colorTargetSize = { colorTarget.width, colorTarget.height };
 
@@ -1679,7 +1771,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	}
 
 	//gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
-	thisFrameCmdBuffer.CmdEndCmbBuffer();
+	thisFrameCmdBuffer.CmdEndCmdBuffer();
 
 	// NOTE: with all these cool stage masks we can only let the gpu run until it need the sc image THEN wait
 	VkSemaphoreSubmitInfo waitScImgAcquire[] = { {
@@ -1687,14 +1779,15 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 		.semaphore = thisVFrame.canGetImgSema,
 		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 	} };
-	VkSemaphoreSubmitInfo signalRenderFinished[] = { {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = scImg.canPresentSema,
-		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-	} };
+	VkSemaphoreSubmitInfo signalRenderFinished[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+			.semaphore = scImg.canPresentSema,
+			.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+		},
+		pVkCtx->gpuFrameTimeline.GetSignalNextPoint( VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT )
+	};
 	
-	pVkCtx->gpuFrameTimeline.submitsIssuedCount++;
-	pVkCtx->QueueSubmitToTimeline( 
-		pVkCtx->gfxQueue, pVkCtx->gpuFrameTimeline, waitScImgAcquire, signalRenderFinished, thisFrameCmdBuffer.hndl );
+	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, currentCB, waitScImgAcquire, signalRenderFinished );
 	pVkCtx->QueuePresent( pVkCtx->gfxQueue, scImgIdx );
 }

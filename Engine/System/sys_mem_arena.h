@@ -10,7 +10,7 @@
 #include "ht_utils.h"
 
 template<u64 SZ_IN_BYTES>
-struct fixed_arena
+struct static_arena
 {
 	alignas( 8 ) u8 mem[ SZ_IN_BYTES ];
 	u64             offset = 0;
@@ -24,6 +24,29 @@ struct fixed_arena
 		u64 newOffset = ( allignedAddr - base ) + bytes;
 
 		HT_ASSERT( newOffset <= SZ_IN_BYTES );
+
+		offset = newOffset;
+		return ( void* ) allignedAddr;
+	}
+};
+
+struct dynamic_arena
+{
+	u8*     mem;
+	u64     offset = 0;
+	u64     size;
+
+	        dynamic_arena( u8* mem, u64 size ) : mem{ mem }, size{ size } {}
+
+	void	Rewind( u64 mark ) { offset = ( mark <= size ) ? mark : size; }
+	void	Reset() { offset = 0; }
+	void*	Alloc( u64 bytes, u64 alignment )
+	{
+		u64 base = ( u64 ) mem;
+		u64 allignedAddr = FwdAlign( base + offset, alignment );
+		u64 newOffset = ( allignedAddr - base ) + bytes;
+
+		HT_ASSERT( newOffset <= size );
 
 		offset = newOffset;
 		return ( void* ) allignedAddr;
@@ -70,9 +93,9 @@ struct stack_adaptor : std::pmr::memory_resource
 	Arena& arena;
 	u64 baseFrameOffset;
 
-	inline stack_adaptor( Arena& a ) : arena{ a }, baseFrameOffset{ a.offset }{}
-	inline ~stack_adaptor() { arena.Rewind( baseFrameOffset ); }
-	u8*    BasePtr() { return arena.base + baseFrameOffset; }
+	inline	stack_adaptor( Arena& a ) : arena{ a }, baseFrameOffset{ a.offset }{}
+	inline	~stack_adaptor() { arena.Rewind( baseFrameOffset ); }
+	u8*		BasePtr() { return arena.base + baseFrameOffset; }
 protected: // NOTE: std::pmr::memory_resource's API
 	void*   do_allocate( size_t bytes, size_t alignment ) override { return arena.Alloc( bytes, alignment ); }
 	void	do_deallocate( void*, size_t, size_t ) override { /* no-op */ }

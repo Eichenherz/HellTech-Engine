@@ -1,25 +1,27 @@
 #pragma once
 
-#ifndef __HT_STABLE_STERTCHY_BUFFEER_H__
-#define __HT_STABLE_STERTCHY_BUFFEER_H__
+#ifndef __HT_STERTCHY_BUFFEER_H__
+#define __HT_STERTCHY_BUFFEER_H__
 
 #include "core_types.h"
 
 #include "System/sys_mem_arena.h"
 
-template<typename T>
-struct stable_stretchy_buffer
+#include <algorithm>
+
+template<typename T, arena_t ARENA_T>
+struct ht_stretchy_buffer
 {
     using reverse_iter = std::reverse_iterator<T*>;
     using const_rev_iter = std::reverse_iterator<const T*>;
 
-    virtual_arena   arena;
+    ARENA_T         arena;
     T*              elems = nullptr;
     u64             elemCount = 0;
     u64             currentCap = 0;
 
-                    stable_stretchy_buffer() = default;
-                    stable_stretchy_buffer( u64 reserveBytes ) : arena{ reserveBytes } {}
+                    ht_stretchy_buffer() = default;
+                    ht_stretchy_buffer( u64 reservedEntries ) : arena{ reservedEntries * sizeof( T ) } {}
 
     T*              begin()         { return elems; }
     T*              end()           { return elems + elemCount; }
@@ -35,11 +37,12 @@ struct stable_stretchy_buffer
     T*              data()          { return elems; }
     const T*        data() const    { return elems; }
     u64             size() const    { return elemCount; }
-    u64             capacity() const { return capacity; }
+    u64             capacity() const { return currentCap; }
 
     void            reserve( u64 newCap );
 
-    void            resize( u64 newSize );
+    void            resize( u64 newSize ) { resize( newSize, {} ); }
+    void            resize( u64 newSize, const T& val );
 
     T&              push_back( const T& val );
     T&              push_back( T&& val );
@@ -53,7 +56,10 @@ struct stable_stretchy_buffer
 };
 
 template<typename T>
-void stable_stretchy_buffer<T>::reserve( u64 newCap )
+using stable_stretchy_buffer = ht_stretchy_buffer<T, virtual_arena>;
+
+template<typename T, arena_t ARENA_T>
+void ht_stretchy_buffer<T, ARENA_T>::reserve( u64 newCap )
 {
     if( newCap <= currentCap )
     {
@@ -66,24 +72,31 @@ void stable_stretchy_buffer<T>::reserve( u64 newCap )
     }
     else
     {
-        arena.Alloc( ( newCap - currentCap ) * sizeof( T ), 1 );
+        arena.Alloc( ( newCap - currentCap ) * sizeof( T ), alignof( T ) );
     }
     currentCap = newCap;
 }
 
-template<typename T>
-void stable_stretchy_buffer<T>::resize( u64 newSize )
+template<typename T, arena_t ARENA_T>
+void ht_stretchy_buffer<T, ARENA_T>::resize( u64 newSize, const T& val )
 {
     if( newSize > currentCap )
     {
         reserve( newSize );
     }
 
-    for( u64 i = elemCount; i < newSize; ++i )
+    if constexpr( std::is_trivially_copyable_v<T> )
     {
-        std::construct_at( &elems[ i ] );
+        std::fill( elems + elemCount, elems + newSize, val );
     }
-
+    else
+    {
+        for( u64 i = elemCount; i < newSize; ++i )
+        {
+            std::construct_at( &elems[ i ], val );
+        }
+    }
+    
     for( u64 i = newSize; i < elemCount; ++i )
     {
         std::destroy_at( &elems[ i ] );
@@ -92,8 +105,8 @@ void stable_stretchy_buffer<T>::resize( u64 newSize )
     elemCount = newSize;
 }
 
-template<typename T>
-T& stable_stretchy_buffer<T>::push_back( const T& val )
+template<typename T, arena_t ARENA_T>
+T& ht_stretchy_buffer<T, ARENA_T>::push_back( const T& val )
 {
     if( elemCount == currentCap )
     {
@@ -105,8 +118,8 @@ T& stable_stretchy_buffer<T>::push_back( const T& val )
     return elems[ elemCount - 1 ];
 }
 
-template<typename T>
-T& stable_stretchy_buffer<T>::push_back( T&& val )
+template<typename T, arena_t ARENA_T>
+T& ht_stretchy_buffer<T, ARENA_T>::push_back( T&& val )
 {
     if( elemCount == currentCap )
     {
@@ -118,9 +131,9 @@ T& stable_stretchy_buffer<T>::push_back( T&& val )
     return elems[ elemCount - 1 ];
 }
 
-template<typename T>
+template<typename T, arena_t ARENA_T>
 template<typename... Args>
-T& stable_stretchy_buffer<T>::emplace_back( Args&&... args )
+T& ht_stretchy_buffer<T, ARENA_T>::emplace_back( Args&&... args )
 {
     if( elemCount == currentCap )
     {
@@ -132,15 +145,15 @@ T& stable_stretchy_buffer<T>::emplace_back( Args&&... args )
     return elems[ elemCount - 1 ];
 }
 
-template<typename T>
-void stable_stretchy_buffer<T>::pop_back()
+template<typename T, arena_t ARENA_T>
+void ht_stretchy_buffer<T, ARENA_T>::pop_back()
 {
     --elemCount;
     std::destroy_at( &elems[ elemCount ] );
 }
 
-template<typename T>
-void stable_stretchy_buffer<T>::clear()
+template<typename T, arena_t ARENA_T>
+void ht_stretchy_buffer<T, ARENA_T>::clear()
 {
     for( u64 i = 0; i < elemCount; ++i )
     {
@@ -149,5 +162,5 @@ void stable_stretchy_buffer<T>::clear()
     elemCount = 0;
 }
 
-#endif // !__HT_STABLE_STERTCHY_BUFFEER_H__
+#endif // !__HT_STERTCHY_BUFFEER_H__
 
