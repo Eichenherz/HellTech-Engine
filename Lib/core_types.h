@@ -29,7 +29,6 @@ inline bool IsIndexValid( T idx )
 }
 
 template<typename T>
-concept TRIVIAL_T = std::is_trivially_destructible_v<T>
-&& std::is_trivially_copyable_v<T>;
+concept TRIVIAL_T = std::is_trivially_destructible_v<T> && std::is_trivially_copyable_v<T>;
 
 #endif // !__CORE_TYPES_H__

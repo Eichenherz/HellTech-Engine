@@ -87,7 +87,10 @@ void ht_stretchy_buffer<T, ARENA_T>::resize( u64 newSize, const T& val )
 
     if constexpr( std::is_trivially_copyable_v<T> )
     {
-        std::fill( elems + elemCount, elems + newSize, val );
+        if( newSize > elemCount )
+        {
+            std::fill( elems + elemCount, elems + newSize, val );
+        }
     }
     else
     {

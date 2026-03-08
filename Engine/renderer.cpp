@@ -1121,7 +1121,7 @@ struct render_context final : renderer_interface
 	tone_mapping_pass							tonemapPass;
 	debug_draw_passes							dbgPass;
 
-	slot_buffer<renderer_mesh_component>        meshTable = { 10'000 };
+	slot_buffer<renderer_mesh_component>        meshTable;
 
 	mtx_queue<renderer_upload_resp>             copyToMainQueue = { 256 };
 
@@ -1530,7 +1530,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 	for( renderer_upload_resp uploadResp = {}; copyToMainQueue.TryPop( uploadResp ); )
 	{
-		renderer_mesh_component& currentMeshSlot = *meshTable.Get( uploadResp.hSlot );
+		renderer_mesh_component& currentMeshSlot = meshTable[ uploadResp.hSlot ];
 
 		currentMeshSlot.payload = uploadResp.payload;
 		currentMeshSlot.desc = uploadResp.desc;
@@ -1553,7 +1553,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accesesd anyways
 	HT_ASSERT( std::size( meshTable ) * sizeof( gpu_mesh ) <= thisVFrame.gpuMeshTable.sizeInBytes );
-	std::memcpy( thisVFrame.gpuMeshTable.hostVisible, std::data( meshTable.data ), std::size( meshTable ) * sizeof( gpu_mesh ) );
+	std::memcpy( thisVFrame.gpuMeshTable.hostVisible, std::data( meshTable.items ), std::size( meshTable ) * sizeof( gpu_mesh ) );
 
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
 

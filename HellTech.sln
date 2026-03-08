@@ -9,6 +9,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HellPack", "HellPack\HellPa
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Tests", "Tests\Tests.vcxproj", "{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TestStretchyBuffer", "Tests\TestStretchyBuffer.vcxproj", "{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Lib", "Lib\Lib.vcxitems", "{59D4FF8C-92BA-4507-B01F-1729110648DA}"
 EndProject
 Global
@@ -36,6 +38,12 @@ Global
 		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.Release|x64.Build.0 = Release|x64
 		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.VK_Debug|x64.ActiveCfg = Release|x64
 		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.VK_Debug|x64.Build.0 = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Debug|x64.ActiveCfg = Debug|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Debug|x64.Build.0 = Debug|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Release|x64.ActiveCfg = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Release|x64.Build.0 = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.VK_Debug|x64.ActiveCfg = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.VK_Debug|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

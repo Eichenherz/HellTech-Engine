@@ -12,10 +12,10 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
-    <ProjectGuid>{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}</ProjectGuid>
+    <ProjectGuid>{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}</ProjectGuid>
     <RootNamespace>Tests</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>TestMemArena</ProjectName>
+    <ProjectName>TestStretchyBuffer</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -40,7 +40,7 @@
   </ImportGroup>
   <Import Project="Tests.props" />
   <ItemGroup>
-    <ClCompile Include="test_mem_arena.cpp" />
+    <ClCompile Include="test_stretchy_buffer.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

@@ -8,8 +8,7 @@
 //   stack_adaptor: LIFO rewind, BasePtr, PMR interface (allocate/deallocate/is_equal)
 //   negative: alloc past capacity, rewind past offset, non-pow2 alignment
 
-#include "DEFS_WIN32_NO_BS.h"
-#include "minunit.h"
+#include "test_common.h"
 
 #include <System/sys_mem_arena.h>
 #include <utility>
@@ -17,17 +16,6 @@
 // NOTE: longjmp interception globals — extern'd in ht_error.h under HT_TESTS
 jmp_buf gHtAssertJmpbuf;
 i32     gHtAssertFired = 0;
-
-// NOTE: passes if HT_ASSERT fired, fails if it did not
-#define MU_ASSERT_FIRES( expr )                 \
-    do {                                        \
-        gHtAssertFired = 0;                     \
-        if( !setjmp( gHtAssertJmpbuf ) )        \
-        {                                       \
-            ( expr );                           \
-        }                                       \
-        mu_check( gHtAssertFired );             \
-    } while( 0 )
 
 // ============================================================================
 // static_arena
