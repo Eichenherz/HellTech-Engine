@@ -181,7 +181,8 @@ struct vk_context
 	std::vector<vk_swapchain_image>			scImgs;
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
-	// NOTE: must be locked too
+	
+	copyable_srwlock                        descUpdatesLock;
 	std::vector<vk_descriptor_write>        descPendingUpdates;
 
 	vk_cb_pool		                        cbPools[ ( u64 ) vk_queue_t::COUNT ];

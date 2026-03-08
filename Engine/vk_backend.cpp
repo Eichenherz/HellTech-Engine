@@ -1000,6 +1000,8 @@ VkSemaphore vk_context::CreateBinarySemaphore()
 
 desc_hndl32 vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
 {
+	std::lock_guard guard{ descUpdatesLock };
+
 	vk_desc_binding_t bindingSlot = VkDescTypeToBinding( rscDescInfo.descriptorType );
 	HT_ASSERT( std::size( descBindingSlots ) > bindingSlot );
 
@@ -1011,6 +1013,8 @@ desc_hndl32 vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
 
 void vk_context::FlushPendingDescriptorUpdates()
 {
+	std::lock_guard guard{ descUpdatesLock };
+
 	if( !std::size( descPendingUpdates ) ) return;
 
 	std::vector<VkWriteDescriptorSet> writes;

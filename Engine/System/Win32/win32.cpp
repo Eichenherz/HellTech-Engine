@@ -46,6 +46,7 @@ virtual_arena::virtual_arena( virtual_arena&& o )
 
 virtual_arena& virtual_arena::operator=( virtual_arena&& o )
 {
+    HT_ASSERT( this != &o && "self move-assign" );
     base      = std::exchange( o.base, nullptr );
     offset    = std::exchange( o.offset, 0 );
     committed = std::exchange( o.committed, 0 );

@@ -29,6 +29,8 @@ struct slot_buffer
     slot_buffer() = default;
     slot_buffer( u64 reservedElems ) : data{ reservedElems }, alive{ reservedElems } {}
 
+    u64 size() const { return count; }
+
     hndl32 PushEntry( T val )
     {
         u32 idx = alive.FindFirstZeroBitIdx();

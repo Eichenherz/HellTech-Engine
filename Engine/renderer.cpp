@@ -823,7 +823,7 @@ struct tone_mapping_pass
 	}
 
 	void TonemappingGammaPass(
-		vk_command_buffer& cmdBuff,
+		vk_command_buffer&  cmdBuff,
 		desc_hndl32         hdrColDesc,
 		desc_hndl32         sdrColDesc,
 		DirectX::XMUINT2	hdrTrgSize
@@ -1080,7 +1080,14 @@ struct virtual_frame
 	//vk_gpu_timer gpuTimer;
 	VkSemaphore                 canGetImgSema;
 	vk_buffer	                viewData;
+
+	vk_buffer					gpuMeshTable;
+	//vk_buffer					gpuMaterialSlotBuff;
+
 	desc_hndl32                 viewDataIdx;
+	desc_hndl32					gpuMeshTableDesc;
+	//desc_hndl32									gpuMaterialSlotBuffDesc;
+
 	u32                         fifIdx; // NOTE: for debug
 
 	inline void Init( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
@@ -1092,6 +1099,12 @@ struct virtual_frame
 		viewData = vkCtx.CreateBuffer( { .name = std::data( name ), .usageFlags = usg, .sizeInBytes = sizeInBytes, 
 			.usage = buffer_usage::HOST_VISIBLE } );
 		viewDataIdx = vkCtx.AllocDescriptor( viewData );
+
+		constexpr u64 DEFAULT_MESH_TABLE_SIZE = 512 * sizeof( gpu_mesh );
+		fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
+		gpuMeshTable = vkCtx.CreateBuffer( { .name = std::data( meshTableName ), .usageFlags = usg, 
+			.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
+		gpuMeshTableDesc = vkCtx.AllocDescriptor( gpuMeshTable );
 	}
 };
 
@@ -1121,9 +1134,6 @@ struct render_context final : renderer_interface
 
 	vk_buffer                                   stagingBuff;
 
-	vk_buffer									gpuMeshSlotBuff;
-	vk_buffer									gpuMaterialSlotBuff;
-
 	// TODO: move to appropriate technique/context
 	VkPipeline									gfxZPrepass;
 	VkPipeline									gfxPipeline;
@@ -1131,9 +1141,6 @@ struct render_context final : renderer_interface
 	VkPipeline									gfxMergedPipeline;
 
 	u64											vFrameIdx = 0;
-
-	desc_hndl32									gpuMeshSlotBuffDesc;
-	desc_hndl32									gpuMaterialSlotBuffDesc;
 
 	desc_hndl32									colSrv;
 	desc_hndl32									depthSrv;
@@ -1147,7 +1154,6 @@ struct render_context final : renderer_interface
 	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height );
 
 	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) override;
-	//virtual void UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena ) override;
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
 
 	inline virtual HRNDMESH32 AllocMeshComponent() override
@@ -1290,8 +1296,6 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 
 	//vrtFrames.resize( framesInFlight );
 }
-
-//void render_context::UploadAsync( const vfs_zip_mem& vfs, virtual_arena& arena ) {}
 
 void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads, virtual_arena& arena )
 {
@@ -1519,11 +1523,18 @@ void render_context::RecordTextureUplaods( std::span<const tex_upload> meshAsset
 	//}
 }
 
-// TODO: use a queue timeline or smth to check if we can get a cmd buffer instead of vFrameIdx
 void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	const u64 currentFrameIdx = vFrameIdx++;
 	const u64 currentFrameInFlightIdx = currentFrameIdx % framesInFlight;
+
+	for( renderer_upload_resp uploadResp = {}; copyToMainQueue.TryPop( uploadResp ); )
+	{
+		renderer_mesh_component& currentMeshSlot = *meshTable.Get( uploadResp.hSlot );
+
+		currentMeshSlot.payload = uploadResp.payload;
+		currentMeshSlot.desc = uploadResp.desc;
+	}
 
 	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
@@ -1540,6 +1551,10 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	HT_ASSERT( BYTE_COUNT( frameData.views ) == thisVFrame.viewData.sizeInBytes );
 	std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
+	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accesesd anyways
+	HT_ASSERT( std::size( meshTable ) * sizeof( gpu_mesh ) <= thisVFrame.gpuMeshTable.sizeInBytes );
+	std::memcpy( thisVFrame.gpuMeshTable.hostVisible, std::data( meshTable.data ), std::size( meshTable ) * sizeof( gpu_mesh ) );
+
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
 
 	vk_cmd_pool_buff currentCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
@@ -1553,8 +1568,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 		InitGlobalResources( config.desiredDepthFormat, config.desiredColorFormat, 
 			config.renderWidth, config.rednerHeight );
 		imguiPass.CreateUploadFontAtlasSync( *pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
-		//VkUploadResources( *vk.pDc, stagingManager, thisFrameCmdBuffer, entities, currentFrameIdx );
-
+		
 		u32 instCount = 1; //instDescBuff.sizeInBytes / sizeof( instance_desc );
 		u32 mletCount = 1; //meshletBuff.sizeInBytes / sizeof( meshlet );
 		cullingPass.InitSceneDependentData( *pVkCtx, instCount, mletCount * instCount );
@@ -1592,11 +1606,6 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	u32 instCount = ( u32 ) instDescBuff.sizeInBytes / sizeof( instance_desc );
 	u32 mletCount = ( u32 ) meshletBuff.sizeInBytes / sizeof( meshlet );
 	u32 meshletUpperBound = instCount * mletCount;
-
-	//DirectX::XMMATRIX t = DirectX::XMMatrixMultiply( 
-	//	DirectX::XMMatrixScaling( 180.0f, 100.0f, 60.0f ), DirectX::XMMatrixTranslation( 20.0f, -10.0f, -60.0f ) );
-	//DirectX::XMFLOAT4X4A debugOcclusionWallTransf;
-	//DirectX::XMStoreFloat4x4A( &debugOcclusionWallTransf, t );
 
 	DirectX::XMUINT2 colorTargetSize = { colorTarget.width, colorTarget.height };
 
@@ -1649,15 +1658,6 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 			sizeof(shadingPush)
 		);
 
-		//vk_rendering_info zDgbInfo = {
-		//	.viewport = viewport,
-		//	.scissor = scissor,
-		//	.colorAttachments = {},
-		//	.pDepthAttachment = &depthRead
-		//};
-		//dbgCtx.DrawCPU( thisFrameCmdBuffer, zDgbInfo, "Draw Occluder-Depth", debug_draw_type::TRIANGLE, 
-		//					   thisVFrame.pViewData->devicePointer, 0, debugOcclusionWallTransf, 0 );
-
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, depthTarget, depthSrv );
 
 		rscStateTracker.UseBuffer( cullingPass.drawCount, 
@@ -1692,39 +1692,14 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, depthTarget, depthSrv );
 
-		//VkRenderingAttachmentInfo attInfosDbg[] = { colorRead };
-		//vk_rendering_info colDgbInfo = {
-		//	.viewport = viewport,
-		//	.scissor = scissor,
-		//	.colorAttachments = attInfosDbg,
-		//	.pDepthAttachment = 0
-		//};
-		//dbgCtx.DrawCPU( thisFrameCmdBuffer, colDgbInfo, "Draw Occluder-Color", debug_draw_type::TRIANGLE, 
-		//					   thisVFrame.pViewData->devicePointer, 1, debugOcclusionWallTransf, cyan );
-
 		if( frameData.freezeMainView )
 		{
-			//VkRenderingAttachmentInfo attInfosDbg[] = { colorRead };
-			//vk_rendering_info colDgbInfo = {
-			//	.viewport = viewport,
-			//	.scissor = scissor,
-			//	.colorAttachments = attInfosDbg,
-			//	.pDepthAttachment = 0
-			//};
-			//dbgCtx.DrawCPU( thisFrameCmdBuffer, colDgbInfo, "Draw Frustum", debug_draw_type::LINE, 
-			//					   thisVFrame.pViewData->devicePointer, 1, frameData.frustTransf, yellow );
+			
 		}
 
 		if( frameData.dbgDraw )
 		{
-			//DrawIndirectPass( thisVFrame.cmdBuff,
-			//				  gfxDrawIndirDbg,
-			//				  &colorRead,
-			//				  0,
-			//				  drawCmdAabbsBuff,
-			//				  drawCountDbgBuff.hndl,
-			//				  dbgDrawProgram,
-			//				  frameData.activeProjView, scissor );
+			
 		}
 
 		thisFrameCmdBuffer.CmdFillVkBuffer( tonemapPass.luminanceHistogramBuffer, 0u );
@@ -1773,7 +1748,6 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	//gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
 	thisFrameCmdBuffer.CmdEndCmdBuffer();
 
-	// NOTE: with all these cool stage masks we can only let the gpu run until it need the sc image THEN wait
 	VkSemaphoreSubmitInfo waitScImgAcquire[] = { {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 		.semaphore = thisVFrame.canGetImgSema,

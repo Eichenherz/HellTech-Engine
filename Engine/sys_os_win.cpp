@@ -598,7 +598,7 @@ DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 
 		for( io_job jobData = {}; threadCtx.jobs.TryPop( jobData ); )
 		{
-			//jobData.upload( threadCtx.arena );
+			jobData.upload( threadCtx.arena );
 		}
 
 		// NOTE: win doesn't have exchRelase64
@@ -788,7 +788,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	// NOTE: for now we only have gpu_instances data
 	slot_buffer<gpu_instance> instances = { 1'000'000 };
 
-	bool vfsMounted = true;
+	bool vfsMounted = false;
 
 	while( isRunning )
 	{
