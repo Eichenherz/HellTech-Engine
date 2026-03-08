@@ -17,15 +17,6 @@
 
 #include "ht_fixed_string.h"
 
-struct frame_data
-{
-	std::vector<view_data>  views;
-	float4x4                frustTransf;
-	float                   elapsedSeconds;
-	bool                    freezeMainView;
-	bool                    dbgDraw;
-};
-
 struct gpu_data
 {
 	float timeMs;
@@ -49,15 +40,62 @@ struct gpu_mesh
 	desc_hndl32			hTriangleBuffer;
 };
 
-struct renderer_mesh_component
+// TODO: use a better container
+struct renderer_mesh_components
 {
-	gpu_mesh_payload payload;
-	gpu_mesh         desc;
+	template<typename T> 
+	using stretchybuf_t = virtual_stretchy_buffer<T>;
+
+	using slotbuf_t = slot_buffer<u32>;
+	using hndl32_t = slotbuf_t::hndl32;
+	
+	slotbuf_t                       slots;
+	// NOTE: yes, these will have holes, they won't be large in theory so it's all fine
+	stretchybuf_t<gpu_mesh_payload> payloads = { slotbuf_t::MAX_ENTRIES_RESERVED };
+	stretchybuf_t<gpu_mesh>         descs    = { slotbuf_t::MAX_ENTRIES_RESERVED };
+
+	inline hndl32_t PushEntry( const gpu_mesh_payload& pl, const gpu_mesh& desc ) 
+	{
+		hndl32_t h = slots.PushEntry( {} );
+
+		payloads.resize( h.slotIdx + 1 );
+		descs.resize( h.slotIdx + 1 );
+
+		payloads[ h.slotIdx ] = pl;
+		descs[ h.slotIdx ] = desc;
+
+		return h;
+	}
+
+	inline void DeleteEntry( hndl32_t h )
+	{
+		slots.RemoveEntry( h );
+		// NOTE: if it reaches here we didn't trigger any assert
+		gpu_mesh_payload& pl = payloads[ h.slotIdx ];
+		gpu_mesh& meshDesc = descs[ h.slotIdx ];
+
+		std::memset( &pl, 0, sizeof( pl ) );
+		std::memset( &meshDesc, 0, sizeof( meshDesc ) );
+	}
+
+	struct mesh_comp_ref
+	{
+		gpu_mesh_payload& payload;
+		gpu_mesh&         desc;
+	};
+	inline mesh_comp_ref operator[]( hndl32_t h )
+	{
+		slots[ h ];
+		// NOTE: if it reaches here we didn't trigger any assert
+		gpu_mesh_payload& pl = payloads[ h.slotIdx ];
+		gpu_mesh& meshDesc = descs[ h.slotIdx ];
+		return { .payload = pl, .desc = meshDesc };
+	}
 };
 
-using HRNDMESH32 = slot_buffer<renderer_mesh_component>::hndl32;
+using HRNDMESH32 = renderer_mesh_components::hndl32_t;
 
-enum class upload_resp_t
+enum class upload_t
 {
 	TEX = 0,
 	MESH
@@ -77,19 +115,21 @@ struct tex_upload
 	// dst slot
 };
 
-struct renderer_upload_resp
-{
-	gpu_mesh_payload payload;
-	gpu_mesh         desc;
-	HRNDMESH32       hSlot;
-	upload_resp_t    respType;
-};
-
 struct gpu_instance
 {
 	packed_trs transform;
 	HRNDMESH32 meshIdx;
 	u16 materialIdx;
+};
+
+struct frame_data
+{
+	std::span<const view_data>		views;
+	std::span<const gpu_instance>	instances;
+	float4x4						frustTransf;
+	float							elapsedSeconds;
+	bool							freezeMainView;
+	bool							dbgDraw;
 };
 
 #endif // !__ENGINE_TYPES_H__

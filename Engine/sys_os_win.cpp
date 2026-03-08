@@ -618,7 +618,7 @@ sys_thread SysCreateThread(
 	u64 stackSize, 
 	u64 maxScratchPadSize, 
 	const wchar_t* name, 
-	stable_stretchy_buffer<sys_thread_data>& threadDataBuff 
+	virtual_stretchy_buffer<sys_thread_data>& threadDataBuff 
 ) {
 	sys_thread_data* pData = &threadDataBuff.push_back( {
 		.signal = SYS_THREAD_SIGNAL_SLEEP,
@@ -714,9 +714,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	}
 
 	gpu_data gpuData = {};
-	frame_data frameData = {};
 
-	frameData.views.resize( 2 );
 	u16 mainViewIdx = 0;
 	u16 dbgViewIdx = 1;
 
@@ -762,7 +760,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
 
-	stable_stretchy_buffer<sys_thread_data> threadDataBuff = { 2 * MB };
+	virtual_stretchy_buffer<sys_thread_data> threadDataBuff = { 2 * MB };
 
 	std::vector<sys_thread> threads;
 	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", threadDataBuff ) );
@@ -785,12 +783,16 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
 	vfs_zip_mem vfs = { *mmappedFile };
 
-	stable_stretchy_buffer<gpu_instance> instances = { 1'000'000 };
+	virtual_stretchy_buffer<gpu_instance> instances = { 1'000'000 };
+
+	virtual_arena scratchArena = { 10 * MB };
 
 	bool vfsMounted = false;
 
 	while( isRunning )
 	{
+		stack_adaptor virtStack = { scratchArena };
+
 		const u64 newTicks = SysTicks();
 		const double elapsedSecs = double( newTicks - currentTicks ) * cpuPeriod;
 		currentTicks = newTicks;
@@ -865,28 +867,36 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		mainActiveCam.Move( camMove, dRot, elapsedSecs );
 		debugCam.Move( camMove, dRot, elapsedSecs );
 
-		if( !inputState.keyStates[ VK_F ] )
-		{
-			view_data mainViewData = mainActiveCam.GetViewData();
-			frameData.views[ mainViewIdx ] = mainViewData;
-
-			mainActiveCam.prevViewProj = mainViewData.mainViewProj;
-		}
-		
-		frameData.views[ dbgViewIdx ] = debugCam.GetViewData();
-
-		XMMATRIX frustMat = FrustumMatrixFromViewProj( XMLoadFloat4x4A( &frameData.views[ mainViewIdx ].mainViewProj ) );
-		XMStoreFloat4x4A( &frameData.frustTransf, frustMat );
-
-		frameData.elapsedSeconds = elapsedSecs;
-		frameData.freezeMainView = inputState.keyStates[ VK_F ];
-		frameData.dbgDraw = inputState.keyStates[ VK_O ];
 
 		imGuiIO.DeltaTime = elapsedSecs;
 		imGuiIO.MousePos = { inputState.posMouse.x, inputState.posMouse.y };
 		imGuiIO.MouseDown[ 0 ] = inputState.mouseButtons[ 0 ];
 		imGuiIO.MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
 		imGuiIO.MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];
+
+
+		std::pmr::vector<view_data> views{ &virtStack };
+
+		view_data mainViewData = mainActiveCam.GetViewData();
+
+		if( !inputState.keyStates[ VK_F ] )
+		{
+			views.push_back( mainViewData );
+			mainActiveCam.prevViewProj = mainViewData.mainViewProj;
+		}
+		
+		views.push_back( debugCam.GetViewData() );
+
+		XMMATRIX frustMat = FrustumMatrixFromViewProj( XMLoadFloat4x4A( &mainViewData.mainViewProj ) );
+		
+		frame_data frameData = {
+			.views = views,
+			.instances = instances,
+			.frustTransf = DX_XMStoreFloat4( frustMat ),
+			.elapsedSeconds = ( float ) elapsedSecs,
+			.freezeMainView = inputState.keyStates[ VK_F ],
+			.dbgDraw = inputState.keyStates[ VK_O ]
+		};
 
 		ImGuiRenderUI( imguiWnds, loadHpkReqs );
 

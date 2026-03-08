@@ -1084,9 +1084,13 @@ struct virtual_frame
 	vk_buffer					gpuMeshTable;
 	//vk_buffer					gpuMaterialSlotBuff;
 
+	vk_buffer                   gpuInstances;
+
 	desc_hndl32                 viewDataIdx;
 	desc_hndl32					gpuMeshTableDesc;
-	//desc_hndl32									gpuMaterialSlotBuffDesc;
+	//desc_hndl32				gpuMaterialSlotBuffDesc;
+
+	desc_hndl32                 instDesc;
 
 	u32                         fifIdx; // NOTE: for debug
 
@@ -1105,7 +1109,21 @@ struct virtual_frame
 		gpuMeshTable = vkCtx.CreateBuffer( { .name = std::data( meshTableName ), .usageFlags = usg, 
 			.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
 		gpuMeshTableDesc = vkCtx.AllocDescriptor( gpuMeshTable );
+
+		constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( gpu_instance );
+		fixed_string<64> instName = { "Buff_VirtualFrame_Insances{}", fifIdx };
+		gpuInstances = vkCtx.CreateBuffer( { .name = std::data( instName ), .usageFlags = usg, 
+			.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
+		instDesc = vkCtx.AllocDescriptor( gpuInstances );
 	}
+};
+
+struct renderer_upload_resp
+{
+	gpu_mesh_payload payload;
+	gpu_mesh         desc;
+	HRNDMESH32       hSlot;
+	upload_t         uploadType;
 };
 
 struct render_context final : renderer_interface
@@ -1121,7 +1139,7 @@ struct render_context final : renderer_interface
 	tone_mapping_pass							tonemapPass;
 	debug_draw_passes							dbgPass;
 
-	slot_buffer<renderer_mesh_component>        meshTable;
+	renderer_mesh_components                    meshTable;
 
 	mtx_queue<renderer_upload_resp>             copyToMainQueue = { 256 };
 
@@ -1158,7 +1176,7 @@ struct render_context final : renderer_interface
 
 	inline virtual HRNDMESH32 AllocMeshComponent() override
 	{
-		return meshTable.PushEntry( {} );
+		return meshTable.PushEntry( {}, {} );
 	}
 
 	virtual void UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) override;
@@ -1372,7 +1390,7 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 		};
 
 		meshesBuff.push_back( { .payload = gpuMeshPayload, .desc = desc, .hSlot = meshUpload.hSlot, 
-			.respType = upload_resp_t::MESH } );
+			.uploadType = upload_t::MESH } );
 
 		{
 			staginScratch.resize( stagingOffsetInBytes + std::size( mesh.meshlets ) );
@@ -1530,10 +1548,10 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 
 	for( renderer_upload_resp uploadResp = {}; copyToMainQueue.TryPop( uploadResp ); )
 	{
-		renderer_mesh_component& currentMeshSlot = meshTable[ uploadResp.hSlot ];
+		auto[ payload, desc ] = meshTable[ uploadResp.hSlot ];
 
-		currentMeshSlot.payload = uploadResp.payload;
-		currentMeshSlot.desc = uploadResp.desc;
+		payload = uploadResp.payload;
+		desc = uploadResp.desc;
 	}
 
 	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
@@ -1552,8 +1570,11 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
 	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accesesd anyways
-	HT_ASSERT( std::size( meshTable ) * sizeof( gpu_mesh ) <= thisVFrame.gpuMeshTable.sizeInBytes );
-	std::memcpy( thisVFrame.gpuMeshTable.hostVisible, std::data( meshTable.items ), std::size( meshTable ) * sizeof( gpu_mesh ) );
+	HT_ASSERT( BYTE_COUNT( meshTable.descs ) <= thisVFrame.gpuMeshTable.sizeInBytes );
+	std::memcpy( thisVFrame.gpuMeshTable.hostVisible, std::data( meshTable.descs ), BYTE_COUNT( meshTable.descs ) );
+
+	HT_ASSERT( BYTE_COUNT( frameData.instances ) <= thisVFrame.gpuInstances.sizeInBytes );
+	std::memcpy( thisVFrame.gpuInstances.hostVisible, std::data( frameData.instances ), BYTE_COUNT( frameData.instances ) );
 
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
 

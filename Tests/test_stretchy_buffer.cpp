@@ -45,7 +45,7 @@ struct non_trivial
 
 MU_TEST( ReserveFirstAlloc )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.reserve( 16 );
     mu_check( 16 == buf.capacity() );
     mu_check( nullptr != buf.elems );
@@ -53,7 +53,7 @@ MU_TEST( ReserveFirstAlloc )
 
 MU_TEST( ReserveGrow )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.reserve( 8 );
     buf.reserve( 32 );
     mu_check( 32 == buf.capacity() );
@@ -65,7 +65,7 @@ MU_TEST( ReserveGrow )
 
 MU_TEST( ResizeGrowFromEmpty )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.resize( 4 );
     mu_check( 4 == std::size( buf ) );
     mu_check( buf.capacity() >= 4 );
@@ -78,7 +78,7 @@ MU_TEST( ResizeGrowFromEmpty )
 
 MU_TEST( ResizeGrowWithValue )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.resize( 4, 42 );
     mu_check( 4 == std::size( buf ) );
     for( u64 i = 0; i < 4; ++i )
@@ -89,7 +89,7 @@ MU_TEST( ResizeGrowWithValue )
 
 MU_TEST( ResizeShrink )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.resize( 8, 7 );
     buf.resize( 3 );
     mu_check( 3 == std::size( buf ) );
@@ -103,7 +103,7 @@ MU_TEST( ResizeShrink )
 
 MU_TEST( ResizeToZero )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.resize( 8, 1 );
     buf.resize( 0 );
     mu_check( 0 == std::size( buf ) );
@@ -111,7 +111,7 @@ MU_TEST( ResizeToZero )
 
 MU_TEST( ResizeSameSize )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.resize( 4, 5 );
     buf.resize( 4 );
     mu_check( 4 == std::size( buf ) );
@@ -123,7 +123,7 @@ MU_TEST( ResizeSameSize )
 
 MU_TEST( ResizeShrinkThenGrow )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.resize( 8, 10 );
     buf.resize( 2 );
     buf.resize( 6, 20 );
@@ -144,7 +144,7 @@ MU_TEST( ResizeNonTrivialGrow )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         non_trivial fillVal( 99 );
         buf.resize( 4, fillVal );
         mu_check( 4 == std::size( buf ) );
@@ -162,7 +162,7 @@ MU_TEST( ResizeNonTrivialShrinkDestroys )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         non_trivial fillVal( 7 );
         buf.resize( 8, fillVal );
         mu_check( 9 == gNonTrivialLiveCount ); // 8 + fillVal
@@ -179,7 +179,7 @@ MU_TEST( ResizeNonTrivialShrinkDestroys )
 
 MU_TEST( PushBackLvalue )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     u32 val = 42;
     u32& ref = buf.push_back( val );
     mu_check( 1 == std::size( buf ) );
@@ -189,7 +189,7 @@ MU_TEST( PushBackLvalue )
 
 MU_TEST( PushBackRvalue )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     u32& ref = buf.push_back( 99 );
     mu_check( 1 == std::size( buf ) );
     mu_check( 99 == buf[ 0 ] );
@@ -198,7 +198,7 @@ MU_TEST( PushBackRvalue )
 
 MU_TEST( PushBackMultipleValues )
 {
-    stable_stretchy_buffer<u32> buf = { 1024 };
+    virtual_stretchy_buffer<u32> buf = { 1024 };
     for( u32 i = 0; i < 32; ++i )
     {
         buf.push_back( i * 10 );
@@ -214,7 +214,7 @@ MU_TEST( PushBackNonTrivialLvalue )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         non_trivial val( 55 );
         buf.push_back( val );
         mu_check( 1 == std::size( buf ) );
@@ -228,7 +228,7 @@ MU_TEST( PushBackNonTrivialRvalue )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         non_trivial val( 77 );
         buf.push_back( std::move( val ) );
         mu_check( 1 == std::size( buf ) );
@@ -244,7 +244,7 @@ MU_TEST( PushBackNonTrivialRvalue )
 
 MU_TEST( EmplaceBackBasic )
 {
-    stable_stretchy_buffer<non_trivial> buf = { 128 };
+    virtual_stretchy_buffer<non_trivial> buf = { 128 };
     gNonTrivialLiveCount = 0;
     non_trivial& ref = buf.emplace_back( 33 );
     mu_check( 1 == std::size( buf ) );
@@ -259,7 +259,7 @@ MU_TEST( EmplaceBackBasic )
 
 MU_TEST( PopBackDecrementsSize )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.push_back( 2 );
     buf.push_back( 3 );
@@ -271,7 +271,7 @@ MU_TEST( PopBackDecrementsSize )
 
 MU_TEST( PopBackToEmpty )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.pop_back();
     mu_check( 0 == std::size( buf ) );
@@ -281,7 +281,7 @@ MU_TEST( PopBackNonTrivialDestroys )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         buf.emplace_back( 10 );
         buf.emplace_back( 20 );
         mu_check( 2 == gNonTrivialLiveCount );
@@ -299,7 +299,7 @@ MU_TEST( PopBackNonTrivialDestroys )
 
 MU_TEST( ClearResetsSize )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     for( u32 i = 0; i < 5; ++i )
     {
         buf.push_back( i );
@@ -311,7 +311,7 @@ MU_TEST( ClearResetsSize )
 
 MU_TEST( ClearOnEmpty )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.clear(); // must not crash
     mu_check( 0 == std::size( buf ) );
 }
@@ -320,7 +320,7 @@ MU_TEST( ClearNonTrivialDestroys )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         buf.emplace_back( 1 );
         buf.emplace_back( 2 );
         buf.emplace_back( 3 );
@@ -334,7 +334,7 @@ MU_TEST( ClearNonTrivialDestroys )
 
 MU_TEST( ClearThenPushBack )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.push_back( 2 );
     buf.clear();
@@ -349,7 +349,7 @@ MU_TEST( ClearThenPushBack )
 
 MU_TEST( PushAfterPop )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.push_back( 2 );
     buf.push_back( 3 );
@@ -365,7 +365,7 @@ MU_TEST( PushAfterPop )
 
 MU_TEST( InterleavedPushPop )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.push_back( 2 );
     buf.pop_back();
@@ -381,7 +381,7 @@ MU_TEST( InterleavedPushPop )
 
 MU_TEST( PopThenPushPastOldCapacity )
 {
-    stable_stretchy_buffer<u32> buf = { 4096 };
+    virtual_stretchy_buffer<u32> buf = { 4096 };
     // NOTE: fill to cap 8, then pop all, then push 16 — triggers grow from empty-ish state
     for( u32 i = 0; i < 8; ++i )
     {
@@ -409,7 +409,7 @@ MU_TEST( EmplaceAfterClear )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         buf.emplace_back( 1 );
         buf.emplace_back( 2 );
         buf.clear();
@@ -426,7 +426,7 @@ MU_TEST( PushPopNonTrivialCycle )
 {
     gNonTrivialLiveCount = 0;
     {
-        stable_stretchy_buffer<non_trivial> buf = { 128 };
+        virtual_stretchy_buffer<non_trivial> buf = { 128 };
         buf.emplace_back( 10 );
         buf.emplace_back( 20 );
         buf.emplace_back( 30 );
@@ -447,7 +447,7 @@ MU_TEST( PushPopNonTrivialCycle )
 
 MU_TEST( OperatorBracketReadWrite )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 10 );
     buf.push_back( 20 );
     buf[ 0 ] = 100;
@@ -457,7 +457,7 @@ MU_TEST( OperatorBracketReadWrite )
 
 MU_TEST( DataPtr )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     mu_check( std::data( buf ) == buf.elems );
     mu_check( 1 == *std::data( buf ) );
@@ -469,7 +469,7 @@ MU_TEST( DataPtr )
 
 MU_TEST( BeginEnd )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 10 );
     buf.push_back( 20 );
     buf.push_back( 30 );
@@ -480,11 +480,11 @@ MU_TEST( BeginEnd )
 
 MU_TEST( ReverseIterators )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.push_back( 2 );
     buf.push_back( 3 );
-    stable_stretchy_buffer<u32>::reverse_iter rit = std::rbegin( buf );
+    virtual_stretchy_buffer<u32>::reverse_iter rit = std::rbegin( buf );
     mu_check( 3 == *rit );
     ++rit;
     mu_check( 2 == *rit );
@@ -496,7 +496,7 @@ MU_TEST( ReverseIterators )
 
 MU_TEST( RangeFor )
 {
-    stable_stretchy_buffer<u32> buf = { 128 };
+    virtual_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.push_back( 2 );
     buf.push_back( 3 );
@@ -510,19 +510,19 @@ MU_TEST( RangeFor )
 
 MU_TEST( EmptyBeginEqualsEnd )
 {
-    stable_stretchy_buffer<u32> buf = {};
+    virtual_stretchy_buffer<u32> buf = {};
     mu_check( std::begin( buf ) == std::end( buf ) );
     mu_check( std::rbegin( buf ) == std::rend( buf ) );
 }
 
 // ============================================================================
-// stable_stretchy_buffer pointer stability
+// virtual_stretchy_buffer pointer stability
 // ============================================================================
 
 MU_TEST( StablePointerStability )
 {
     // NOTE: virtual_arena gives stable pointers across grows
-    stable_stretchy_buffer<u32> buf = { 4096 };
+    virtual_stretchy_buffer<u32> buf = { 4096 };
     buf.push_back( 42 );
     u32* firstElem = &buf[ 0 ];
     for( u32 i = 0; i < 100; ++i )

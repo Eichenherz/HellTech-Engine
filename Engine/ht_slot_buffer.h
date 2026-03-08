@@ -20,14 +20,12 @@ struct slot_buffer
     static constexpr u32   SANTINEL_IDX           = MAX_ENTRIES_RESERVED - 1;
     static constexpr u32   MAX_GEN                = ( 1ull << BIT_WIDTH_MAX_GENS ) - 1;
 
-    // NOTE: bit pattern of an x86 signaling NaN
-    static constexpr u32   FREELIST_MARKER_U32    = std::bit_cast<u32>( 0x7F800001 );
+    static constexpr u32   FREELIST_MARKER_U32    = 0xBAD;
 
     struct freelist_cursor
     {
-        u64 MARKER     : 32                = FREELIST_MARKER_U32;
-        u64 slotIdx    : BIT_WIDTH_MAX_IDX = SANTINEL_IDX;
-        u64 padding    : 12;
+        u32 slotIdx    : BIT_WIDTH_MAX_IDX = SANTINEL_IDX;
+        u32 marker     : 12                = FREELIST_MARKER_U32;
     };
     static_assert( sizeof( T ) >= sizeof( freelist_cursor ) );
 
@@ -38,7 +36,7 @@ struct slot_buffer
         u32 padding    : 1; 
     };
 
-    stable_stretchy_buffer<T>      items        = { MAX_ENTRIES_RESERVED };
+    virtual_stretchy_buffer<T>      items        = { MAX_ENTRIES_RESERVED };
     freelist_cursor                freelistHead = {};
 
 
@@ -61,7 +59,7 @@ struct slot_buffer
         u32 currentFreeSlotIdx = freelistHead.slotIdx;
 
         freelist_cursor& currentFreelistCursor = ( freelist_cursor& ) items[ currentFreeSlotIdx ];
-        HT_ASSERT( ( u32 ) FREELIST_MARKER_U32 == currentFreelistCursor.MARKER );
+        HT_ASSERT( FREELIST_MARKER_U32 == currentFreelistCursor.marker );
 
         freelistHead.slotIdx = currentFreelistCursor.slotIdx;
 

@@ -56,7 +56,7 @@ struct ht_stretchy_buffer
 };
 
 template<typename T>
-using stable_stretchy_buffer = ht_stretchy_buffer<T, virtual_arena>;
+using virtual_stretchy_buffer = ht_stretchy_buffer<T, virtual_arena>;
 
 template<typename T, arena_t ARENA_T>
 void ht_stretchy_buffer<T, ARENA_T>::reserve( u64 newCap )

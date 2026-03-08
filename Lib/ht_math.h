@@ -125,20 +125,6 @@ inline aabb_t<float3> MergeAabbs( const std::ranges::forward_range auto& aabbs )
 	return MergeAabbsMultiple( aabbs );
 }
 
-__forceinline float3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
-{
-	DirectX::XMFLOAT3 out;
-	DirectX::XMStoreFloat3( &out, v );
-	return out;
-}
-
-__forceinline float4 XM_CALLCONV DX_XMStoreFloat4( DirectX::XMVECTOR v )
-{
-	DirectX::XMFLOAT4 out;
-	DirectX::XMStoreFloat4( &out, v );
-	return out;
-}
-
 inline aabb_t<float3> TransformAABB( 
 	const float3& min, 
 	const float3& max, 

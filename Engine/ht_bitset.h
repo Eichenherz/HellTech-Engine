@@ -11,7 +11,7 @@ struct bitset
 {
     using word_t = u64;
 
-    stable_stretchy_buffer<word_t> words;
+    virtual_stretchy_buffer<word_t> words;
     u64                            bitCount = 0;
 
             bitset() = default;
