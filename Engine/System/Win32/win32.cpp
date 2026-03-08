@@ -29,12 +29,15 @@ void copyable_srwlock::unlock() const { ReleaseSRWLockExclusive( ( SRWLOCK* ) ( 
 virtual_arena::virtual_arena( u64 reservedBytesCount ) : reserved{ reservedBytesCount }
 {
     base = ( u8* ) VirtualAlloc( nullptr, reserved, MEM_RESERVE, PAGE_READWRITE );
-    HT_ASSERT( base && "VirtualAlloc reserve failed" );
+	WIN_CHECK( base );
 }
 
 virtual_arena::~virtual_arena()
 {
-    if( base ) VirtualFree( base, 0, MEM_RELEASE );
+	if( base )
+	{
+		WIN_CHECK( VirtualFree( base, 0, MEM_RELEASE ) );
+	}
 }
 
 virtual_arena::virtual_arena( virtual_arena&& o )
@@ -70,7 +73,7 @@ void virtual_arena::Reset()
     #ifdef _DEBUG
         std::memset( base, 0xDE, committed );
     #endif
-        VirtualFree( base, committed, MEM_DECOMMIT );
+		WIN_CHECK( VirtualFree( base, committed, MEM_DECOMMIT ) );
     }
 
     committed = 0;
@@ -88,7 +91,7 @@ void* virtual_arena::Alloc( u64 bytes, u64 alignment )
     {
         u64 newCommitted = ( ( newOffset + PAGE_SIZE - 1 ) / PAGE_SIZE ) * PAGE_SIZE;
         if( newCommitted > reserved ) newCommitted = reserved;
-		HT_ASSERT( VirtualAlloc( base + committed, newCommitted - committed, MEM_COMMIT, PAGE_READWRITE ) );
+		WIN_CHECK( VirtualAlloc( base + committed, newCommitted - committed, MEM_COMMIT, PAGE_READWRITE ) );
         committed = newCommitted;
     }
 

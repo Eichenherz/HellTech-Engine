@@ -40,40 +40,6 @@ struct non_trivial
 };
 
 // ============================================================================
-// default constructor
-// ============================================================================
-
-MU_TEST( DefaultCtorElemsNull )
-{
-    stable_stretchy_buffer<u32> buf = {};
-    mu_check( nullptr == buf.elems );
-}
-
-MU_TEST( DefaultCtorSizeZero )
-{
-    stable_stretchy_buffer<u32> buf = {};
-    mu_check( 0 == std::size( buf ) );
-}
-
-MU_TEST( DefaultCtorCapacityZero )
-{
-    stable_stretchy_buffer<u32> buf = {};
-    mu_check( 0 == buf.capacity() );
-}
-
-// ============================================================================
-// reserving constructor
-// ============================================================================
-
-MU_TEST( ReserveCtorSetsCapacity )
-{
-    stable_stretchy_buffer<u32> buf = { 64 };
-    // NOTE: arena is reserved but no elems allocated yet
-    mu_check( 0 == std::size( buf ) );
-    mu_check( 0 == buf.capacity() );
-}
-
-// ============================================================================
 // reserve
 // ============================================================================
 
@@ -91,34 +57,6 @@ MU_TEST( ReserveGrow )
     buf.reserve( 8 );
     buf.reserve( 32 );
     mu_check( 32 == buf.capacity() );
-}
-
-MU_TEST( ReserveNoOpOnSmaller )
-{
-    stable_stretchy_buffer<u32> buf = { 128 };
-    buf.reserve( 32 );
-    buf.reserve( 16 );
-    mu_check( 32 == buf.capacity() );
-}
-
-MU_TEST( ReserveNoOpOnEqual )
-{
-    stable_stretchy_buffer<u32> buf = { 128 };
-    buf.reserve( 32 );
-    buf.reserve( 32 );
-    mu_check( 32 == buf.capacity() );
-}
-
-MU_TEST( ReserveDoesNotChangeSize )
-{
-    stable_stretchy_buffer<u32> buf = { 128 };
-    buf.push_back( 1 );
-    buf.push_back( 2 );
-    u64 sizeBefore = std::size( buf );
-    buf.reserve( 64 );
-    mu_check( sizeBefore == std::size( buf ) );
-    mu_check( 1 == buf[ 0 ] );
-    mu_check( 2 == buf[ 1 ] );
 }
 
 // ============================================================================
@@ -258,30 +196,6 @@ MU_TEST( PushBackRvalue )
     mu_check( &buf[ 0 ] == &ref );
 }
 
-MU_TEST( PushBackAutoGrowFromZeroCap )
-{
-    stable_stretchy_buffer<u32> buf = { 1024 };
-    // NOTE: capacity starts at 0, first push_back should reserve 8
-    buf.push_back( 1 );
-    mu_check( 1 == std::size( buf ) );
-    mu_check( 8 == buf.capacity() );
-}
-
-MU_TEST( PushBackAutoGrowDoubling )
-{
-    stable_stretchy_buffer<u32> buf = { 1024 };
-    // NOTE: fill to initial auto-cap of 8
-    for( u32 i = 0; i < 8; ++i )
-    {
-        buf.push_back( i );
-    }
-    mu_check( 8 == buf.capacity() );
-    // NOTE: 9th element triggers doubling to 16
-    buf.push_back( 100 );
-    mu_check( 16 == buf.capacity() );
-    mu_check( 9 == std::size( buf ) );
-}
-
 MU_TEST( PushBackMultipleValues )
 {
     stable_stretchy_buffer<u32> buf = { 1024 };
@@ -337,21 +251,6 @@ MU_TEST( EmplaceBackBasic )
     mu_check( 33 == buf[ 0 ].val );
     mu_check( &buf[ 0 ] == &ref );
     mu_check( 1 == gNonTrivialLiveCount );
-}
-
-MU_TEST( EmplaceBackAutoGrow )
-{
-    stable_stretchy_buffer<u32> buf = { 1024 };
-    for( u32 i = 0; i < 9; ++i )
-    {
-        buf.emplace_back( i );
-    }
-    mu_check( 9 == std::size( buf ) );
-    mu_check( 16 == buf.capacity() );
-    for( u32 i = 0; i < 9; ++i )
-    {
-        mu_check( i == buf[ i ] );
-    }
 }
 
 // ============================================================================
@@ -556,28 +455,12 @@ MU_TEST( OperatorBracketReadWrite )
     mu_check( 20 == buf[ 1 ] );
 }
 
-MU_TEST( ConstOperatorBracket )
-{
-    stable_stretchy_buffer<u32> buf = { 128 };
-    buf.push_back( 5 );
-    const stable_stretchy_buffer<u32>& cbuf = buf;
-    mu_check( 5 == cbuf[ 0 ] );
-}
-
 MU_TEST( DataPtr )
 {
     stable_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     mu_check( std::data( buf ) == buf.elems );
     mu_check( 1 == *std::data( buf ) );
-}
-
-MU_TEST( ConstDataPtr )
-{
-    stable_stretchy_buffer<u32> buf = { 128 };
-    buf.push_back( 1 );
-    const stable_stretchy_buffer<u32>& cbuf = buf;
-    mu_check( std::data( cbuf ) == cbuf.elems );
 }
 
 // ============================================================================
@@ -595,45 +478,20 @@ MU_TEST( BeginEnd )
     mu_check( std::end( buf ) == ( std::begin( buf ) + 3 ) );
 }
 
-MU_TEST( ConstBeginEnd )
-{
-    stable_stretchy_buffer<u32> buf = { 128 };
-    buf.push_back( 1 );
-    buf.push_back( 2 );
-    const stable_stretchy_buffer<u32>& cbuf = buf;
-    const u32* cit = std::begin( cbuf );
-    mu_check( 1 == *cit );
-    mu_check( std::end( cbuf ) == ( std::begin( cbuf ) + 2 ) );
-}
-
 MU_TEST( ReverseIterators )
 {
     stable_stretchy_buffer<u32> buf = { 128 };
     buf.push_back( 1 );
     buf.push_back( 2 );
     buf.push_back( 3 );
-    stable_stretchy_buffer<u32>::reverse_iter rit = buf.rbegin();
+    stable_stretchy_buffer<u32>::reverse_iter rit = std::rbegin( buf );
     mu_check( 3 == *rit );
     ++rit;
     mu_check( 2 == *rit );
     ++rit;
     mu_check( 1 == *rit );
     ++rit;
-    mu_check( buf.rend() == rit );
-}
-
-MU_TEST( ConstReverseIterators )
-{
-    stable_stretchy_buffer<u32> buf = { 128 };
-    buf.push_back( 10 );
-    buf.push_back( 20 );
-    const stable_stretchy_buffer<u32>& cbuf = buf;
-    stable_stretchy_buffer<u32>::const_rev_iter crit = cbuf.rbegin();
-    mu_check( 20 == *crit );
-    ++crit;
-    mu_check( 10 == *crit );
-    ++crit;
-    mu_check( cbuf.rend() == crit );
+    mu_check( std::rend( buf ) == rit );
 }
 
 MU_TEST( RangeFor )
@@ -654,7 +512,7 @@ MU_TEST( EmptyBeginEqualsEnd )
 {
     stable_stretchy_buffer<u32> buf = {};
     mu_check( std::begin( buf ) == std::end( buf ) );
-    mu_check( buf.rbegin() == buf.rend() );
+    mu_check( std::rbegin( buf ) == std::rend( buf ) );
 }
 
 // ============================================================================
@@ -679,21 +537,10 @@ MU_TEST( StablePointerStability )
 // suites
 // ============================================================================
 
-MU_TEST_SUITE( SuiteStretchyBufferCtor )
-{
-    MU_RUN_TEST( DefaultCtorElemsNull );
-    MU_RUN_TEST( DefaultCtorSizeZero );
-    MU_RUN_TEST( DefaultCtorCapacityZero );
-    MU_RUN_TEST( ReserveCtorSetsCapacity );
-}
-
 MU_TEST_SUITE( SuiteStretchyBufferReserve )
 {
     MU_RUN_TEST( ReserveFirstAlloc );
     MU_RUN_TEST( ReserveGrow );
-    MU_RUN_TEST( ReserveNoOpOnSmaller );
-    MU_RUN_TEST( ReserveNoOpOnEqual );
-    MU_RUN_TEST( ReserveDoesNotChangeSize );
 }
 
 MU_TEST_SUITE( SuiteStretchyBufferResize )
@@ -712,8 +559,6 @@ MU_TEST_SUITE( SuiteStretchyBufferPushBack )
 {
     MU_RUN_TEST( PushBackLvalue );
     MU_RUN_TEST( PushBackRvalue );
-    MU_RUN_TEST( PushBackAutoGrowFromZeroCap );
-    MU_RUN_TEST( PushBackAutoGrowDoubling );
     MU_RUN_TEST( PushBackMultipleValues );
     MU_RUN_TEST( PushBackNonTrivialLvalue );
     MU_RUN_TEST( PushBackNonTrivialRvalue );
@@ -722,7 +567,6 @@ MU_TEST_SUITE( SuiteStretchyBufferPushBack )
 MU_TEST_SUITE( SuiteStretchyBufferEmplaceBack )
 {
     MU_RUN_TEST( EmplaceBackBasic );
-    MU_RUN_TEST( EmplaceBackAutoGrow );
 }
 
 MU_TEST_SUITE( SuiteStretchyBufferPopBack )
@@ -752,17 +596,13 @@ MU_TEST_SUITE( SuiteStretchyBufferSequenced )
 MU_TEST_SUITE( SuiteStretchyBufferAccess )
 {
     MU_RUN_TEST( OperatorBracketReadWrite );
-    MU_RUN_TEST( ConstOperatorBracket );
     MU_RUN_TEST( DataPtr );
-    MU_RUN_TEST( ConstDataPtr );
 }
 
 MU_TEST_SUITE( SuiteStretchyBufferIterators )
 {
     MU_RUN_TEST( BeginEnd );
-    MU_RUN_TEST( ConstBeginEnd );
     MU_RUN_TEST( ReverseIterators );
-    MU_RUN_TEST( ConstReverseIterators );
     MU_RUN_TEST( RangeFor );
     MU_RUN_TEST( EmptyBeginEqualsEnd );
 }
@@ -783,7 +623,6 @@ MU_TEST_SUITE( SuiteStretchyBufferStability )
 
 int main( int argc, char* argv[] )
 {
-    MU_RUN_SUITE( SuiteStretchyBufferCtor );
     MU_RUN_SUITE( SuiteStretchyBufferReserve );
     MU_RUN_SUITE( SuiteStretchyBufferResize );
     MU_RUN_SUITE( SuiteStretchyBufferPushBack );

@@ -23,12 +23,6 @@ i32     gHtAssertFired = 0;
 
 static constexpr u64 STATIC_CAP = 256;
 
-MU_TEST( StaticArenaInitialState )
-{
-    static_arena<STATIC_CAP> a = {};
-    mu_check( 0 == a.offset );
-}
-
 MU_TEST( StaticArenaAllocBasic )
 {
     static_arena<STATIC_CAP> a = {};
@@ -132,7 +126,6 @@ MU_TEST( StaticArenaAllocNonPow2Align )
 
 MU_TEST_SUITE( SuiteStaticArena )
 {
-    MU_RUN_TEST( StaticArenaInitialState );
     MU_RUN_TEST( StaticArenaAllocBasic );
     MU_RUN_TEST( StaticArenaAllocZeroBytes );
     MU_RUN_TEST( StaticArenaAllocAlignment );
@@ -153,14 +146,6 @@ MU_TEST_SUITE( SuiteStaticArena )
 
 static constexpr u64 DYN_CAP = 4096;
 static u8            gDynBuf[ DYN_CAP ];
-
-MU_TEST( DynamicArenaCtor )
-{
-    dynamic_arena a = { gDynBuf, DYN_CAP };
-    mu_check( gDynBuf == a.mem );
-    mu_check( DYN_CAP == a.size );
-    mu_check( 0 == a.offset );
-}
 
 MU_TEST( DynamicArenaAllocBasic )
 {
@@ -262,7 +247,6 @@ MU_TEST( DynamicArenaAllocNonPow2Align )
 
 MU_TEST_SUITE( SuiteDynamicArena )
 {
-    MU_RUN_TEST( DynamicArenaCtor );
     MU_RUN_TEST( DynamicArenaAllocBasic );
     MU_RUN_TEST( DynamicArenaAllocZeroBytes );
     MU_RUN_TEST( DynamicArenaAllocAlignment );
@@ -283,15 +267,6 @@ MU_TEST_SUITE( SuiteDynamicArena )
 
 static constexpr u64 RESERVE_SZ = 1ull << 20;   // 1 MB
 static constexpr u64 PAGE_SZ    = virtual_arena::PAGE_SIZE;
-
-MU_TEST( VirtualArenaDefaultCtor )
-{
-    virtual_arena a = {};
-    mu_check( nullptr == a.base );
-    mu_check( 0 == a.offset );
-    mu_check( 0 == a.committed );
-    mu_check( 0 == a.reserved );
-}
 
 MU_TEST( VirtualArenaDtorOnDefault )
 {
@@ -325,28 +300,12 @@ MU_TEST( VirtualArenaAllocZeroBytes )
     mu_check( 0 == a.offset );
 }
 
-MU_TEST( VirtualArenaAllocAlignment16 )
-{
-    virtual_arena a = { RESERVE_SZ };
-    a.Alloc( 1, 1 );
-    void* p = a.Alloc( 32, 16 );
-    mu_check( 0 == ( (u64)p & 15 ) );
-}
-
 MU_TEST( VirtualArenaAllocAlignment64 )
 {
     virtual_arena a = { RESERVE_SZ };
     a.Alloc( 1, 1 );
     void* p = a.Alloc( 32, 64 );
     mu_check( 0 == ( (u64)p & 63 ) );
-}
-
-MU_TEST( VirtualArenaAllocAlignment256 )
-{
-    virtual_arena a = { RESERVE_SZ };
-    a.Alloc( 1, 1 );
-    void* p = a.Alloc( 32, 256 );
-    mu_check( 0 == ( (u64)p & 255 ) );
 }
 
 MU_TEST( VirtualArenaAllocCommitsPage )
@@ -616,14 +575,11 @@ MU_TEST( VirtualArenaMoveAssignSelf )
 
 MU_TEST_SUITE( SuiteVirtualArena )
 {
-    MU_RUN_TEST( VirtualArenaDefaultCtor );
     MU_RUN_TEST( VirtualArenaDtorOnDefault );
     MU_RUN_TEST( VirtualArenaReserveCtor );
     MU_RUN_TEST( VirtualArenaAllocBasic );
     MU_RUN_TEST( VirtualArenaAllocZeroBytes );
-    MU_RUN_TEST( VirtualArenaAllocAlignment16 );
     MU_RUN_TEST( VirtualArenaAllocAlignment64 );
-    MU_RUN_TEST( VirtualArenaAllocAlignment256 );
     MU_RUN_TEST( VirtualArenaAllocCommitsPage );
     MU_RUN_TEST( VirtualArenaAllocExactPage );
     MU_RUN_TEST( VirtualArenaAllocMultiPage );

@@ -785,8 +785,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
 	vfs_zip_mem vfs = { *mmappedFile };
 
-	// NOTE: for now we only have gpu_instances data
-	slot_buffer<gpu_instance> instances = { 1'000'000 };
+	stable_stretchy_buffer<gpu_instance> instances = { 1'000'000 };
 
 	bool vfsMounted = false;
 
@@ -853,7 +852,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 				{
 					auto it = meshIdMap.find( node.meshHash );
 					if( std::cend( meshIdMap ) == it ) continue;
-					instances.PushEntry( { .transform = node.toWorld, .meshIdx = it->second } );
+					instances.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
 				}
 			}
 			
