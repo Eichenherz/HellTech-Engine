@@ -10,7 +10,7 @@
 
 #include "test_common.h"
 
-#include <System/sys_mem_arena.h>
+#include <ht_mem_arena.h>
 #include <utility>
 
 // NOTE: longjmp interception globals — extern'd in ht_error.h under HT_TESTS

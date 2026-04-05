@@ -3,9 +3,9 @@
 #ifndef __HT_STERTCHY_BUFFEER_H__
 #define __HT_STERTCHY_BUFFEER_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
-#include "System/sys_mem_arena.h"
+#include "ht_mem_arena.h"
 
 #include <algorithm>
 

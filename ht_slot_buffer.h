@@ -3,7 +3,7 @@
 #ifndef __HT_SLOT_BUFFER_H__
 #define __HT_SLOT_BUFFER_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 #include "ht_stretchy_buffer.h"
 
