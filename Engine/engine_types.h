@@ -36,8 +36,11 @@ struct gpu_mesh
 	alignas( 16 ) vec3	maxAabb;
 	char                padding[ 4 ];
 	desc_hndl32			hMeshletBuffer;
+	u32					meshletCount;
 	desc_hndl32			hVertexBuffer;
+	u32					vertexCount;
 	desc_hndl32			hTriangleBuffer;
+	u32					triangleCount;
 };
 
 // TODO: use a better container
@@ -86,7 +89,7 @@ struct renderer_mesh_components
 	inline mesh_comp_ref operator[]( hndl32_t h )
 	{
 		slots[ h ];
-		// NOTE: if it reaches here we didn't trigger any assert
+		// NOTE: if it reaches here we didn't trigger any assert ( slots[ h ] will assert if it's not valid )
 		gpu_mesh_payload& pl = payloads[ h.slotIdx ];
 		gpu_mesh& meshDesc = descs[ h.slotIdx ];
 		return { .payload = pl, .desc = meshDesc };

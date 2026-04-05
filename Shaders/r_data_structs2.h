@@ -65,9 +65,9 @@ struct view_data
 	float4x4	mainViewProj;
 	float4x4	prevViewProj;
 	float3	    worldPos;
-	float	pad0;
-	float3	camViewDir;
-	float	pad1;
+	float		pad0;
+	float3		camViewDir;
+	float		pad1;
 };
 
 // TODO: compressed coords u8, u16
@@ -283,13 +283,13 @@ void BufferStore( uint buffIdx, T value, uint idx = 0, uint offsetInBytes = 0 )
 	storageBuffers[ buffIdx ].Store<T>( idx * sizeof( T ) + offsetInBytes, value );
 }
 
-template<typename T>
-T BufferAtomicAdd( uint buffIdx, T newValue, uint idx = 0, uint offsetInBytes = 0 )
+//template<typename T>
+uint BufferAtomicAdd( uint buffIdx, uint newValue, uint idx = 0, uint offsetInBytes = 0 )
 {
-	T oldValue;
+	uint oldValue;
 	//if( is_same<T, uint>() || is_same<T, int>() )
 	//{
-		storageBuffers[ buffIdx ].InterlockedAdd( idx * sizeof( T ) + offsetInBytes, newValue, oldValue );
+		storageBuffers[ buffIdx ].InterlockedAdd( idx * sizeof( uint ) + offsetInBytes, newValue, oldValue );
 	//}
 	//else if( is_same<T, uint64_t>() || is_same<T, int64_t>() )
 	//{

@@ -563,7 +563,6 @@ struct debug_draw_passes
 
 
 static vk_buffer globVertexBuff;
-static vk_buffer indexBuff;
 static vk_buffer meshBuff;
 
 static vk_buffer meshletBuff;
@@ -576,15 +575,21 @@ constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
 constexpr char drakPath[] = "Assets/cyberbaron.drak";
 
 
+constexpr u64 MAX_TRIANGLES_IN_SCENE = 1'000'000;
+using index_t = u8;
+
 struct culling_pass
 {
-	vk_buffer instanceOccludedCache;
-	vk_buffer clusterOccludedCache;
-	vk_buffer compactedDrawArgs;
-	vk_buffer drawCmds;
-	vk_buffer drawCount;
-	vk_buffer atomicWgCounter;
-	vk_buffer dispatchIndirect;
+	vk_buffer		instanceOccludedCache;
+	vk_buffer		clusterOccludedCache;
+	vk_buffer		compactedDrawArgs;
+	vk_buffer		drawCmds;
+	vk_buffer		drawCount;
+	vk_buffer		atomicWgCounter;
+	vk_buffer		dispatchIndirect;
+	// NOTE: bc we don't have meshelets or RT we need a global, merged idx buffer, 
+	// fortuantaly we do use meshlets so it's U8 indices
+	vk_buffer       indexBuffer; 
 
 	VkPipeline		compPipeline;
 	VkPipeline      compClusterCullPipe;
@@ -603,21 +608,31 @@ struct culling_pass
 			.name = "Buff_DrawCount",
 			.usageFlags = usgFlags,
 			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } );
+			.usage = buffer_usage::GPU_ONLY 
+		} );
 
 		atomicWgCounter = dc.CreateBuffer( {
 			.name = "Buff_AtomicWgCounter",
-			.usageFlags = 
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-																		 .sizeInBytes = 1 * sizeof( u32 ),
-																		 .usage = buffer_usage::GPU_ONLY } ); 
+			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT 
+			| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			.sizeInBytes = 1 * sizeof( u32 ),
+			.usage = buffer_usage::GPU_ONLY 
+		} ); 
 
 		dispatchIndirect = dc.CreateBuffer( {
 			.name = "Buff_DispatchIndirect",
-			.usageFlags = 
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-																		  .sizeInBytes = 1 * sizeof( dispatch_command ),
-																		  .usage = buffer_usage::GPU_ONLY } );  
+			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT 
+			| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			.sizeInBytes = 1 * sizeof( dispatch_command ),
+			.usage = buffer_usage::GPU_ONLY 
+		} );  
+
+		indexBuffer = dc.CreateBuffer( {
+			.name = "Buff_GlobalIdx",
+			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			.sizeInBytes = 3 * sizeof( index_t ) * MAX_TRIANGLES_IN_SCENE,
+			.usage = buffer_usage::GPU_ONLY 
+		} );
 	}
 
 	void InitSceneDependentData( vk_context& dc, u32 instancesUpperBound, u32 meshletUpperBound )
@@ -1359,7 +1374,7 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 
 		fixed_string<256> nameMeshlets = { "{}_Buff_Meshlets", meshUpload.filepath };
 		fixed_string<256> nameVtx = { "{}_Buff_Vtx", meshUpload.filepath };
-		fixed_string<356> nameTris = { "{}_Buff_Tris", meshUpload.filepath };
+		fixed_string<256> nameTris = { "{}_Buff_Tris", meshUpload.filepath };
 
 		gpu_mesh_payload gpuMeshPayload = {
 			.meshletBuffer = pVkCtx->CreateBuffer( {
@@ -1385,8 +1400,11 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 			.minAabb = mesh.aabbMin,
 			.maxAabb = mesh.aabbMax,
 			.hMeshletBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.meshletBuffer ),
+			.meshletCount = ( u32 ) std::size( mesh.meshlets ),
 			.hVertexBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.vertexBuffer ),
-			.hTriangleBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.triangleBuffer )
+			.vertexCount = ( u32 ) std::size( mesh.vertices ),
+			.hTriangleBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.triangleBuffer ),
+			.triangleCount = ( u32 ) std::size( mesh.triangles )
 		};
 
 		meshesBuff.push_back( { .payload = gpuMeshPayload, .desc = desc, .hSlot = meshUpload.hSlot, 
@@ -1670,8 +1688,8 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 			thisFrameCmdBuffer,
 			gfxMergedPipeline,
 			colorPassInfo,
-			indexBuff,
-			VK_INDEX_TYPE_UINT32,
+			cullingPass.indexBuffer,
+			VK_INDEX_TYPE_UINT8,
 			cullingPass.drawCmds,
 			cullingPass.drawCount,
 			meshletUpperBound,
@@ -1702,8 +1720,8 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 			thisFrameCmdBuffer,
 			gfxMergedPipeline,
 			colorPassInfo,
-			indexBuff,
-			VK_INDEX_TYPE_UINT32,
+			cullingPass.indexBuffer,
+			VK_INDEX_TYPE_UINT8,
 			cullingPass.drawCmds,
 			cullingPass.drawCount,
 			meshletUpperBound,

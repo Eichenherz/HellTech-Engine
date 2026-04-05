@@ -3,9 +3,6 @@
 
 #ifndef __cplusplus
 
-// TODO: culling inspired by Nabla
-// https://github.com/Devsh-Graphics-Programming/Nabla/blob/master/include/nbl/builtin/glsl/utils/culling.glsl
-// TODO: cleanup revisit same in cluster culling
 
 struct frustum_culling_result
 {
@@ -77,6 +74,23 @@ screenspace_aabb ProjectAabbToScreenSapce( float3 aabbMin, float3 aabbMax, float
 
 	screenspace_aabb res = { minXY, maxXY, maxZ };
 	return res;
+}
+
+bool ScreenSpaceAabbVsHiZ( in screenspace_aabb ssAabb, in Texture2D<float4> hizTex, in SamplerState quadMin )
+{
+	uint3 widthHeightMipCount;
+	hizTex.GetDimensions( 0, widthHeightMipCount.x, widthHeightMipCount.y, widthHeightMipCount.z );
+	
+	float2 size = abs( ssAabb.maxXY - ssAabb.minXY ) * float2( widthHeightMipCount.xy );
+	float maxMipLevel = float( widthHeightMipCount.z ) - 1.0f;
+				
+	float chosenMipLevel = min( floor( log2( max( size.x, size.y ) ) ), maxMipLevel );
+			
+	float2 uv = ( ssAabb.maxXY + ssAabb.minXY ) * 0.5f;
+	
+	float sampledDepth = hizTex.SampleLevel( quadMin, uv, chosenMipLevel ).x;
+	
+	return ( sampledDepth <= ssAabb.maxZ );
 }
 
 struct visible_instance

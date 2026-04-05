@@ -5,152 +5,80 @@
 [[vk::push_constant]]
 culling_params pushBlock;
 
-bool ScreenSpaceAabbVsHiZ( in screenspace_aabb ssAabb, in Texture2D<float4> hizTex, in SamplerState quadMin )
-{
-	uint3 widthHeightMipCount;
-	hizTex.GetDimensions( 0, widthHeightMipCount.x, widthHeightMipCount.y, widthHeightMipCount.z );
-	
-	float2 size = abs( ssAabb.maxXY - ssAabb.minXY ) * float2( widthHeightMipCount.xy );
-	float maxMipLevel = float( widthHeightMipCount.z ) - 1.0f;
-				
-	float chosenMipLevel = min( floor( log2( max( size.x, size.y ) ) ), maxMipLevel );
-			
-	float2 uv = ( ssAabb.maxXY + ssAabb.minXY ) * 0.5f;
-	
-	float sampledDepth = hizTex.SampleLevel( quadMin, uv, chosenMipLevel ).x;
-	
-	return ( sampledDepth <= ssAabb.maxZ );
-}
-
-bool GetInstanceVisFromCache( uint cacheBuffIdx, uint instID )
-{
-	uint bucketId = instID / 32;
-	uint entryID = instID & 31;
-	
-	uint visBucket = BufferLoad<uint>( cacheBuffIdx, bucketId );
-	
-	return visBucket & entryID;
-}
-
-void SetInstanceVisFromCache( uint cacheBuffIdx, uint instID )
-{
-	uint bucketId = instID / 32;
-	uint entryID = instID & 31;
-	
-	uint old;
-	// NOTE: bc we can't use ResourceHeap yet we gotta do this BS
-	storageBuffers[ cacheBuffIdx ].InterlockedOr( bucketId, entryID, old );
-}
-
-groupshared uint ldsGroupOffset;
-groupshared uint ldsGroupCounter;
 
 [numthreads(32, 1, 1)]
 [shader("compute")]
 void DrawCullCsMain( uint3 globalDispatchID : SV_DispatchThreadID, uint groupFlatIdx : SV_GroupIndex ) 
 {
-	if( groupFlatIdx == 0 )
+	if( globalDispatchID.x >= pushBlock.instCount )
 	{
-		ldsGroupOffset = 0;
+		return;
 	}
-	GroupMemoryBarrierWithGroupSync();
-	
-	bool isValidInstanceIdx = globalDispatchID.x < pushBlock.instCount;
-	bool testVisibility = true;
-	if( isValidInstanceIdx && !pushBlock.isLatePass )
+
+	bool instanceIsOccluded = false;
+	if( pushBlock.isLatePass )
 	{
-		testVisibility = GetInstanceVisFromCache( pushBlock.visInstCacheIdx, globalDispatchID.x );
+		instanceIsOccluded = BufferLoad<uint>( pushBlock.visInstCacheIdx, globalDispatchID.x );
 	}
 	
+	if( pushBlock.isLatePass && !instanceIsOccluded )
+	{
+		return;
+	}
+
+	instance_desc currentInst = BufferLoad<instance_desc>( pushBlock.instDescIdx, globalDispatchID.x );
+	gpu_mesh currentMesh = BufferLoad<gpu_mesh>( pushBlock.meshDescIdx, currentInst.meshIdx );
+		
+	float3 aabbMin = currentMesh.minAabb;
+	float3 aabbMax = currentMesh.maxAabb;
+		
+	global_data cam = BufferLoad<global_data>( pushBlock.camIdx );
+	
+	bool testOcclusion = !pushBlock.isLatePass ? true : instanceIsOccluded;;
 	bool visible = false;
-	instance_desc currentInst;
-	mesh_desc currentMesh;
-	if( isValidInstanceIdx && testVisibility )
+	if( !pushBlock.isLatePass )
 	{
-		currentInst = BufferLoad<instance_desc>( pushBlock.instDescIdx, globalDispatchID.x );
-		currentMesh = BufferLoad<mesh_desc>( pushBlock.meshDescIdx, currentInst.meshIdx );
-		
-		float3 center = currentMesh.center;
-		float3 extent = currentMesh.extent;
-		
-		float3 aabbMin = center - extent;
-		float3 aabbMax = center + extent;
-		
-		global_data cam = BufferLoad<global_data>( pushBlock.camIdx );
+		// NOTE: 1st pass runs frustum culling with current instTransform and current cam
 		float4x4 mvp = mul( currentInst.localToWorld, mul( cam.mainView, cam.proj ) );
-			
 		frustum_culling_result frustumCullRes = FrustumCulling( aabbMin, aabbMax, mvp );
-		
+		testOcclusion &&= !frustumCullRes.intersectsZNear;
+		// NOTE: we might be visible but if we intersect the znear we skip occlusion
 		visible = frustumCullRes.visible;
-		if( pushBlock.isLatePass && ( visible && !frustumCullRes.intersectsZNear ) )
-		{
-			screenspace_aabb ssAabb = ProjectAabbToScreenSapce( aabbMin, aabbMax, mvp );
-				
-			Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
-			SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
-			
-			visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
-			if( visible )
-			{
-				SetInstanceVisFromCache( pushBlock.visInstCacheIdx, globalDispatchID.x );
-			}
-		}
 	}
 	
+	if( visible && testOcclusion )
+	{
+		// NOTE: 1st pass uses prev instTransform prevCam and prev HZB
+		float4x4 view = pushBlock.isLatePass ? cam.mainView : cam.prevView;
+		float4x4 mvpOcclusion = mul( currentInst.localToWorld, mul( view, cam.proj ) );
+		screenspace_aabb ssAabb = ProjectAabbToScreenSapce( aabbMin, aabbMax, mvpOcclusion );
+				
+		Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
+		SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
+			
+		visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
+		
+	}
+	
+	if( !pushBlock.isLatePass )
+	{
+		BufferStore<uint>( pushBlock.visInstCacheIdx, visible ? 1 : 0, globalDispatchID.x );
+	}
+
 	uint lanesVisible = WaveActiveCountBits( visible );
 	uint offsetForWave = 0;
 	if( lanesVisible > 0 )
 	{
 		if( WaveIsFirstLane() )
 		{
-			InterlockedAdd( ldsGroupOffset, lanesVisible, offsetForWave );
+			offsetForWave = BufferAtomicAdd( pushBlock.visibleItemsCount, lanesVisible );
 		}
-		// NOTE: assuming IDs match for WaveIsFirstLane and WaveReadLaneFirst
-		offsetForWave = WaveReadLaneFirst( offsetForWave );
 	}
 
-	GroupMemoryBarrierWithGroupSync();
-	if( groupFlatIdx == 0 )
-	{
-		uint offsetForGroup;
-		storageBuffers[ pushBlock.drawCounterIdx ].InterlockedAdd( 0, ldsGroupOffset, offsetForGroup );
-		ldsGroupOffset = offsetForGroup;
-	}
-
-	DeviceMemoryBarrier();
-	GroupMemoryBarrierWithGroupSync();
-	uint activeLaneOffset = WavePrefixCountBits( lanesVisible );
-	uint slotIdx = WaveReadLaneFirst( offsetForWave + ldsGroupOffset ) + activeLaneOffset;
+	uint slotIdx = WaveReadLaneFirst( offsetForWave );
 	if( visible )
 	{
-		// TODO: use meshlet lodding
-		mesh_lod lod = currentMesh.lods[ 0 ];
-		draw_command cmd;
-		cmd.drawIdx = globalDispatchID.x; // NOTE: instance ID !!!
-		cmd.indexCount = lod.indexCount;
-		cmd.instanceCount = 1;
-		cmd.firstIndex = lod.indexOffset;
-		cmd.vertexOffset = currentMesh.vertexOffset;
-		cmd.firstInstance = 0;
-		storageBuffers[ pushBlock.drawBuffIdx ].Store( slotIdx * sizeof( draw_command ), cmd );
-	}
-
-	if( groupFlatIdx == 0 )
-	{
-		storageBuffers[ pushBlock.atomicWgCounterIdx ].InterlockedAdd( 0, 1, ldsGroupCounter );
-	}
-
-	GroupMemoryBarrierWithGroupSync();
-	if( ldsGroupCounter != ( WORK_GROUP_COUNT.x - 1 ) )
-	{
-		return;
-	}
-
-	if( groupFlatIdx == 0 )
-	{
-		//uint mletsExpDispatch = ( BufferLoad<uint>( pushBlock.drawCounterIdx ) + 3 ) / 4;
-		//storageBuffers[ pushBlock.dispatchCmdIdx ].Store( 0, dispatch_command{ mletsExpDispatch, 1, 1 } );
-		// NOTE: reset atomicCounter
-		storageBuffers[ pushBlock.atomicWgCounterIdx ].Store( 0, 0 );
+		// NOTE: bc wer'e lazy, we're gonna use the same struct 
+		BufferStore<gpu_mesh>( pushBlock.visibleItems, currentMesh, slotIdx );
 	}
 }

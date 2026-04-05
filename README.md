@@ -9,6 +9,13 @@ An WIP exploration of the modern rendering landscape with Vulkan 1.2+ and DX12 o
 - dedicated GPU ( ?, prefferably NV )
 
 
+### HtLib SUBTREE :
+- Remote: https://github.com/Eichenherz/HtLib.git → `HtLib/`
+- Pull upstream changes: `git htlib-pull`
+- Push local changes back: `git htlib-push`
+- Aliases are local to this repo (`.git/config`)
+
+
 ### DEPENDENCIES :
 - [meshoptimizer](https://github.com/zeux/meshoptimizer)
 - [cgltf](https://github.com/jkuhlmann/cgltf)

@@ -34,6 +34,49 @@ namespace fs = std::filesystem;
 
 #include "hp_types_internal.h"
 
+template<typename TriIdx, typename PrimIdx>
+inline auto PermuteTrianglesByPrimitiveRemap( const std::vector<TriIdx>& oldIdx, const std::vector<PrimIdx>& primitiveIndices )
+{
+	u64 triangleCount = std::size( primitiveIndices );
+	HP_ASSERT( ( triangleCount * 3 ) == std::size( oldIdx ) );
+
+	std::vector<TriIdx> newIdx( std::size( oldIdx ) );
+	for( u64 ti = 0; ti < triangleCount; ++ti )
+	{
+		u64 oldTi = primitiveIndices[ ti ];
+		u64 src = 3ull * oldTi;
+		u64 dst = 3ull * ti;
+
+		newIdx[ dst + 0 ] = oldIdx[ src + 0 ];
+		newIdx[ dst + 1 ] = oldIdx[ src + 1 ];
+		newIdx[ dst + 2 ] = oldIdx[ src + 2 ];
+	}
+
+	return newIdx;
+}
+
+template<typename Idx>
+inline auto BuildVertexRemapFromPermutedIndices( const std::vector<Idx>& permutedIndices, u64 vtxCount )
+{
+	constexpr Idx invalidIdx = Idx{ INVALID_IDX };
+
+	HP_ASSERT( invalidIdx >= vtxCount );
+
+	std::vector<Idx> remap( vtxCount, invalidIdx );
+	u32 next = 0;
+
+	for( Idx idx : permutedIndices )
+	{
+		Idx oldV = idx;
+		if( invalidIdx == remap[ oldV ] )
+		{
+			remap[ oldV ] = next++;
+		}
+	}
+
+	return remap;
+}
+
 raw_mesh ValidateAndNormalizeRawMesh( const raw_mesh& inRawMesh )
 {
 	HT_ASSERT( std::size( inRawMesh.indices ) != 0 );
