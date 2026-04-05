@@ -28,10 +28,10 @@ inline constexpr VkDescriptorType VkDescBindingToType( vk_desc_binding_t binding
 	using enum vk_desc_binding_t;
 	switch( binding )
 	{
-	case SAMPLER: return VK_DESCRIPTOR_TYPE_SAMPLER;
-	case STORAGE_BUFFER: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	case STORAGE_IMAGE: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	case SAMPLED_IMAGE: return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+	case SAMPLER:			return VK_DESCRIPTOR_TYPE_SAMPLER;
+	case STORAGE_BUFFER:	return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	case STORAGE_IMAGE:		return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	case SAMPLED_IMAGE:		return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
 	}
 	return VK_DESCRIPTOR_TYPE_MAX_ENUM;
@@ -42,10 +42,10 @@ inline constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
 	using enum vk_desc_binding_t;
 	switch( type )
 	{
-	case VK_DESCRIPTOR_TYPE_SAMPLER: return SAMPLER;
+	case VK_DESCRIPTOR_TYPE_SAMPLER:		return SAMPLER;
 	case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return STORAGE_BUFFER;
-	case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return STORAGE_IMAGE;
-	case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return SAMPLED_IMAGE;
+	case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:	return STORAGE_IMAGE;
+	case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:	return SAMPLED_IMAGE;
 	default: HT_ASSERT( 0 && "Wrong descriptor type" ); 
 	}
 	return COUNT;
@@ -122,7 +122,7 @@ inline VkFormat VkFromatFromDdsDxgi( dds::DXGI_FORMAT fmt )
     case dds::DXGI_FORMAT_BC6H_SF16:                return VK_FORMAT_BC6H_SFLOAT_BLOCK;
     case dds::DXGI_FORMAT_BC7_UNORM:                return VK_FORMAT_BC7_UNORM_BLOCK;
     case dds::DXGI_FORMAT_BC7_UNORM_SRGB:           return VK_FORMAT_BC7_SRGB_BLOCK;
-    default:                                         return VK_FORMAT_UNDEFINED;
+    default:                                        return VK_FORMAT_UNDEFINED;
     }
 }
 

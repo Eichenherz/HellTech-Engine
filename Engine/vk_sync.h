@@ -169,16 +169,16 @@ inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
 	u32								dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
 ) {
 	return {
-		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-		.srcStageMask = srcStageMask,
-		.srcAccessMask = srcAccessMask,
-		.dstStageMask = dstStageMask,
-		.dstAccessMask = dstAccessMask,
-		.srcQueueFamilyIndex = srcQueueFamilyIndex,
-		.dstQueueFamilyIndex = dstQueueFamilyIndex,
-		.buffer = buff,
-		.offset = offset,
-		.size = size
+		.sType					= VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+		.srcStageMask			= srcStageMask,
+		.srcAccessMask			= srcAccessMask,
+		.dstStageMask			= dstStageMask,
+		.dstAccessMask			= dstAccessMask,
+		.srcQueueFamilyIndex	= srcQueueFamilyIndex,
+		.dstQueueFamilyIndex	= dstQueueFamilyIndex,
+		.buffer					= buff,
+		.offset					= offset,
+		.size					= size
 	};
 }
 
@@ -196,25 +196,25 @@ inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
 
 
 inline VkImageMemoryBarrier2 VkMakeImageBarrier(
-	const vk_image& img,
-	const vk_access_stage_masks& srcSync,
-	const vk_access_stage_masks& dstSync,
-	VkImageLayout srcLayout,
-	VkImageLayout dstLayout,
-	const VkImageSubresourceRange& subResource
+	const vk_image&					img,
+	const vk_access_stage_masks&	srcSync,
+	const vk_access_stage_masks&	dstSync,
+	VkImageLayout					srcLayout,
+	VkImageLayout					dstLayout,
+	const VkImageSubresourceRange&	subResource
 ) {
 	return {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-		.srcStageMask = srcSync.stageFlags,
-		.srcAccessMask = srcSync.accessFlags,
-		.dstStageMask = dstSync.stageFlags,
-		.dstAccessMask = dstSync.accessFlags,
-		.oldLayout = srcLayout,
-		.newLayout = dstLayout,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = img.hndl,
-		.subresourceRange = subResource
+		.sType					= VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+		.srcStageMask			= srcSync.stageFlags,
+		.srcAccessMask			= srcSync.accessFlags,
+		.dstStageMask			= dstSync.stageFlags,
+		.dstAccessMask			= dstSync.accessFlags,
+		.oldLayout				= srcLayout,
+		.newLayout				= dstLayout,
+		.srcQueueFamilyIndex	= VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex	= VK_QUEUE_FAMILY_IGNORED,
+		.image					= img.hndl,
+		.subresourceRange		= subResource
 	};
 }
 
@@ -222,16 +222,19 @@ inline VkImageMemoryBarrier2 VkMakeImageBarrier(
 using vk_rsc_hndl64 = u64;
 struct vk_rsc_state_tracker
 {
-	ankerl::unordered_dense::map<vk_rsc_hndl64, vk_rsc_sync_state> resourceStateTracker;
-	fixed_vector<VkBufferMemoryBarrier2, 16> buffBarrierCache;
-	fixed_vector<VkImageMemoryBarrier2, 16> imgBarrierCache;
+	template <class Key, class T>
+	using unordered_dense = ankerl::unordered_dense::map<Key, T>;
+
+	unordered_dense<vk_rsc_hndl64, vk_rsc_sync_state>	resourceStateTracker;
+	fixed_vector<VkBufferMemoryBarrier2, 16>			buffBarrierCache;
+	fixed_vector<VkImageMemoryBarrier2, 16>				imgBarrierCache;
 
 	// NOTE: buffers will always be in VK_IMAGE_LAYOUT_MAX_ENUM aka INVALID
 	void UseBuffer( 
-		const vk_buffer& rsc, 
-		const vk_access_stage_masks& dstMasks, 
-		VkDeviceSize offset = 0, 
-		VkDeviceSize size = VK_WHOLE_SIZE
+		const vk_buffer&				rsc,
+		const vk_access_stage_masks&	dstMasks,
+		VkDeviceSize					offset = 0,
+		VkDeviceSize					size = VK_WHOLE_SIZE
 	) {
 		auto it = resourceStateTracker.find( ( u64 ) rsc.hndl );
 		if( std::cend( resourceStateTracker ) == it )
@@ -285,10 +288,10 @@ struct vk_rsc_state_tracker
 	}
 
 	void UseImage( 
-		const vk_image& rsc, 
-		const vk_access_stage_masks& dstMasks, 
-		VkImageLayout dstLayout, 
-		const VkImageSubresourceRange& subResource 
+		const vk_image&					rsc,
+		const vk_access_stage_masks&	dstMasks,
+		VkImageLayout					dstLayout,
+		const VkImageSubresourceRange&	subResource
 	) {
 		auto it = resourceStateTracker.find( ( u64 ) rsc.hndl );
 		if( std::cend( resourceStateTracker ) == it )

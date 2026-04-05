@@ -25,7 +25,7 @@
 inline std::string_view VkResErrorString( VkResult errorCode )
 {
 	switch( errorCode )			{
-#define VK_RES_STR(r) case VK_ ##r: return #r
+#define VK_RES_STR( r ) case VK_ ##r: return #r
 		VK_RES_STR( NOT_READY );
 		VK_RES_STR( TIMEOUT );
 		VK_RES_STR( EVENT_SET );
@@ -79,35 +79,35 @@ do{																						\
 template<typename VKH>
 constexpr VkObjectType VkGetObjTypeFromHandle()
 {
-	if( std::is_same<VKH, VkInstance>::value ) return VK_OBJECT_TYPE_INSTANCE;
-	if( std::is_same<VKH, VkPhysicalDevice>::value ) return VK_OBJECT_TYPE_PHYSICAL_DEVICE;
-	if( std::is_same<VKH, VkDevice>::value ) return VK_OBJECT_TYPE_DEVICE;
-	if( std::is_same<VKH, VkSemaphore>::value ) return VK_OBJECT_TYPE_SEMAPHORE;
-	if( std::is_same<VKH, VkCommandBuffer>::value ) return VK_OBJECT_TYPE_COMMAND_BUFFER;
-	if( std::is_same<VKH, VkFence>::value ) return VK_OBJECT_TYPE_FENCE;
-	if( std::is_same<VKH, VkDeviceMemory>::value ) return VK_OBJECT_TYPE_DEVICE_MEMORY;
-	if( std::is_same<VKH, VkBuffer>::value ) return VK_OBJECT_TYPE_BUFFER;
-	if( std::is_same<VKH, VkImage>::value ) return VK_OBJECT_TYPE_IMAGE;
-	if( std::is_same<VKH, VkEvent>::value ) return VK_OBJECT_TYPE_EVENT;
-	if( std::is_same<VKH, VkQueryPool>::value ) return VK_OBJECT_TYPE_QUERY_POOL;
-	if( std::is_same<VKH, VkBufferView>::value ) return VK_OBJECT_TYPE_BUFFER_VIEW;
-	if( std::is_same<VKH, VkImageView>::value ) return VK_OBJECT_TYPE_IMAGE_VIEW;
-	if( std::is_same<VKH, VkShaderModule>::value ) return VK_OBJECT_TYPE_SHADER_MODULE;
-	if( std::is_same<VKH, VkPipelineCache>::value ) return VK_OBJECT_TYPE_PIPELINE_CACHE;
-	if( std::is_same<VKH, VkPipelineLayout>::value ) return VK_OBJECT_TYPE_PIPELINE_LAYOUT;
-	if( std::is_same<VKH, VkRenderPass>::value ) return VK_OBJECT_TYPE_RENDER_PASS;
-	if( std::is_same<VKH, VkPipeline>::value ) return VK_OBJECT_TYPE_PIPELINE;
-	if( std::is_same<VKH, VkDescriptorSetLayout>::value ) return VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT;
-	if( std::is_same<VKH, VkSampler>::value ) return VK_OBJECT_TYPE_SAMPLER;
-	if( std::is_same<VKH, VkDescriptorPool>::value ) return VK_OBJECT_TYPE_DESCRIPTOR_POOL;
-	if( std::is_same<VKH, VkDescriptorSet>::value ) return VK_OBJECT_TYPE_DESCRIPTOR_SET;
-	if( std::is_same<VKH, VkFramebuffer>::value ) return VK_OBJECT_TYPE_FRAMEBUFFER;
-	if( std::is_same<VKH, VkCommandPool>::value ) return VK_OBJECT_TYPE_COMMAND_POOL;
-	if( std::is_same<VKH, VkSamplerYcbcrConversion>::value ) return VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION;
-	if( std::is_same<VKH, VkDescriptorUpdateTemplate>::value ) return VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE;
-	if( std::is_same<VKH, VkSurfaceKHR>::value ) return VK_OBJECT_TYPE_SURFACE_KHR;
-	if( std::is_same<VKH, VkSwapchainKHR>::value ) return VK_OBJECT_TYPE_SURFACE_KHR;
-	if( std::is_same<VKH, VkSurfaceKHR>::value ) return VK_OBJECT_TYPE_SWAPCHAIN_KHR;
+	if( std::is_same_v<VKH, VkInstance> )						return VK_OBJECT_TYPE_INSTANCE;
+	if( std::is_same_v<VKH, VkPhysicalDevice> )					return VK_OBJECT_TYPE_PHYSICAL_DEVICE;
+	if( std::is_same_v<VKH, VkDevice> )							return VK_OBJECT_TYPE_DEVICE;
+	if( std::is_same_v<VKH, VkSemaphore> )						return VK_OBJECT_TYPE_SEMAPHORE;
+	if( std::is_same_v<VKH, VkCommandBuffer> )					return VK_OBJECT_TYPE_COMMAND_BUFFER;
+	if( std::is_same_v<VKH, VkFence> )							return VK_OBJECT_TYPE_FENCE;
+	if( std::is_same_v<VKH, VkDeviceMemory> )					return VK_OBJECT_TYPE_DEVICE_MEMORY;
+	if( std::is_same_v<VKH, VkBuffer> )	 						return VK_OBJECT_TYPE_BUFFER;
+	if( std::is_same_v<VKH, VkImage> )	 						return VK_OBJECT_TYPE_IMAGE;
+	if( std::is_same_v<VKH, VkEvent> )	 						return VK_OBJECT_TYPE_EVENT;
+	if( std::is_same_v<VKH, VkQueryPool> )	 					return VK_OBJECT_TYPE_QUERY_POOL;
+	if( std::is_same_v<VKH, VkBufferView> )	 					return VK_OBJECT_TYPE_BUFFER_VIEW;
+	if( std::is_same_v<VKH, VkImageView> )	 					return VK_OBJECT_TYPE_IMAGE_VIEW;
+	if( std::is_same_v<VKH, VkShaderModule> )	 				return VK_OBJECT_TYPE_SHADER_MODULE;
+	if( std::is_same_v<VKH, VkPipelineCache> )	 				return VK_OBJECT_TYPE_PIPELINE_CACHE;
+	if( std::is_same_v<VKH, VkPipelineLayout> )	 				return VK_OBJECT_TYPE_PIPELINE_LAYOUT;
+	if( std::is_same_v<VKH, VkRenderPass> )						return VK_OBJECT_TYPE_RENDER_PASS;
+	if( std::is_same_v<VKH, VkPipeline> )						return VK_OBJECT_TYPE_PIPELINE;
+	if( std::is_same_v<VKH, VkDescriptorSetLayout> )			return VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT;
+	if( std::is_same_v<VKH, VkSampler> )						return VK_OBJECT_TYPE_SAMPLER;
+	if( std::is_same_v<VKH, VkDescriptorPool> )	 				return VK_OBJECT_TYPE_DESCRIPTOR_POOL;
+	if( std::is_same_v<VKH, VkDescriptorSet> )	 				return VK_OBJECT_TYPE_DESCRIPTOR_SET;
+	if( std::is_same_v<VKH, VkFramebuffer> )	 				return VK_OBJECT_TYPE_FRAMEBUFFER;
+	if( std::is_same_v<VKH, VkCommandPool> )	 				return VK_OBJECT_TYPE_COMMAND_POOL;
+	if( std::is_same_v<VKH, VkSamplerYcbcrConversion> )			return VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION;
+	if( std::is_same_v<VKH, VkDescriptorUpdateTemplate> )		return VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE;
+	if( std::is_same_v<VKH, VkSurfaceKHR> )						return VK_OBJECT_TYPE_SURFACE_KHR;
+	if( std::is_same_v<VKH, VkSwapchainKHR> )					return VK_OBJECT_TYPE_SURFACE_KHR;
+	if( std::is_same_v<VKH, VkSurfaceKHR> )						return VK_OBJECT_TYPE_SWAPCHAIN_KHR;
 
 	HT_ASSERT( 0 );
 	return VK_OBJECT_TYPE_UNKNOWN;
@@ -118,10 +118,10 @@ inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
 {
 	static_assert( sizeof( vkHandle ) == sizeof( u64 ) );
 	VkDebugUtilsObjectNameInfoEXT nameInfo = { 
-		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
-		.objectType = VkGetObjTypeFromHandle<VKH>(),
-		.objectHandle = ( u64 ) vkHandle,
-		.pObjectName = name
+		.sType			= VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+		.objectType		= VkGetObjTypeFromHandle<VKH>(),
+		.objectHandle	= ( u64 ) vkHandle,
+		.pObjectName	= name
 	};
 
 	VK_CHECK( vkSetDebugUtilsObjectNameEXT( vkDevice, &nameInfo ) );

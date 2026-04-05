@@ -70,19 +70,19 @@ enum render_target_op : u32
 };
 
 // TODO: enforce some clearOp ---> clearVals params correctness ?
-inline static VkRenderingAttachmentInfo VkMakeAttachemntInfo(
-	VkImageView view,
-	VkAttachmentLoadOp       loadOp,
-	VkAttachmentStoreOp      storeOp,
-	VkClearValue             clearValue
+inline static VkRenderingAttachmentInfo VkMakeAttachmentInfo(
+	VkImageView				view,
+	VkAttachmentLoadOp      loadOp,
+	VkAttachmentStoreOp     storeOp,
+	VkClearValue            clearValue
 ) {
 	return {
-		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-		.imageView = view,
-		.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-		.loadOp = loadOp,
-		.storeOp = storeOp,
-		.clearValue = ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
+		.sType			= VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+		.imageView		= view,
+		.imageLayout	= VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+		.loadOp			= loadOp,
+		.storeOp		= storeOp,
+		.clearValue		= ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
 	};
 }
 
@@ -177,11 +177,11 @@ struct imgui_pass
 
 	// NOTE: it's mostly inspired by the official backend code
 	void DrawUiPass(
-		vk_context& vkCtx,
+		vk_context&		vkCtx,
 		VkCommandBuffer cmdBuff,
 		const vk_image& dstTarget,
-		u64 frameIdx,
-		u64 frameInFlightIdx
+		u64				frameIdx,
+		u64				frameInFlightIdx
 	) {
 		HT_ASSERT( frameInFlightIdx < vtx.capacity() );
 		HT_ASSERT( frameInFlightIdx < idx.capacity() );
@@ -248,7 +248,7 @@ struct imgui_pass
 		VkViewport uiViewport = { 0, 0, ( float ) dstTarget.width, ( float ) dstTarget.height, 0, 1.0f };
 		vkCmdSetViewport( cmdBuff, 0, 1, &uiViewport );
 
-		VkRenderingAttachmentInfo dstTargetAttachmentInfo = VkMakeAttachemntInfo( 
+		VkRenderingAttachmentInfo dstTargetAttachmentInfo = VkMakeAttachmentInfo(
 			dstTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 		VkRenderingInfo renderInfo = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
@@ -405,11 +405,11 @@ imgui_pass MakeImguiPass( vk_context& dc, VkFormat colDstFormat )
 		shaderStages, dynamicStates, &colDstFormat, 1, VK_FORMAT_UNDEFINED, guiState, pipelineLayout );
 
 	return {
-		.fontSampler = fontSampler,
-		.descSetLayout = descSetLayout,
+		.fontSampler	= fontSampler,
+		.descSetLayout	= descSetLayout,
 		.pipelineLayout = pipelineLayout,
-		.descTemplate = descTemplate,
-		.pipeline = pipeline
+		.descTemplate	= descTemplate,
+		.pipeline		= pipeline
 	};
 }
 
@@ -425,6 +425,7 @@ constexpr const char* ToString( debug_draw_type t )
 	{
 	case debug_draw_type::LINE:     return "LINE";
 	case debug_draw_type::TRIANGLE: return "TRIANGLE";
+		default: break;
 	}
 	return "UNKNOWN";
 }
@@ -570,9 +571,6 @@ static vk_buffer meshletBuff;
 static vk_buffer materialsBuff;
 static vk_buffer instDescBuff;
 static vk_buffer lightsBuff;
-
-constexpr char glbPath[] = "D:\\3d models\\cyberbaron\\cyberbaron.glb";
-constexpr char drakPath[] = "Assets/cyberbaron.drak";
 
 
 constexpr u64 MAX_TRIANGLES_IN_SCENE = 1'000'000;
@@ -937,10 +935,10 @@ struct depth_pyramid_pass
 	}
 
 	void Execute( 
-		vk_command_buffer& cmdBuff, 
-		vk_rsc_state_tracker& rscTracker, 
-		const vk_image& depthTarget, 
-		desc_hndl32 depthIdx 
+		vk_command_buffer&		cmdBuff,
+		vk_rsc_state_tracker&	rscTracker,
+		const vk_image&			depthTarget,
+		desc_hndl32				depthIdx
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "HiZ Multi Pass", {} );
 
@@ -1042,16 +1040,16 @@ DrawIndirectPass(
 
 inline static void
 DrawIndexedIndirectMerged(
-	vk_command_buffer		cmdBuff,
-	VkPipeline	            vkPipeline,
-	const vk_rendering_info& renderingInfo,
-	const vk_buffer&      indexBuff,
-	VkIndexType           indexType,
-	const vk_buffer&      drawCmds,
-	const vk_buffer&      drawCount,
-	u32 maxDrawCount,
-	const void* pPushData,
-	u32 pushDataSize
+	vk_command_buffer			cmdBuff,
+	VkPipeline					vkPipeline,
+	const vk_rendering_info&	renderingInfo,
+	const vk_buffer&      		indexBuff,
+	VkIndexType           		indexType,
+	const vk_buffer&      		drawCmds,
+	const vk_buffer&      		drawCount,
+	u32							maxDrawCount,
+	const void*					pPushData,
+	u32							pushDataSize
 ) {
 	vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Draw Indexed Indirect Pass", {} );
 
@@ -1072,22 +1070,22 @@ DrawIndexedIndirectMerged(
 
 struct renderer_geometry
 {
-	std::vector<gpu_mesh_payload> gpuMeshesPayload;
-	std::vector<gpu_mesh> gpuMeshes; // NOTE: matches 1:1 the above buffers
+	std::vector<gpu_mesh_payload>	gpuMeshesPayload;
+	std::vector<gpu_mesh>			gpuMeshes; // NOTE: matches 1:1 the above buffers
 
-	std::vector<vk_image> textures;
+	std::vector<vk_image>			textures;
 
-	vk_buffer instanceBuffer;
+	vk_buffer						instanceBuffer;
 
-	vk_buffer hLights;
+	vk_buffer						hLights;
 
-	desc_hndl32 instBuffDesc;
+	desc_hndl32						instBuffDesc;
 	
-	desc_hndl32 lightsDesc;
+	desc_hndl32						lightsDesc;
 
 	// NOTE: we never deallocate samplers 
-	std::vector<VkSampler> samplers;
-	std::vector<desc_hndl32> hSamplers;
+	std::vector<VkSampler>			samplers;
+	std::vector<desc_hndl32>		hSamplers;
 };
 
 struct virtual_frame
@@ -1126,7 +1124,7 @@ struct virtual_frame
 		gpuMeshTableDesc = vkCtx.AllocDescriptor( gpuMeshTable );
 
 		constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( gpu_instance );
-		fixed_string<64> instName = { "Buff_VirtualFrame_Insances{}", fifIdx };
+		fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
 		gpuInstances = vkCtx.CreateBuffer( { .name = std::data( instName ), .usageFlags = usg, 
 			.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
 		instDesc = vkCtx.AllocDescriptor( gpuInstances );
@@ -1175,13 +1173,14 @@ struct render_context final : renderer_interface
 
 	u64											vFrameIdx = 0;
 
+	VkSampler									pbrSampler;
+	desc_hndl32									pbrSamplerIdx;
+
 	desc_hndl32									colSrv;
 	desc_hndl32									depthSrv;
 
-	const u8									framesInFlight = 2;
-	
-	VkSampler									pbrSampler;
-	desc_hndl32									pbrSamplerIdx;
+	const u32									framesInFlight = 2;
+
 
 	// TODO: will disappear when we have all the vbuffer, gbuffer and so forth passes
 	void InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height );
@@ -1588,7 +1587,7 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	HT_ASSERT( BYTE_COUNT( frameData.views ) == thisVFrame.viewData.sizeInBytes );
 	std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accesesd anyways
+	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accessed anyways
 	HT_ASSERT( BYTE_COUNT( meshTable.descs ) <= thisVFrame.gpuMeshTable.sizeInBytes );
 	std::memcpy( thisVFrame.gpuMeshTable.hostVisible, std::data( meshTable.descs ), BYTE_COUNT( meshTable.descs ) );
 
@@ -1635,10 +1634,10 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	u32 scImgIdx = pVkCtx->AcquireNextSwapchainImageBlocking( thisVFrame.canGetImgSema );
 	const vk_swapchain_image& scImg = pVkCtx->scImgs[ scImgIdx ];
 
-	auto depthWrite = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
-	auto depthRead = VkMakeAttachemntInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
-	auto colorWrite = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
-	auto colorRead = VkMakeAttachemntInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
+	VkRenderingAttachmentInfo depthWrite = VkMakeAttachmentInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
+	VkRenderingAttachmentInfo depthRead = VkMakeAttachmentInfo( depthTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
+	VkRenderingAttachmentInfo colorWrite = VkMakeAttachmentInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, {} );
+	VkRenderingAttachmentInfo colorRead = VkMakeAttachmentInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} );
 
 	VkViewport viewport = VkGetViewport( colorTarget.width, colorTarget.height );
 	VkRect2D scissor = VkGetScissor( colorTarget.width, colorTarget.height );

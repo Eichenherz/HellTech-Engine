@@ -115,21 +115,21 @@ inline VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
 __forceinline VkImageSubresourceRange VkFullResource( const vk_image& img ) 
 {
 	return {
-		.aspectMask = VkSelectAspectMaskFromFormat( img.format ),
-		.baseMipLevel = 0,
-		.levelCount = VK_REMAINING_MIP_LEVELS,
+		.aspectMask		= VkSelectAspectMaskFromFormat( img.format ),
+		.baseMipLevel	= 0,
+		.levelCount		= VK_REMAINING_MIP_LEVELS,
 		.baseArrayLayer = 0,
-		.layerCount = VK_REMAINING_ARRAY_LAYERS
+		.layerCount		= VK_REMAINING_ARRAY_LAYERS
 	};
 }
 
 __forceinline VkImageSubresourceLayers VkFullResourceLayers( const vk_image& img ) 
 {
 	return {
-		.aspectMask = VkSelectAspectMaskFromFormat( img.format ),
-		.mipLevel = 0,
+		.aspectMask		= VkSelectAspectMaskFromFormat( img.format ),
+		.mipLevel		= 0,
 		.baseArrayLayer = 0,
-		.layerCount = VK_REMAINING_ARRAY_LAYERS
+		.layerCount		= VK_REMAINING_ARRAY_LAYERS
 	};
 }
 
@@ -146,17 +146,17 @@ VkMakeImgView(
 ){
 	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( imgFormat );
 	VkImageViewCreateInfo viewInfo = { 
-		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-		.image = vkImg,
-		.viewType = imgViewType,
-		.format = imgFormat,
-		.subresourceRange = {
-			.aspectMask = aspectFlags,
-			.baseMipLevel = mipLevel,
-			.levelCount = levelCount,
+		.sType				= VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image				= vkImg,
+		.viewType			= imgViewType,
+		.format				= imgFormat,
+		.subresourceRange	= {
+			.aspectMask		= aspectFlags,
+			.baseMipLevel	= mipLevel,
+			.levelCount		= levelCount,
 			.baseArrayLayer = arrayLayer,
-			.layerCount = layerCount,
-	},
+			.layerCount		= layerCount,
+		},
 	};
 
 	VkImageView view;
@@ -170,11 +170,11 @@ struct vk_descriptor_info
 {
 	union
 	{
-		VkDescriptorBufferInfo buff;
-		VkDescriptorImageInfo img;
+		VkDescriptorBufferInfo	buff;
+		VkDescriptorImageInfo	img;
 	};
-	VkDescriptorType descriptorType;
-	vk_resource_type rscType;
+	VkDescriptorType			descriptorType;
+	vk_resource_type			rscType;
 
 	vk_descriptor_info() = default;
 	vk_descriptor_info( const vk_buffer& vkBuff ) : buff{ vkBuff.hndl, 0, vkBuff.sizeInBytes }
@@ -210,16 +210,16 @@ struct vk_descriptor_info
 static_assert( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE == u64( u16( -1 ) ) );
 struct desc_hndl32
 {
-	u32 slot : 16;
-	u32 type : 2;
-	u32 inUse : 1;
-	u32 unused : 13;
+	u32 slot	: 16;
+	u32 type	: 2;
+	u32 inUse	: 1;
+	u32 unused	: 13;
 };
 
 struct vk_descriptor_write
 {
-	vk_descriptor_info descInfo;
-	desc_hndl32 hndl;
+	vk_descriptor_info	descInfo;
+	desc_hndl32			hndl;
 };
 
 #endif // !__VK_RESOURCES_H__

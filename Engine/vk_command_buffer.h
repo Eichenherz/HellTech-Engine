@@ -27,9 +27,9 @@ struct vk_scoped_label
 		this->cmdBuff = _cmdBuff;
 
 		VkDebugUtilsLabelEXT dbgLabel = {
-			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+			.sType		= VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
 			.pLabelName = labelName,
-			.color = { ( float ) col.r, ( float ) col.g, ( float ) col.b, ( float ) col.a },
+			.color		= { ( float ) col.r, ( float ) col.g, ( float ) col.b, ( float ) col.a },
 		};
 		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
 	}
@@ -44,8 +44,8 @@ struct vk_rendering_info
 {
 	alignas( 8 ) VkViewport							viewport;
 	alignas( 8 ) VkRect2D							scissor;
-	std::span<const VkRenderingAttachmentInfo>	colorAttachments;
-	const VkRenderingAttachmentInfo*			pDepthAttachment;
+	std::span<const VkRenderingAttachmentInfo>		colorAttachments;
+	const VkRenderingAttachmentInfo*				pDepthAttachment;
 };
 
 
@@ -66,17 +66,17 @@ struct vk_scoped_renderpass
 
 struct vk_command_buffer
 {
-	VkCommandBuffer hndl;
-	VkPipelineLayout bindlessPipelineLayout;
-	VkDescriptorSet bindlessDescriptorSet;
+	VkCommandBuffer		hndl;
+	VkPipelineLayout	bindlessPipelineLayout;
+	VkDescriptorSet		bindlessDescriptorSet;
 	VkPipelineBindPoint currentBindPoint;
 
 	vk_command_buffer( VkCommandBuffer cmdBuff, VkPipelineLayout pipelineLayout, VkDescriptorSet descriptorSet )
 	{
-		this->hndl = cmdBuff;
-		this->bindlessPipelineLayout = pipelineLayout;
-		this->bindlessDescriptorSet = descriptorSet;
-		this->currentBindPoint = VK_PIPELINE_BIND_POINT_MAX_ENUM;
+		this->hndl						= cmdBuff;
+		this->bindlessPipelineLayout	= pipelineLayout;
+		this->bindlessDescriptorSet		= descriptorSet;
+		this->currentBindPoint			= VK_PIPELINE_BIND_POINT_MAX_ENUM;
 
 		VkCommandBufferBeginInfo cmdBufBegInfo = { 
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -96,12 +96,12 @@ struct vk_command_buffer
 		vkCmdSetViewport( hndl, 0, 1, &renderingInfo.viewport );
 
 		VkRenderingInfo vkRenderInfo = {
-			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-			.renderArea = renderingInfo.scissor,
-			.layerCount = 1,
-			.colorAttachmentCount = ( u32 ) std::size( renderingInfo.colorAttachments ),
-			.pColorAttachments = std::data( renderingInfo.colorAttachments ),
-			.pDepthAttachment = renderingInfo.pDepthAttachment
+			.sType					= VK_STRUCTURE_TYPE_RENDERING_INFO,
+			.renderArea				= renderingInfo.scissor,
+			.layerCount				= 1,
+			.colorAttachmentCount	= ( u32 ) std::size( renderingInfo.colorAttachments ),
+			.pColorAttachments		= std::data( renderingInfo.colorAttachments ),
+			.pDepthAttachment		= renderingInfo.pDepthAttachment
 		};
 		return { hndl, vkRenderInfo };
 	}
@@ -119,12 +119,12 @@ struct vk_command_buffer
 	void CmdPushConstants( const void* pData, u32 size )
 	{
 		VkPushConstantsInfo pushConstInfo = {
-			.sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
-			.layout = bindlessPipelineLayout,
+			.sType		= VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
+			.layout		= bindlessPipelineLayout,
 			.stageFlags = VK_SHADER_STAGE_ALL,
-			.offset = 0,
-			.size = size,
-			.pValues = pData
+			.offset		= 0,
+			.size		= size,
+			.pValues	= pData
 		};
 		vkCmdPushConstants2( hndl, &pushConstInfo );
 	}
@@ -147,15 +147,15 @@ struct vk_command_buffer
 
 	void CmdPipelineBarriers( 
 		std::span<const VkBufferMemoryBarrier2> buffBarriers, 
-		std::span<const VkImageMemoryBarrier2> imgBarriers 
+		std::span<const VkImageMemoryBarrier2>	imgBarriers
 	) const 
 	{
 		VkDependencyInfo dependency = {
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.bufferMemoryBarrierCount = ( u32 ) std::size( buffBarriers ),
-			.pBufferMemoryBarriers = std::data( buffBarriers ),
-			.imageMemoryBarrierCount = ( u32 ) std::size( imgBarriers ),
-			.pImageMemoryBarriers = std::data( imgBarriers ),
+			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.bufferMemoryBarrierCount	= ( u32 ) std::size( buffBarriers ),
+			.pBufferMemoryBarriers		= std::data( buffBarriers ),
+			.imageMemoryBarrierCount	= ( u32 ) std::size( imgBarriers ),
+			.pImageMemoryBarriers		= std::data( imgBarriers ),
 		};
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
@@ -186,10 +186,10 @@ struct vk_command_buffer
 		const VkImageSubresourceLayers&     dstSubresourceLayers
 	) {
 		VkBufferImageCopy imgCopyRegion = {
-			.bufferOffset = srcOffset,
-			.imageSubresource = dstSubresourceLayers,
-			.imageOffset = {},
-			.imageExtent = { u32( dst.width ), u32( dst.height ), 1 }
+			.bufferOffset		= srcOffset,
+			.imageSubresource	= dstSubresourceLayers,
+			.imageOffset		= {},
+			.imageExtent		= { u32( dst.width ), u32( dst.height ), 1 }
 		};
 
 		vkCmdCopyBufferToImage( hndl, src.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
@@ -198,9 +198,9 @@ struct vk_command_buffer
 	void CmdPipelineMemoryBarriers( std::span<VkMemoryBarrier2> memBarriers ) 
 	{
 		VkDependencyInfo dependency = {
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.memoryBarrierCount = ( u32 ) std::size( memBarriers ),
-			.pMemoryBarriers = std::data( memBarriers ),
+			.sType				= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.memoryBarrierCount	= ( u32 ) std::size( memBarriers ),
+			.pMemoryBarriers	= std::data( memBarriers ),
 		};
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
@@ -208,9 +208,9 @@ struct vk_command_buffer
 	void CmdPipelineBufferBarriers( const VkBufferMemoryBarrier2& buffBarrier ) 
 	{
 		VkDependencyInfo dependency = {
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.bufferMemoryBarrierCount = 1,
-			.pBufferMemoryBarriers = &buffBarrier,
+			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.bufferMemoryBarrierCount	= 1,
+			.pBufferMemoryBarriers		= &buffBarrier,
 		};
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
@@ -218,9 +218,9 @@ struct vk_command_buffer
 	void CmdPipelineBufferBarriers( std::span<VkBufferMemoryBarrier2> buffBarriers ) 
 	{
 		VkDependencyInfo dependency = {
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.bufferMemoryBarrierCount = ( u32 ) std::size( buffBarriers ),
-			.pBufferMemoryBarriers = std::data( buffBarriers ),
+			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.bufferMemoryBarrierCount	= ( u32 ) std::size( buffBarriers ),
+			.pBufferMemoryBarriers		= std::data( buffBarriers ),
 		};
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
@@ -228,9 +228,9 @@ struct vk_command_buffer
 	void CmdPipelineImageBarriers( const VkImageMemoryBarrier2& imgBarrier ) 
 	{
 		VkDependencyInfo dependency = {
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.imageMemoryBarrierCount = 1,
-			.pImageMemoryBarriers = &imgBarrier,
+			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount	= 1,
+			.pImageMemoryBarriers		= &imgBarrier,
 		};
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
@@ -238,9 +238,9 @@ struct vk_command_buffer
 	void CmdPipelineImageBarriers( std::span<VkImageMemoryBarrier2> imgBarriers ) 
 	{
 		VkDependencyInfo dependency = {
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.imageMemoryBarrierCount = ( u32 ) std::size( imgBarriers ),
-			.pImageMemoryBarriers = std::data( imgBarriers ),
+			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount	= ( u32 ) std::size( imgBarriers ),
+			.pImageMemoryBarriers		= std::data( imgBarriers ),
 		};
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}

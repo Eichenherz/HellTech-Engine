@@ -496,17 +496,17 @@ constexpr u64 CACHE_LINE_SZ = 64;
 
 #define CACHE_ALIGN alignas( CACHE_LINE_SZ )
 
-// NOTE: bc Win32 expects LONG64 
-using atomic64 = i64;
+// NOTE: bc Win32 expects LONG64
+#define ht_atomic64 volatile i64
 
 enum sys_thread_signal : i64
 {
-	SYS_THREAD_SIGNAL_SLEEP = 0,
-	SYS_THREAD_SIGNAL_WAKEUP = 1,
-	SYS_THREAD_SIGNAL_EXIT = -1
+	SYS_THREAD_SIGNAL_SLEEP		= 0,
+	SYS_THREAD_SIGNAL_WAKEUP	= 1,
+	SYS_THREAD_SIGNAL_EXIT		= -1
 };
 
-void AtomicSingalSingleThread( volatile atomic64& signal, sys_thread_signal val )
+void AtomicSignalSingleThread( ht_atomic64& signal, sys_thread_signal val )
 {
 	InterlockedExchange64( &signal, val );
 	WakeByAddressSingle( ( void* ) &signal );
@@ -560,9 +560,9 @@ struct io_job
 
 struct sys_thread_data
 {
-	CACHE_ALIGN volatile atomic64 signal;
-	CACHE_ALIGN virtual_arena     arena;
-	mtx_queue<io_job>             jobs;
+	CACHE_ALIGN ht_atomic64		signal;
+	CACHE_ALIGN virtual_arena	arena;
+	mtx_queue<io_job>           jobs;
 };
 
 struct sys_thread
@@ -576,18 +576,18 @@ DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 {
 	sys_thread_data& threadCtx = *( sys_thread_data* ) lpParam;
 
-	constexpr sys_thread_signal undesiredVal = SYS_THREAD_SIGNAL_SLEEP;
-	static_assert( sizeof( threadCtx.signal ) == sizeof( undesiredVal ) );
+	constexpr sys_thread_signal UNDESIRED_VAl = SYS_THREAD_SIGNAL_SLEEP;
+	static_assert( sizeof( threadCtx.signal ) == sizeof( UNDESIRED_VAl ) );
 
 	for( ;; )
 	{
 		for( ;; )
 		{
-			WaitOnAddress( &threadCtx.signal, ( void* ) &undesiredVal, sizeof( threadCtx.signal ), INFINITE );
-			atomic64 capturedVal = InterlockedAddAcquire64( &threadCtx.signal, 0 );
+			WaitOnAddress( &threadCtx.signal, ( void* ) &UNDESIRED_VAl, sizeof( threadCtx.signal ), INFINITE );
+			sys_thread_signal capturedVal = ( sys_thread_signal ) InterlockedAddAcquire64( &threadCtx.signal, 0 );
 
 			[[unlikely]] if( SYS_THREAD_SIGNAL_EXIT == capturedVal ) goto EXIT;
-			if( undesiredVal != capturedVal ) break;
+			if( UNDESIRED_VAl != capturedVal ) break;
 		}
 
 		for( io_job jobData = {}; threadCtx.jobs.TryPop( jobData ); )
@@ -609,15 +609,15 @@ EXIT:
 
 
 sys_thread SysCreateThread( 
-	u64 stackSize, 
-	u64 maxScratchPadSize, 
-	const wchar_t* name, 
-	virtual_stretchy_buffer<sys_thread_data>& threadDataBuff 
+	u64											stackSize,
+	u64											maxScratchPadSize,
+	const wchar_t*								name,
+	virtual_stretchy_buffer<sys_thread_data>&	threadDataBuff
 ) {
 	sys_thread_data* pData = &threadDataBuff.push_back( {
 		.signal = SYS_THREAD_SIGNAL_SLEEP,
-		.arena = virtual_arena{ maxScratchPadSize },
-		.jobs = { 128 }
+		.arena	= virtual_arena{ maxScratchPadSize },
+		.jobs	= { 128 }
 	} );
 
 	DWORD threadId;
@@ -627,9 +627,9 @@ sys_thread SysCreateThread(
 	SysNameThread( hThread, name );
 
 	return {
-		.hndl = hThread,
-		.pData = pData,
-		.threadId = threadId
+		.hndl		= hThread,
+		.pData		= pData,
+		.threadId	= threadId
 	};
 }
 
@@ -651,18 +651,18 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	GetSystemInfo( &sysInfo );
 
 	WNDCLASSEX wc = {
-		.cbSize = sizeof( WNDCLASSEX ),
-		.lpfnWndProc = MainWndProc,
-		.hInstance = hInst,
-		.hCursor = LoadCursor( 0, IDC_ARROW ),
-		.lpszClassName = ENGINE_NAME
+		.cbSize			= sizeof( WNDCLASSEX ),
+		.lpfnWndProc	= MainWndProc,
+		.hInstance		= hInst,
+		.hCursor		= LoadCursor( 0, IDC_ARROW ),
+		.lpszClassName	= ENGINE_NAME
 	};
 	WIN_CHECK( RegisterClassExA( &wc ) );
 	
 	RECT wr = {
-		.left = 350,
-		.top = 100,
-		.right = ( LONG ) SCREEN_WIDTH + wr.left,
+		.left	= 350,
+		.top	= 100,
+		.right	= ( LONG ) SCREEN_WIDTH + wr.left,
 		.bottom = ( LONG ) SCREEN_HEIGHT + wr.top
 	};
 
@@ -729,20 +729,20 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 				.type = imgui_widget_type::TEXT
 			} 
 		},
-		.name = "Renderer Stats",
-		.flags = ImGuiWindowFlags_NoScrollbar
+		.name	= "Renderer Stats",
+		.flags	= ImGuiWindowFlags_NoScrollbar
 	} );
 
 	imguiWnds.push_back( {
 		.widgets = { 
 			imgui_widget {
-				.name = "Load HPK",
+				.name	= "Load HPK",
 				.Action = ImGuiLoadFileAction,
-				.type = imgui_widget_type::BUTTON
+				.type	= imgui_widget_type::BUTTON
 		    } 
 		},
-		.name = "##bnt_load_hpk",
-		.flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | 
+		.name	= "##bnt_load_hpk",
+		.flags	= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
 		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse
 	} );
 
@@ -829,7 +829,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 			ioThread.pData->jobs.TryPush( renderer_upload_job{ .reqs = std::move( uploads ), .pRI = pRenderer.get() } );
 
-			AtomicSingalSingleThread( ioThread.pData->signal, SYS_THREAD_SIGNAL_WAKEUP );
+			AtomicSignalSingleThread( ioThread.pData->signal, SYS_THREAD_SIGNAL_WAKEUP );
 
 			//ankerl::unordered_dense::map<u64, u32> texIdMap;
 			//for( const vfs_path& vpath : texFiles )

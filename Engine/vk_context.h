@@ -90,15 +90,15 @@ struct vk_cmd_pool_buff
 
 struct vk_cb_deletion
 {
-	VkSemaphore sema;
-	u64 waitVal;
-	vk_cmd_pool_buff hndl;
+	VkSemaphore			sema;
+	u64					waitVal;
+	vk_cmd_pool_buff	hndl;
 };
 
 struct vk_cb_pool
 {
-	fixed_mtx_queue<vk_cmd_pool_buff, 128> free;
-	fixed_mtx_queue<vk_cb_deletion, 128> pending;
+	fixed_mtx_queue<vk_cmd_pool_buff, 128>	free;
+	fixed_mtx_queue<vk_cb_deletion, 128>	pending;
 };
 
 struct vk_desc_deletion
@@ -111,13 +111,13 @@ struct vk_resc_deletion
 {
 	//VkSemaphore			timelineSema = VK_NULL_HANDLE;
 	//u64					waitSignal = -1;
-	u64					frameTimelineVal;
+	u64						frameTimelineVal;
 	union
 	{
 		vk_buffer			buff;
 		vk_image			img;
 	};
-	vk_resource_type    type;
+	vk_resource_type		type;
 
 	inline vk_resc_deletion() = default;
 	inline vk_resc_deletion( const vk_buffer& b, u64 counter ) 
@@ -128,9 +128,9 @@ struct vk_resc_deletion
 
 struct vk_desc_binding
 {
-	mtx_queue<desc_hndl32> slots;
+	mtx_queue<desc_hndl32>	slots;
 
-	VkDescriptorType type;
+	VkDescriptorType		type;
 
 	vk_desc_binding() = default;
 
@@ -196,7 +196,7 @@ struct vk_context
 
 	VkSwapchainKHR		                    swapchain;
 
-	// TODO: sync when doing parallel uplaods
+	// TODO: sync when doing parallel uploads
 	std::vector<VkFence>                    copyFencesPool;
 
 	VkDescriptorPool						descPool;
@@ -269,10 +269,10 @@ struct vk_context
 		{
 			u64 targetCount = timeline.submitsIssuedCount;
 			VkSemaphoreWaitInfo waitInfo = { 
-				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+				.sType			= VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
 				.semaphoreCount = 1,
-				.pSemaphores = &timeline.sema,
-				.pValues = &targetCount,
+				.pSemaphores	= &timeline.sema,
+				.pValues		= &targetCount,
 			};
 
 			return vkWaitSemaphores( device, &waitInfo, waitTime );
@@ -314,15 +314,15 @@ struct vk_context
 	{
 		VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( dst.format );
 		VkMemoryToImageCopy memToImgCopy = {
-			.sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY,
-			.pHostPointer = pSrc,
-			.imageSubresource = {
+			.sType				= VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY,
+			.pHostPointer		= pSrc,
+			.imageSubresource	= {
 				.aspectMask     = aspectFlags, 
 				.mipLevel       = 0,
 				.baseArrayLayer = 0,
 				.layerCount     = 1
             },
-			.imageExtent = dst.Extent3D(),
+			.imageExtent		= dst.Extent3D(),
 		};
 
 		VkCopyMemoryToImageInfo copyMemInfo = {
@@ -369,12 +369,12 @@ struct vk_context
 	inline void QueuePresent( const vk_queue& queue, u32 imgIdx )
 	{
 		VkPresentInfoKHR presentInfo = { 
-			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+			.sType				= VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 			.waitSemaphoreCount = 1,
-			.pWaitSemaphores = &scImgs[ imgIdx ].canPresentSema,
-			.swapchainCount = 1,
-			.pSwapchains = &swapchain,
-			.pImageIndices = &imgIdx
+			.pWaitSemaphores	= &scImgs[ imgIdx ].canPresentSema,
+			.swapchainCount		= 1,
+			.pSwapchains		= &swapchain,
+			.pImageIndices		= &imgIdx
 		};
 		VK_CHECK( vkQueuePresentKHR( queue.hndl, &presentInfo ) );
 	}
