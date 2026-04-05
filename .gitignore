@@ -12,6 +12,10 @@ bin/*
 
 int/*
 
+build/*
+
 imgui.ini
 
 3rdParty/*
+
+CMakePresets.json.user

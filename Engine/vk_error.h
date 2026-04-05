@@ -3,7 +3,7 @@
 #ifndef __VK_ERROR_H__
 #define __VK_ERROR_H__
 
-#include "DEFS_WIN32_NO_BS.h"
+#include "Win32/DEFS_WIN32_NO_BS.h"
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
@@ -19,7 +19,7 @@
 
 #include "ht_error.h"
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 // TODO: gen from VkResult ?
 inline std::string_view VkResErrorString( VkResult errorCode )

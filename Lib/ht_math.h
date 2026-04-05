@@ -2,7 +2,7 @@
 #define __HT_MATH_H__
 
 #include "ht_vec_types.h"
-#include "core_types.h"
+#include "ht_core_types.h"
 #include <span>
 #include <math.h>
 

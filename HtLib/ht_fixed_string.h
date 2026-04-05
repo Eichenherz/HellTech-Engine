@@ -3,7 +3,7 @@
 #ifndef __HT_FIXED_STRING_H__
 #define __HT_FIXED_STRING_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_error.h"
 #include "ht_fixed_vector.h"
 

@@ -1,7 +1,7 @@
 #ifndef __MIKKT_SPACE_H__
 #define __MIKKT_SPACE_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_math.h"
 #include "ht_error.h"
 #include "hp_types_internal.h"
@@ -62,7 +62,7 @@ inline void set_tspace_basic(
 
 	// MikkTSpace may call this multiple times for the same vi (shared vertex across faces).
 	// If your mesh is "regular" and you want the final averaged tangent, overwriting is fine:
-	// the algorithm’s internal accumulation decides the final tangent per corner/vertex.
+	// the algorithmï¿½s internal accumulation decides the final tangent per corner/vertex.
 	//
 	// If you later discover mismatches at seams, it means your indices were NOT split.
 	userData->tans[ vi ] = { tangent[ 0 ], tangent[ 1 ], tangent[ 2 ], sign };

@@ -1,7 +1,0 @@
-{
-  "C_Cpp.enhancedColorization": "enabled",
-  "C_Cpp.intelliSenseEngine": "default",
-  "editor.semanticHighlighting.enabled": true,
-  "C_Cpp.default.cppStandard": "c++20",
-  "C_Cpp.default.cStandard": "c17"
-}

@@ -3,7 +3,7 @@
 #ifndef __HT_MTX_QUEUE_H__
 #define __HT_MTX_QUEUE_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "System/sys_sync.h"
 #include <array>
 

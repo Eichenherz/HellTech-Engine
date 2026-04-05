@@ -3,7 +3,7 @@
 #ifndef __HT_GFX_TYPES_H__
 #define __HT_GFX_TYPES_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_vec_types.h"
 
 struct alignas( 16 ) packed_trs

@@ -15,7 +15,7 @@ namespace fs = std::filesystem;
 
 #include <dds.h>
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_error.h"
 
 #include "zip_pack.h"

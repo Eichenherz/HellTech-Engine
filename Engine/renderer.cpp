@@ -10,7 +10,7 @@
 #include <format>
 #include <memory>
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_utils.h"
 #include "sys_os_api.h"
 
@@ -122,7 +122,7 @@ struct imgui_pass
 	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
 	static_assert( sizeof( ImDrawIdx ) == sizeof( index_t ) );
 
-	static constexpr u64 DEFAULT_BUFF_SIZE = 16 * KB;
+	static constexpr u64					DEFAULT_BUFF_SIZE = 16 * KB;
 
 	fixed_vector<vk_buffer, MAX_FIF>		vtx;
 	fixed_vector<vk_buffer, MAX_FIF>		idx;
@@ -378,9 +378,9 @@ imgui_pass MakeImguiPass( vk_context& dc, VkFormat colDstFormat )
 	VK_CHECK( vkCreateDescriptorUpdateTemplate( dc.device, &templateInfo, 0, &descTemplate ) );
 
 	unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
-		SysReadFile( "../bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
+		SysReadFile( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
 	unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
-		SysReadFile( "../bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
+		SysReadFile( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
 
 	vk_gfx_pso_config guiState = {
 		.polyMode = VK_POLYGON_MODE_FILL,
@@ -443,9 +443,9 @@ struct debug_draw_passes
 	void Init( vk_context& dc, VkPipelineLayout globalLayout, vk_renderer_config& rndCfg )
 	{
 		unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
-			SysReadFile( "../Shaders/v_cpu_dbg_draw.vert.spv" ) );
+			SysReadFile( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
 		unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
-			SysReadFile( "../Shaders/f_pass_col.frag.spv" ) );
+			SysReadFile( "Shaders/f_pass_col.frag.spv" ) );
 
 		static_assert( worldLeftHanded );
 
@@ -596,7 +596,7 @@ struct culling_pass
 
 	void Init( vk_context& dc )
 	{
-		unique_shader_ptr drawCull = dc.CreateShaderFromSpirv( SysReadFile( "../Shaders/c_draw_cull.comp.spv" ) );
+		unique_shader_ptr drawCull = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/c_draw_cull.comp.spv" ) );
 		compPipeline = dc.CreateComptuePipeline( *drawCull, "Pipeline_Comp_DrawCull" );
 
 		//vk_shader clusterCull = dc.CreateShaderFromSpirv( "Shaders/c_meshlet_cull.comp.spv", dc.device );
@@ -762,9 +762,9 @@ struct culling_pass
 
 struct tone_mapping_pass
 {
-	vk_buffer	averageLuminanceBuffer;
-	vk_buffer	luminanceHistogramBuffer;
-	vk_buffer	atomicWgCounterBuff;
+	vk_buffer					averageLuminanceBuffer;
+	vk_buffer					luminanceHistogramBuffer;
+	vk_buffer					atomicWgCounterBuff;
 
 	VkPipeline					compAvgLumPipe;
 	VkPipeline					compTonemapPipe;
@@ -776,11 +776,11 @@ struct tone_mapping_pass
 	void Init( vk_context& dc )
 	{
 		unique_shader_ptr avgLum = dc.CreateShaderFromSpirv( 
-			SysReadFile( "../bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
+			SysReadFile( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
 		compAvgLumPipe = dc.CreateComptuePipeline( *avgLum, "Pipeline_Comp_AvgLum" );
 
 		unique_shader_ptr toneMapper = dc.CreateShaderFromSpirv( 
-			SysReadFile( "../bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
+			SysReadFile( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
 		compTonemapPipe = dc.CreateComptuePipeline( *toneMapper, "Pipeline_Comp_Tonemapping" );
 
 		VkBufferUsageFlags usageFlags = 
@@ -875,7 +875,7 @@ struct depth_pyramid_pass
 	void Init( vk_context& vkCtx )
 	{
 		unique_shader_ptr downsampler = vkCtx.CreateShaderFromSpirv( 
-			SysReadFile( "../bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
+			SysReadFile( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
 		pipeline = vkCtx.CreateComptuePipeline( *downsampler, "Pipeline_Comp_HiZ" );
 
 		u16 squareDim = 512;
@@ -1265,7 +1265,7 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, config ) );
 
 	{
-		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "../Shaders/v_z_prepass.vert.spv" ) );
+		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/v_z_prepass.vert.spv" ) );
 
 		vk_gfx_shader_stage shaderStages[] = { *vtx };
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -1300,8 +1300,8 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	cullingPass.Init( *pVkCtx );
 	tonemapPass.Init( *pVkCtx );
 	{
-		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "../Shaders/vtx_merged.vert.spv" ) );
-		unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv( SysReadFile( "../Shaders/pbr.frag.spv" ) );
+		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/vtx_merged.vert.spv" ) );
+		unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv( SysReadFile( "Shaders/pbr.frag.spv" ) );
 		
 		vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -1579,7 +1579,8 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	if( currentFrameIdx < framesInFlight )
 	{
 		vrtFrames.push_back( {} );
-		std::rbegin( vrtFrames )->Init( *pVkCtx, std::size( frameData.views ) * sizeof( view_data ), currentFrameInFlightIdx );
+		std::rbegin( vrtFrames )->Init(
+			*pVkCtx,  std::size( frameData.views ) * sizeof( view_data ), ( u32 ) currentFrameInFlightIdx );
 	}
 
 	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];

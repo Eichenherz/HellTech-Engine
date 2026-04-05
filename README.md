@@ -1,12 +1,11 @@
 # HellTech Engine
-An WIP exploration of the modern rendering landscape with Vulkan 1.2+ and DX12 on Windows.
+An WIP exploration of the modern rendering landscape with Vulkan 1.4+ on Windows.
 
 
 ### REQUIREMENTS:
 - Win10+
-- Vulkan1.2+
-- DX12 ( with sm6.6 support )
-- dedicated GPU ( ?, prefferably NV )
+- Vulkan1.4+
+- dedicated GPU ( preferably NV )
 
 
 ### HtLib SUBTREE :
@@ -30,7 +29,7 @@ An WIP exploration of the modern rendering landscape with Vulkan 1.2+ and DX12 o
 - meshlet culling ( frustum + occlusion )
 - occlusion culling via HiZ buffer
 - merge the triangles of the surviving meshlets into one index buffer
-- 3 bytes tanget frames
+- 3 bytes tangent frames
 - resource access in shaders relies on bindless or BDAs ( sometimes push descriptors too )
 
 ![HellTech Engine 8_27_2021 12_35_42 PM](https://user-images.githubusercontent.com/32171756/135079403-c1c025b4-bb22-4181-a33a-0a49b469a5e6.png)

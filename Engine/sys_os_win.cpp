@@ -1,4 +1,4 @@
-#include "DEFS_WIN32_NO_BS.h"
+#include "Win32/DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
 #pragma comment( lib, "Synchronization.lib" )
 #include <windowsx.h>
@@ -12,11 +12,11 @@
 #include <string>
 
 #include "sys_os_api.h"
-#include "core_types.h"
+#include "ht_core_types.h"
 
 #include "r_data_structs.h"
 
-#include <System/Win32/win32_err.h>
+#include <Win32/win32_err.h>
 #include <System/sys_file.h>
 #include "zip_pack.h"
 
@@ -41,12 +41,6 @@ static inline void SysOsCreateConsole()
 	std::cerr.clear();
 	std::wcout.clear();
 	std::wcerr.clear();
-}
-
-void SysErrMsgBox( const char* str )
-{
-	UINT behaviour = MB_OK | MB_ICONERROR | MB_APPLMODAL;
-	MessageBox( 0, str, 0, behaviour );
 }
 
 static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
@@ -518,7 +512,7 @@ void AtomicSingalSingleThread( volatile atomic64& signal, sys_thread_signal val 
 	WakeByAddressSingle( ( void* ) &signal );
 }
 
-#include "System/sys_mem_arena.h"
+#include "ht_mem_arena.h"
 #include "ht_mtx_queue.h"
 
 

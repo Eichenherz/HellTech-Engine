@@ -10,7 +10,7 @@
 
 #include <vk_mem_alloc.h>
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 #include "ht_error.h"
 #include "vk_error.h"
@@ -26,7 +26,7 @@
 #include <memory>
 
 #include "System/sys_sync.h"
-#include "System/sys_mem_arena.h"
+#include "ht_mem_arena.h"
 
 #include "ht_mtx_queue.h"
 

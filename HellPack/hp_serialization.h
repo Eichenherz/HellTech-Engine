@@ -1,7 +1,7 @@
 #ifndef __HP_SERIALIZATION_H__
 #define __HP_SERIALIZATION_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_error.h"
 #include "range_utils.h"
 #include "ht_utils.h"

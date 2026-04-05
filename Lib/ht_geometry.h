@@ -1,7 +1,7 @@
 #ifndef __HT_GEOMETRY_H__
 #define __HT_GEOMETRY_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include <vector>
 #include <array>
 #include <span>

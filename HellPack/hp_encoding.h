@@ -1,7 +1,7 @@
 #ifndef __HP_ENCODING_H__
 #define __HP_ENCODING_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_math.h"
 
 inline float SignNonZero( float e )

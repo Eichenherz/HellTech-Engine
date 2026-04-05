@@ -4,7 +4,7 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 struct vk_swapchain_config
 {

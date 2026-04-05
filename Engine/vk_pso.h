@@ -6,7 +6,7 @@
 
 #include "ht_error.h"
 #include "vk_error.h"
-#include "core_types.h"
+#include "ht_core_types.h"
 
 #include <span>
 #include "ht_fixed_string.h"

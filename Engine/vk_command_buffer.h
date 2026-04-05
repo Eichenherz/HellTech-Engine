@@ -5,7 +5,7 @@
 #include <vulkan.h>
 #include <Volk/volk.h>
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 #include "vk_utils.h"
 #include "vk_resources.h"
@@ -176,7 +176,7 @@ struct vk_command_buffer
 		std::span<const VkBufferImageCopy>  mipsLayers
 	) {
 		vkCmdCopyBufferToImage( hndl, src.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
-			std::size( mipsLayers ), std::data( mipsLayers ) );
+			( u32 ) std::size( mipsLayers ), std::data( mipsLayers ) );
 	}
 
 	void CmdCopyBufferToImageSubresource( 

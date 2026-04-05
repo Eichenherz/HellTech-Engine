@@ -1,7 +1,7 @@
 #ifndef __HP_TYPES_INTERNAL_H__
 #define __HP_TYPES_INTERNAL_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 #include <vector>
 #include <string>

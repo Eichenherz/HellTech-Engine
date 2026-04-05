@@ -3,7 +3,7 @@
 #ifndef __SYS_OS_API_H__
 #define __SYS_OS_API_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 #include <cstdarg>
 #include <vector>

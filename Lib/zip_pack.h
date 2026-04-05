@@ -3,7 +3,7 @@
 #ifndef __ZIP_PACK_H__
 #define __ZIP_PACK_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_error.h"
 #include "ht_fixed_string.h"
 
@@ -155,7 +155,7 @@ struct vfs_zip_mem
 
 	// NOTE: this is really a hack, so in the future we need our own pak file
 	// NOTE: this won're reliably give back file sizes
-	const u8* ZipGetFileView( const void* base, u32 offset ) const
+	const u8* ZipGetFileView( const void* base, u64 offset ) const
 	{
 	#pragma pack( push, 1 )
 		struct zip_local_header 

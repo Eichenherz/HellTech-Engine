@@ -3,7 +3,7 @@
 
 #ifdef __cplusplus
 
-#include "core_types.h"
+#include "ht_core_types.h"
 
 // TODO: no clang ?
 #ifdef __clang__

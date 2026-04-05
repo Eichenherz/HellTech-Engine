@@ -1,7 +1,7 @@
 #ifndef __HP_BCN_COMPRESSION_H__
 #define __HP_BCN_COMPRESSION_H__
 
-#include "core_types.h"
+#include "ht_core_types.h"
 #include "ht_error.h"
 
 #include <bc7enc.h>
