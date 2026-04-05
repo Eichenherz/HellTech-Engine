@@ -1,45 +1,17 @@
-
-x64/
-
 *.spv
 
 desktop.ini
 
-vk_generator.py
-
-spirv_reflect.c
-
-spirv_reflect.h
-
-diy_pch.h
-
-lz4.c
-
-lz4.h
-
-miniz.c
-
-miniz.h
-
-spng.c
-
-spng.h
-
-cgltf.h
-
 Assets/
 
-.vscode/
+.vs/
 
-README.md
+packages/
 
-bcn_compressor.cpp
+bin/*
 
-nuklear.h
+int/*
 
-nuklear.cpp
+imgui.ini
 
-stb_truetype.h
-
-imgui/
-Shader.hlsl
+3rdParty/*

@@ -1,0 +1,26 @@
+#include "r_data_structs2.h"
+
+[[vk::push_constant]]
+struct {
+	uint dbgGemoetryIdx;
+	uint globalBuffIdx;
+	uint camIdx;
+	bool activeView;
+} pushBlock;
+
+
+[shader( "vertex" )]
+void DbgDrawVsMain( 
+	in uint vertexId : SV_VertexID,
+	out float4 outPos : SV_Position,
+	[[vk::location( 0 )]] 
+	out float4 col : COLOR0
+) {
+	dbg_vertex v = BufferLoad<dbg_vertex>( pushBlock.dbgGemoetryIdx, vertexId );
+	global_data camData = BufferLoad<global_data>( pushBlock.globalBuffIdx, pushBlock.camIdx );
+	
+	float4x4 view = pushBlock.activeView ? camData.activeView : camData.mainView;
+	float4x4 viewProj = mul( view, camData.proj );
+	outPos = mul( v.pos, viewProj );
+	col = float4( v.col.xyz, 1.0f );
+}

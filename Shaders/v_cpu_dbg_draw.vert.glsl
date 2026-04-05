@@ -1,23 +1,41 @@
 #version 460
 
-layout( push_constant ) uniform block{
-	mat4 projView;
+#extension GL_GOOGLE_include_directive : require
+
+#define BINDLESS
+#include "..\r_data_structs.h"
+
+layout( push_constant, scalar ) uniform block {
+	mat4 transf;
+	uint64_t vtxAddr;
+	uint64_t viewAddr;
+	uint viewIdx;
+	uint color;
 };
 
-struct dbg_vertex
+layout( buffer_reference ) readonly buffer dbg_vtx_ref{
+	vec3 dbgVertices[];
+};
+
+layout( buffer_reference, buffer_reference_align = 16 ) readonly buffer view_ref{
+	view_data views[];
+};
+
+vec3 AabbTransfromVertex( vec3 pos, vec3 minBox, vec3 maxBox )
 {
-	vec4 pos;
-	vec3 col;
-};
+	vec3 center = ( maxBox + minBox ) * 0.5f;
+	vec3 scale = abs( maxBox - minBox ) * 0.5f;
 
-layout( binding = 0 ) readonly buffer dbg_vtx_buff{
-	dbg_vertex dbgGeomBuff[];
-};
+	return pos * scale + center;
+}
 
 layout( location = 0 ) out vec3 oCol;
 void main()
 {
-	dbg_vertex v = dbgGeomBuff[ gl_VertexIndex ];
-	gl_Position = projView * v.pos;
-	oCol = v.col.xyz;
+	vec3 pos = dbg_vtx_ref( vtxAddr ).dbgVertices[ gl_VertexIndex ];
+
+	view_data viewData = view_ref( viewAddr ).views[ viewIdx ];
+
+	gl_Position = viewData.mainViewProj * transf * vec4( pos, 1.0f );
+	oCol = unpackUnorm4x8( color ).zyx;
 }

@@ -1,0 +1,67 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.4.11519.219
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Engine", "Engine\Engine.vcxproj", "{2992F6AA-0134-42CD-82ED-774882CF6F3C}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HellPack", "HellPack\HellPack.vcxproj", "{DE2B4E66-787C-485C-99B3-434624C5E8E1}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Tests", "Tests\Tests.vcxproj", "{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TestStretchyBuffer", "Tests\TestStretchyBuffer.vcxproj", "{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TestSlotBuffer", "Tests\TestSlotBuffer.vcxproj", "{B4D5E6F7-1A2B-3C4D-5E6F-7A8B9C0D1E2F}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Lib", "Lib\Lib.vcxitems", "{59D4FF8C-92BA-4507-B01F-1729110648DA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+		VK_Debug|x64 = VK_Debug|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2992F6AA-0134-42CD-82ED-774882CF6F3C}.Debug|x64.ActiveCfg = Debug|x64
+		{2992F6AA-0134-42CD-82ED-774882CF6F3C}.Debug|x64.Build.0 = Debug|x64
+		{2992F6AA-0134-42CD-82ED-774882CF6F3C}.Release|x64.ActiveCfg = Release|x64
+		{2992F6AA-0134-42CD-82ED-774882CF6F3C}.Release|x64.Build.0 = Release|x64
+		{2992F6AA-0134-42CD-82ED-774882CF6F3C}.VK_Debug|x64.ActiveCfg = VK_Debug|x64
+		{2992F6AA-0134-42CD-82ED-774882CF6F3C}.VK_Debug|x64.Build.0 = VK_Debug|x64
+		{DE2B4E66-787C-485C-99B3-434624C5E8E1}.Debug|x64.ActiveCfg = Debug|x64
+		{DE2B4E66-787C-485C-99B3-434624C5E8E1}.Debug|x64.Build.0 = Debug|x64
+		{DE2B4E66-787C-485C-99B3-434624C5E8E1}.Release|x64.ActiveCfg = Release|x64
+		{DE2B4E66-787C-485C-99B3-434624C5E8E1}.Release|x64.Build.0 = Release|x64
+		{DE2B4E66-787C-485C-99B3-434624C5E8E1}.VK_Debug|x64.ActiveCfg = Release|x64
+		{DE2B4E66-787C-485C-99B3-434624C5E8E1}.VK_Debug|x64.Build.0 = Release|x64
+		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.Debug|x64.ActiveCfg = Debug|x64
+		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.Debug|x64.Build.0 = Debug|x64
+		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.Release|x64.ActiveCfg = Release|x64
+		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.Release|x64.Build.0 = Release|x64
+		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.VK_Debug|x64.ActiveCfg = Release|x64
+		{C8E2F4A1-3B7D-4E9C-B5F2-0A1D6E8C3F47}.VK_Debug|x64.Build.0 = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Debug|x64.ActiveCfg = Debug|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Debug|x64.Build.0 = Debug|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Release|x64.ActiveCfg = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.Release|x64.Build.0 = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.VK_Debug|x64.ActiveCfg = Release|x64
+		{A7B3C1D2-4E5F-6A7B-8C9D-0E1F2A3B4C5D}.VK_Debug|x64.Build.0 = Release|x64
+		{B4D5E6F7-1A2B-3C4D-5E6F-7A8B9C0D1E2F}.Debug|x64.ActiveCfg = Debug|x64
+		{B4D5E6F7-1A2B-3C4D-5E6F-7A8B9C0D1E2F}.Debug|x64.Build.0 = Debug|x64
+		{B4D5E6F7-1A2B-3C4D-5E6F-7A8B9C0D1E2F}.Release|x64.ActiveCfg = Release|x64
+		{B4D5E6F7-1A2B-3C4D-5E6F-7A8B9C0D1E2F}.Release|x64.Build.0 = Release|x64
+		{B4D5E6F7-1A2B-3C4D-5E6F-7A8B9C0D1E2F}.VK_Debug|x64.ActiveCfg = Release|x64
+		{B4D5E6F7-1A2B-3C4D-5E6F-7A8B9C0D1E2F}.VK_Debug|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B6654640-D35D-4FCB-BE0E-2FE88C2F6544}
+	EndGlobalSection
+	GlobalSection(SharedMSBuildProjectFiles) = preSolution
+		Lib\Lib.vcxitems*{2992f6aa-0134-42cd-82ed-774882cf6f3c}*SharedItemsImports = 4
+		Lib\Lib.vcxitems*{59d4ff8c-92ba-4507-b01f-1729110648da}*SharedItemsImports = 9
+		Lib\Lib.vcxitems*{de2b4e66-787c-485c-99b3-434624c5e8e1}*SharedItemsImports = 4
+	EndGlobalSection
+EndGlobal

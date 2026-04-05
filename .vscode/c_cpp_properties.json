@@ -1,0 +1,28 @@
+{
+  "configurations": [
+    {
+      "name": "Win64_VK_Debug",
+      "includePath": [
+        "${workspaceFolder}/Lib",
+        "${workspaceFolder}/Engine",
+        "${workspaceFolder}/HellPack",
+        "${workspaceFolder}/3rdParty/**",
+        "${workspaceFolder}/packages/**",
+        "${env:VULKAN_SDK}/Include"
+      ],
+      "defines": [
+        "_DEBUG",
+        "_VK_DEBUG_",
+        "WIN32",
+        "_WINDOWS",
+        "UNICODE",
+        "_UNICODE"
+      ],
+      "cStandard": "c17",
+      "cppStandard": "c++20",
+      "intelliSenseMode": "msvc-x64",
+      "compilerPath": "D:/Microsoft Visual Studio/18/Insiders/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/cl.exe"
+    }
+  ],
+  "version": 4
+}

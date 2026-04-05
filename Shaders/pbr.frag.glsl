@@ -5,15 +5,15 @@
 #define BINDLESS
 #include "..\r_data_structs.h"
 
-layout( push_constant ) uniform block{
+layout( push_constant, scalar ) uniform block {
 	uint64_t vtxAddr;
 	uint64_t transfAddr;
-	//uint64_t drawCmdAddr;
+	uint64_t compactedDrawsAddr;
 	//uint64_t camDataAddr;
-	uint64_t camIdx;
 	uint64_t mtrlsAddr;
 	uint64_t lightsAddr;
-	uint64_t samplerIdx;
+	uint viewDataIdx;
+	uint samplerIdx;
 };
 
 layout( buffer_reference, scalar, buffer_reference_align = 4 ) readonly buffer mtl_ref{
@@ -123,7 +123,7 @@ layout( location = 0 ) out vec4 oCol;
 layout( early_fragment_tests ) in;
 void main()
 {
-	global_data cam = ssbos[uint(camIdx)].g;
+	view_data view = ssbos[ viewDataIdx ].views[ 0 ];//viewIdx ];
 
 	material_data mtl = mtl_ref( mtrlsAddr ).materials[ mtlIdx ];
 
@@ -134,8 +134,8 @@ void main()
 	vec3 normalFromMap = texture( sampler2D( 
 		sampledImages[ nonuniformEXT( mtl.normalMapIdx ) ], samplers[ uint( samplerIdx ) ] ), vsOut.uv ).rgb;
 
-	normalFromMap = normalFromMap * 2.0 - 1.0;
-	normalFromMap.b = sqrt( clamp( 1 - dot( normalFromMap.rg, normalFromMap.rg ), 0, 1 ) );
+	normalFromMap = normalFromMap * 2.0f - 1.0f;
+	normalFromMap.b = sqrt( clamp( 1.0f - dot( normalFromMap.rg, normalFromMap.rg ), 0.0f, 1.0f ) );
 
 	baseCol = SrgbToLinear( baseCol );
 	baseCol *= vec4( mtl.baseColFactor, 1 );
@@ -152,17 +152,18 @@ void main()
 	float surfRoughness = orm.r * mtl.roughnessFactor;
 	float surfMetalness = orm.g * mtl.metallicFactor;
 
-	vec3 viewDir = normalize( cam.worldPos - vsOut.worldPos );
+	vec3 viewDir = normalize( view.worldPos - vsOut.worldPos );
 
-	vec3 baseReflectivity = mix( vec3( 0.04 ), baseCol.rgb, surfMetalness );
-	vec3 diffCol = baseCol.rgb * ( 1.0 - surfMetalness );
+	vec3 baseReflectivity = mix( vec3( 0.04f ), baseCol.rgb, surfMetalness );
+	vec3 diffCol = baseCol.rgb * ( 1.0f - surfMetalness );
 
 	vec3 reflectance = {};
 
-	float ambientFactor = 0.0025;
+	float ambientFactor = 0.0025f;
 	oCol = vec4( baseCol.rgb * ambientFactor, 1 );
 
-	[[unroll]] for( uint i = 0; i < 4; ++i )
+	[[unroll]] 
+	for( uint i = 0; i < 4; ++i )
 	{
 		light_data l = light_ref( lightsAddr ).lights[ i ];
 		vec3 posToLight = l.pos - vsOut.worldPos;
@@ -171,7 +172,7 @@ void main()
 		reflectance += ComputeBrdfReflectance( 
 			normalize( posToLight ), diffCol, baseReflectivity, viewDir, bumpN, surfRoughness ) * radiance;
 	}
-	oCol += vec4( reflectance, 1 );
+	oCol += vec4( reflectance, 1.0f );
 	
 
 	//{
@@ -196,5 +197,5 @@ void main()
 	//}
 
 	//oCol = vec4( ( bumpN * 0.5 + 0.5 ) * 0.0015, 1 );
-	oCol = vec4( ( n * 0.5 + 0.5 ) * 0.0015, 1 );
+	//oCol = vec4( ( n * 0.5 + 0.5 ) * 0.0015, 1 );
 }
