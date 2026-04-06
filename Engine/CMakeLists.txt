@@ -19,6 +19,7 @@ add_executable(Engine WIN32      # WIN32 = Windows subsystem (not console)
     ${THIRD_PARTY}/imgui/imgui_widgets.cpp
     ${THIRD_PARTY}/ImGuiFileDialog/ImGuiFileDialog.cpp
     ${THIRD_PARTY}/miniz/miniz.c
+    ${THIRD_PARTY}/OffsetAllocator/offsetAllocator.cpp
 )
 
 target_include_directories(Engine PRIVATE

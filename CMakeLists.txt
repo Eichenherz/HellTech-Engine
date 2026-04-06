@@ -123,6 +123,7 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/meshoptimizer/src
     ${THIRD_PARTY}/tinygltf
     ${THIRD_PARTY}/minunit
+    ${THIRD_PARTY}/OffsetAllocator
 )
 
 # Single bundle — Engine + HellPack inherit this automatically via link_libraries() below

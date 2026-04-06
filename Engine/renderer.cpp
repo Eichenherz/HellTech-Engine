@@ -2,8 +2,8 @@
 #include <vulkan.h>
 
 #include <Volk/volk.h>
+#include <offsetAllocator.hpp>
 
-#include <cstdarg>
 #include <string.h>
 #include <string_view>
 #include <span>
@@ -573,7 +573,10 @@ static vk_buffer instDescBuff;
 static vk_buffer lightsBuff;
 
 
-constexpr u64 MAX_TRIANGLES_IN_SCENE = 1'000'000;
+constexpr u64 MAX_TRIANGLES_IN_SCENE = 10'000'000;
+constexpr u64 MAX_VERTICES_IN_SCENE = 5'000'000;
+constexpr u64 MAX_MESHLETS_IN_SCENE = 100'000;
+
 using index_t = u8;
 
 struct culling_pass
@@ -1065,12 +1068,122 @@ DrawIndexedIndirectMerged(
 #include "ht_gfx_types.h"
 #include "hell_pack.h"
 
-#include <dds.h>
+using offset_alloc_t = OffsetAllocator::Allocation;
+
+struct offset_allocator_t
+{
+	alignas( alignof( OffsetAllocator::Allocator ) ) u8		mStorage[ sizeof( OffsetAllocator::Allocator ) ] = {};
+	OffsetAllocator::Allocator*								mAlloc = {};
+
+	offset_allocator_t() = default;
+	offset_allocator_t( u32 size, u32 maxAllocs = 128 * 1024 )
+	{
+		mAlloc = new ( mStorage ) OffsetAllocator::Allocator( size, maxAllocs );
+	}
+
+	~offset_allocator_t() { if ( mAlloc ) { mAlloc->~Allocator(); } }
+
+	offset_allocator_t( offset_allocator_t&& o )
+	{
+		if ( o.mAlloc )
+		{
+			mAlloc = new ( mStorage ) OffsetAllocator::Allocator( std::move( *o.mAlloc ) );
+			o.mAlloc->~Allocator();
+			o.mAlloc = {};
+		}
+	}
+	offset_allocator_t& operator=( offset_allocator_t&& o )
+	{
+		if ( mAlloc )
+		{
+			mAlloc->~Allocator();
+			mAlloc = {};
+		}
+
+		if ( o.mAlloc )
+		{
+			mAlloc = new ( mStorage ) OffsetAllocator::Allocator( std::move( *o.mAlloc ) );
+			o.mAlloc->~Allocator();
+			o.mAlloc = {};
+		}
+		return *this;
+	}
+
+	offset_alloc_t	Alloc( u32 size ) { return mAlloc->allocate( size ); }
+	void			Free( offset_alloc_t alloc ) { mAlloc->free( alloc ); }
+};
+
+struct gpu_mesh_allocation
+{
+	offset_alloc_t meshletAlloc;
+	offset_alloc_t vtxAlloc;
+	offset_alloc_t triAlloc;
+};
+
+struct renderer_upload_resp
+{
+	gpu_mesh			gpuMesh;
+	gpu_mesh_allocation alloc;
+	HRNDMESH32			hSlot;
+	upload_t			uploadType;
+};
+
+// TODO: use a better container
+struct renderer_mesh_components
+{
+	template<typename T>
+	using stretchybuf_t = virtual_stretchy_buffer<T>;
+
+	using slotbuf_t = slot_buffer<u32>;
+	using hndl32_t = slotbuf_t::hndl32;
+
+	slotbuf_t							slots;
+	// NOTE: yes, these will have holes, they won't be large in theory so it's all fine
+	stretchybuf_t<gpu_mesh_allocation>	allocs = { slotbuf_t::MAX_ENTRIES_RESERVED };
+	stretchybuf_t<gpu_mesh>				descs    = { slotbuf_t::MAX_ENTRIES_RESERVED };
+
+	inline hndl32_t PushEntry( const gpu_mesh_allocation& alloc, const gpu_mesh& desc )
+	{
+		hndl32_t h = slots.PushEntry( {} );
+
+		allocs.resize( h.slotIdx + 1 );
+		descs.resize( h.slotIdx + 1 );
+
+		allocs[ h.slotIdx ] = alloc;
+		descs[ h.slotIdx ] = desc;
+
+		return h;
+	}
+
+	inline void DeleteEntry( hndl32_t h )
+	{
+		slots.RemoveEntry( h );
+		// NOTE: if it reaches here we didn't trigger any assert
+		gpu_mesh_allocation& alloc = allocs[ h.slotIdx ];
+		gpu_mesh& meshDesc = descs[ h.slotIdx ];
+
+		std::memset( &alloc, 0, sizeof( alloc ) );
+		std::memset( &meshDesc, 0, sizeof( meshDesc ) );
+	}
+
+	struct mesh_comp_ref
+	{
+		gpu_mesh_allocation&	alloc;
+		gpu_mesh&				desc;
+	};
+	inline mesh_comp_ref operator[]( hndl32_t h )
+	{
+		slots[ h ];
+		// NOTE: if it reaches here we didn't trigger any assert ( slots[ h ] will assert if it's not valid )
+		gpu_mesh_allocation& alloc = allocs[ h.slotIdx ];
+		gpu_mesh& meshDesc = descs[ h.slotIdx ];
+		return { .alloc = alloc, .desc = meshDesc };
+	}
+};
 
 
 struct renderer_geometry
 {
-	std::vector<gpu_mesh_payload>	gpuMeshesPayload;
 	std::vector<gpu_mesh>			gpuMeshes; // NOTE: matches 1:1 the above buffers
 
 	std::vector<vk_image>			textures;
@@ -1131,13 +1244,6 @@ struct virtual_frame
 	}
 };
 
-struct renderer_upload_resp
-{
-	gpu_mesh_payload payload;
-	gpu_mesh         desc;
-	HRNDMESH32       hSlot;
-	upload_t         uploadType;
-};
 
 struct render_context final : renderer_interface
 {
@@ -1164,6 +1270,14 @@ struct render_context final : renderer_interface
 	vk_image								    depthTarget;
 
 	vk_buffer                                   stagingBuff;
+
+	vk_buffer                                   megaGpuVtxBuff;
+	vk_buffer                                   megaGpuTriBuff;
+	vk_buffer                                   megaGpuMeshletBuff;
+
+	offset_allocator_t							meshletAllocator;
+	offset_allocator_t							vtxAllocator;
+	offset_allocator_t							triAllocator;
 
 	// TODO: move to appropriate technique/context
 	VkPipeline									gfxZPrepass;
@@ -1195,7 +1309,7 @@ struct render_context final : renderer_interface
 
 	virtual void UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) override;
 	// TODO:
-	void RecordTextureUplaods( std::span<const tex_upload> meshAssets, virtual_arena& arena );
+	void RecordTextureUploads( std::span<const tex_upload> meshAssets, virtual_arena& arena );
 };
 
 std::unique_ptr<renderer_interface> MakeRenderer()
@@ -1326,7 +1440,27 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 
 	imguiPass = MakeImguiPass( *pVkCtx, pVkCtx->scConfig.format );
 
-	//vrtFrames.resize( framesInFlight );
+	constexpr VkBufferUsageFlags megaBuffUsg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {
+		.usageFlags		= megaBuffUsg,
+		.sizeInBytes	= sizeof( gpu_meshlet ) * MAX_MESHLETS_IN_SCENE,
+		.usage			= buffer_usage::GPU_ONLY
+	} );
+	megaGpuVtxBuff = pVkCtx->CreateBuffer( {
+		.usageFlags		= megaBuffUsg,
+		.sizeInBytes	= sizeof( packed_vtx ) * MAX_VERTICES_IN_SCENE,
+		.usage			= buffer_usage::GPU_ONLY
+	} );
+	megaGpuTriBuff = pVkCtx->CreateBuffer( {
+		.usageFlags		= megaBuffUsg | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+		.sizeInBytes	= sizeof( index_t ) * MAX_TRIANGLES_IN_SCENE,
+		.usage			= buffer_usage::GPU_ONLY
+	} );
+
+	meshletAllocator = { ( u32 ) megaGpuMeshletBuff.sizeInBytes };
+	vtxAllocator = { ( u32 ) megaGpuVtxBuff.sizeInBytes };
+	triAllocator = { ( u32 ) megaGpuTriBuff.sizeInBytes };
 }
 
 void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads, virtual_arena& arena )
@@ -1334,16 +1468,16 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 	if( VK_NULL_HANDLE == stagingBuff.hndl )
 	{
 		stagingBuff = pVkCtx->CreateBuffer( {
-			.usageFlags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			.sizeInBytes = 256 * MB, 
-			.usage = buffer_usage::STAGING
+			.usageFlags		= VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			.sizeInBytes	= 256 * MB,
+			.usage			= buffer_usage::STAGING
 		} );
 	}
 
 	// TODO: replace with our own buffer 
 	std::pmr::monotonic_buffer_resource stagingBuffPool = { stagingBuff.hostVisible, stagingBuff.sizeInBytes };
-	std::pmr::vector<u8> staginScratch{ &stagingBuffPool };
-	staginScratch.reserve( stagingBuff.sizeInBytes );
+	std::pmr::vector<u8> stagingScratch{ &stagingBuffPool };
+	stagingScratch.reserve( stagingBuff.sizeInBytes );
 
 	vk_cmd_pool_buff copyCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
 	vk_command_buffer copyCmdBuff = { copyCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
@@ -1354,99 +1488,99 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 	meshesBuff.reserve( std::size( meshUploads ) );
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &vaStack };
-	buffInitCpyBarriers.reserve( std::size( meshUploads ) );
+	buffInitCpyBarriers.reserve( std::size( meshUploads ) * 3 );
 
 	std::pmr::vector<vk_buffer_copy> buffCopies{ &vaStack };
 	buffCopies.reserve( std::size( meshUploads ) );
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &vaStack };
-	buffEndCpyBarriers.reserve( std::size( meshUploads ) );
+	buffEndCpyBarriers.reserve( std::size( meshUploads ) * 3 );
 
 	for( const mesh_upload_req& meshUpload : meshUploads )
 	{
-		u64 stagingOffsetInBytes = std::size( staginScratch );
+		u64 stagingOffsetInBytes = std::size( stagingScratch );
 
 		const hellpack_mesh_asset& mesh = meshUpload.htAsset;
-		// NOTE: bc we draw as meshlets but on the trad pipeline we need a merged index buffer
-		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
-		fixed_string<256> nameMeshlets = { "{}_Buff_Meshlets", meshUpload.filepath };
-		fixed_string<256> nameVtx = { "{}_Buff_Vtx", meshUpload.filepath };
-		fixed_string<256> nameTris = { "{}_Buff_Tris", meshUpload.filepath };
+		u32 mletSzInBytes = ( u32 ) std::size( mesh.meshlets );
+		u32 vtxSzInBytes = ( u32 ) std::size( mesh.vertices );
+		u32 triSzInBytes = ( u32 ) std::size( mesh.triangles );
 
-		gpu_mesh_payload gpuMeshPayload = {
-			.meshletBuffer = pVkCtx->CreateBuffer( {
-				.name = std::data( nameMeshlets ),
-				.usageFlags = usgFlags,
-				.sizeInBytes = std::size( mesh.meshlets ),
-				.usage = buffer_usage::GPU_ONLY } ),
-
-			.vertexBuffer = pVkCtx->CreateBuffer( {
-				.name = std::data( nameVtx ),
-				.usageFlags = usgFlags,
-				.sizeInBytes = std::size( mesh.vertices ),
-				.usage = buffer_usage::GPU_ONLY } ),
-
-			.triangleBuffer = pVkCtx->CreateBuffer( {
-				.name = std::data( nameTris ),
-				.usageFlags = usgFlags,
-				.sizeInBytes = std::size( mesh.triangles ),
-				.usage = buffer_usage::GPU_ONLY } ),
+		gpu_mesh_allocation gpuMeshAlloc = {
+			.meshletAlloc	= meshletAllocator.Alloc( mletSzInBytes ),
+			.vtxAlloc		= vtxAllocator.Alloc( vtxSzInBytes ),
+			.triAlloc		= triAllocator.Alloc( triSzInBytes )
+		};
+		gpu_mesh gpuMesh = {
+			.minAabb		= mesh.aabbMin,
+			.maxAabb		= mesh.aabbMax,
+			.meshletOffset	= gpuMeshAlloc.meshletAlloc.offset,
+			.vtxOffset		= gpuMeshAlloc.vtxAlloc.offset,
+			.triOffset		= gpuMeshAlloc.triAlloc.offset,
+			.meshletCount	= mletSzInBytes,
+			.vtxCount		= vtxSzInBytes,
+			.triCount		= triSzInBytes
 		};
 
-		gpu_mesh desc = {
-			.minAabb = mesh.aabbMin,
-			.maxAabb = mesh.aabbMax,
-			.hMeshletBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.meshletBuffer ),
-			.meshletCount = ( u32 ) std::size( mesh.meshlets ),
-			.hVertexBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.vertexBuffer ),
-			.vertexCount = ( u32 ) std::size( mesh.vertices ),
-			.hTriangleBuffer = pVkCtx->AllocDescriptor( gpuMeshPayload.triangleBuffer ),
-			.triangleCount = ( u32 ) std::size( mesh.triangles )
-		};
-
-		meshesBuff.push_back( { .payload = gpuMeshPayload, .desc = desc, .hSlot = meshUpload.hSlot, 
-			.uploadType = upload_t::MESH } );
+		meshesBuff.push_back( { .gpuMesh = gpuMesh, .alloc = gpuMeshAlloc,
+			.hSlot = meshUpload.hSlot, .uploadType = upload_t::MESH } );
 
 		{
-			staginScratch.resize( stagingOffsetInBytes + std::size( mesh.meshlets ) );
-			std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes, std::data( mesh.meshlets ), std::size( mesh.meshlets ) );
+			stagingScratch.resize( stagingOffsetInBytes + mletSzInBytes );
+			std::memcpy( std::data( stagingScratch ) + stagingOffsetInBytes,
+				std::data( mesh.meshlets ), std::size( mesh.meshlets ) );
 
-			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.meshletBuffer.hndl, 0, 0,
-				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT ) );
+			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuMeshletBuff.hndl, 0, 0,
+				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+				gpuMesh.meshletOffset, mletSzInBytes ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, gpuMeshPayload.meshletBuffer.hndl, stagingOffsetInBytes, 
-				0, std::size( mesh.meshlets ) );
+			buffCopies.emplace_back( stagingBuff.hndl, megaGpuMeshletBuff.hndl, stagingOffsetInBytes,
+				gpuMesh.meshletOffset, mletSzInBytes );
 
-			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.meshletBuffer.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0, 0, VK_WHOLE_SIZE, pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
+			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuMeshletBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
+				gpuMesh.meshletOffset, mletSzInBytes,
+				pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 
-			stagingOffsetInBytes += std::size( mesh.meshlets );
+			stagingOffsetInBytes += mletSzInBytes;
 		}
 
 		{
-			staginScratch.resize( stagingOffsetInBytes + std::size( mesh.vertices ) );
-			std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes, std::data( mesh.vertices ), std::size( mesh.vertices ) );
+			stagingScratch.resize( stagingOffsetInBytes + vtxSzInBytes );
+			std::memcpy( std::data( stagingScratch ) + stagingOffsetInBytes,
+				std::data( mesh.vertices ), std::size( mesh.vertices ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, gpuMeshPayload.vertexBuffer.hndl, stagingOffsetInBytes, 
-				0, std::size( mesh.vertices ) );
+			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuVtxBuff.hndl, 0, 0,
+				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+				gpuMesh.vtxOffset, vtxSzInBytes ) );
+
+			buffCopies.emplace_back( stagingBuff.hndl, megaGpuVtxBuff.hndl, stagingOffsetInBytes,
+				gpuMesh.vtxOffset, vtxSzInBytes );
 			
-			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.vertexBuffer.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0, 0, VK_WHOLE_SIZE, pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
+			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuVtxBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
+				gpuMesh.vtxOffset, vtxSzInBytes, pVkCtx->copyQueue.familyIdx,
+				pVkCtx->gfxQueue.familyIdx ) );
 
-			stagingOffsetInBytes += std::size( mesh.vertices );
+			stagingOffsetInBytes += vtxSzInBytes;
 		}
 
 		{
-			staginScratch.resize( stagingOffsetInBytes + std::size( mesh.triangles ) );
-			std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes, std::data( mesh.triangles ), std::size( mesh.triangles ) );
+			stagingScratch.resize( stagingOffsetInBytes + triSzInBytes );
+			std::memcpy( std::data( stagingScratch ) + stagingOffsetInBytes,
+				std::data( mesh.triangles ), std::size( mesh.triangles ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, gpuMeshPayload.triangleBuffer.hndl, stagingOffsetInBytes, 
-				0, std::size( mesh.triangles ) );
+			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuTriBuff.hndl, 0, 0,
+				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+				gpuMesh.triOffset, triSzInBytes ) );
+
+			buffCopies.emplace_back( stagingBuff.hndl, megaGpuTriBuff.hndl, stagingOffsetInBytes,
+				gpuMesh.triOffset, triSzInBytes );
 			
-			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( gpuMeshPayload.triangleBuffer.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0, 0, VK_WHOLE_SIZE, pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
+			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuTriBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
+				gpuMesh.triOffset, triSzInBytes,
+				pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 
 			stagingOffsetInBytes += std::size( mesh.triangles );
 		}
@@ -1471,7 +1605,8 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 
 	for( const VkBufferMemoryBarrier2& barr : buffEndCpyBarriers )
 	{
-		buffTransferOwnershipBarriers.push_back( VkMakeBufferBarrier( barr.buffer, 0, 0, 0, 0, 0, VK_WHOLE_SIZE,
+		buffTransferOwnershipBarriers.push_back( VkMakeBufferBarrier( barr.buffer, 0, 0, 0, 0,
+			barr.offset, barr.size,
 			pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 	}
 
@@ -1486,7 +1621,7 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 		.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 
-	VkSemaphore ownershipTransferComplete = pVkCtx->CreateBinarySemaphore();
+	//VkSemaphore ownershipTransferComplete = pVkCtx->CreateBinarySemaphore();
 
 	VkFence fence = pVkCtx->GetOrCreateFence();
 	pVkCtx->QueueSubmit( pVkCtx->copyQueue, gfxCB, waitCpyDone, {}, fence );
@@ -1500,7 +1635,7 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 }
 
 
-void render_context::RecordTextureUplaods( std::span<const tex_upload> meshAssets, virtual_arena& arena )
+void render_context::RecordTextureUploads( std::span<const tex_upload> meshAssets, virtual_arena& arena )
 {
 	//ankerl::unordered_dense::pmr::map<u64, u32> texIdMap{ &vaStack };
 	//for( const vfs_path& vpath : texFiles )
@@ -1563,13 +1698,6 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	const u64 currentFrameIdx = vFrameIdx++;
 	const u64 currentFrameInFlightIdx = currentFrameIdx % framesInFlight;
 
-	for( renderer_upload_resp uploadResp = {}; copyToMainQueue.TryPop( uploadResp ); )
-	{
-		auto[ payload, desc ] = meshTable[ uploadResp.hSlot ];
-
-		payload = uploadResp.payload;
-		desc = uploadResp.desc;
-	}
 
 	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
@@ -1580,6 +1708,14 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 		vrtFrames.push_back( {} );
 		std::rbegin( vrtFrames )->Init(
 			*pVkCtx,  std::size( frameData.views ) * sizeof( view_data ), ( u32 ) currentFrameInFlightIdx );
+	}
+
+	for( renderer_upload_resp uploadResp = {}; copyToMainQueue.TryPop( uploadResp ); )
+	{
+		auto[ payload, desc ] = meshTable[ uploadResp.hSlot ];
+
+		payload = uploadResp.alloc;
+		desc = uploadResp.gpuMesh;
 	}
 
 	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
