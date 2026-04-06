@@ -32,6 +32,8 @@ inline float4 fmaxf( float4 a, float4 b )
 	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ), fmaxf( a.w,b.w ) };
 }
 
+// AABB
+
 template<typename Vec>
 struct aabb_t
 {
@@ -159,6 +161,47 @@ __forceinline aabb_t<float3> TransformAABB(
 	const float3&			s 
 ) {
 	return TransformAABB( aabb.min, aabb.max, t, r, s );
+}
+
+constexpr std::array<float3, 8u> GenerateBoxWithBounds( float3 boxMin, float3 boxMax )
+{
+	std::array<float3, 8u> boxCorners = {};
+	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z };
+	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z };
+	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z };
+	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z };
+	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z };
+	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z };
+	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z };
+	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z };
+
+	return boxCorners;
+}
+
+inline void XM_CALLCONV
+TransformBoxVertices(
+	DirectX::XMMATRIX	transf,
+	float3				boxMin,
+	float3				boxMax,
+	float4*				boxCorners
+) {
+	using namespace DirectX;
+
+	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z, 1.0f };
+	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z, 1.0f };
+	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z, 1.0f };
+	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z, 1.0f };
+	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z, 1.0f };
+	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z, 1.0f };
+	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z, 1.0f };
+	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z, 1.0f };
+
+	for( u64 ci = 0; ci < 8; ++ci )
+	{
+		XMFLOAT4& outCorner = boxCorners[ ci ];
+		XMVECTOR transformedCorner = XMVector4Transform( XMLoadFloat4( &outCorner ), transf );
+		outCorner = DX_XMStoreFloat4( transformedCorner );
+	}
 }
 
 #include <immintrin.h>

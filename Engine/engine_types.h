@@ -6,38 +6,13 @@
 #include "ht_core_types.h"
 #include "ht_vec_types.h"
 #include "hell_pack.h"
-#include "r_data_structs.h"
 #include "ht_slot_buffer.h"
-#include "vk_resources.h"
+#include "ht_renderer_types.h"
 #include "ht_fixed_string.h"
 
 struct gpu_data
 {
 	float timeMs;
-};
-
-// NOTE: weird alignments bc this will be read by the GPU !
-struct gpu_mesh
-{
-	alignas( 16 ) float3	minAabb;
-	alignas( 16 ) float3	maxAabb;
-	u32						meshletOffset;
-	u32						vtxOffset;
-	u32						triOffset;
-	u32						meshletCount;
-	u32						vtxCount;
-	u32						triCount;
-};
-
-struct gpu_meshlet
-{
-	alignas( 16 ) float3	minAabb;
-	alignas( 16 ) float3	maxAabb;
-	u32						vtxOffset;
-	u32						triOffset;
-	u32						vtxCount : 8;
-	u32						triCount : 8;
-	u32						padding : 16;
 };
 
 // TODO: maybe don't expose this
@@ -65,9 +40,9 @@ struct tex_upload
 
 struct gpu_instance
 {
-	packed_trs transform;
-	HRNDMESH32 meshIdx;
-	u16 materialIdx;
+	packed_trs	transform;
+	HRNDMESH32	meshIdx;
+	u16			materialIdx;
 };
 
 struct frame_data

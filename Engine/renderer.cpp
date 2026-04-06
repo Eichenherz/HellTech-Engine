@@ -26,6 +26,10 @@
 
 #include "engine_types.h"
 
+#include "ht_geometry.h"
+#include "ht_math.h"
+#include <imgui.h>
+
 #include <DirectXPackedVector.h>
 
 namespace DXPacked = DirectX::PackedVector;
@@ -56,7 +60,7 @@ static const DXPacked::XMCOLOR yellow = { 255u, 255u, 0u, 1 };
 static const DXPacked::XMCOLOR cyan = { 0u, 255u, 255u, 1 };
 static const DXPacked::XMCOLOR magenta = { 255u, 0u, 255u, 1 };
 
-#include "r_data_structs.h"
+#include "ht_renderer_types.h"
 
 // NOTE: clear depth to 0 bc we	use RevZ
 constexpr VkClearValue DEPTH_CLEAR_VAL = {};
@@ -87,33 +91,10 @@ inline static VkRenderingAttachmentInfo VkMakeAttachmentInfo(
 }
 
 
-// TODO: ensure mipmapMode in assetcmpl
-// TODO: addrModeW ?
-// TODO: more stuff ?
-//inline VkSamplerCreateInfo VkMakeSamplerInfo( sampler_config config )
-//{
-//	HT_ASSERT( 0 );
-//	VkSamplerCreateInfo vkSamplerInfo = { 
-//		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-//		.magFilter = VkGetFilterTypeFromGltf( config.mag ),
-//		.minFilter = VkGetFilterTypeFromGltf( config.min ),
-//		.mipmapMode =  VkGetMipmapTypeFromGltf( config.min ),
-//		.addressModeU = VkGetAddressModeFromGltf( config.addrU ),
-//		.addressModeV = VkGetAddressModeFromGltf( config.addrV )
-//	};
-//
-//	return vkSamplerInfo;
-//}
-
-#include "ht_geometry.h"
-
-
 inline u32 GroupCount( u32 invocationCount, u32 workGroupSize )
 {
 	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
 }
-
-#include <imgui.h>
 
 struct imgui_pass
 {
@@ -234,9 +215,9 @@ struct imgui_pass
 			idxDst += cmdList->IdxBuffer.Size;
 		}
 
-		vec2 scale = { 2.0f / drawData->DisplaySize.x, 2.0f / drawData->DisplaySize.y };
-		vec2 move = { -1.0f - drawData->DisplayPos.x * scale.x, -1.0f - drawData->DisplayPos.y * scale.y };
-		vec4 pushConst = { scale.x, scale.y, move.x, move.y };
+		float2 scale = { 2.0f / drawData->DisplaySize.x, 2.0f / drawData->DisplaySize.y };
+		float2 move = { -1.0f - drawData->DisplayPos.x * scale.x, -1.0f - drawData->DisplayPos.y * scale.y };
+		float4 pushConst = { scale.x, scale.y, move.x, move.y };
 
 		vk_descriptor_info pushDescs[] = { vtxBuff, { fontSampler, fontAtlasImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } };
 
@@ -265,9 +246,9 @@ struct imgui_pass
 		vkCmdBindIndexBuffer( cmdBuff, idxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
 
 		// (0,0) unless using multi-viewports
-		vec2 clipOff = { drawData->DisplayPos.x, drawData->DisplayPos.y };
+		float2 clipOff = { drawData->DisplayPos.x, drawData->DisplayPos.y };
 		// (1,1) unless using retina display which are often (2,2)
-		vec2 clipScale = { drawData->FramebufferScale.x, drawData->FramebufferScale.y };
+		float2 clipScale = { drawData->FramebufferScale.x, drawData->FramebufferScale.y };
 
 		u32 vtxOffset = 0, idxOffset = 0;
 		for( u32 li = 0u; li < ( u32 ) drawData->CmdListsCount; ++li )
@@ -277,8 +258,8 @@ struct imgui_pass
 			{
 				const ImDrawCmd* pCmd = &cmdList->CmdBuffer[ ci ];
 				// Project scissor/clipping rectangles into framebuffer space
-				vec2 clipMin = { ( pCmd->ClipRect.x - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.y - clipOff.y ) * clipScale.y };
-				vec2 clipMax = { ( pCmd->ClipRect.z - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.w - clipOff.y ) * clipScale.y };
+				float2 clipMin = { ( pCmd->ClipRect.x - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.y - clipOff.y ) * clipScale.y };
+				float2 clipMax = { ( pCmd->ClipRect.z - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.w - clipOff.y ) * clipScale.y };
 
 				// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
 				clipMin = { std::max( clipMin.x, 0.0f ), std::max( clipMin.y, 0.0f ) };
@@ -526,12 +507,12 @@ struct debug_draw_passes
 
 	// TODO: multi draw with params
 	void DrawCPU( 
-		vk_command_buffer&        cmdBuff, 
-		const vk_rendering_info&  renderingInfo, 
-		debug_draw_type           ddType, 
-		u64                       viewAddr, 
-		u32                       viewIdx,
-		const mat4&      transf,
+		vk_command_buffer&        	cmdBuff,
+		const vk_rendering_info&  	renderingInfo,
+		debug_draw_type           	ddType,
+		u64                       	viewAddr,
+		u32                       	viewIdx,
+		const float4x4&				transf,
 		u32 color
 	) {
 		std::array<char, 64> fixedStr = {};
@@ -550,11 +531,11 @@ struct debug_draw_passes
 	#pragma pack(push, 1)
 		struct debug_cpu_push
 		{
-			mat4 transf;
-			uint64_t vtxAddr;
-			uint64_t viewAddr;
-			uint viewIdx;
-			uint color;
+			float4x4	transf;
+			u64 		vtxAddr;
+			u64 		viewAddr;
+			u32 		viewIdx;
+			u32 		color;
 		} pc = { transf, vtxAddr, viewAddr, viewIdx, color };
 	#pragma pack(pop)
 		cmdBuff.CmdPushConstants( &pc, sizeof( pc ) );
@@ -588,8 +569,8 @@ struct culling_pass
 	vk_buffer		drawCount;
 	vk_buffer		atomicWgCounter;
 	vk_buffer		dispatchIndirect;
-	// NOTE: bc we don't have meshelets or RT we need a global, merged idx buffer, 
-	// fortuantaly we do use meshlets so it's U8 indices
+	// NOTE: bc we don't have meshlets or RT we need a global, merged idx buffer,
+	// fortunately we do use meshlets so it's U8 indices
 	vk_buffer       indexBuffer; 
 
 	VkPipeline		compPipeline;
@@ -829,10 +810,10 @@ struct tone_mapping_pass
 		struct push_const
 		{
 			avg_luminance_info  avgLumInfo;
-			uint				hdrColSrcIdx;
-			uint				lumHistoIdx;
-			uint				atomicWorkGrCounterIdx;
-			uint				avgLumIdx;
+			u32					hdrColSrcIdx;
+			u32					lumHistoIdx;
+			u32					atomicWorkGrCounterIdx;
+			u32					avgLumIdx;
 		} pushConst = { avgLumInfo, hdrColSrcDesc.slot, lumHistoIdx.slot, atomicWgCounterIdx.slot, avgLumIdx.slot };
 		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 		cmdBuff.CmdDispatch( numWorkGrs );
@@ -851,9 +832,9 @@ struct tone_mapping_pass
 		DirectX::XMUINT3 numWorkGrs = { GroupCount( hdrTrgSize.x, groupSize.x ), GroupCount( hdrTrgSize.y, groupSize.y ), 1 };
 		struct push_const
 		{
-			uint hdrColIdx;
-			uint sdrColIdx;
-			uint avgLumIdx;
+			u32 hdrColIdx;
+			u32 sdrColIdx;
+			u32 avgLumIdx;
 		} pushConst = { hdrColDesc.slot, sdrColDesc.slot, avgLumIdx.slot };
 		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 		cmdBuff.CmdDispatch( numWorkGrs );
@@ -975,20 +956,20 @@ struct depth_pyramid_pass
 			u32 levelWidth = std::max( 1u, u32( hiZTarget.width ) >> i );
 			u32 levelHeight = std::max( 1u, u32( hiZTarget.height ) >> i );
 
-			vec2 reduceData{ ( float ) levelWidth, ( float ) levelHeight };
+			float2 reduceData{ ( float ) levelWidth, ( float ) levelHeight };
 
 			struct push_const
 			{
-				vec2 reduce;
-				uint samplerIdx;
-				uint srcImgIdx;
-				uint mipLevel;
-				uint dstImgIdx;
+				float2	reduce;
+				u32 	samplerIdx;
+				u32 	srcImgIdx;
+				u32 	mipLevel;
+				u32 	dstImgIdx;
 
-				push_const(vec2 r, uint s, uint src, uint mip, uint dst)
+				push_const(float2 r, u32 s, u32 src, u32 mip, u32 dst)
 					: reduce(r), samplerIdx(s), srcImgIdx(src), mipLevel(mip), dstImgIdx(dst) {}
 			};
-			push_const pushConst{ vec2{(float)levelWidth, (float)levelHeight}, quadMinSamplerIdx.slot, srcImg, mipLevel, dstImg };
+			push_const pushConst{ float2{ (float) levelWidth, (float) levelHeight}, quadMinSamplerIdx.slot, srcImg, mipLevel, dstImg };
 			cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 
 			group_size grSz = { 32,32,1 };
@@ -1219,33 +1200,43 @@ struct virtual_frame
 	desc_hndl32                 instDesc;
 
 	u32                         fifIdx; // NOTE: for debug
-
-	inline void Init( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
-	{
-		constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-		fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
-
-		canGetImgSema = vkCtx.CreateBinarySemaphore();
-		viewData = vkCtx.CreateBuffer( { .name = std::data( name ), .usageFlags = usg, .sizeInBytes = sizeInBytes, 
-			.usage = buffer_usage::HOST_VISIBLE } );
-		viewDataIdx = vkCtx.AllocDescriptor( viewData );
-
-		constexpr u64 DEFAULT_MESH_TABLE_SIZE = 512 * sizeof( gpu_mesh );
-		fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
-		gpuMeshTable = vkCtx.CreateBuffer( { .name = std::data( meshTableName ), .usageFlags = usg, 
-			.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
-		gpuMeshTableDesc = vkCtx.AllocDescriptor( gpuMeshTable );
-
-		constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( gpu_instance );
-		fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
-		gpuInstances = vkCtx.CreateBuffer( { .name = std::data( instName ), .usageFlags = usg, 
-			.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
-		instDesc = vkCtx.AllocDescriptor( gpuInstances );
-	}
 };
 
+inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
+{
+	constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+	fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
 
-struct render_context final : renderer_interface
+	VkSemaphore canGetImgSema = vkCtx.CreateBinarySemaphore();
+	vk_buffer viewData = vkCtx.CreateBuffer( { .name = std::data( name ), .usageFlags = usg, .sizeInBytes = sizeInBytes,
+		.usage = buffer_usage::HOST_VISIBLE } );
+	desc_hndl32 viewDataIdx = vkCtx.AllocDescriptor( viewData );
+
+	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 512 * sizeof( gpu_mesh );
+	fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
+	vk_buffer gpuMeshTable = vkCtx.CreateBuffer( { .name = std::data( meshTableName ), .usageFlags = usg,
+		.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
+	desc_hndl32 gpuMeshTableDesc = vkCtx.AllocDescriptor( gpuMeshTable );
+
+	constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( gpu_instance );
+	fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
+	vk_buffer gpuInstances = vkCtx.CreateBuffer( { .name = std::data( instName ), .usageFlags = usg,
+		.sizeInBytes = DEFAULT_INST_COUNT, .usage = buffer_usage::HOST_VISIBLE } );
+	desc_hndl32 instDesc = vkCtx.AllocDescriptor( gpuInstances );
+
+	return {
+		.canGetImgSema		= canGetImgSema,
+		.viewData			= viewData,
+		.gpuMeshTable		= gpuMeshTable,
+		.gpuInstances		= gpuInstances,
+		.viewDataIdx		= viewDataIdx,
+		.gpuMeshTableDesc	= gpuMeshTableDesc,
+		.instDesc			= instDesc,
+		.fifIdx				= fifIdx,
+	};
+}
+
+struct renderer_context final : renderer_interface
 {
 	alignas( 8 ) vk_renderer_config             config = { 
 		.renderWidth = SCREEN_WIDTH, .rednerHeight = SCREEN_HEIGHT };
@@ -1314,10 +1305,10 @@ struct render_context final : renderer_interface
 
 std::unique_ptr<renderer_interface> MakeRenderer()
 {
-	return std::make_unique<render_context>();
+	return std::make_unique<renderer_context>();
 }
 
-void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height )
+void renderer_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat desiredColorFormat, u16 width, u16 height )
 {
 	constexpr VkImageUsageFlags depthUsgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
@@ -1373,7 +1364,7 @@ void render_context::InitGlobalResources( VkFormat desiredDepthFormat, VkFormat 
 	rscStateTracker.UseImage( colorTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 }
 
-void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
+void renderer_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 {
 	pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, config ) );
 
@@ -1463,7 +1454,7 @@ void render_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	triAllocator = { ( u32 ) megaGpuTriBuff.sizeInBytes };
 }
 
-void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads, virtual_arena& arena )
+void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads, virtual_arena& arena )
 {
 	if( VK_NULL_HANDLE == stagingBuff.hndl )
 	{
@@ -1621,8 +1612,6 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 		.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 
-	//VkSemaphore ownershipTransferComplete = pVkCtx->CreateBinarySemaphore();
-
 	VkFence fence = pVkCtx->GetOrCreateFence();
 	pVkCtx->QueueSubmit( pVkCtx->copyQueue, gfxCB, waitCpyDone, {}, fence );
 
@@ -1635,7 +1624,7 @@ void render_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads,
 }
 
 
-void render_context::RecordTextureUploads( std::span<const tex_upload> meshAssets, virtual_arena& arena )
+void renderer_context::RecordTextureUploads( std::span<const tex_upload> meshAssets, virtual_arena& arena )
 {
 	//ankerl::unordered_dense::pmr::map<u64, u32> texIdMap{ &vaStack };
 	//for( const vfs_path& vpath : texFiles )
@@ -1693,22 +1682,21 @@ void render_context::RecordTextureUploads( std::span<const tex_upload> meshAsset
 	//}
 }
 
-void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
+void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	const u64 currentFrameIdx = vFrameIdx++;
 	const u64 currentFrameInFlightIdx = currentFrameIdx % framesInFlight;
 
-
-	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
-	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
-
 	[[unlikely]]
 	if( currentFrameIdx < framesInFlight )
 	{
-		vrtFrames.push_back( {} );
-		std::rbegin( vrtFrames )->Init(
-			*pVkCtx,  std::size( frameData.views ) * sizeof( view_data ), ( u32 ) currentFrameInFlightIdx );
+		virtual_frame vframe = MakeVirtualFrame( *pVkCtx,  std::size( frameData.views ) * sizeof( view_data ),
+			( u32 ) currentFrameInFlightIdx );
+		vrtFrames.push_back( vframe );
 	}
+
+	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
+	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
 
 	for( renderer_upload_resp uploadResp = {}; copyToMainQueue.TryPop( uploadResp ); )
 	{
@@ -1880,11 +1868,11 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 		thisFrameCmdBuffer.CmdFillVkBuffer( tonemapPass.luminanceHistogramBuffer, 0u );
 		thisFrameCmdBuffer.CmdFillVkBuffer( tonemapPass.atomicWgCounterBuff, 0u );
 
-		rscStateTracker.UseBuffer( tonemapPass.luminanceHistogramBuffer, 
+		rscStateTracker.UseBuffer( tonemapPass.luminanceHistogramBuffer,
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
-		rscStateTracker.UseBuffer( tonemapPass.atomicWgCounterBuff, 
+		rscStateTracker.UseBuffer( tonemapPass.atomicWgCounterBuff,
 			{ HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT } );
-		rscStateTracker.UseImage( colorTarget, 
+		rscStateTracker.UseImage( colorTarget,
 			{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT }, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 		rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
 
@@ -1924,15 +1912,15 @@ void render_context::HostFrames( const frame_data& frameData, gpu_data& gpuData 
 	thisFrameCmdBuffer.CmdEndCmdBuffer();
 
 	VkSemaphoreSubmitInfo waitScImgAcquire[] = { {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = thisVFrame.canGetImgSema,
-		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.sType		= VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore	= thisVFrame.canGetImgSema,
+		.stageMask	= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 	} };
 	VkSemaphoreSubmitInfo signalRenderFinished[] = {
 		{
-			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-			.semaphore = scImg.canPresentSema,
-			.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+			.sType		= VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+			.semaphore	= scImg.canPresentSema,
+			.stageMask	= VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
 		},
 		pVkCtx->gpuFrameTimeline.GetSignalNextPoint( VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT )
 	};

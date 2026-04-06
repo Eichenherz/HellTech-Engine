@@ -13,9 +13,9 @@
 
 #include <dds.h>
 
-inline VkViewport VkGetViewport( float width, float height )
+inline VkViewport VkGetViewport( u32 width, u32 height )
 {
-	return { 0.0f, height, width, -height, 0.0f, 1.0f };
+	return { 0.0f, ( float ) height, ( float ) width, -( (  float ) height ), 0.0f, 1.0f };
 }
 
 inline VkRect2D VkGetScissor( u32 width, u32 height )

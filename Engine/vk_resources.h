@@ -1,9 +1,9 @@
+#pragma once
+
 #ifndef __VK_RESOURCES_H__
 #define __VK_RESOURCES_H__
 
-#define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
-#include "Win32/DEFS_WIN32_NO_BS.h"
 #include <vulkan.h>
 
 #include "vk_utils.h"

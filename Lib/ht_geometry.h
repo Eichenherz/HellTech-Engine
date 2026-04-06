@@ -6,23 +6,9 @@
 #include <array>
 #include <span>
 
-#include "r_data_structs.h"
+#include "ht_renderer_types.h"
+#include "ht_vec_types.h"
 
-// NOTE: clang-cl on VS issue
-#ifdef __clang__
-#undef __clang__
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-#define __clang__
-
-#elif _MSC_VER >= 1916
-
-#define _XM_NO_XMVECTOR_OVERLOADS_
-#include <DirectXMath.h>
-
-#endif
-
-#include <DirectXPackedVector.h>
 
 constexpr bool worldLeftHanded = true;
 
@@ -245,37 +231,7 @@ constexpr DirectX::XMFLOAT3 BOX_MIN = {-0.5f, -0.5f, -0.5f };
 constexpr DirectX::XMFLOAT3 BOX_MAX = { 0.5f,  0.5f,  0.5f };
 
 
-constexpr std::array<DirectX::XMFLOAT3A, 8u> 
-GenerateBoxWithBounds( DirectX::XMFLOAT3 boxMin, DirectX::XMFLOAT3 boxMax )
-{
-	std::array<DirectX::XMFLOAT3A,8u> boxCorners = {};
-	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z };
-	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z };
-	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z };
-	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z };
-	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z };
-	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z };
-	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z };
-	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z };
 
-	return boxCorners;
-}
-
-//inline std::array<DirectX::XMFLOAT3,8u> XM_CALLCONV 
-//GenerateTransformedBox( DirectX::XMMATRIX transf, DirectX::XMFLOAT3	boxMin, DirectX::XMFLOAT3 boxMax )
-//{
-//	using namespace DirectX;
-//
-//	std::array<DirectX::XMFLOAT3, 8u> boxCorners = GenerateBoxWithBounds( boxMin, boxMax );
-//
-//	for( XMFLOAT3& thisCorner : boxCorners )
-//	{
-//		XMVECTOR transformedCorner = XMVector4Transform( XMVectorSet( thisCorner.x, thisCorner.y, thisCorner.z, 1.0f ), transf );
-//		XMStoreFloat3( &thisCorner, transformedCorner );
-//	}
-//
-//	return boxCorners;
-//}
 
 template<typename Vertex>
 constexpr std::array<Vertex, std::size( boxLineIndices )> 
@@ -303,49 +259,10 @@ BoxVerticesAsTriangles( const std::array<Vertex, 8u>& boxVertices )
 	return out;
 }
 
-
-inline void XM_CALLCONV 
-TrnasformBoxVertices(
-	DirectX::XMMATRIX		transf,
-	DirectX::XMFLOAT3		boxMin,
-	DirectX::XMFLOAT3		boxMax,
-	DirectX::XMFLOAT4*		boxCorners
-){
-	using namespace DirectX;
-
-	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z, 1.0f };
-	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z, 1.0f };
-	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z, 1.0f };
-	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z, 1.0f };
-	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z, 1.0f };
-	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z, 1.0f };
-	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z, 1.0f };
-	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z, 1.0f };
-
-	for( u64 ci = 0; ci < 8; ++ci )
-	{
-		XMFLOAT4& outCorner = boxCorners[ ci ];
-		XMVECTOR trnasformedCorner = XMVector4Transform( XMLoadFloat4( &outCorner ), transf );
-		XMStoreFloat4( &outCorner, trnasformedCorner );
-	}
-}
-
-struct box_bounds
-{
-	DirectX::XMFLOAT3 min;
-	DirectX::XMFLOAT3 max;
-};
-
-struct entities_data
-{
-	std::vector<DirectX::XMFLOAT4X4A> transforms;
-	std::vector<box_bounds> instAabbs;
-};
-
 constexpr double RAND_MAX_SCALE = 1.0 / double( RAND_MAX );
 // TODO: remove ?
 inline static std::vector<instance_desc>
-SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrlCount, float sceneRadius )
+SpawnRandomInstances( const std::span<gpu_mesh> meshes, u64 drawCount, u64 mtrlCount, float sceneRadius )
 {
 	using namespace DirectX;
 
@@ -382,7 +299,7 @@ SpawnRandomInstances( const std::span<mesh_desc> meshes, u64 drawCount, u64 mtrl
 
 	return insts;
 }
-inline static std::vector<DirectX::XMFLOAT4X4A> SpawmRandomTransforms( u64 instCount, float sceneRadius, float globalScale )
+inline static std::vector<DirectX::XMFLOAT4X4A> SpawnRandomTransforms( u64 instCount, float sceneRadius, float globalScale )
 {
 	using namespace DirectX;
 
@@ -414,20 +331,6 @@ inline static std::vector<DirectX::XMFLOAT4X4A> SpawmRandomTransforms( u64 instC
 	}
 
 	return transf;
-}
-inline static std::vector<light_data> SpawnRandomLights( u64 lightCount, float sceneRadius )
-{
-	std::vector<light_data> lights( lightCount );
-	for( light_data& l : lights )
-	{
-		l.pos.x = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.pos.y = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.pos.z = float( rand() * RAND_MAX_SCALE ) * sceneRadius * 2.0f - sceneRadius;
-		l.radius = 100.0f * float( rand() * RAND_MAX_SCALE ) + 2.0f;
-		l.col = { 600.0f,200.0f,100.0f };
-	}
-
-	return lights;
 }
 
 constexpr u64 randSeed = 42;

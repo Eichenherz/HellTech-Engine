@@ -64,7 +64,7 @@ __forceinline float4 XM_CALLCONV DX_XMStoreFloat4( DirectX::XMVECTOR v )
 	return out;
 }
 
-__forceinline float4x4 XM_CALLCONV DX_XMStoreFloat4( DirectX::XMMATRIX m )
+__forceinline float4x4 XM_CALLCONV DX_XMStoreFloat4x4( DirectX::XMMATRIX m )
 {
 	DirectX::XMFLOAT4X4A out;
 	DirectX::XMStoreFloat4x4A( &out, m );

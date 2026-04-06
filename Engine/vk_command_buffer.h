@@ -6,10 +6,10 @@
 #include <Volk/volk.h>
 
 #include "ht_core_types.h"
+#include "ht_renderer_types.h"
 
 #include "vk_utils.h"
 #include "vk_resources.h"
-#include "r_data_structs.h"
 
 #include <span>
 

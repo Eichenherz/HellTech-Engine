@@ -14,8 +14,6 @@
 #include "sys_os_api.h"
 #include "ht_core_types.h"
 
-#include "r_data_structs.h"
-
 #include <Win32/win32_err.h>
 #include <System/sys_file.h>
 #include "zip_pack.h"
@@ -233,10 +231,10 @@ static inline u64	SysTicks()
 
 struct alignas( 4 ) input_state
 {
-	vec2 posMouse;
-	vec2 dMouse;
-	bool keyStates[ 512 ];
-	bool mouseButtons[ 5 ];
+	float2	posMouse;
+	float2	dMouse;
+	bool 	keyStates[ 512 ];
+	bool 	mouseButtons[ 5 ];
 };
 
 struct move_cam_action
@@ -886,7 +884,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		frame_data frameData = {
 			.views = views,
 			.instances = instances,
-			.frustTransf = DX_XMStoreFloat4( frustMat ),
+			.frustTransf = DX_XMStoreFloat4x4( frustMat ),
 			.elapsedSeconds = ( float ) elapsedSecs,
 			.freezeMainView = inputState.keyStates[ VK_F ],
 			.dbgDraw = inputState.keyStates[ VK_O ]

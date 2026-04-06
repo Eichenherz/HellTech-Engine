@@ -6,23 +6,7 @@
 #include "ht_core_types.h"
 #include "ht_vec_types.h"
 
-struct alignas( 16 ) packed_trs
-{
-	float3 t;
-	float pad0;
-	float4 r;
-	float3 s;
-	float pad1;
-};
-
-struct packed_vtx
-{
-	float3 pos;
-	float2 octNormal;
-	float tanAngle;
-	float u, v;
-	u8 tanSign;
-};
+#include "ht_renderer_types.h"
 
 struct vertex_attrs
 {
