@@ -28,7 +28,13 @@ struct typed_view
 using byte_view = typed_view<u8>;
 
 template<typename T>
-static inline byte_view AsBytes( typed_view<T> v )
+constexpr inline u32 TypedViewStrideSizeInBytes( typed_view<T> v )
+{
+	return sizeof( T );
+}
+
+template<typename T>
+inline byte_view AsBytes( typed_view<T> v )
 {
 	static_assert( std::is_trivially_copyable_v<T> );
 	return { ( const u8* ) std::data( v ), ( u32 ) std::size( v ) * sizeof( T ) };

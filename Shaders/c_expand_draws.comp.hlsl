@@ -1,20 +1,24 @@
+#include "ht_renderer_types.h"
+#include "ht_hlsl_lang.h"
+
 [[vk::push_constant]]
-expand_params pushBlock;
+draw_expansion_params pushBlock;
 
 [numthreads(32, 1, 1)]
 [shader("compute")]
-void ExpandDrawsCsMain( uint3 globalDispatchID : SV_DispatchThreadID, uint groupFlatIdx : SV_GroupIndex )
+void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlatIdx : SV_GroupIndex )
 {
-    if( globalDispatchID.x >= pushBlock.instCount )
+    if( globalDispatchID.x >= pushBlock.drawsCount )
 	{
 		return;
 	}
 
-    gpu_mesh currentMesh = BufferLoad<gpu_mesh>( pushBlock.srcBufferIdx, globalDispatchID.x );
-    uint meshletCount = currentMesh.meshletCount;
-    uint laneOffset = WavePrefixSum( meshletCount );
-    uint waveTotal = WaveActiveSum( meshletCount );
-    uint waveBase = 0;
+    visible_instance thisVisInstance = BufferLoad<visible_instance>( pushBlock.srcBufferIdx, globalDispatchID.x );
+    u32 meshletOffset = thisVisInstance.meshletOffset;
+    u32 meshletCount = thisVisInstance.meshletCount;
+    u32 laneOffset = WavePrefixSum( meshletCount );
+    u32 waveTotal = WaveActiveSum( meshletCount );
+    u32 waveBase = 0;
     if( WaveIsFirstLane() )
     {
         waveBase = BufferAtomicAdd( pushBlock.counterIdx, waveTotal );
@@ -25,8 +29,18 @@ void ExpandDrawsCsMain( uint3 globalDispatchID : SV_DispatchThreadID, uint group
 
     for( uint mlti = 0; mlti < meshletCount; ++mlti )
     {
+        gpu_meshlet currentMeshlet = megaMeshletBuffer[ mlti + meshletOffset ];
+
+        visible_meshlet visMeshlet = {
+            thisVisInstance.instId,
+            currentMeshlet.vtxOffset,
+            currentMeshlet.triOffset,
+            currentMeshlet.vtxCount,
+            currentMeshlet.triCount,
+            0 // padding
+        };
+
         uint slotIdx = globalOffset + mlti;
-        meshlet currentMeshlet = BufferLoad<meshlet>( currentMesh.hMeshletBuffer, mlti );
-        BufferStore<meshlet>( pushBlock.dstBufferIdx, currentMeshlet, slotIdx );
+        BufferStore<visible_meshlet>( pushBlock.dstBufferIdx, visMeshlet, slotIdx );
     }
 }

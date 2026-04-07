@@ -80,11 +80,13 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
     cmd = [
         DXC,
         "-spirv",
+        "-I", str(Path(__file__).parent / "Lib"),
         f"-fspv-target-env={args.vk}",
         "-fspv-use-vulkan-memory-model",
         #"-fvk-use-dx-layout",
         "-fvk-use-scalar-layout",
         "-enable-16bit-types",
+        "-fspv-extension=SPV_KHR_16bit_storage",
         "-E", entry,
         "-T", target,
         str(shader_path),

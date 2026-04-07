@@ -21,6 +21,9 @@ using float2 = DirectX::XMFLOAT2;
 using float3 = DirectX::XMFLOAT3;
 using float4 = DirectX::XMFLOAT4;
 
+using float3x3 = DirectX::XMFLOAT3X3;
+using float4x4 = DirectX::XMFLOAT4X4A;
+
 constexpr bool operator==( const float2& a, const float2& b )
 {
 	return a.x == b.x && a.y == b.y;
@@ -47,8 +50,6 @@ constexpr bool operator!=( const float4& a, const float4& b )
 {
 	return !( a == b );
 }
-
-using float4x4 = DirectX::XMFLOAT4X4A;
 
 __forceinline float3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
 {

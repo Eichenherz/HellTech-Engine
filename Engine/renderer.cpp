@@ -1454,6 +1454,14 @@ void renderer_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	triAllocator = { ( u32 ) megaGpuTriBuff.sizeInBytes };
 }
 
+void AppendBytesRange( std::pmr::vector<u8>& memVec, byte_view byteRange )
+{
+	u64 vecSz = std::size( memVec );
+	u64 bytesCount = std::size( byteRange );
+	memVec.resize( vecSz + bytesCount );
+	std::memcpy( std::data( memVec ) + vecSz, std::data( byteRange ), bytesCount );
+}
+
 void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads, virtual_arena& arena )
 {
 	if( VK_NULL_HANDLE == stagingBuff.hndl )
@@ -1489,91 +1497,81 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 
 	for( const mesh_upload_req& meshUpload : meshUploads )
 	{
-		u64 stagingOffsetInBytes = std::size( stagingScratch );
-
 		const hellpack_mesh_asset& mesh = meshUpload.htAsset;
 
-		u32 mletSzInBytes = ( u32 ) std::size( mesh.meshlets );
-		u32 vtxSzInBytes = ( u32 ) std::size( mesh.vertices );
-		u32 triSzInBytes = ( u32 ) std::size( mesh.triangles );
+		byte_view mltAsBytes = AsBytes( mesh.meshlets );
+		byte_view vtxAsBytes = AsBytes( mesh.vertices );
+		byte_view triAsBytes = AsBytes( mesh.triangles );
 
-		gpu_mesh_allocation gpuMeshAlloc = {
-			.meshletAlloc	= meshletAllocator.Alloc( mletSzInBytes ),
-			.vtxAlloc		= vtxAllocator.Alloc( vtxSzInBytes ),
-			.triAlloc		= triAllocator.Alloc( triSzInBytes )
-		};
+		offset_alloc_t mltAlloc	= meshletAllocator.Alloc( std::size( mltAsBytes ) );
+		offset_alloc_t vtxAlloc	= vtxAllocator.Alloc( std::size( vtxAsBytes ) );
+		offset_alloc_t triAlloc	= triAllocator.Alloc( std::size( triAsBytes ) );
+
+
+		// NOTE: this MUST be in elements bc we use it on the gpu as such
 		gpu_mesh gpuMesh = {
 			.minAabb		= mesh.aabbMin,
 			.maxAabb		= mesh.aabbMax,
-			.meshletOffset	= gpuMeshAlloc.meshletAlloc.offset,
-			.vtxOffset		= gpuMeshAlloc.vtxAlloc.offset,
-			.triOffset		= gpuMeshAlloc.triAlloc.offset,
-			.meshletCount	= mletSzInBytes,
-			.vtxCount		= vtxSzInBytes,
-			.triCount		= triSzInBytes
+			.meshletOffset	= mltAlloc.offset / TypedViewStrideSizeInBytes( mesh.meshlets ),
+			.vtxOffset		= vtxAlloc.offset / TypedViewStrideSizeInBytes( mesh.vertices ),
+			.triOffset		= triAlloc.offset / TypedViewStrideSizeInBytes( mesh.triangles ),
+			.meshletCount	= ( u32 ) std::size( mesh.meshlets ),
+			.vtxCount		= ( u32 ) std::size( mesh.vertices ),
+			.triCount		= ( u32 ) std::size( mesh.triangles )
 		};
+		gpu_mesh_allocation gpuMeshAlloc = { .meshletAlloc = mltAlloc, .vtxAlloc = vtxAlloc, .triAlloc = triAlloc };
 
-		meshesBuff.push_back( { .gpuMesh = gpuMesh, .alloc = gpuMeshAlloc,
-			.hSlot = meshUpload.hSlot, .uploadType = upload_t::MESH } );
+		meshesBuff.emplace_back( gpuMesh, gpuMeshAlloc, meshUpload.hSlot, upload_t::MESH );
 
 		{
-			stagingScratch.resize( stagingOffsetInBytes + mletSzInBytes );
-			std::memcpy( std::data( stagingScratch ) + stagingOffsetInBytes,
-				std::data( mesh.meshlets ), std::size( mesh.meshlets ) );
+			u64 offsetInBytes = std::size( stagingScratch );
+			AppendBytesRange( stagingScratch, mltAsBytes );
 
 			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuMeshletBuff.hndl, 0, 0,
 				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-				gpuMesh.meshletOffset, mletSzInBytes ) );
+				mltAlloc.offset, std::size( mltAsBytes ) ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, megaGpuMeshletBuff.hndl, stagingOffsetInBytes,
-				gpuMesh.meshletOffset, mletSzInBytes );
+			buffCopies.emplace_back( stagingBuff.hndl, megaGpuMeshletBuff.hndl, offsetInBytes,
+				mltAlloc.offset, std::size( mltAsBytes ) );
 
 			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuMeshletBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
-				gpuMesh.meshletOffset, mletSzInBytes,
+				mltAlloc.offset, std::size( mltAsBytes ),
 				pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
-
-			stagingOffsetInBytes += mletSzInBytes;
 		}
 
 		{
-			stagingScratch.resize( stagingOffsetInBytes + vtxSzInBytes );
-			std::memcpy( std::data( stagingScratch ) + stagingOffsetInBytes,
-				std::data( mesh.vertices ), std::size( mesh.vertices ) );
+			u64 offsetInBytes = std::size( stagingScratch );
+			AppendBytesRange( stagingScratch, vtxAsBytes );
 
 			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuVtxBuff.hndl, 0, 0,
 				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-				gpuMesh.vtxOffset, vtxSzInBytes ) );
+				vtxAlloc.offset, std::size( vtxAsBytes ) ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, megaGpuVtxBuff.hndl, stagingOffsetInBytes,
-				gpuMesh.vtxOffset, vtxSzInBytes );
-			
+			buffCopies.emplace_back( stagingBuff.hndl, megaGpuVtxBuff.hndl, offsetInBytes,
+				vtxAlloc.offset, std::size( vtxAsBytes ) );
+
 			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuVtxBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
-				gpuMesh.vtxOffset, vtxSzInBytes, pVkCtx->copyQueue.familyIdx,
+				vtxAlloc.offset, std::size( vtxAsBytes ), pVkCtx->copyQueue.familyIdx,
 				pVkCtx->gfxQueue.familyIdx ) );
-
-			stagingOffsetInBytes += vtxSzInBytes;
 		}
 
 		{
-			stagingScratch.resize( stagingOffsetInBytes + triSzInBytes );
-			std::memcpy( std::data( stagingScratch ) + stagingOffsetInBytes,
-				std::data( mesh.triangles ), std::size( mesh.triangles ) );
+			u64 offsetInBytes = std::size( stagingScratch );
+			AppendBytesRange( stagingScratch, triAsBytes );
 
 			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuTriBuff.hndl, 0, 0,
 				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-				gpuMesh.triOffset, triSzInBytes ) );
+				triAlloc.offset, std::size( triAsBytes ) ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, megaGpuTriBuff.hndl, stagingOffsetInBytes,
-				gpuMesh.triOffset, triSzInBytes );
+			buffCopies.emplace_back( stagingBuff.hndl, megaGpuTriBuff.hndl, offsetInBytes,
+				triAlloc.offset, std::size( triAsBytes ) );
 			
 			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuTriBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
-				gpuMesh.triOffset, triSzInBytes,
+				triAlloc.offset, std::size( triAsBytes ),
 				pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
-
-			stagingOffsetInBytes += std::size( mesh.triangles );
 		}
 	}
 

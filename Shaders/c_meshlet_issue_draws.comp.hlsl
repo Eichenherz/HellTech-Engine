@@ -1,45 +1,31 @@
+#include "ht_renderer_types.h"
+#include "ht_hlsl_lang.h"
+
 [[vk::push_constant]]
 meshlet_issue_draws_params pushBlock;
 
 [numthreads(32, 1, 1)]
 [shader("compute")]
-void ExpandDrawsCsMain( uint3 globalDispatchID : SV_DispatchThreadID, uint groupFlatIdx : SV_GroupIndex )
+void IssueMeshletDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlatIdx : SV_GroupIndex )
 {
-    if( globalDispatchID.x >= pushBlock.instCount )
+    if( globalDispatchID.x >= pushBlock.mltCount )
 	{
 		return;
 	}
 
-    meshlet currentMeshlet = BufferLoad<meshlet>( pushBlock.srcBufferIdx, globalDispatchID.x );
-    uint mletIdxCount = currentMeshlet.triCount * 3;
-
-    uint waveDrawOffset = WaveActiveCountBits( true );
-    uint waveDrawBase = 0;
+    u32 waveDrawOffset = WaveActiveCountBits( true );
+    u32 waveDrawBase = 0;
     if( WaveIsFirstLane() )
     {
         waveDrawBase = BufferAtomicAdd( pushBlock.drawCmdCounterIdx, waveDrawOffset );
     }
     
     waveDrawBase = WaveReadLaneFirst( waveDrawBase );
-    uint drawSlot = waveDrawBase + WavePrefixCountBits( true );
-    // write draw
+    u32 drawSlot = waveDrawBase + WavePrefixCountBits( true );
 
-    uint laneOffset = WavePrefixSum( mletIdxCount );
-    uint waveTotal = WaveActiveSum( mletIdxCount );
-    uint waveIndexBase = 0;
-    if( WaveIsFirstLane() )
-    {
-        waveIndexBase = BufferAtomicAdd( pushBlock.idxCounterIdx, waveTotal );
-        // TODO: clamp and write to host that we dropped some triangles so we can adjust
-    }
-    
-    waveIndexBase = WaveReadLaneFirst( waveIndexBase );
-    uint globalOffset = waveIndexBase + laneOffset;
+	visible_meshlet currentMeshlet = BufferLoad<visible_meshlet>( pushBlock.srcBufferIdx, globalDispatchID.x );
+	draw_command draw = { currentMeshlet.instId, currentMeshlet.triCount * 3, 1,
+		currentMeshlet.triOffset, currentMeshlet.vtxOffset, 0 };
 
-    for( uint mlti = 0; mlti < mletIdxCount; ++mlti )
-    {
-        uint slotIdx = globalOffset + mlti;
-        meshlet currentMeshlet = BufferLoad<meshlet>( currentMesh.hMeshletBuffer, mlti );
-        BufferStore<meshlet>( pushBlock.dstBufferIdx, currentMeshlet, slotIdx );
-    }
+	BufferStore<draw_command>( pushBlock.drawCmdsBuffIdx, draw, drawSlot );
 }

@@ -18,7 +18,10 @@ static const float PI = 3.14159265359f;
 typedef uint64_t	u64;
 typedef uint		u32;
 typedef uint16_t	u16;
-typedef uint8_t		u8;
+//typedef uint8_t		u8;
+
+typedef uint3		u32x3;
+
 #define ALIGNAS( x )
 
 #endif
@@ -54,6 +57,19 @@ struct packed_vtx
 	u16		tanSign;
 };
 
+struct packed_vertex
+{
+	float	px;
+	float	py;
+	float	pz;
+	float	tu;
+	float	tv;
+	float	octNX;
+	float	octNY;
+	float	tanAngle;
+	u16		tanSign;
+};
+
 // TODO: compressed coords u8, u16
 struct vertex
 {
@@ -68,11 +84,7 @@ struct vertex
 // TODO: compress data more ?
 struct ALIGNAS( 16 ) instance_desc
 {
-	float4x4	localToWorld;
-	float3		pos;
-	float		scale;
-	float4		rot;
-
+	packed_trs	toWorld;
 	u32			meshIdx;
 	u32			mtrlIdx;
 };
@@ -181,5 +193,56 @@ struct luminance_histogram
 	u32 finalTailValsCount;
 };
 
+struct visible_instance
+{
+	u32 instId;
+	u32 meshletOffset;
+	u32 meshletCount;
+};
+
+struct visible_meshlet
+{
+	u32 instId;
+	u32 vtxOffset;
+	u32 triOffset;
+	u32	vtxCount : 8;
+	u32	triCount : 8;
+	u32	padding : 16;
+};
+
+struct culling_params
+{
+	u32 instCount;
+	u32 visInstCacheIdx;
+	u32 instDescIdx;
+	u32 meshDescIdx;
+	u32 camIdx;
+	u32 hizTexIdx;
+	u32 hizSamplerIdx;
+	u32 visibleItemsCountIdx;
+	u32 visibleItemsIdx;
+	bool isLatePass;
+};
+
+struct draw_expansion_params
+{
+	u32 drawsCount;
+	u32 srcBufferIdx;
+	u32 dstBufferIdx;
+	u32 counterIdx;
+};
+
+struct meshlet_issue_draws_params
+{
+	u32 mltCount;
+	u32 srcBufferIdx;
+	u32 drawCmdCounterIdx;
+	u32 drawCmdsBuffIdx;
+};
+
+// TODO: place these together with stuff from ht_hlsl_lang
+static const u32 MESHLET_BUFF_BINDING = 4;
+static const u32 VTX_BUFF_BINDING = 5;
+static const u32 TRI_BUFF_BINDING = 6;
 
 #endif // !__HT_RENDERER_TYPES_H__

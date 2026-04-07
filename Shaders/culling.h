@@ -42,7 +42,7 @@ struct screenspace_aabb
 	float maxZ;
 };
 
-screenspace_aabb ProjectAabbToScreenSapce( float3 aabbMin, float3 aabbMax, float4x4 mvp )
+screenspace_aabb ProjectAabbToScreenSpace( float3 aabbMin, float3 aabbMax, float4x4 mvp )
 {
 	float3 aabbSize = aabbMax - aabbMin;
 	float3 aabbCorners[] = { 
@@ -93,12 +93,6 @@ bool ScreenSpaceAabbVsHiZ( in screenspace_aabb ssAabb, in Texture2D<float4> hizT
 	return ( sampledDepth <= ssAabb.maxZ );
 }
 
-struct visible_instance
-{
-	uint instId;
-	uint meshletOffset;
-	uint meshletCount;
-};
 
 #endif
 
