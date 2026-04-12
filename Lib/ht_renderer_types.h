@@ -212,16 +212,16 @@ struct visible_meshlet
 
 struct culling_params
 {
-	u32 instCount;
-	u32 visInstCacheIdx;
-	u32 instDescIdx;
-	u32 meshDescIdx;
-	u32 camIdx;
-	u32 hizTexIdx;
-	u32 hizSamplerIdx;
-	u32 visibleItemsCountIdx;
-	u32 visibleItemsIdx;
-	bool isLatePass;
+	u32 	instCount;
+	u32 	visInstCacheIdx;
+	u32 	instDescIdx;
+	u32 	meshDescIdx;
+	u32 	camIdx;
+	u32 	hizTexIdx;
+	u32 	hizSamplerIdx;
+	u32 	visibleItemsCountIdx;
+	u32 	visibleItemsIdx;
+	bool	isLatePass;
 };
 
 struct draw_expansion_params
@@ -234,11 +234,25 @@ struct draw_expansion_params
 
 struct meshlet_issue_draws_params
 {
-	u32 mltCount;
+	u32 mltCounterIdx;
 	u32 srcBufferIdx;
 	u32 drawCmdCounterIdx;
 	u32 drawCmdsBuffIdx;
 };
+
+struct indirect_dispatcher_params
+{
+	u32 cullShaderWorkGrX;
+	u32 dispatchCmdBuffIdx;
+	u32 counterBufferIdx;
+};
+
+struct vbuffer_params
+{
+	u32 instBuffIdx;
+	u32 camIdx;
+};
+
 
 // TODO: place these together with stuff from ht_hlsl_lang
 static const u32 MESHLET_BUFF_BINDING = 4;

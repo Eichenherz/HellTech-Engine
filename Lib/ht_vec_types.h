@@ -17,6 +17,9 @@
 
 #endif
 
+using u32x2 = DirectX::XMUINT2;
+using u32x3 = DirectX::XMUINT3;
+
 using float2 = DirectX::XMFLOAT2;
 using float3 = DirectX::XMFLOAT3;
 using float4 = DirectX::XMFLOAT4;

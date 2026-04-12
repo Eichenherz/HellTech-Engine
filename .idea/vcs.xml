@@ -4,6 +4,7 @@
     <mapping directory="" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/ImGuiFileDialog" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/MikkTSpace" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rdParty/OffsetAllocator" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/VulkanMemoryAllocator" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/bc7enc_rdo" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/dds" vcs="Git" />

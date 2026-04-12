@@ -8,7 +8,8 @@ meshlet_issue_draws_params pushBlock;
 [shader("compute")]
 void IssueMeshletDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlatIdx : SV_GroupIndex )
 {
-    if( globalDispatchID.x >= pushBlock.mltCount )
+	u32 mltCount = BufferLoad<u32>( pushBlock.mltCounterIdx, 0 );
+    if( globalDispatchID.x >= mltCount )
 	{
 		return;
 	}

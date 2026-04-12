@@ -195,7 +195,7 @@ struct vk_command_buffer
 		vkCmdCopyBufferToImage( hndl, src.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
 	}
 
-	void CmdPipelineMemoryBarriers( std::span<VkMemoryBarrier2> memBarriers ) 
+	void CmdPipelineMemoryBarriers( std::span<const VkMemoryBarrier2> memBarriers )
 	{
 		VkDependencyInfo dependency = {
 			.sType				= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,

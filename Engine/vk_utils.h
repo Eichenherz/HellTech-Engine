@@ -155,5 +155,22 @@ struct vk_buffer_copy
     }
 };
 
+// TODO: enforce some clearOp ---> clearVals params correctness ?
+inline static VkRenderingAttachmentInfo VkMakeAttachmentInfo(
+	VkImageView				view,
+	VkAttachmentLoadOp      loadOp,
+	VkAttachmentStoreOp     storeOp,
+	VkClearValue            clearValue
+) {
+	return {
+		.sType			= VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+		.imageView		= view,
+		.imageLayout	= VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+		.loadOp			= loadOp,
+		.storeOp		= storeOp,
+		.clearValue		= ( loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ) ? clearValue : VkClearValue{},
+	};
+}
+
 #endif // !__VK_UTILS_H__
 
