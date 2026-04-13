@@ -165,9 +165,9 @@ struct vk_command_buffer
 		vkCmdCopyBuffer( hndl, src.hndl, dst.hndl, 1, &copyRegion );
 	}
 
-	void CmdCopyBuffer( const vk_buffer_copy& cpy )
+	inline void CmdCopyBuffer( const VkCopyBufferInfo2& cpy )
 	{
-		vkCmdCopyBuffer2( hndl, &cpy.cpyInfo2 );
+		vkCmdCopyBuffer2( hndl, &cpy );
 	}
 
 	void CmdCopyBufferToImageMipsLayers( 

@@ -126,34 +126,26 @@ inline VkFormat VkFromatFromDdsDxgi( dds::DXGI_FORMAT fmt )
     }
 }
 
-struct vk_buffer_copy
+inline VkBufferCopy2 MakeVkBufferCopy2( VkDeviceSize srcOffset, VkDeviceSize dstOffset, VkDeviceSize size )
 {
-    VkCopyBufferInfo2 cpyInfo2;
-    VkBufferCopy2     region;
+	return {
+		.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
+		.srcOffset = srcOffset,
+		.dstOffset = dstOffset,
+		.size      = size
+	};
+}
 
-    inline vk_buffer_copy( 
-        VkBuffer        src, 
-        VkBuffer        dst, 
-        VkDeviceSize    srcOffset, 
-        VkDeviceSize    dstOffset, 
-        VkDeviceSize    size 
-    ) {
-        region = {
-            .sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
-            .srcOffset = srcOffset,
-            .dstOffset = dstOffset,
-            .size      = size,
-        };
-
-        cpyInfo2 = {
-            .sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-            .srcBuffer   = src,
-            .dstBuffer   = dst,
-            .regionCount = 1,
-            .pRegions    = &region,
-        };
-    }
-};
+inline VkCopyBufferInfo2 MakeVkCopyBufferInfo2( VkBuffer src, VkBuffer dst, std::span<const VkBufferCopy2> copyRegions )
+{
+	return {
+		.sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+		.srcBuffer   = src,
+		.dstBuffer   = dst,
+		.regionCount = ( u32 ) std::size( copyRegions ),
+		.pRegions    = std::data( copyRegions )
+	};
+}
 
 // TODO: enforce some clearOp ---> clearVals params correctness ?
 inline static VkRenderingAttachmentInfo VkMakeAttachmentInfo(

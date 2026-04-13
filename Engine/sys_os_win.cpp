@@ -751,18 +751,18 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		.flags	= ImGuiWindowFlags_NoScrollbar
 	} );
 
-	imguiWnds.push_back( {
-		.widgets = { 
-			imgui_widget {
-				.name	= "Load HPK",
-				.Action = ImGuiLoadFileAction,
-				.type	= imgui_widget_type::BUTTON
-		    } 
-		},
-		.name	= "##bnt_load_hpk",
-		.flags	= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
-		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse
-	} );
+	//imguiWnds.push_back( {
+	//	.widgets = {
+	//		imgui_widget {
+	//			.name	= "Load HPK",
+	//			.Action = ImGuiLoadFileAction,
+	//			.type	= imgui_widget_type::BUTTON
+	//	    }
+	//	},
+	//	.name	= "##bnt_load_hpk",
+	//	.flags	= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+	//	ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse
+	//} );
 
 	std::vector<ht_load_hpk_req> loadHpkReqs;
 

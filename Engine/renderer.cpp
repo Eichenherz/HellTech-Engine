@@ -1119,7 +1119,7 @@ struct vbuffer_pass
 			VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
 			gfxVBuffPipeline = dc.CreateGfxPipeline( shaderStages, dynamicStates, &VBUFF_FORMAT,
-				1, VK_FORMAT_UNDEFINED, vbuffState, dc.globalPipelineLayout );
+				1, DEPTH_FORMAT, vbuffState, dc.globalPipelineLayout );
 		}
 		{
 			unique_shader_ptr comp = dc.CreateShaderFromSpirv(
@@ -1135,6 +1135,7 @@ struct vbuffer_pass
 		VkIndexType           	indexType,
 		const vk_buffer&		drawCmds,
 		const vk_buffer&		drawCount,
+		desc_hndl32				drawBuffIdx,
 		desc_hndl32				instBuffIdx,
 		desc_hndl32				camIdx,
 		bool					latePass
@@ -1171,10 +1172,14 @@ struct vbuffer_pass
 
 		cmdBuff.CmdBindPipelineAndBindlessDesc( gfxVBuffPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS );
 
-		vbuffer_params pushBlock = { .instBuffIdx = instBuffIdx.slot, .camIdx = camIdx.slot };
+		vbuffer_params pushBlock = {
+			.drawBuffIdx	= drawBuffIdx.slot,
+			.instBuffIdx	= instBuffIdx.slot,
+			.camIdx			= camIdx.slot
+		};
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
 
-		u32 maxDraws = drawCmds.sizeInBytes / sizeof( draw_command );
+		u32 maxDraws = u32( drawCmds.sizeInBytes / sizeof( draw_command ) );
 		cmdBuff.CmdDrawIndexedIndirectCount( indexBuff, indexType, drawCmds, drawCount, maxDraws );
 	}
 
@@ -1428,18 +1433,22 @@ struct renderer_context final : renderer_interface
 			pDstGpuMesh[ si ] = renderables.items[ si ].desc;
 		}
 
-		HT_ASSERT( std::size( frameData.instances ) * sizeof( gpu_instance ) <= thisVFrame.gpuInstances.sizeInBytes );
+		HT_ASSERT( std::size( frameData.instances ) * sizeof( instance_desc ) <= thisVFrame.gpuInstances.sizeInBytes );
 
 		u32 numValidInstances = 0;
-		gpu_instance* pDstGpuInst = ( gpu_instance* ) thisVFrame.gpuInstances.hostVisible;
+		instance_desc* pDstGpuInst = ( instance_desc* ) thisVFrame.gpuInstances.hostVisible;
 		for( const gpu_instance& sceneNode : frameData.instances )
 		{
-			if( mesh_hndl32 hMesh = std::bit_cast<mesh_hndl32>( sceneNode.meshIdx );
-				IsStructZero( renderables[ hMesh ] ) )
+			mesh_hndl32 hMesh = std::bit_cast<mesh_hndl32>( sceneNode.meshIdx );
+			if( IsStructZero( renderables[ hMesh ] ) )
 			{
 				continue;
 			}
-			pDstGpuInst[ numValidInstances ] = sceneNode;
+			pDstGpuInst[ numValidInstances ] = {
+				.toWorld = sceneNode.transform,
+				.meshIdx = hMesh.slotIdx
+				//.mtrlIdx =
+			};
 			numValidInstances++;
 		}
 
@@ -1474,6 +1483,7 @@ void renderer_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	imguiPass = MakeImguiPass( *pVkCtx, pVkCtx->scConfig.format );
 
 	stagingBuff = pVkCtx->CreateBuffer( {
+		.name			= "StagingBuff",
 		.usageFlags		= VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		.sizeInBytes	= 256 * MB,
 		.usage			= buffer_usage::STAGING
@@ -1482,16 +1492,19 @@ void renderer_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	constexpr VkBufferUsageFlags megaBuffUsg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {
+		.name			= "MegaGpuMeshletBuff",
 		.usageFlags		= megaBuffUsg,
 		.sizeInBytes	= sizeof( gpu_meshlet ) * MAX_MESHLETS_IN_SCENE,
 		.usage			= buffer_usage::GPU_ONLY
 	} );
 	megaGpuVtxBuff = pVkCtx->CreateBuffer( {
+		.name			= "MegaGpuVtxBuff",
 		.usageFlags		= megaBuffUsg,
 		.sizeInBytes	= sizeof( packed_vtx ) * MAX_VERTICES_IN_SCENE,
 		.usage			= buffer_usage::GPU_ONLY
 	} );
 	megaGpuTriBuff = pVkCtx->CreateBuffer( {
+		.name			= "MegaGpuTriBuff",
 		.usageFlags		= megaBuffUsg | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
 		.sizeInBytes	= sizeof( index_t ) * MAX_TRIANGLES_IN_SCENE,
 		.usage			= buffer_usage::GPU_ONLY
@@ -1545,9 +1558,13 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &vaStack };
 	buffInitCpyBarriers.reserve( std::size( meshUploads ) * 3 );
-
-	std::pmr::vector<vk_buffer_copy> buffCopies{ &vaStack };
-	buffCopies.reserve( std::size( meshUploads ) );
+	// TODO: add some guards for stack frame overflow
+	std::pmr::vector<VkBufferCopy2> mltRegionCopies{ &vaStack };
+	mltRegionCopies.reserve( std::size( meshUploads ) );
+	std::pmr::vector<VkBufferCopy2> vtxRegionCopies{ &vaStack };
+	vtxRegionCopies.reserve( std::size( meshUploads ) );
+	std::pmr::vector<VkBufferCopy2> triRegionCopies{ &vaStack };
+	triRegionCopies.reserve( std::size( meshUploads ) );
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &vaStack };
 	buffEndCpyBarriers.reserve( std::size( meshUploads ) * 3 );
@@ -1588,8 +1605,8 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
 				mltAlloc.offset, std::size( mltAsBytes ) ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, megaGpuMeshletBuff.hndl, offsetInBytes,
-				mltAlloc.offset, std::size( mltAsBytes ) );
+			mltRegionCopies.push_back(
+				MakeVkBufferCopy2(offsetInBytes, mltAlloc.offset, std::size( mltAsBytes ) ) );
 
 			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuMeshletBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
@@ -1605,8 +1622,8 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
 				vtxAlloc.offset, std::size( vtxAsBytes ) ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, megaGpuVtxBuff.hndl, offsetInBytes,
-				vtxAlloc.offset, std::size( vtxAsBytes ) );
+			vtxRegionCopies.push_back(
+				MakeVkBufferCopy2(offsetInBytes, vtxAlloc.offset, std::size( vtxAsBytes ) ) );
 
 			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuVtxBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
@@ -1622,8 +1639,8 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
 				triAlloc.offset, std::size( triAsBytes ) ) );
 
-			buffCopies.emplace_back( stagingBuff.hndl, megaGpuTriBuff.hndl, offsetInBytes,
-				triAlloc.offset, std::size( triAsBytes ) );
+			triRegionCopies.push_back(
+				MakeVkBufferCopy2(offsetInBytes, triAlloc.offset, std::size( triAsBytes ) ) );
 
 			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuTriBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
@@ -1636,17 +1653,18 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 	vk_command_buffer copyCmdBuff = { copyCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
 
 	copyCmdBuff.CmdPipelineBufferBarriers( buffInitCpyBarriers );
-	for( const vk_buffer_copy& buffCpy : buffCopies )
-	{
-		copyCmdBuff.CmdCopyBuffer( buffCpy );
-	}
+
+	copyCmdBuff.CmdCopyBuffer( MakeVkCopyBufferInfo2( stagingBuff.hndl, megaGpuMeshletBuff.hndl, mltRegionCopies ) );
+	copyCmdBuff.CmdCopyBuffer( MakeVkCopyBufferInfo2( stagingBuff.hndl, megaGpuVtxBuff.hndl, vtxRegionCopies ) );
+	copyCmdBuff.CmdCopyBuffer( MakeVkCopyBufferInfo2( stagingBuff.hndl, megaGpuTriBuff.hndl, triRegionCopies ) );
+
 	copyCmdBuff.CmdPipelineBufferBarriers( buffEndCpyBarriers );
 
 	copyCmdBuff.CmdEndCmdBuffer();
 
 	pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCB );
 
-	vk_cmd_pool_buff gfxCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+	vk_cmd_pool_buff gfxCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 	vk_command_buffer gfxCmdBuff = { gfxCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &vaStack };
@@ -1654,8 +1672,8 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 
 	for( const VkBufferMemoryBarrier2& barr : buffEndCpyBarriers )
 	{
-		buffTransferOwnershipBarriers.push_back( VkMakeBufferBarrier( barr.buffer, 0, 0, 0, 0,
-			barr.offset, barr.size,
+		buffTransferOwnershipBarriers.push_back( VkMakeBufferBarrier( barr.buffer, 0, 0,
+			0, 0, barr.offset, barr.size,
 			pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 	}
 
@@ -1664,14 +1682,14 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 	gfxCmdBuff.CmdEndCmdBuffer();
 
 	VkSemaphoreSubmitInfo waitCpyDone[] = { {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = pVkCtx->copyQueue.timelineSema,
-		.value = pVkCtx->copyQueue.submitionCount,
-		.stageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+		.sType		= VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore	= pVkCtx->copyQueue.timelineSema,
+		.value		= pVkCtx->copyQueue.submitionCount,
+		.stageMask	= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 
 	VkFence fence = pVkCtx->GetOrCreateFence();
-	pVkCtx->QueueSubmit( pVkCtx->copyQueue, gfxCB, waitCpyDone, {}, fence );
+	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCB, waitCpyDone, {}, fence );
 
 	pVkCtx->FenceWaitBlocking( fence );
 
@@ -1761,7 +1779,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
 	u32 instCount = UpdateSceneData( thisVFrame, frameData );
-	instCount = 0;
+
 	vk_cmd_pool_buff currentCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 	vk_command_buffer thisFrameCmdBuffer = { currentCB.buff, pVkCtx->globalPipelineLayout, pVkCtx->descSet };
 
@@ -1819,18 +1837,18 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, false );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
-			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, thisVFrame.instDesc,
-			thisVFrame.viewDataIdx, false );
+			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
+			thisVFrame.instDesc, thisVFrame.viewDataIdx, false );
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
-		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
+			cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
 			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx,
 			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
-			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, thisVFrame.instDesc,
-			thisVFrame.viewDataIdx, true );
+			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
+			thisVFrame.instDesc, thisVFrame.viewDataIdx, true );
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 

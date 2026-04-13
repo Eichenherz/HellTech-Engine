@@ -135,7 +135,18 @@ VkDbgUtilsMsgCallback(
 	void* userData
 ) {
 	// NOTE: validation layer bug
-	if( callbackData->messageIdNumber == 0xe8616bf2 ) return VK_FALSE;
+	if( 0xe8616bf2 == callbackData->messageIdNumber ) return VK_FALSE;
+
+	constexpr i32 IGNORE_MESSAGE_IDS[] = {
+		499644646, /* NSight mem binding err */
+		7798123, /* NSight mem binding err */
+	};
+
+	if( std::ranges::find( IGNORE_MESSAGE_IDS, callbackData->messageIdNumber )
+		!= std::ranges::end( IGNORE_MESSAGE_IDS ) )
+	{
+		return VK_FALSE;
+	}
 
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
 	{
@@ -145,7 +156,8 @@ VkDbgUtilsMsgCallback(
 		return VK_FALSE;
 	}
 
-	std::string formattedMsg = std::format( "{}\n{}\n", callbackData->pMessageIdName, callbackData->pMessage );
+	std::string formattedMsg = std::format( "{}\n{}\n{}\n",
+		callbackData->messageIdNumber, callbackData->pMessageIdName, callbackData->pMessage );
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
 	{
 		std::cout << ">>> VK_WARNING <<<\n" << formattedMsg << "\n";

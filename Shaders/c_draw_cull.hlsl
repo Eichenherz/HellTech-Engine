@@ -65,7 +65,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 			
 		visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
 	}
-	
+	visible = true;
 	if( !pushBlock.isLatePass )
 	{
 		BufferStore<u32>( pushBlock.visInstCacheIdx, visible ? 1 : 0, globalDispatchID.x );
