@@ -15,12 +15,18 @@
 static const float invPi = 0.31830988618f;
 static const float PI = 3.14159265359f;
 
+typedef int			i32;
+
 typedef uint64_t	u64;
 typedef uint		u32;
 typedef uint16_t	u16;
 //typedef uint8_t		u8;
 
+typedef int3		i32x3;
+typedef int2		i32x2;
+
 typedef uint3		u32x3;
+typedef uint2		u32x2;
 
 #define ALIGNAS( x )
 
@@ -124,18 +130,10 @@ struct dispatch_command
 #endif
 };
 
-// TODO: remove
-struct compacted_draw_args
-{
-	u32 nodeIdx;
-	u32 materialIdx;
-	u32 meshletIdx;
-};
-
 // TODO: rename
 struct draw_command
 {
-	u32	drawIdx;
+	u32		instIdx;
 #if defined( __cplusplus ) && defined( __VK )
 	VkDrawIndexedIndirectCommand cmd;
 #else
@@ -249,14 +247,24 @@ struct indirect_dispatcher_params
 
 struct vbuffer_params
 {
+	u32 drawBuffIdx;
 	u32 instBuffIdx;
 	u32 camIdx;
 };
 
+struct vbuffer_dbg_draw_params
+{
+	u32 srcIdx;
+	u32 dstIdx;
+};
 
-// TODO: place these together with stuff from ht_hlsl_lang
-static const u32 MESHLET_BUFF_BINDING = 4;
-static const u32 VTX_BUFF_BINDING = 5;
-static const u32 TRI_BUFF_BINDING = 6;
+struct global_data
+{
+	u64 mltAddr;
+	u64 vtxAddr;
+	u64 triAddr;
+};
+
+static const u64 GLOB_DATA_BINDING_SLOT = 0;
 
 #endif // !__HT_RENDERER_TYPES_H__

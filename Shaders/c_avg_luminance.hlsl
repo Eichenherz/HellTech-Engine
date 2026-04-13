@@ -1,4 +1,4 @@
-#include "r_data_structs2.h"
+#include "ht_renderer_types.h"
 
 //[[vk::constant_id(0)]]
 static const uint WAVE_LANE_COUNT = 32;

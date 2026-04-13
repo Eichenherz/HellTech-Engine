@@ -87,6 +87,7 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
         "-fvk-use-scalar-layout",
         "-enable-16bit-types",
         "-fspv-extension=SPV_KHR_16bit_storage",
+        "-fspv-extension=SPV_KHR_physical_storage_buffer",
         "-E", entry,
         "-T", target,
         str(shader_path),

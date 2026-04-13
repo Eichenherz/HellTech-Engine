@@ -42,4 +42,19 @@ inline std::span<const u8> CastSpanAsU8ReadOnly( std::span<T> span )
 {
 	return { ( const u8* )( std::data( span ) ), span.size_bytes() };
 }
+
+template<typename T>
+constexpr bool IsStructZero( const T& inStruct )
+{
+	constexpr u8 ZERO_STRUCT_MEM[ sizeof( T ) ] = {};
+	i32 memCmpRes = std::memcmp( &inStruct, ZERO_STRUCT_MEM, sizeof( T ) );
+	return 0 == memCmpRes;
+}
+
+template<typename T>
+constexpr void ZeroStruct( T& inStruct )
+{
+	std::memset( &inStruct, 0, sizeof( inStruct ) );
+}
+
 #endif // !__HT_UTILS_H__

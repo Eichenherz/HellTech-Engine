@@ -29,7 +29,8 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
 
     for( uint mlti = 0; mlti < meshletCount; ++mlti )
     {
-        gpu_meshlet currentMeshlet = megaMeshletBuffer[ mlti + meshletOffset ];
+        device_addr<gpu_meshlet> ptr = { gGlobData.mltAddr };
+        gpu_meshlet currentMeshlet = ptr[ mlti + meshletOffset ];
 
         visible_meshlet visMeshlet = {
             thisVisInstance.instId,

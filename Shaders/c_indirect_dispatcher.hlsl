@@ -1,4 +1,5 @@
 #include "ht_renderer_types.h"
+#include "ht_hlsl_lang.h"
 
 [[vk::push_constant]]
 indirect_dispatcher_params pushBlock;
@@ -9,6 +10,6 @@ indirect_dispatcher_params pushBlock;
 void IndirectDispatcherCsMain()
 {
     u32 workItemsCount = BufferLoad<u32>( pushBlock.counterBufferIdx, 0 );
-    dispatch_command dispatchCmd = { ( workItemsCount + cullShaderWorkGrX - 1 ) / pushBlock.cullShaderWorkGrX, 1, 1 };
+    dispatch_command dispatchCmd = { ( workItemsCount + pushBlock.cullShaderWorkGrX - 1 ) / pushBlock.cullShaderWorkGrX, 1, 1 };
     BufferStore<dispatch_command>( pushBlock.dispatchCmdBuffIdx, dispatchCmd, 0 );
 }
