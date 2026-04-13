@@ -15,8 +15,7 @@ struct gpu_data
 	float timeMs;
 };
 
-// TODO: maybe don't expose this
-using HRNDMESH32 = slot_buffer<u32>::hndl32;
+using HRNDMESH32 = u32;
 
 enum class upload_t
 {

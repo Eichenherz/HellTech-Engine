@@ -362,6 +362,32 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 #include <ImGuiFileDialog.h>
 #include "ht_fixed_string.h"
 
+struct im_gui_ctx
+{
+	ImGuiContext*	ctx;
+	ImGuiIO*		io;
+
+	im_gui_ctx( u32 width, u32 height )
+	{
+		ctx = ImGui::CreateContext();
+		ImGui::SetCurrentContext( ctx );
+		ImGui::StyleColorsDark();
+		io = &ImGui::GetIO();
+		io->DisplaySize = { ( float ) width, ( float ) height };
+		io->Fonts->AddFontDefault();
+		io->Fonts->Build();
+	}
+
+	inline void UpdateTimeAndInputState( float elapsedSecs, const input_state& inputState )
+	{
+		io->DeltaTime = elapsedSecs;
+		io->MousePos = { inputState.posMouse.x, inputState.posMouse.y };
+		io->MouseDown[ 0 ] = inputState.mouseButtons[ 0 ];
+		io->MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
+		io->MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];
+	}
+};
+
 using imgui_widget_name = fixed_string<16>;
 
 using imgui_window_name = fixed_string<32>;
@@ -490,7 +516,7 @@ inline void SysNameThread( HANDLE hThread, const wchar_t* name )
 	HT_ASSERT( SUCCEEDED( SetThreadDescription( hThread, name ) ) );
 }
 
-constexpr u64 CACHE_LINE_SZ = 64;
+constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 
 #define CACHE_ALIGN alignas( CACHE_LINE_SZ )
 
@@ -565,9 +591,9 @@ struct sys_thread_data
 
 struct sys_thread
 {
-	HANDLE			  hndl;
-	sys_thread_data*  pData;
-	DWORD			  threadId;
+	HANDLE			  			hndl;
+	sys_thread_data*  			pData;
+	DWORD			  			threadId;
 };
 
 DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
@@ -668,34 +694,37 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
-	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left,wr.top, 
-		wr.right - wr.left, wr.bottom - wr.top, 0,0, hInst, &inputState );
+	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left, wr.top,
+		wr.right - wr.left, wr.bottom - wr.top, 0, 0, hInst, &inputState );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
 	// NOTE: don't use RIDEV_INPUTSINK in order to only receive when in focus
-	RAWINPUTDEVICE hid[ 2 ] = {};
-	hid[ 0 ].usUsage = HID_USAGE_GENERIC_MOUSE;
-	hid[ 0 ].usUsagePage = HID_USAGE_PAGE_GENERIC;
-	hid[ 0 ].hwndTarget = hWnd;
-	// TODO: no legacy causes cam to move weirdly
-	hid[ 0 ].dwFlags = 0;// RIDEV_NOLEGACY;
-
-	hid[ 1 ].usUsage = HID_USAGE_GENERIC_KEYBOARD;
-	hid[ 1 ].usUsagePage = HID_USAGE_PAGE_GENERIC;
-	hid[ 1 ].hwndTarget = hWnd;
-	// NOTE: won't pass msgs like PtrSc
-	hid[ 1 ].dwFlags = 0;// RIDEV_NOLEGACY;
+	RAWINPUTDEVICE hid[ 2 ] = {
+		RAWINPUTDEVICE{
+			.usUsagePage	= HID_USAGE_PAGE_GENERIC,
+			.usUsage		= HID_USAGE_GENERIC_MOUSE,
+			.dwFlags		= 0, // RIDEV_NOLEGACY, // TODO: no legacy causes cam to move weirdly
+			.hwndTarget		= hWnd
+		},
+		RAWINPUTDEVICE{
+			.usUsagePage	= HID_USAGE_PAGE_GENERIC,
+			.usUsage		= HID_USAGE_GENERIC_KEYBOARD,
+			.dwFlags		= 0, // RIDEV_NOLEGACY, // NOTE: won't pass msgs like PtrSc
+			.hwndTarget		= hWnd
+		}
+	};
 	WIN_CHECK( RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
 	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
-	float mouseSensitivity = 0.1f;
-	float camSpeed = 1.5f;
-	float moveThreshold = 0.0001f;
+	float			mouseSensitivity = 0.1f;
+	float			camSpeed = 1.5f;
+	float			moveThreshold = 0.0001f;
 
 	constexpr float zNear = 0.5f;
-	XMMATRIX proj = PerspRevInfFovLH( XMConvertToRadians( 70.0f ), float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
+	XMMATRIX		proj = PerspRevInfFovLH( XMConvertToRadians( 70.0f ),
+		float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
 
 	virtual_camera mainActiveCam = { proj };
 	virtual_camera debugCam = { proj };
@@ -705,19 +734,10 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		mainActiveCam.prevViewProj = mainViewData.mainViewProj;
 	}
 
-	gpu_data gpuData = {};
+	gpu_data	gpuData = {};
 
-	u16 mainViewIdx = 0;
-	u16 dbgViewIdx = 1;
+	im_gui_ctx imGuiCtx = { SCREEN_WIDTH, SCREEN_HEIGHT };
 
-	ImGuiContext* imGuiCtx = ImGui::CreateContext();
-	ImGui::SetCurrentContext( imGuiCtx );
-	ImGui::StyleColorsDark();
-	ImGuiIO& imGuiIO = ImGui::GetIO();
-	imGuiIO.DisplaySize = { SCREEN_WIDTH, SCREEN_HEIGHT };
-	imGuiIO.Fonts->AddFontDefault();
-	imGuiIO.Fonts->Build();
-	
 
 	std::vector<imgui_window> imguiWnds;
 	imguiWnds.push_back( {
@@ -747,12 +767,12 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	std::vector<ht_load_hpk_req> loadHpkReqs;
 
 
-	auto pRenderer = MakeRenderer();
+	std::unique_ptr<renderer_interface> pRenderer = MakeRenderer();
 
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
 
-	virtual_stretchy_buffer<sys_thread_data> threadDataBuff = { 2 * MB };
+	virtual_stretchy_buffer<sys_thread_data> threadDataBuff = { 8 /* cores */ };
 
 	std::vector<sys_thread> threads;
 	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", threadDataBuff ) );
@@ -770,12 +790,12 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	u64					currentTicks = SysTicks();
 
 	// TODO: vfs
-	constexpr char assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	unique_mmap_file mmappedFile = SysCreateFile( assetFile, file_permissions_bits::READ,
+	constexpr char		assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	unique_mmap_file	mmappedFile = SysCreateFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
-	vfs_zip_mem vfs = { *mmappedFile };
+	vfs_zip_mem			vfs = { *mmappedFile };
 
-	virtual_stretchy_buffer<gpu_instance> instances = { 1'000'000 };
+	virtual_stretchy_buffer<gpu_instance> flatSceneGraph = { 1'000'000 };
 
 	virtual_arena scratchArena = { 10 * MB };
 
@@ -783,7 +803,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	while( isRunning )
 	{
-		stack_adaptor virtStack = { scratchArena };
+		stack_adaptor virtualStack = { scratchArena };
 
 		const u64 newTicks = SysTicks();
 		const double elapsedSecs = double( newTicks - currentTicks ) * cpuPeriod;
@@ -800,8 +820,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 			auto meshFiles = vfs.files | std::views::keys | std::views::filter( 
 				[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".mesh" ) ); } );
 
-			auto texFiles = vfs.files | std::views::keys | std::views::filter( 
-				[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".dds" ) ); } );
+			//auto texFiles = vfs.files | std::views::keys | std::views::filter(
+			//	[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".dds" ) ); } );
 
 			auto levelFiles = vfs.files | std::views::keys | std::views::filter( 
 				[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".lvl" ) ); } );
@@ -846,7 +866,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 				{
 					auto it = meshIdMap.find( node.meshHash );
 					if( std::cend( meshIdMap ) == it ) continue;
-					instances.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
+					flatSceneGraph.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
 				}
 			}
 			
@@ -859,15 +879,9 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		mainActiveCam.Move( camMove, dRot, elapsedSecs );
 		debugCam.Move( camMove, dRot, elapsedSecs );
 
+		imGuiCtx.UpdateTimeAndInputState( elapsedSecs, inputState );
 
-		imGuiIO.DeltaTime = elapsedSecs;
-		imGuiIO.MousePos = { inputState.posMouse.x, inputState.posMouse.y };
-		imGuiIO.MouseDown[ 0 ] = inputState.mouseButtons[ 0 ];
-		imGuiIO.MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
-		imGuiIO.MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];
-
-
-		std::pmr::vector<view_data> views{ &virtStack };
+		std::pmr::vector<view_data> views{ &virtualStack };
 
 		view_data mainViewData = mainActiveCam.GetViewData();
 
@@ -883,7 +897,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		
 		frame_data frameData = {
 			.views = views,
-			.instances = instances,
+			.instances = flatSceneGraph,
 			.frustTransf = DX_XMStoreFloat4x4( frustMat ),
 			.elapsedSeconds = ( float ) elapsedSecs,
 			.freezeMainView = inputState.keyStates[ VK_F ],

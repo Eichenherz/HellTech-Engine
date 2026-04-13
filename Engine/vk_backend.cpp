@@ -220,14 +220,14 @@ static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const
 		bindingFlags[ i ] = flag;
 	}
 
-	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFalgs = {
+	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFlags = {
 		.sType			= VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
 		.bindingCount	= ( u32 ) std::size( bindingFlags ),
 		.pBindingFlags	= std::data( bindingFlags )
 	};
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {
 		.sType			= VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.pNext			= &descSetFalgs,
+		.pNext			= &descSetFlags,
 		.flags			= VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
 		.bindingCount	= ( u32 ) std::size( descSetLayout ),
 		.pBindings		= std::data( descSetLayout )
@@ -965,7 +965,7 @@ VkPipeline vk_context::CreateGfxPipeline(
 	return vkGfxPipeline;
 }
 
-VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, const char* pName )
+VkPipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 {
 	VkPipelineShaderStageRequiredSubgroupSizeCreateInfo subgroupSizeInfo = {
 		.sType					= VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
@@ -988,7 +988,9 @@ VkPipeline vk_context::CreateComptuePipeline( const vk_shader& shader, const cha
 
 	VkPipeline pipeline;
 	VK_CHECK( vkCreateComputePipelines( device, 0, 1, &compPipelineInfo, 0, &pipeline ) );
-	if( pName ) VkDbgNameObj( pipeline, device, pName );
+
+	fixed_string<256> pipelineName = { "Pipeline_Comp_{}", shader.entryPoint };
+	VkDbgNameObj( pipeline, device, ( const char* ) pipelineName );
 
 	return pipeline;
 }
@@ -998,7 +1000,7 @@ VkSemaphore vk_context::CreateBinarySemaphore()
 	return VkMakeSemaphore( device, false, -1 );
 }
 
-desc_hndl32 vk_context::AllocDescriptor( const vk_descriptor_info& rscDescInfo )
+desc_hndl32 vk_context::AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo )
 {
 	std::lock_guard guard{ descUpdatesLock };
 
@@ -1018,7 +1020,7 @@ void vk_context::FlushPendingDescriptorUpdates()
 	if( !std::size( descPendingUpdates ) ) return;
 
 	std::vector<VkWriteDescriptorSet> writes;
-	for( const auto& update : descPendingUpdates )
+	for( const vk_descriptor_write& update : descPendingUpdates )
 	{
 		const VkDescriptorImageInfo* pImageInfo = 0;
 		const VkDescriptorBufferInfo* pBufferInfo = 0;
@@ -1101,7 +1103,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 	}
 }
 
-void vk_context::CreateSwapchin()
+void vk_context::CreateSwapchain()
 {
 	// NOTE: rn we can't recreate the swapchian
 	HT_ASSERT( !std::size( scImgs ) && ( VK_NULL_HANDLE == swapchain ) );
@@ -1169,7 +1171,7 @@ void vk_context::CreateSwapchin()
 				.width		= scInfo.imageExtent.width,
 				.height		= scInfo.imageExtent.height,
 			},
-			.writeDescIdx = AllocDescriptor( vk_descriptor_info{ view, VK_IMAGE_LAYOUT_GENERAL } )
+			.writeDescIdx = AllocDescriptorIdx( vk_descriptor_info{ view, VK_IMAGE_LAYOUT_GENERAL } )
 		} );
 	}
 }

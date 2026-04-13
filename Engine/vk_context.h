@@ -248,7 +248,7 @@ struct vk_context
 		const vk_gfx_pso_config&				psoConfig,
 		VkPipelineLayout						vkPipelineLayout = VK_NULL_HANDLE );
 
-	VkPipeline CreateComptuePipeline( const vk_shader& shader, const char* pName );
+	VkPipeline CreateComputePipeline( const vk_shader& shader );
 
 	inline VkSampler CreateSampler( const VkSamplerCreateInfo& samplerCreateInfo )
 	{
@@ -336,8 +336,8 @@ struct vk_context
 		VK_CHECK( vkCopyMemoryToImage( device, &copyMemInfo ) );
 	}
 
-	desc_hndl32 AllocDescriptor( const vk_descriptor_info& rscDescInfo );
-	inline void EnqueueDescriptorFree( desc_hndl32 handle, u64 frameIdx )
+	desc_hndl32 AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo );
+	inline void EnqueueDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx )
 	{
 		descriptroDeletionQueue.push_back( { frameIdx, handle } );
 	}
@@ -346,7 +346,7 @@ struct vk_context
 
 	void FlushDeletionQueues( u64 frameIdx );
 
-	void CreateSwapchin();
+	void CreateSwapchain();
 
 	inline u32 AcquireNextSwapchainImageBlocking( VkSemaphore canGetImgSema ) const
 	{
