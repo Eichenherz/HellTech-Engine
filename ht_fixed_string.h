@@ -42,7 +42,8 @@ struct fixed_string : fixed_vector<char, N>
     void            resize( u64 n, char val = '\0' );
 
 
-    operator std::string_view() const { return { base_t::data(), base_t::size() }; }
+    operator std::string_view()  const { return { base_t::data(), base_t::size() }; }
+    explicit operator const char*() const { return base_t::data(); }
 };
 
 template<u64 N>
