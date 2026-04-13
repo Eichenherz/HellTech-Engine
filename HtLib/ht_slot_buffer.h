@@ -37,7 +37,7 @@ struct slot_buffer
     };
 
     virtual_stretchy_buffer<T>      items        = { MAX_ENTRIES_RESERVED };
-    freelist_cursor                freelistHead = {};
+    freelist_cursor                 freelistHead = {};
 
 
     u64 size() const { return std::size( items ); } // NOTE: bc we can have dead slots
@@ -85,6 +85,13 @@ struct slot_buffer
         currentFreeListCursor.slotIdx = freelistHead.slotIdx;
         freelistHead.slotIdx = h.slotIdx;
     }
+
+    inline static bool IsDeadSlot( const T& slotItem )
+    {
+        const freelist_cursor& currentFreeListCursor = ( freelist_cursor& ) slotItem;
+        return FREELIST_MARKER_U32 == currentFreeListCursor.marker;
+    }
+
 };
 
 #endif // !__HT_SLOT_BUFFER_H__
