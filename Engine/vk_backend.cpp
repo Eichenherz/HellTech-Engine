@@ -583,13 +583,13 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 	VkFormat			scDesiredFormat,
 	VkPresentModeKHR    desiredPresentMode,
 	VkImageUsageFlags   scImgUsage,
-	u32                 minNumIngs
+	u32                 requestedNumImgs
 ) {
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	VK_CHECK( vkGetPhysicalDeviceSurfaceCapabilitiesKHR( vkPhysicalDevice, vkSurf, &surfaceCaps ) );
 	HT_ASSERT( surfaceCaps.maxImageArrayLayers >= 1 );
 
-	HT_ASSERT( ( minNumIngs > surfaceCaps.minImageCount ) && ( minNumIngs < surfaceCaps.maxImageCount ) );
+	HT_ASSERT( ( requestedNumImgs >= surfaceCaps.minImageCount ) && ( requestedNumImgs <= surfaceCaps.maxImageCount ) );
 	HT_ASSERT( ( surfaceCaps.currentExtent.width <= surfaceCaps.maxImageExtent.width ) &&
 		( surfaceCaps.currentExtent.height <= surfaceCaps.maxImageExtent.height ) );
 
@@ -853,7 +853,7 @@ unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByte
 	VkShaderModule sm;
 	VK_CHECK( vkCreateShaderModule( device, &shaderModuleInfo, 0, &sm ) );
 
-	PFN_VkShaderDestoryer deleter = [ this ]( vk_shader* p )
+	PFN_VkShaderDestroyer deleter = [ this ]( vk_shader* p )
 	{
 		if( !p ) return;
 		this->DestroyShaderModule( p->module );
@@ -1058,9 +1058,9 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 	{
 		for( vk_cb_deletion del = {}; cbPool.pending.TryPop( del ); )
 		{
-			u64 sumbissionsCompleted = 0;
-			VK_CHECK( vkGetSemaphoreCounterValue( device, del.sema, &sumbissionsCompleted ) );
-			if( del.waitVal >= sumbissionsCompleted )
+			u64 submissionsCompleted = 0;
+			VK_CHECK( vkGetSemaphoreCounterValue( device, del.sema, &submissionsCompleted ) );
+			if( del.waitVal > submissionsCompleted )
 			{
 				// NOTE: if we can't retire we put it back and break for this frame
 				while( !cbPool.pending.TryPush( del ) );
@@ -1094,12 +1094,12 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		}
 		it = resourceDeletionQueue.erase( it );
 	}
-	for( auto it = std::begin( descriptroDeletionQueue ); std::end( descriptroDeletionQueue ) != it; )
+	for( auto it = std::begin( descriptorDeletionQueue ); std::end( descriptorDeletionQueue ) != it; )
 	{
 		auto[ timelineCounterVal, hndl ] = *it;
 		if( frameSubmissionsCompleted <= timelineCounterVal ) break;
 		descBindingSlots[ hndl.type ].FreeSlot( hndl );
-		it = descriptroDeletionQueue.erase( it );
+		it = descriptorDeletionQueue.erase( it );
 	}
 }
 

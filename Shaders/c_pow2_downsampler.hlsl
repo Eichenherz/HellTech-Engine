@@ -1,17 +1,18 @@
-#include "r_data_structs2.h"
+#include "ht_renderer_types.h"
+#include "ht_hlsl_lang.h"
 
 [[vk::push_constant]]
 struct {
 	float2 imgSize;
-	uint samplerIdx;
-	uint inImgIdx;
-	uint inImgLod;
-	uint outImgIdx;
+	u32 samplerIdx;
+	u32 inImgIdx;
+	u32 inImgLod;
+	u32 outImgIdx;
 } pushBlock;
 
 [ shader( "compute" ) ]
 [numthreads( 32, 32, 1 )]
-void Pow2DownsamplerCsMain( uint3 globalThreadDispatchID : SV_DispatchThreadID )
+void Pow2DownsamplerCsMain( u32x3 globalThreadDispatchID : SV_DispatchThreadID )
 {
 	uint2 pos = globalThreadDispatchID.xy;
 	float2 uv = ( float2( pos ) + 0.5f ) / pushBlock.imgSize;

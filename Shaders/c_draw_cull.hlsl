@@ -40,7 +40,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		
 	view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
 
-	bool testOcclusion = !pushBlock.isLatePass ? true : instanceIsOccluded;;
+	bool testOcclusion = !pushBlock.isLatePass ? true : instanceIsOccluded;
 	bool visible = false;
 	if( !pushBlock.isLatePass )
 	{
@@ -80,11 +80,12 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 			offsetForWave = BufferAtomicAdd( pushBlock.visibleItemsCountIdx, lanesVisible );
 		}
 	}
-
-	uint slotIdx = WaveReadLaneFirst( offsetForWave );
+	u32 laneOffset = WavePrefixCountBits( visible );
+	u32 slotIdx = WaveReadLaneFirst( offsetForWave ) + laneOffset;
 	if( visible )
 	{
-		visible_instance thisInst = { instId, currentMesh.meshletOffset, currentMesh.meshletCount };
+		visible_instance thisInst = { instId, currentMesh.meshletOffset, currentMesh.meshletCount,
+			currentMesh.vtxOffset, currentMesh.triOffset };
 		BufferStore<visible_instance>( pushBlock.visibleItemsIdx, thisInst, slotIdx );
 	}
 }

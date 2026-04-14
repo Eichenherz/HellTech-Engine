@@ -6,6 +6,10 @@
 #include <span>
 #include <math.h>
 
+#include <DirectXPackedVector.h>
+
+namespace DXPacked = DirectX::PackedVector;
+
 inline float2 fminf( float2 a, float2 b )
 {
 	return { fminf( a.x,b.x ), fminf( a.y,b.y ) };
@@ -245,6 +249,12 @@ inline float MaxF32x8_SIMD( __m256 a, __m256 b )
 	__m128 max_f32x4 = _mm_hmax_ps( laneMax_f32x4 );
 
 	return _mm_cvtss_f32( max_f32x4 );
+}
+
+constexpr float Unorm8ToF32( u8 c )
+{
+	constexpr float INV_RANGE = 1.0f / 255.0f;
+	return float( c ) * INV_RANGE;
 }
 
 #endif // !__HT_MATH_H__

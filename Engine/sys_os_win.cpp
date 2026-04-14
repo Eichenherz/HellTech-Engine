@@ -69,11 +69,12 @@ std::vector<u8> SysReadFile( const char* fileName )
 // TODO: might not want to crash when file can't be written/read
 bool SysWriteToFile( const char* filename, const u8* data, u32 sizeInBytes )
 {
-	DWORD accessMode = GENERIC_WRITE;
-	DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-	DWORD creationDisp = OPEN_ALWAYS;
+	DWORD accessMode	= GENERIC_WRITE;
+	DWORD shareMode		= FILE_SHARE_READ | FILE_SHARE_WRITE;
+	DWORD creationDisp	= OPEN_ALWAYS;
 	DWORD flagsAndAttrs = FILE_ATTRIBUTE_NORMAL;
-	HANDLE hFile = CreateFile( filename, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
+	HANDLE hFile		= CreateFile( filename, accessMode, shareMode, 0,
+		creationDisp, flagsAndAttrs, 0 );
 
 	OVERLAPPED asyncIo = {};
 	WIN_CHECK( !WriteFileEx( hFile, data, sizeInBytes, &asyncIo, 0 ) );
@@ -97,13 +98,13 @@ constexpr float ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
 
 struct virtual_camera
 {
-	DirectX::XMFLOAT4X4A projection;
-	DirectX::XMFLOAT4X4A prevViewProj = {};
+	float4x4	projection;
+	float4x4	prevViewProj = {};
 
-	DirectX::XMFLOAT3 worldPos = { 0.0f, 0.0f, 0.0f };
+	float3		worldPos = { 0.0f, 0.0f, 0.0f };
 
-	static constexpr DirectX::XMFLOAT3 fwdBasis = { 0.0f, 0.0f, 1.0f };
-	static constexpr DirectX::XMFLOAT3 upBasis = { 0.0f, 1.0f, 0.0f };
+	static constexpr float3 fwdBasis = { 0.0f, 0.0f, 1.0f };
+	static constexpr float3 upBasis = { 0.0f, 1.0f, 0.0f };
 	// NOTE: pitch must be in [-pi/2,pi/2]
 	float pitch = 0.0f;
 	float yaw = 0.0f;
@@ -115,7 +116,7 @@ struct virtual_camera
 		DirectX::XMStoreFloat4x4A( &projection, proj );
 	}
 
-	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, DirectX::XMFLOAT2 dRot, float elapsedSecs )
+	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot, float elapsedSecs )
 	{
 		using namespace DirectX;
 
@@ -668,6 +669,13 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	SysOsCreateConsole();
 
 	SysNameThread( GetCurrentThread(), L"Main/Renderer Thread" );
+#ifdef  _DEBUG
+	// TODO: fix sys_path whatever to work with this !
+	char workingDir[ MAX_PATH ] = {};
+	WIN_CHECK( 0 != GetCurrentDirectoryA( std::size( workingDir ), workingDir ) );
+	fixed_string<512> workingDirMsg = {"WorkingDir: {}\n", workingDir };
+	std::cout << ( const char* ) workingDirMsg;
+#endif //_DEBUG
 
 	WIN_CHECK( DirectX::XMVerifyCPUSupport() );
 

@@ -98,25 +98,25 @@ struct ALIGNAS( 16 ) instance_desc
 // NOTE: weird alignments bc this will be read by the GPU !
 struct gpu_mesh
 {
-	ALIGNAS( 16 ) float3	minAabb;
-	ALIGNAS( 16 ) float3	maxAabb;
-	u32						meshletOffset;
-	u32						vtxOffset;
-	u32						triOffset;
-	u32						meshletCount;
-	u32						vtxCount;
-	u32						triCount;
+	float3	minAabb;
+	float3	maxAabb;
+	u32		meshletOffset;
+	u32		vtxOffset;
+	u32		triOffset;
+	u32		meshletCount;
+	u32		vtxCount;
+	u32		triCount;
 };
 
 struct gpu_meshlet
 {
-	ALIGNAS( 16 ) float3	minAabb;
-	ALIGNAS( 16 ) float3	maxAabb;
-	u32						vtxOffset;
-	u32						triOffset;
-	u32						vtxCount : 8;
-	u32						triCount : 8;
-	u32						padding : 16;
+	float3	minAabb;
+	float3	maxAabb;
+	u32		vtxOffset;
+	u32		triOffset;
+	u32		vtxCount	: 8;
+	u32		triCount	: 8;
+	u32		padding		: 16;
 };
 
 struct dispatch_command
@@ -196,6 +196,8 @@ struct visible_instance
 	u32 instId;
 	u32 meshletOffset;
 	u32 meshletCount;
+	u32 vtxOffset;
+	u32 triOffset;
 };
 
 struct visible_meshlet

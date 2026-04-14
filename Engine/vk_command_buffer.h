@@ -8,28 +8,22 @@
 #include "ht_core_types.h"
 #include "ht_renderer_types.h"
 
-#include "vk_utils.h"
 #include "vk_resources.h"
 
 #include <span>
-
-// TODO: move
-#include <DirectXPackedVector.h>
-
-namespace DXPacked = DirectX::PackedVector;
 
 struct vk_scoped_label
 {
 	VkCommandBuffer cmdBuff;
 
-	inline vk_scoped_label( VkCommandBuffer _cmdBuff, const char* labelName, DXPacked::XMCOLOR col )
+	inline vk_scoped_label( VkCommandBuffer _cmdBuff, const char* labelName, float4 col )
 	{
 		this->cmdBuff = _cmdBuff;
 
 		VkDebugUtilsLabelEXT dbgLabel = {
 			.sType		= VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
 			.pLabelName = labelName,
-			.color		= { ( float ) col.r, ( float ) col.g, ( float ) col.b, ( float ) col.a },
+			.color		= { col.x, col.y, col.z, col.w },
 		};
 		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
 	}
@@ -85,7 +79,7 @@ struct vk_command_buffer
 		vkBeginCommandBuffer( hndl, &cmdBufBegInfo );
 	}
 
-	vk_scoped_label CmdIssueScopedLabel( const char* labelName, DXPacked::XMCOLOR col = {} )
+	inline vk_scoped_label CmdIssueScopedLabel( const char* labelName, float4 col = {} )
 	{
 		return { hndl, labelName, col };
 	}

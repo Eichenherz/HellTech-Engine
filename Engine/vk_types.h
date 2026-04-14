@@ -27,7 +27,7 @@ struct vk_renderer_config
 	VkFormat				desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 	VkFormat				desiredHiZFormat = VK_FORMAT_R32_SFLOAT;
 	u16             		renderWidth;
-	u16             		rednerHeight;
+	u16             		renderHeight;
 	u8              		framesInFlightCount = 2;
 	u8              		swapchainImageCount = 3;
 };

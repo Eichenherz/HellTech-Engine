@@ -64,7 +64,7 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 		VK_RES_STR( OPERATION_NOT_DEFERRED_KHR );
 		VK_RES_STR( PIPELINE_COMPILE_REQUIRED_EXT );
 		VK_RES_STR( RESULT_MAX_ENUM );
-#undef STR
+#undef VK_RES_STR
 	default: return "VK_UNKNOWN_INTERNAL_ERROR";
 	}
 }
@@ -106,8 +106,7 @@ constexpr VkObjectType VkGetObjTypeFromHandle()
 	if( std::is_same_v<VKH, VkSamplerYcbcrConversion> )			return VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION;
 	if( std::is_same_v<VKH, VkDescriptorUpdateTemplate> )		return VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE;
 	if( std::is_same_v<VKH, VkSurfaceKHR> )						return VK_OBJECT_TYPE_SURFACE_KHR;
-	if( std::is_same_v<VKH, VkSwapchainKHR> )					return VK_OBJECT_TYPE_SURFACE_KHR;
-	if( std::is_same_v<VKH, VkSurfaceKHR> )						return VK_OBJECT_TYPE_SWAPCHAIN_KHR;
+	if( std::is_same_v<VKH, VkSwapchainKHR> )					return VK_OBJECT_TYPE_SWAPCHAIN_KHR;
 
 	HT_ASSERT( 0 );
 	return VK_OBJECT_TYPE_UNKNOWN;

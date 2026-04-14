@@ -164,8 +164,8 @@ struct vk_desc_binding
 	}
 };
 
-using PFN_VkShaderDestoryer = std::function<void( vk_shader* )>;
-using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestoryer>;
+using PFN_VkShaderDestroyer = std::function<void( vk_shader* )>;
+using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestroyer>;
 
 struct vk_context
 {
@@ -174,7 +174,7 @@ struct vk_context
 	// NOTE: we only alloc PERSISTENT resouces on other timelines; 
 	// only the main GPU timeline is to alloc and free TRANSIENTS
 	std::vector<vk_resc_deletion>			resourceDeletionQueue;
-	std::vector<vk_desc_deletion>			descriptroDeletionQueue;
+	std::vector<vk_desc_deletion>			descriptorDeletionQueue;
 
 	static_arena<2048>						scratchArena;
 
@@ -228,7 +228,7 @@ struct vk_context
 	}
 	inline void EnqueueDescriptorFree( const vk_desc_deletion& rscDeletion )
 	{
-		descriptroDeletionQueue.push_back( rscDeletion );
+		descriptorDeletionQueue.push_back( rscDeletion );
 	}
 
 	unique_shader_ptr CreateShaderFromSpirv( std::span<const u8> spvByteCode );
@@ -339,7 +339,7 @@ struct vk_context
 	desc_hndl32 AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo );
 	inline void EnqueueDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx )
 	{
-		descriptroDeletionQueue.push_back( { frameIdx, handle } );
+		descriptorDeletionQueue.push_back( { frameIdx, handle } );
 	}
 
 	void FlushPendingDescriptorUpdates();

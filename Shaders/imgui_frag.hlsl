@@ -1,4 +1,4 @@
-[[vk::binding( 1 )]] Texture2D fontAtals;
+[[vk::binding( 1 )]] Texture2D fontAtlas;
 [[vk::binding( 1 )]] SamplerState fontSampler;
 
 [shader("pixel")]
@@ -9,5 +9,5 @@ float4 ImGuiPsMain(
 	in float2 uv : TEXCOORD0
 ) : SV_Target
 {
-    return col * fontAtals.Sample( fontSampler, uv );
+    return col * fontAtlas.Sample( fontSampler, uv );
 }
