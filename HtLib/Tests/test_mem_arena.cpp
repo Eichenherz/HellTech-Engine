@@ -277,7 +277,7 @@ MU_TEST( VirtualArenaDtorOnDefault )
 MU_TEST( VirtualArenaReserveCtor )
 {
     virtual_arena a = { RESERVE_SZ };
-    mu_check( nullptr != a.base );
+    mu_check( nullptr != a.mem );
     mu_check( RESERVE_SZ == a.reserved );
     mu_check( 0 == a.offset );
     mu_check( 0 == a.committed );
@@ -288,7 +288,7 @@ MU_TEST( VirtualArenaAllocBasic )
     virtual_arena a = { RESERVE_SZ };
     void* p = a.Alloc( 64, 8 );
     mu_check( nullptr != p );
-    mu_check( (u8*)p >= a.base && (u8*)p < ( a.base + a.reserved ) );
+    mu_check( (u8*)p >= a.mem && (u8*)p < ( a.mem + a.reserved ) );
     mu_check( 64 == a.offset );
 }
 
@@ -442,15 +442,15 @@ MU_TEST( VirtualArenaMoveCtor )
 {
     virtual_arena src = { RESERVE_SZ };
     src.Alloc( 64, 8 );
-    u8* origBase = src.base;
+    u8* origBase = src.mem;
 
     virtual_arena dst = { std::move( src ) };
 
-    mu_check( nullptr == src.base );
+    mu_check( nullptr == src.mem );
     mu_check( 0 == src.offset );
     mu_check( 0 == src.committed );
     mu_check( 0 == src.reserved );
-    mu_check( origBase == dst.base );
+    mu_check( origBase == dst.mem );
     mu_check( 64 == dst.offset );
     mu_check( RESERVE_SZ == dst.reserved );
 }
@@ -459,16 +459,16 @@ MU_TEST( VirtualArenaMoveAssign )
 {
     virtual_arena src = { RESERVE_SZ };
     src.Alloc( 64, 8 );
-    u8* origBase = src.base;
+    u8* origBase = src.mem;
 
     virtual_arena dst = {};
     dst = std::move( src );
 
-    mu_check( nullptr == src.base );
+    mu_check( nullptr == src.mem );
     mu_check( 0 == src.offset );
     mu_check( 0 == src.committed );
     mu_check( 0 == src.reserved );
-    mu_check( origBase == dst.base );
+    mu_check( origBase == dst.mem );
     mu_check( 64 == dst.offset );
     mu_check( RESERVE_SZ == dst.reserved );
 }
@@ -638,14 +638,14 @@ MU_TEST( StackAdaptorBasePtr )
     virtual_arena a = { RESERVE_SZ };
     a.Alloc( 64, 8 );
     stack_adaptor sa = { a };
-    mu_check( ( a.base + 64 ) == sa.BasePtr() );
+    mu_check( ( a.mem + 64 ) == sa.BasePtr() );
 }
 
 MU_TEST( StackAdaptorBasePtrAtZero )
 {
     virtual_arena a = { RESERVE_SZ };
     stack_adaptor sa = { a };
-    mu_check( a.base == sa.BasePtr() );
+    mu_check( a.mem == sa.BasePtr() );
 }
 
 MU_TEST( StackAdaptorPmrAllocate )

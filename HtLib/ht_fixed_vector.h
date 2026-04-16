@@ -41,7 +41,7 @@ struct fixed_vector
     u64                     size()        const { return elemCount; }
     constexpr u64           capacity()    const { return N; }
 
-    void                    push_back( const T& v ) { HT_ASSERT( elemCount < N ); elems[ elemCount++ ] = v; }
+    void                    push_back( const T& v ) { HT_ASSERT( elemCount < N ); elems[ elemCount ] = v; elemCount++; }
 
     template<typename... Args>
     T&                      emplace_back( Args&&... args );
@@ -78,7 +78,12 @@ template<TRIVIAL_T T, u64 N>
 fixed_vector<T, N>::fixed_vector( std::initializer_list<T> il )
 {
     HT_ASSERT( std::size( il ) <= N );
-    for ( const T& v : il ) elems[ elemCount++ ] = v;
+    for ( const T& v : il )
+    {
+        elems[ elemCount ] = v;
+        elemCount++;
+    }
+
 }
 
 template<TRIVIAL_T T, u64 N>
@@ -89,7 +94,8 @@ fixed_vector<T, N>::fixed_vector( Iter first, Iter last )
     HT_ASSERT( sz <= N );
     for ( ; first != last; ++first )
     {
-        elems[ elemCount++ ] = *first;
+        elems[ elemCount ] = *first;
+        elemCount++;
     }
 }
 
@@ -98,14 +104,18 @@ template<typename... Args>
 T& fixed_vector<T, N>::emplace_back( Args&&... args )
 {
     HT_ASSERT( elemCount < N );
-    return elems[ elemCount++ ] = T{ std::forward<Args>( args )... };
+    u64 oldCount = elemCount++;
+    return elems[ oldCount ] = T{ std::forward<Args>( args )... };
 }
 
 template<TRIVIAL_T T, u64 N>
 void fixed_vector<T, N>::resize( u64 n, const T& val )
 {
     HT_ASSERT( n <= N );
-    for ( u64 i = elemCount; i < n; ++i ) elems[ i ] = val;
+    for ( u64 i = elemCount; i < n; ++i )
+    {
+        elems[ i ] = val;
+    }
     elemCount = n;
 }
 

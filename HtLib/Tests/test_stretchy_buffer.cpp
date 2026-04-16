@@ -15,7 +15,7 @@
 
 #include "test_common.h"
 
-#include <ht_stretchy_buffer.h>
+#include <ht_stretchybuff.h>
 #include <utility>
 
 // NOTE: longjmp interception globals — extern'd in ht_error.h under HT_TESTS

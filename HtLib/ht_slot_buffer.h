@@ -5,7 +5,7 @@
 
 #include "ht_core_types.h"
 
-#include "ht_stretchy_buffer.h"
+#include "ht_stretchybuff.h"
 
 // NOTE: this is capped at MAX_ENTRIES_RESERVED
 
@@ -35,8 +35,8 @@ struct slot_buffer
         u32 generation : BIT_WIDTH_MAX_GENS;
         u32 padding    : 1; 
     };
-
-    virtual_stretchy_buffer<T>      items        = { MAX_ENTRIES_RESERVED };
+    // TODO: use our stretchy buff or allocator/arena
+    std::vector<T>                  items        = {};
     freelist_cursor                 freelistHead = {};
 
 

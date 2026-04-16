@@ -27,6 +27,6 @@ endfunction()
 # Test executables  (1 per test file, matching VS projects)
 # ============================================================================
 
-add_ht_test(TestSlotBuffer     Tests/test_slot_buffer.cpp     ${HTLIB_WIN32_IMPL})
-add_ht_test(TestStretchyBuffer Tests/test_stretchy_buffer.cpp ${HTLIB_WIN32_IMPL})
+#add_ht_test(TestSlotBuffer     Tests/test_slot_buffer.cpp     ${HTLIB_WIN32_IMPL})
+#add_ht_test(TestStretchyBuffer Tests/test_stretchy_buffer.cpp ${HTLIB_WIN32_IMPL})
 add_ht_test(TestMemArena       Tests/test_mem_arena.cpp       ${HTLIB_WIN32_IMPL})

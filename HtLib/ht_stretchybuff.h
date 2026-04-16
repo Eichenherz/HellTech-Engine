@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HT_VECTOR_H__
-#define __HT_VECTOR_H__
+#ifndef __HT_STRETCHYBUFF_H__
+#define __HT_STRETCHYBUFF_H__
 
 #include "ht_core_types.h"
 #include "ht_mem_arena.h"
@@ -17,19 +17,17 @@ concept CONTIGUOUS_MEMCPY_ABLE = std::ranges::contiguous_range<R> && std::is_tri
 template<typename R, typename T>
 concept TRIVIAL_RANGE_OF = CONTIGUOUS_MEMCPY_ABLE<R> && std::same_as<std::ranges::range_value_t<R>, T>;
 
-template<typename T, arena_t ARENA_T>
-struct ht_vector
+// TODO: add an explicit push_grow func which takes an arena/allocator thingy
+template<typename T>
+struct ht_stretchybuff
 {
     using reverse_iter          = std::reverse_iterator<T*>;
     using const_rev_iter        = std::reverse_iterator<const T*>;
 
-    ARENA_T         arena       = {};
     T*              elems       = nullptr;
     u64             elemCount   = 0;
     u64             currentCap  = 0;
 
-                    ht_vector() = default;
-                    ht_vector( ARENA_T a );
 
     T*              begin()         { return elems; }
     T*              end()           { return elems + elemCount; }
@@ -46,8 +44,6 @@ struct ht_vector
     const T*        data() const    { return elems; }
     u64             size() const    { return elemCount; }
     u64             capacity() const { return currentCap; }
-
-    void            reserve( u64 newCap );
 
     void            resize( u64 newSize ) { resize( newSize, {} ); }
     void            resize( u64 newSize, const T& val );
@@ -67,44 +63,22 @@ struct ht_vector
 };
 
 template<typename T>
-using virtual_stretchy_buffer = ht_vector<T, virtual_arena>;
+inline ht_stretchybuff<T> HtNewStretchyBuffFromMem( void* mem, u64 cap )
+{
+    return { .elems = (T*) mem, .currentCap = cap / sizeof( T ) };
+}
+
+template<typename T, arena_t Arena>
+inline ht_stretchybuff<T> HtANewStretchyBuffFromArena( Arena& arena, u64 count )
+{
+    T* mem = new ( arena.Alloc( sizeof( T ) * count, alignof( T ) ) ) T[ count ];
+    return { .elems = mem, .currentCap = count };
+}
 
 template<typename T>
-using dynamic_stretchy_buffer = ht_vector<T, dynamic_arena>;
-
-template<typename T, arena_t ARENA_T>
-ht_vector<T, ARENA_T>::ht_vector( ARENA_T a ) : arena{ MOV( a ) }
+void ht_stretchybuff<T>::resize( u64 newSize, const T& val )
 {
-    elems;
-    currentCap;
-}
-
-template<typename T, arena_t ARENA_T>
-void ht_vector<T, ARENA_T>::reserve( u64 newCap )
-{
-    if( newCap <= currentCap )
-    {
-        return;
-    }
-
-    if( nullptr == elems )
-    {
-        elems = ( T* ) arena.Alloc( newCap * sizeof( T ), alignof( T ) );
-    }
-    else
-    {
-        arena.Alloc( ( newCap - currentCap ) * sizeof( T ), alignof( T ) );
-    }
-    currentCap = newCap;
-}
-
-template<typename T, arena_t ARENA_T>
-void ht_vector<T, ARENA_T>::resize( u64 newSize, const T& val )
-{
-    if( newSize > currentCap )
-    {
-        reserve( newSize );
-    }
+    HT_ASSERT( newSize <= currentCap );
 
     if constexpr( std::is_trivially_copyable_v<T> )
     {
@@ -129,65 +103,53 @@ void ht_vector<T, ARENA_T>::resize( u64 newSize, const T& val )
     elemCount = newSize;
 }
 
-template<typename T, arena_t ARENA_T>
-T& ht_vector<T, ARENA_T>::push_back( const T& val )
+template<typename T>
+T& ht_stretchybuff<T>::push_back( const T& val )
 {
-    if( elemCount == currentCap )
-    {
-        reserve( currentCap ? currentCap * 2 : 8 );
-    }
-
+    HT_ASSERT( elemCount <= currentCap );
     std::construct_at( &elems[ elemCount ], val );
     ++elemCount;
     return elems[ elemCount - 1 ];
 }
 
-template<typename T, arena_t ARENA_T>
-T& ht_vector<T, ARENA_T>::push_back( T&& val )
+template<typename T>
+T& ht_stretchybuff<T>::push_back( T&& val )
 {
-    if( elemCount == currentCap )
-    {
-        reserve( currentCap ? currentCap * 2 : 8 );
-    }
-
+    HT_ASSERT( elemCount <= currentCap );
     std::construct_at( &elems[ elemCount ], std::move( val ) );
     ++elemCount;
     return elems[ elemCount - 1 ];
 }
 
-template<typename T, arena_t ARENA_T>
+template<typename T>
 template<typename... Args>
-T& ht_vector<T, ARENA_T>::emplace_back( Args&&... args )
+T& ht_stretchybuff<T>::emplace_back( Args&&... args )
 {
-    if( elemCount == currentCap )
-    {
-        reserve( currentCap ? currentCap * 2 : 8 );
-    }
-
+    HT_ASSERT( elemCount <= currentCap );
     std::construct_at( &elems[ elemCount ], FWD( args )... );
     ++elemCount;
     return elems[ elemCount - 1 ];
 }
 
-template<typename T, arena_t ARENA_T>
+template<typename T>
 template<TRIVIAL_RANGE_OF<T> R>
-void ht_vector<T, ARENA_T>::append_range( R&& rg )
+void ht_stretchybuff<T>::append_range( R&& rg )
 {
     u64 off     = size();
     u64 rgSz    = std::size( rg );
     resize( off + rgSz );
-    std::memcpy( data() + off, std::data( rg ), rgSz * sizeof( T ) );
+    std::memcpy( data() + ( off * sizeof( T ) ), std::data( rg ), rgSz * sizeof( T ) );
 }
 
-template<typename T, arena_t ARENA_T>
-void ht_vector<T, ARENA_T>::pop_back()
+template<typename T>
+void ht_stretchybuff<T>::pop_back()
 {
     --elemCount;
     std::destroy_at( &elems[ elemCount ] );
 }
 
-template<typename T, arena_t ARENA_T>
-void ht_vector<T, ARENA_T>::clear()
+template<typename T>
+void ht_stretchybuff<T>::clear()
 {
     for( u64 i = 0; i < elemCount; ++i )
     {
@@ -196,5 +158,5 @@ void ht_vector<T, ARENA_T>::clear()
     elemCount = 0;
 }
 
-#endif // !__HT_VECTOR_H__
+#endif // !__HT_STRETCHYBUFF_H__
 
