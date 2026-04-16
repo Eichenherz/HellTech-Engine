@@ -26,7 +26,7 @@ static const u32 WAVE_COUNT_PER_WG; // gl_NumSubgroups
 	GENERATOR( u32, ##__VA_ARGS__ ) \
 	GENERATOR( float, ##__VA_ARGS__ ) \
 	GENERATOR( int2, ##__VA_ARGS__ ) \
-	GENERATOR( uint2, ##__VA_ARGS__ ) \
+	GENERATOR( u32x2, ##__VA_ARGS__ ) \
 	GENERATOR( float2, ##__VA_ARGS__ ) \
 	GENERATOR( i32x3, ##__VA_ARGS__ ) \
 	GENERATOR( u32x3, ##__VA_ARGS__ ) \

@@ -20,14 +20,10 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	}
 
 	bool instanceIsOccluded = false;
-	if( pushBlock.isLatePass )
+	if( bool( pushBlock.isLatePass ) )
 	{
 		instanceIsOccluded = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
-	}
-	
-	if( pushBlock.isLatePass && !instanceIsOccluded )
-	{
-		return;
+		if( !instanceIsOccluded ) return;
 	}
 
 	instance_desc currentInst = BufferLoad<instance_desc>( pushBlock.instDescIdx, instId );
@@ -40,7 +36,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		
 	view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
 
-	bool testOcclusion = !pushBlock.isLatePass ? true : instanceIsOccluded;
+	bool testOcclusion = !bool( pushBlock.isLatePass ) ? true : instanceIsOccluded;
 	bool visible = false;
 	if( !pushBlock.isLatePass )
 	{
@@ -66,7 +62,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
 	}
 	visible = true;
-	if( !pushBlock.isLatePass )
+	if( !bool( pushBlock.isLatePass ) )
 	{
 		BufferStore<u32>( pushBlock.visInstCacheIdx, visible ? 1 : 0, globalDispatchID.x );
 	}

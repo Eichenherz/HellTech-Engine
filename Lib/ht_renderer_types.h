@@ -212,16 +212,16 @@ struct visible_meshlet
 
 struct culling_params
 {
-	u32 	instCount;
-	u32 	visInstCacheIdx;
-	u32 	instDescIdx;
-	u32 	meshDescIdx;
-	u32 	camIdx;
-	u32 	hizTexIdx;
-	u32 	hizSamplerIdx;
-	u32 	visibleItemsCountIdx;
-	u32 	visibleItemsIdx;
-	bool	isLatePass;
+	u32 instCount;
+	u32 visInstCacheIdx;
+	u32 instDescIdx;
+	u32 meshDescIdx;
+	u32 camIdx;
+	u32 hizTexIdx;
+	u32 hizSamplerIdx;
+	u32 visibleItemsCountIdx;
+	u32 visibleItemsIdx;
+	u32	isLatePass;
 };
 
 struct draw_expansion_params

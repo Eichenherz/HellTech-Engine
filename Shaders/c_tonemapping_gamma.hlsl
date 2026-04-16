@@ -1,4 +1,5 @@
 #include "ht_renderer_types.h"
+#include "ht_hlsl_lang.h"
 
 // NOTE: taken from Lottes 2016, "Advanced Techniques and Optimization of HDR Color Pipelines"
 float TonemapLottesCurve( float hdrLum )

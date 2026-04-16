@@ -1,4 +1,5 @@
 #include "ht_renderer_types.h"
+#include "ht_hlsl_lang.h"
 
 //[[vk::constant_id(0)]]
 static const uint WAVE_LANE_COUNT = 32;

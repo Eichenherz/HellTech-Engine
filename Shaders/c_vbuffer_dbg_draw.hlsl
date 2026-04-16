@@ -20,9 +20,9 @@ float3 ColorHash( float2 v )
 
 [numthreads(16, 16, 1)]
 [shader("compute")]
-void VBufferTriHashDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
+void VBufferDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
-	float2 texel = gTexture2D_float2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
+	float2 texel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
 	float3 col   = ColorHash( texel );
 
 	gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( col, 1.0f );

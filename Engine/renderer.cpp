@@ -1,4 +1,5 @@
 #define VK_NO_PROTOTYPES
+#define __VK // NOTE: used to not include all the vk shit everywhere
 #include <vulkan.h>
 
 #include <Volk/volk.h>
@@ -668,9 +669,6 @@ struct culling_pass
 		desc_hndl32				samplerDesc,
 		bool					latePass
 	) {
-		// NOTE: wtf Vulkan ?
-		constexpr u64 VK_PIPELINE_STAGE_2_DISPATCH_INDIRECT_BIT_HELLTECH = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
-
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Cull Pass",{} );
 
 		if( !latePass )
@@ -713,6 +711,15 @@ struct culling_pass
 				.dstAccessMask	= VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT,
 			},
 		};
+		constexpr VkMemoryBarrier2 computeToIndirectComputeExecDependency[] = {
+			VkMemoryBarrier2{
+				.sType			= VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+				.srcStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.srcAccessMask	= VK_ACCESS_2_SHADER_WRITE_BIT,
+				.dstStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+				.dstAccessMask	= VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+			},
+		};
 
 		{
 			culling_params pushBlock = {
@@ -743,7 +750,7 @@ struct culling_pass
 			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
 			cmdBuff.CmdDispatch( { 1, 1, 1 } );
 		}
-		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
+		cmdBuff.CmdPipelineMemoryBarriers( computeToIndirectComputeExecDependency );
 		{
 			draw_expansion_params pushBlock = {
 				.drawsCount		= instCount,
@@ -766,7 +773,7 @@ struct culling_pass
 			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
 			cmdBuff.CmdDispatch( { 1, 1, 1 } );
 		}
-		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
+		cmdBuff.CmdPipelineMemoryBarriers( computeToIndirectComputeExecDependency );
 		{
 			meshlet_issue_draws_params pushBlock = {
 				.mltCounterIdx		= compactedClustersCounterIdx.slot,

@@ -6,6 +6,7 @@
 #include <Volk/volk.h>
 
 #include "ht_core_types.h"
+#define __VK // NOTE: used to not include all the vk shit everywhere
 #include "ht_renderer_types.h"
 
 #include "vk_resources.h"
@@ -123,7 +124,7 @@ struct vk_command_buffer
 		vkCmdPushConstants2( hndl, &pushConstInfo );
 	}
 
-	void CmdDispatch( DirectX::XMUINT3 numWorkgroups )
+	void CmdDispatch( u32x3 numWorkgroups )
 	{
 		vkCmdDispatch( hndl, numWorkgroups.x, numWorkgroups.y, numWorkgroups.z );
 	}
@@ -136,10 +137,11 @@ struct vk_command_buffer
 		u32              maxDrawCount
 	) {
 		vkCmdBindIndexBuffer( hndl, idxBuffer.hndl, 0, idxType );
-		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, 0, drawCount.hndl, 0, maxDrawCount, sizeof( draw_command ) );
+		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, offsetof( draw_command, cmd ),
+			drawCount.hndl, 0, maxDrawCount, sizeof( draw_command ) );
 	}
 
-	void CmdPipelineBarriers( 
+	void CmdPipelineBarriers(
 		std::span<const VkBufferMemoryBarrier2> buffBarriers, 
 		std::span<const VkImageMemoryBarrier2>	imgBarriers
 	) const 
