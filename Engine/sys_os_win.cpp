@@ -8,6 +8,7 @@
 #include <iostream>
 #include <algorithm>
 
+#include <ranges>
 #include <vector>
 #include <string>
 
@@ -628,16 +629,16 @@ EXIT:
 	return 0;
 }
 
-#include "ht_stretchy_buffer.h"
+#include "ht_stretchybuff.h"
 
 #include "ht_slot_buffer.h"
 
 
 sys_thread SysCreateThread( 
-	u64											stackSize,
-	u64											maxScratchPadSize,
-	const wchar_t*								name,
-	virtual_stretchy_buffer<sys_thread_data>&	threadDataBuff
+	u64									stackSize,
+	u64									maxScratchPadSize,
+	const wchar_t*						name,
+	ht_stretchybuff<sys_thread_data>&	threadDataBuff
 ) {
 	sys_thread_data* pData = &threadDataBuff.push_back( {
 		.signal = SYS_THREAD_SIGNAL_SLEEP,
@@ -725,6 +726,18 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	};
 	WIN_CHECK( RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
+
+	virtual_arena persistentArena = { 10 * GB };
+	virtual_arena scratchArena = { 10 * MB };
+
+	ht_stretchybuff<sys_thread_data> threadDataBuff = HtANewStretchyBuffFromArena<sys_thread_data>(
+		persistentArena, 8 /* cores */ );
+
+	std::vector<sys_thread> threads;
+	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", threadDataBuff ) );
+
+	sys_thread& ioThread = threads[ 0 ];
+
 	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
 	float			mouseSensitivity = 0.1f;
 	float			camSpeed = 1.5f;
@@ -780,13 +793,6 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
 
-	virtual_stretchy_buffer<sys_thread_data> threadDataBuff = { 8 /* cores */ };
-
-	std::vector<sys_thread> threads;
-	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", threadDataBuff ) );
-
-	sys_thread& ioThread = threads[ 0 ];
-
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
@@ -803,9 +809,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
 	vfs_zip_mem			vfs = { *mmappedFile };
 
-	virtual_stretchy_buffer<gpu_instance> flatSceneGraph = { 1'000'000 };
-
-	virtual_arena scratchArena = { 10 * MB };
+	ht_stretchybuff<gpu_instance> flatSceneGraph;
 
 	bool vfsMounted = false;
 
@@ -865,11 +869,15 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 			//	if( std::cend( texIdMap ) != texIdMap.find( pathHash ) ) continue;
 			//}
 
+			// TODO: must reserve before alloc
+			HT_ASSERT( 1 == std::ranges::distance( levelFiles ) );
 			for( const vfs_path& vpath : levelFiles )
 			{
 				std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
 				hellpack_level lvl = HpkReadBinaryBlob<hellpack_level>( rawBytes );
 
+				flatSceneGraph = HtANewStretchyBuffFromArena<gpu_instance>(
+					persistentArena, std::size( lvl.nodes ) );
 				for( const world_node& node : lvl.nodes )
 				{
 					auto it = meshIdMap.find( node.meshHash );

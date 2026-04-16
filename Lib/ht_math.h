@@ -257,4 +257,17 @@ constexpr float Unorm8ToF32( u8 c )
 	return float( c ) * INV_RANGE;
 }
 
+inline u64 FloorPowOf2( u64 size )
+{
+	// NOTE: use Hacker's Delight for bit-trickery
+	constexpr u64 ONE_LEFT_MOST = u64( 1ULL << ( sizeof( u64 ) * 8 - 1 ) );
+	return ( size ) ? ONE_LEFT_MOST >> __lzcnt64( size ) : 0;
+}
+inline u32 GetImgMipCount( u32 width, u32 height, u32 mipLevels )
+{
+	HT_ASSERT( width && height );
+	// NOTE: floor( log2 () ) == bit_width -1
+	return std::min( ( u32 ) std::bit_width( std::max( width, height ) ) - 1, mipLevels );
+}
+
 #endif // !__HT_MATH_H__
