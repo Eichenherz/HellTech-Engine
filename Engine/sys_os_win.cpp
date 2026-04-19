@@ -113,23 +113,16 @@ struct virtual_camera
 
 	float				speed = 1.5f;
 
-	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot, float elapsedSecs )
+	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot )
 	{
 		using namespace DirectX;
 
-		yaw = XMScalarModAngle( yaw + dRot.x * elapsedSecs );
-		pitch = std::clamp( pitch + dRot.y * elapsedSecs, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
+		yaw = XMScalarModAngle( yaw + dRot.x );
+		pitch = std::clamp( pitch + dRot.y, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
 
 		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( speed, speed, speed );
 		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
-
-		XMVECTOR xmCamPos = XMLoadFloat3( &worldPos );
-		float lerpTimeFactor = 0.18f * elapsedSecs / 0.0166f;
-		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, xmCamMove ), lerpTimeFactor );
-
-		// TODO: thresholds
-		//float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
-		worldPos = DX_XMStoreFloat3( smoothNewCamPos );
+		worldPos = DX_XMStoreFloat3( XMVectorAdd( XMLoadFloat3( &worldPos ), xmCamMove ) );
 	}
 
 	inline view_data GetViewData() const
@@ -149,11 +142,12 @@ struct virtual_camera
 
 		XMMATRIX xmProj = XMLoadFloat4x4A( &proj );
 
+		// TODO: don't transpose as soon as we fix the HLSL mem read !
 		return {
 			.proj			= proj,
-			.mainView		= DX_XMStoreFloat4x4( view ),
+			.mainView		= DX_XMStoreFloat4x4( XMMatrixTranspose( view ) ),
 			//.prevView		= DX_XMStoreFloat4x4(),
-			.mainViewProj	= DX_XMStoreFloat4x4( XMMatrixMultiply( view, xmProj ) ),
+			.mainViewProj	= DX_XMStoreFloat4x4( XMMatrixTranspose( XMMatrixMultiply( view, xmProj ) ) ),
 			.prevViewProj	= prevViewProj,
 			.worldPos		= worldPos,
 			// NOTE: this must not be negative for LH coords
@@ -214,8 +208,12 @@ struct move_cam_action
 	float2				dRot;
 };
 
-inline move_cam_action GetMoveCamAction( const input_state& inputState, float mouseSensitivity )
-{
+inline move_cam_action GetMoveCamAction(
+	const input_state&	inputState,
+	float				moveSpeed,
+	float				elapsedTime,
+	float				mouseSensitivity
+) {
 	using namespace DirectX;
 
 	XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
@@ -228,12 +226,12 @@ inline move_cam_action GetMoveCamAction( const input_state& inputState, float mo
 
 	if( !XMVector3Equal( camMove, XMVectorZero() ) )
 	{
-		camMove = XMVector3Normalize( camMove );
+		camMove = XMVectorScale( XMVector3Normalize( camMove ), moveSpeed * elapsedTime );
 	}
 
 	float2 yawPitch = {
 		( float ) inputState.mouseDx * mouseSensitivity,
-		( float ) inputState.mouseDx * mouseSensitivity
+		( float ) inputState.mouseDy * mouseSensitivity
 	};
 	return { .camMove = camMove, .dRot = yawPitch };
 }
@@ -742,10 +740,9 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
-	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
-	float			mouseSensitivity = 0.1f;
-	float			camSpeed = 1.5f;
-	float			moveThreshold = 0.0001f;
+	float			moveSpeed = 1.2f;
+	float			mouseSensitivity = 0.001f;
+	float			moveThreshold = 0.0002f;
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
@@ -771,12 +768,12 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		stack_adaptor virtualStack = { scratchArena };
 
 		const u64 newTicks = SysTicks();
-		const double elapsedSecs = double( newTicks - currentTicks ) * cpuPeriod;
+		const double elapsedTime = double( newTicks - currentTicks ) * cpuPeriod;
 		currentTicks = newTicks;
-		//accumulator += elapsedSecs;
+		//accumulator += elapsedTime;
 
-		inputState.mouseDx = 0.0f;
-		inputState.mouseDy = 0.0f;
+		inputState.mouseDx = 0;
+		inputState.mouseDy = 0;
 
 		isRunning = SysPumpUserInput();
 
@@ -839,22 +836,22 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 					flatSceneGraph.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
 				}
 			}
-			
 			vfsMounted = true;
 		}
 
+		auto[ camMove, dRot ] = GetMoveCamAction( inputState, elapsedTime,
+			moveSpeed, mouseSensitivity );
 
-		auto[ camMove, dRot ] = GetMoveCamAction( inputState, mouseSensitivity );
+		mainActiveCam.Move( camMove, dRot );
+		debugCam.Move( camMove, dRot );
 
-		mainActiveCam.Move( camMove, dRot, elapsedSecs );
-		debugCam.Move( camMove, dRot, elapsedSecs );
-
-		imGuiCtx.UpdateTimeAndInputState( elapsedSecs, inputState );
+		imGuiCtx.UpdateTimeAndInputState( elapsedTime, inputState );
 
 		std::pmr::vector<view_data> views{ &virtualStack };
 
 		view_data mainViewData = mainActiveCam.GetViewData();
 
+		[[likely]]
 		if( !inputState.keyStates[ HT_SC_F ] )
 		{
 			views.push_back( mainViewData );
@@ -869,7 +866,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 			.views 			= views,
 			.instances 		= flatSceneGraph,
 			.frustTransf	= DX_XMStoreFloat4x4( frustMat ),
-			.elapsedSeconds = ( float ) elapsedSecs,
+			.elapsedSeconds = ( float ) elapsedTime,
 			.freezeMainView = inputState.keyStates[ HT_SC_F ],
 			.dbgDraw		= inputState.keyStates[ HT_SC_O ]
 		};

@@ -25,14 +25,14 @@ static const u32 WAVE_COUNT_PER_WG; // gl_NumSubgroups
 	GENERATOR( i32, ##__VA_ARGS__ ) \
 	GENERATOR( u32, ##__VA_ARGS__ ) \
 	GENERATOR( float, ##__VA_ARGS__ ) \
-	GENERATOR( int2, ##__VA_ARGS__ ) \
+	GENERATOR( i32x2, ##__VA_ARGS__ ) \
 	GENERATOR( u32x2, ##__VA_ARGS__ ) \
 	GENERATOR( float2, ##__VA_ARGS__ ) \
 	GENERATOR( i32x3, ##__VA_ARGS__ ) \
 	GENERATOR( u32x3, ##__VA_ARGS__ ) \
 	GENERATOR( float3, ##__VA_ARGS__ ) \
-	GENERATOR( int4, ##__VA_ARGS__ ) \
-	GENERATOR( uint4, ##__VA_ARGS__ ) \
+	GENERATOR( i32x4, ##__VA_ARGS__ ) \
+	GENERATOR( u32x4, ##__VA_ARGS__ ) \
 	GENERATOR( float4, ##__VA_ARGS__ )
 
 #define TEXTURE_TYPE_SLOT_GENERATOR( native_type, texture_type, slot ) \

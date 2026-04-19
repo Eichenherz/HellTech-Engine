@@ -22,9 +22,11 @@ typedef uint		u32;
 typedef uint16_t	u16;
 //typedef uint8_t		u8;
 
+typedef int4		i32x4;
 typedef int3		i32x3;
 typedef int2		i32x2;
 
+typedef uint4		u32x4;
 typedef uint3		u32x3;
 typedef uint2		u32x2;
 
