@@ -56,15 +56,6 @@ struct ALIGNAS( 16 ) packed_trs
 
 struct packed_vtx
 {
-	float3	pos;
-	float2	octNormal;
-	float	tanAngle;
-	float	u, v;
-	u16		tanSign;
-};
-
-struct packed_vertex
-{
 	float	px;
 	float	py;
 	float	pz;
@@ -130,8 +121,7 @@ struct dispatch_command
 #endif
 };
 
-// TODO: rename
-struct draw_command
+struct draw_indexed_command
 {
 	u32		instIdx;
 #if defined( __cplusplus ) && defined( __VK )

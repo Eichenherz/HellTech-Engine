@@ -25,8 +25,8 @@ void IssueMeshletDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 
     u32 drawSlot = waveDrawBase + WavePrefixCountBits( true );
 
 	visible_meshlet currentMeshlet = BufferLoad<visible_meshlet>( pushBlock.srcBufferIdx, globalDispatchID.x );
-	draw_command draw = { currentMeshlet.instId, currentMeshlet.triCount * 3, 1,
+	draw_indexed_command draw = { currentMeshlet.instId, currentMeshlet.triCount * 3, 1,
 		currentMeshlet.triOffset, currentMeshlet.vtxOffset, 0 };
 
-	BufferStore<draw_command>( pushBlock.drawCmdsBuffIdx, draw, drawSlot );
+	BufferStore<draw_indexed_command>( pushBlock.drawCmdsBuffIdx, draw, drawSlot );
 }

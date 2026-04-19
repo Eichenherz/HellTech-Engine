@@ -34,6 +34,8 @@ namespace fs = std::filesystem;
 
 #include "hp_types_internal.h"
 
+#include <ht_macros.h>
+
 template<typename TriIdx, typename PrimIdx>
 inline auto PermuteTrianglesByPrimitiveRemap( const std::vector<TriIdx>& oldIdx, const std::vector<PrimIdx>& primitiveIndices )
 {
@@ -122,10 +124,10 @@ struct rt_cluster_config
 void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 {
 	meshopt_Stream attrStreams[] = {
-		{ .data = std::data( rawMesh.pos ), .size = std::size( rawMesh.pos ), .stride = sizeof( rawMesh.pos[ 0 ] ) },
-		{ .data = std::data( rawMesh.normals ), .size = std::size( rawMesh.normals ), .stride = sizeof( rawMesh.normals[ 0 ] ) },
-		{ .data = std::data( rawMesh.tans ), .size = std::size( rawMesh.tans ), .stride = sizeof( rawMesh.tans[ 0 ] ) },
-		{ .data = std::data( rawMesh.uvs ), .size = std::size( rawMesh.uvs ), .stride = sizeof( rawMesh.uvs[ 0 ] ) },
+		{ .data = std::data( rawMesh.pos ), .size = sizeof( rawMesh.pos[ 0 ] ), .stride = sizeof( rawMesh.pos[ 0 ] ) },
+		{ .data = std::data( rawMesh.normals ), .size = sizeof( rawMesh.normals[ 0 ] ), .stride = sizeof( rawMesh.normals[ 0 ] ) },
+		{ .data = std::data( rawMesh.tans ), .size = sizeof( rawMesh.tans[ 0 ] ), .stride = sizeof( rawMesh.tans[ 0 ] ) },
+		{ .data = std::data( rawMesh.uvs ), .size = sizeof( rawMesh.uvs[ 0 ] ), .stride = sizeof( rawMesh.uvs[ 0 ] ) },
 	};
 	std::vector<u32>& indices = rawMesh.indices;
 
@@ -133,79 +135,79 @@ void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 	const u64 idxCount = std::size( indices );
 
 	std::vector<u32> remap( vtxCount );
-	u64 newVtxCount = meshopt_generateVertexRemapMulti(
-		std::data( remap ), std::data( indices ), idxCount, vtxCount, attrStreams, std::size( attrStreams ) );
+	u64 newVtxCount = meshopt_generateVertexRemapMulti(std::data( remap ), std::data( indices ),
+		idxCount, vtxCount, attrStreams, std::size( attrStreams ) );
 
 	HT_ASSERT( newVtxCount <= vtxCount );
-	if( newVtxCount != vtxCount )
-	{
-		meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( remap ) );
-		meshopt_remapVertexBuffer( std::data( rawMesh.pos ), std::data( rawMesh.pos ), vtxCount, 
-								   sizeof( rawMesh.pos[ 0 ] ), std::data( remap ) );
-		rawMesh.pos.resize( newVtxCount );
-		meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ), vtxCount, 
-								   sizeof( rawMesh.normals[ 0 ] ), std::data( remap ) );
-		rawMesh.normals.resize( newVtxCount );
-		meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ), vtxCount, 
-								   sizeof( rawMesh.tans[ 0 ] ), std::data( remap ) );
-		rawMesh.tans.resize( newVtxCount );
-		meshopt_remapVertexBuffer( std::data( rawMesh.uvs ), std::data( rawMesh.uvs ), vtxCount, 
-								   sizeof( rawMesh.uvs[ 0 ] ), std::data( remap ) );
-		rawMesh.uvs.resize( newVtxCount );
-	}
+	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( remap ) );
+
+	meshopt_remapVertexBuffer( std::data( rawMesh.pos ), std::data( rawMesh.pos ), vtxCount,
+							   sizeof( rawMesh.pos[ 0 ] ), std::data( remap ) );
+	rawMesh.pos.resize( newVtxCount );
+	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ), vtxCount,
+							   sizeof( rawMesh.normals[ 0 ] ), std::data( remap ) );
+	rawMesh.normals.resize( newVtxCount );
+	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ), vtxCount,
+							   sizeof( rawMesh.tans[ 0 ] ), std::data( remap ) );
+	rawMesh.tans.resize( newVtxCount );
+	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ), std::data( rawMesh.uvs ), vtxCount,
+							   sizeof( rawMesh.uvs[ 0 ] ), std::data( remap ) );
+	rawMesh.uvs.resize( newVtxCount );
 
 	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), idxCount, newVtxCount );
 
-	meshopt_optimizeVertexFetch( std::data( rawMesh.pos ), std::data( indices ), idxCount, std::data( rawMesh.pos ), 
-								 newVtxCount, sizeof( rawMesh.pos[ 0 ] ) );
-	meshopt_optimizeVertexFetch( std::data( rawMesh.normals ), std::data( indices ), idxCount, std::data( rawMesh.normals ), 
-								 newVtxCount, sizeof( rawMesh.normals[ 0 ] ) );
-	meshopt_optimizeVertexFetch( std::data( rawMesh.tans ), std::data( indices ), idxCount, std::data( rawMesh.tans ), 
-								 newVtxCount, sizeof( rawMesh.tans[ 0 ] ) );
-	meshopt_optimizeVertexFetch( std::data( rawMesh.uvs ), std::data( indices ), idxCount, std::data( rawMesh.uvs ), 
-								 newVtxCount, sizeof( rawMesh.uvs[ 0 ] ) );
+	std::vector<u32> fetchRemap( newVtxCount );
+	meshopt_optimizeVertexFetchRemap( std::data( fetchRemap ), std::data( indices ),
+		idxCount, newVtxCount );
+
+	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( fetchRemap ) );
+
+
+	meshopt_remapVertexBuffer( std::data( rawMesh.pos ),std::data( rawMesh.pos ), newVtxCount,
+		sizeof( rawMesh.pos[0] ), std::data( fetchRemap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ), newVtxCount,
+		sizeof( rawMesh.normals[0] ), std::data( fetchRemap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ), newVtxCount,
+		sizeof( rawMesh.tans[0] ), std::data( fetchRemap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ),std::data( rawMesh.uvs ), newVtxCount,
+		sizeof( rawMesh.uvs[0] ), std::data( fetchRemap ) );
 }
 
 struct __meshopt_meshlets
 {
-	std::vector<meshopt_Meshlet> info;
-	std::vector<u32> vertices;
-	std::vector<u8> triangles;
+	std::vector<meshopt_Meshlet>	info;
+	std::vector<u32> 				vertices;
+	std::vector<u8>					triIndices;
 };
 
 __meshopt_meshlets MeshoptMakeClusters( 
-	std::span<const float3> pos, 
-	std::span<const u32> indices, 
-	meshlet_config cfg 
+	std::span<const float3> pos,
+	std::span<const u32>	indices,
+	meshlet_config			cfg
 ) { 
 	const u64 indexCount = std::size( indices );
 	
 	const u64 maxMeshletCount = meshopt_buildMeshletsBound( indexCount, cfg.maxVertices, cfg.maxTriangles );
 	std::vector<meshopt_Meshlet> meshlets( maxMeshletCount );
-	std::vector<u32> mletVtx( indexCount );
-	std::vector<u8> mletTris( indexCount );
+	std::vector<u32> mltVtx( indexCount );
+	std::vector<u8> mltTris( indexCount );
 
-	u64 meshletCount = meshopt_buildMeshlets(
-		&meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ], std::size( indices ),
-		&pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.maxTriangles, cfg.coneWeight );
+	u64 meshletCount = meshopt_buildMeshlets( &meshlets[ 0 ], &mltVtx[ 0 ], &mltTris[ 0 ], &indices[ 0 ],
+		std::size( indices ), &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ),
+		cfg.maxVertices, cfg.maxTriangles, cfg.coneWeight );
 
 	const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
 
 	meshlets.resize( meshletCount );
-	mletVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
-	mletTris.resize( ( u64 ) last.triangle_offset + ( ( ( u64 ) last.triangle_count * 3 + 3 ) & ~3 ) );
+	mltVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
+	mltTris.resize( ( u64 ) last.triangle_offset + ( u64 ) last.triangle_count * 3 );
 
 	for( const meshopt_Meshlet& m : meshlets )
 	{
-		meshopt_optimizeMeshlet( &mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ],
-								 m.triangle_count, m.vertex_count );
+		meshopt_optimizeMeshlet( &mltVtx[ m.vertex_offset ], &mltTris[ m.triangle_offset ], m.triangle_count, m.vertex_count );
 	}
 
-	return { 
-		.info = std::move( meshlets ), 
-		.vertices = std::move( mletVtx ), 
-		.triangles = std::move( mletTris ) 
-	};
+	return {  .info = MOV( meshlets ), .vertices = MOV( mltVtx ), .triIndices = MOV( mltTris ) };
 }
 
 __meshopt_meshlets MeshoptMakeClusters( 
@@ -237,24 +239,24 @@ __meshopt_meshlets MeshoptMakeClusters(
 			m.triangle_count, m.vertex_count );
 	}
 
-	return { 
-		.info = std::move( meshlets ), 
-		.vertices = std::move( mletVtx ), 
-		.triangles = std::move( mletTris ) 
+	return {
+		.info		= MOV( meshlets ),
+		.vertices	= MOV( mletVtx ),
+		.triIndices	= MOV( mletTris )
 	};
 }
 
 template<typename T> 
-inline auto GetMeshletLocalAttrStream( 
-	std::span<const T> meshAttrStream, 
-	std::span<const u32> mletVtx, 
-	u64 mletVtxOffset, 
-	u64 mletVtxCount 
+inline std::vector<T> GetMeshletLocalAttrStream(
+	std::span<const T>		meshAttrStream,
+	std::span<const u32>	mltVtx,
+	u64						mltVtxOffset,
+	u64						mltVtxCount
 ){
-	std::vector<T> localStream( mletVtxCount );
+	std::vector<T> localStream( mltVtxCount );
 	for( u64 vi = 0; vi < std::size( localStream ); ++vi )
 	{
-		localStream[ vi ] = meshAttrStream[ mletVtx[ vi + mletVtxOffset ] ];
+		localStream[ vi ] = meshAttrStream[ mltVtx[ vi + mltVtxOffset ] ];
 	}
 
 	return localStream;
@@ -262,67 +264,76 @@ inline auto GetMeshletLocalAttrStream(
 
 mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 {
-	__meshopt_meshlets meshoptMeshlets = MeshoptMakeClusters( rawMesh.pos, rawMesh.indices, meshlet_config{} );
+	meshlet_config mltCfg = {};
+	__meshopt_meshlets meshoptMeshlets = MeshoptMakeClusters( rawMesh.pos, rawMesh.indices, mltCfg );
 
-	std::span<const float3> pos = rawMesh.pos;
-	std::span<const float3> norm = rawMesh.normals;
-	std::span<const float4> tan = rawMesh.tans;
-	std::span<const float2> uvs = rawMesh.uvs;
+	std::span<const float3> pos		= rawMesh.pos;
+	std::span<const float3> norm	= rawMesh.normals;
+	std::span<const float4> tan		= rawMesh.tans;
+	std::span<const float2> uvs		= rawMesh.uvs;
 
 	std::vector<packed_vtx> vertices;
-	std::vector<u8> triangles;
-	std::vector<meshlet> meshlets;
+	std::vector<u8>			triIndices;
+	std::vector<meshlet>	meshlets;
 
 	vertices.reserve( std::size( meshoptMeshlets.vertices ) );
-	triangles.reserve( std::size( meshoptMeshlets.triangles ) );
+	triIndices.reserve( std::size( meshoptMeshlets.triIndices ) );
 	meshlets.reserve( std::size( meshoptMeshlets.info ) );
 
 	for( const meshopt_Meshlet& m : meshoptMeshlets.info )
 	{
-		std::vector<float3> mletPosStream = GetMeshletLocalAttrStream( pos, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
+		HT_ASSERT( ( m.vertex_count <= u32( mltCfg.maxVertices ) ) && ( m.triangle_count <= u32( mltCfg.maxTriangles ) ) );
 
-		auto mletNormStream = GetMeshletLocalAttrStream( norm, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
-		auto mletTanStream = GetMeshletLocalAttrStream( tan, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
-		auto mletUvStream = GetMeshletLocalAttrStream( uvs, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
+		std::vector<float3> mltPosStream = GetMeshletLocalAttrStream( pos, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
 
-		std::vector<packed_vtx> packedVtx( std::size( mletPosStream ) );
+		std::vector<float3> mltNormStream = GetMeshletLocalAttrStream(
+			norm, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
+		std::vector<float4> mltTanStream = GetMeshletLocalAttrStream(
+			tan, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
+		std::vector<float2> mltUvStream = GetMeshletLocalAttrStream(
+			uvs, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
+
+		const aabb_t<float3> aabb = ComputeAabb( mltPosStream );
+
+		std::vector<packed_vtx> packedVtx( std::size( mltPosStream ) );
 		for( u64 vi = 0; vi < m.vertex_count; ++vi )
 		{
-			float3 p = mletPosStream[ vi ];
-			float3 n = mletNormStream[ vi ];
-			float4 t = mletTanStream[ vi ];
-			float2 uv = mletUvStream[ vi ];
+			float3 p	= mltPosStream[ vi ];
+			float3 n	= mltNormStream[ vi ];
+			float4 t	= mltTanStream[ vi ];
+			float2 uv	= mltUvStream[ vi ];
 			float2 octNormal = OctaNormalEncode( n );
 			float tanAngle = EncodeTanToAngle( n, { t.x,t.y,t.z } );
 			u8 tanSign = ( -1.0f == t.w ) ? 1 : 0;
 
 			packedVtx[ vi ] = {
-				.pos = p,
-				.octNormal = octNormal, 
-				.tanAngle = tanAngle, 
-				.u = uv.x, .v = uv.y, 
-				.tanSign = tanSign 
+				.px 		= p.x,
+				.py 		= p.y,
+				.pz 		= p.z,
+				.tu 		= uv.x,
+				.tv 		= uv.y,
+				.octNX		= octNormal.x,
+				.octNY		= octNormal.y,
+				.tanAngle	= tanAngle,
+				.tanSign	= tanSign
 			};
 		}
 
-		const aabb_t<float3> aabb = ComputeAabb( mletPosStream );
-
-		HT_ASSERT( ( m.vertex_count < u32( u8( -1 ) ) ) && ( m.triangle_count < u32( u8( -1 ) ) ) );
-
 		meshlet outMeshlet = {
-			.aabbMin = aabb.min,
-			.aabbMax = aabb.max,
-			.vtxOffset = ( u32 ) std::size( vertices ),
-			.triOffset = ( u32 ) std::size( triangles ),
-			.vtxCount = ( u8 ) m.vertex_count,
-			.triCount = ( u8 ) m.triangle_count
+			.aabbMin	= aabb.min,
+			.aabbMax	= aabb.max,
+			.vtxOffset	= ( u32 ) std::size( vertices ),
+			.triOffset	= ( u32 ) std::size( triIndices ),
+			.vtxCount	= ( u8 ) m.vertex_count,
+			.triCount	= ( u8 ) m.triangle_count
 		};
 		meshlets.push_back( outMeshlet );
 
-		auto meshletTris = std::span<const u8>{ meshoptMeshlets.triangles }.subspan( m.triangle_offset, m.triangle_count );
+		std::span<const u8> mltTriIndices = { std::data( meshoptMeshlets.triIndices ) + m.triangle_offset,
+			m.triangle_count * 3 };
 
 		std::ranges::copy( packedVtx, std::back_inserter( vertices ) );
-		std::ranges::copy( meshletTris, std::back_inserter( triangles ) );
+		std::ranges::copy( mltTriIndices, std::back_inserter( triIndices ) );
 	}
 
 	auto aabbView = meshlets | std::views::transform( 
@@ -331,10 +342,10 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 	aabb_t<float3> aabb = MergeAabbs( aabbView );
 
 	return {
-		.vertices = std::move( vertices ),
-		.triangles = std::move( triangles ),
-		.meshlets = std::move( meshlets ),
-		.aabb = { aabb.min, aabb.max }
+		.vertices	= MOV( vertices ),
+		.triIndices	= MOV( triIndices ),
+		.meshlets	= MOV( meshlets ),
+		.aabb		= { aabb.min, aabb.max }
 	};
 }
 
@@ -397,12 +408,12 @@ constexpr bc_format_t DxgiToBcFormat( dds::DXGI_FORMAT dxgiFmt )
 
 struct compression_job
 {
-	alignas( 8 ) vfs_path filename;
-	dds_texture tex;
-	std::span<const u8> src;
-	dds::DXGI_FORMAT fmt;
-	u16 width;
-	u16 height;
+	alignas( 8 ) vfs_path	filename;
+	dds_texture				tex;
+	std::span<const u8> 	src;
+	dds::DXGI_FORMAT		fmt;
+	u16						width;
+	u16						height;
 
 	void Execute()
 	{
@@ -427,8 +438,8 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 	HT_ASSERT( std::size( imageViews ) < u16( INVALID_IDX ) );
 
 	// NOTE: we use indices and vfs_path here bc we're deduping wrt to tinygltf's stuff which is index based
-	ankerl::unordered_dense::set<u16> jobsSet;
-	std::vector<compression_job> jobs;
+	ankerl::unordered_dense::set<u16>	jobsSet;
+	std::vector<compression_job>		jobs;
 
 	jobsSet.reserve( std::size( imageViews ) );
 	jobs.reserve( std::size( imageViews ) );
@@ -444,11 +455,11 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 			jobsSet.emplace( idx );
 
 			jobs.push_back( {
-				.filename = filename,
-				.src = imgView.data, 
-				.fmt = fmt, 
-				.width = imgView.metadata.width, 
-				.height = imgView.metadata.height 
+				.filename	= filename,
+				.src		= imgView.data,
+				.fmt		= fmt,
+				.width		= imgView.metadata.width,
+				.height		= imgView.metadata.height
 			} );
 		}
 		
@@ -461,34 +472,34 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 	for( const raw_material_info& mtrl : rawMaterials )
 	{
 		//ProcessImageView( material.occlusionIdx, bc_format_t::BC7_RGBA );
-		// NOTE: currently not suporting ambient occlusion which must be packed into MR
+		// NOTE: currently not supporting ambient occlusion which must be packed into MR
 		HT_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
 
 		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { mtrl.name + "_albedo.dds" } );
-		u64 metallicRoughnessHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, { mtrl.name + "_normal.dds" } );
-		u64 normalHash = ProcessImageView( mtrl.metallicRoughnessIdx, dds::DXGI_FORMAT_BC7_UNORM, { mtrl.name + "_mro.dds" } );
+		u64 normalHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, { mtrl.name + "_normal.dds" } );
+		u64 metallicRoughnessHash = ProcessImageView( mtrl.metallicRoughnessIdx, dds::DXGI_FORMAT_BC7_UNORM, { mtrl.name + "_mro.dds" } );
 		u64 emissiveHash = ProcessImageView( mtrl.emissiveIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { mtrl.name + "_emissive.dds" } );
 
 		materials.push_back( {
-			.baseColorHash = baseColorHash,
-			.metallicRoughnessHash = metallicRoughnessHash,
-			.normalHash = normalHash,
-			.emissiveHash = emissiveHash,
+			.baseColorHash			= baseColorHash,
+			.metallicRoughnessHash	= metallicRoughnessHash,
+			.normalHash				= normalHash,
+			.emissiveHash			= emissiveHash,
 
-			.baseColFactor = mtrl.baseColFactor,
-			.emissiveFactor = mtrl.emissiveFactor,
-			.metallicFactor = mtrl.metallicFactor,
-			.roughnessFactor = mtrl.metallicFactor,
+			.baseColFactor			= mtrl.baseColFactor,
+			.emissiveFactor			= mtrl.emissiveFactor,
+			.metallicFactor			= mtrl.metallicFactor,
+			.roughnessFactor		= mtrl.roughnessFactor,
 
-			.alphaCutoff = mtrl.alphaCutoff,
+			.alphaCutoff			= mtrl.alphaCutoff,
 
-			.samplerIdx = mtrl.samplerIdx,
+			.samplerIdx				= mtrl.samplerIdx,
 
-			.alphaMode = mtrl.alphaMode
+			.alphaMode				= mtrl.alphaMode
 		} );
 	}
 
-	return { .materials = std::move( materials ), .jobs = std::move( jobs ) };
+	return { .materials = MOV( materials ), .jobs = MOV( jobs ) };
 }
 
 inline void WaitThreadPoolDone( std::vector<std::thread>& threadPool )
@@ -538,11 +549,11 @@ int main()
 	gltf_loader gltf = { gltfFilePath };
 
 	// TODO: ensure we keep the same indexing as tinygltf provides !!!!
-	std::vector<raw_node> rawNodes = gltf.ProcessNodes();
-	std::vector<raw_mesh> rawMeshes = gltf.ProcessMeshes();
-	std::vector<sampler_config> samplers = gltf.ProcessSamplers();
-	std::vector<raw_material_info> rawMaterials = gltf.ProcessMaterials();
-	std::vector<raw_image_view> imageViews = gltf.ProcessImages();
+	std::vector<raw_node>			rawNodes		= gltf.ProcessNodes();
+	std::vector<raw_mesh>			rawMeshes		= gltf.ProcessMeshes();
+	std::vector<sampler_config>		samplers		= gltf.ProcessSamplers();
+	std::vector<raw_material_info>	rawMaterials	= gltf.ProcessMaterials();
+	std::vector<raw_image_view>		imageViews		= gltf.ProcessImages();
 
 	auto[ materialTable, texCmpJobs ] = PrepareBcnCompressionBatch( rawMaterials, imageViews );
 
@@ -560,11 +571,15 @@ int main()
 		}
 	};
 
+	std::cout << "Processing materials async\n";
+
 	for( u64 ti = 0; ti < std::thread::hardware_concurrency(); ++ti ) tasks.emplace_back( WorkerLoop );
 
 	std::vector<world_node> instances;
 
 	ankerl::unordered_dense::map<vfs_path, mesh_asset> meshAssetMap;
+
+	std::cout << "Processing meshes\n";
 	for( const raw_node& n : rawNodes )
 	{
 		if( !IsIndexValid( n.meshIdx ) ) continue;
@@ -580,11 +595,13 @@ int main()
 		meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
 
 		instances.push_back( {
-			.toWorld = n.toWorld,
-			.meshHash = std::hash<vfs_path>{}( assetPath ),
-			.materialIdx = ( u16 ) mesh.materialIdx // NOTE: these should match 1:1 with ours
+			.toWorld		= n.toWorld,
+			.meshHash		= std::hash<vfs_path>{}( assetPath ),
+			.materialIdx	= ( u16 ) mesh.materialIdx // NOTE: these should match 1:1 with ours
 		} );
 	}
+
+	std::cout << "Processing meshes done ! Dumping to file.\n";
 
 	const std::string hpkFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
 	{
@@ -601,13 +618,14 @@ int main()
 			for( auto& [ filePath, meshAsset ] : meshAssetMap )
 			{
 				hellpack_serializble_buffer buffs[] = { 
-					meshAsset.vertices, meshAsset.triangles, meshAsset.meshlets, meshAsset.aabb };
+					meshAsset.vertices, meshAsset.triIndices, meshAsset.meshlets, meshAsset.aabb };
 				std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::MESH );
 				zipArchive.WriteBytesToFile( filePath, bytes );
 			}
 		}
 		WaitThreadPoolDone( tasks );
 
+		std::cout << "Processing materials done ! Dumping to file.\n";
 		for( const compression_job& cmp : texCmpJobs )
 		{
 			HT_ASSERT( std::size( cmp.tex ) );

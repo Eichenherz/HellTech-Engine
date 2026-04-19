@@ -20,11 +20,11 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	}
 
 	bool instanceIsOccluded = false;
-	if( bool( pushBlock.isLatePass ) )
-	{
-		instanceIsOccluded = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
-		if( !instanceIsOccluded ) return;
-	}
+	//if( bool( pushBlock.isLatePass ) )
+	//{
+	//	instanceIsOccluded = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
+	//	if( !instanceIsOccluded ) return;
+	//}
 
 	instance_desc currentInst = BufferLoad<instance_desc>( pushBlock.instDescIdx, instId );
 	float4x4 toWorld = TrsToFloat4x4( currentInst.toWorld.t, currentInst.toWorld.r, currentInst.toWorld.s );
@@ -38,29 +38,29 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 
 	bool testOcclusion = !bool( pushBlock.isLatePass ) ? true : instanceIsOccluded;
 	bool visible = false;
-	if( !pushBlock.isLatePass )
-	{
-		// NOTE: 1st pass runs frustum culling with current instTransform and current cam
-
-		float4x4 mvp = mul( toWorld, mul( cam.mainView, cam.proj ) );
-		frustum_culling_result frustumCullRes = FrustumCulling( aabbMin, aabbMax, mvp );
-		testOcclusion = testOcclusion && !frustumCullRes.intersectsZNear;
-		// NOTE: we might be visible but if we intersect the znear we skip occlusion
-		visible = frustumCullRes.visible;
-	}
+	//if( !bool( pushBlock.isLatePass ) )
+	//{
+	//	// NOTE: 1st pass runs frustum culling with current instTransform and current cam
+	//
+	//	float4x4 mvp = mul( toWorld, mul( cam.mainView, cam.proj ) );
+	//	frustum_culling_result frustumCullRes = FrustumCulling( aabbMin, aabbMax, mvp );
+	//	testOcclusion = testOcclusion && !frustumCullRes.intersectsZNear;
+	//	// NOTE: we might be visible but if we intersect the znear we skip occlusion
+	//	visible = frustumCullRes.visible;
+	//}
 	
-	if( visible && testOcclusion )
-	{
-		// NOTE: 1st pass uses prev instTransform prevCam and prev HZB
-		float4x4 view = pushBlock.isLatePass ? cam.mainView : cam.prevView;
-		float4x4 mvpOcclusion = mul( toWorld, mul( view, cam.proj ) );
-		screenspace_aabb ssAabb = ProjectAabbToScreenSpace( aabbMin, aabbMax, mvpOcclusion );
-				
-		Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
-		SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
-			
-		visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
-	}
+	//if( visible && testOcclusion )
+	//{
+	//	// NOTE: 1st pass uses prev instTransform prevCam and prev HZB
+	//	float4x4 view = bool( pushBlock.isLatePass ) ? cam.mainView : cam.prevView;
+	//	float4x4 mvpOcclusion = mul( toWorld, mul( view, cam.proj ) );
+	//	screenspace_aabb ssAabb = ProjectAabbToScreenSpace( aabbMin, aabbMax, mvpOcclusion );
+	//
+	//	Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
+	//	SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
+	//
+	//	visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
+	//}
 	visible = true;
 	if( !bool( pushBlock.isLatePass ) )
 	{

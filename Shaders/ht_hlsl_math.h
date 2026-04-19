@@ -11,10 +11,10 @@ float4x4 TrsToFloat4x4( float3 t, float4 q, float3 s )
     float wx = q.w * x2, wy = q.w * y2, wz = q.w * z2;
 
     return float4x4(
-        ( 1 - yy - zz ) * s.x,  ( xy - wz ) * s.y,		( xz + wy ) * s.z,		t.x,
-        ( xy + wz ) * s.x,    	( 1 - xx - zz ) * s.y,  ( yz - wx ) * s.z,		t.y,
-        ( xz - wy ) * s.x,    	( yz + wx ) * s.y,		( 1 - xx - yy ) * s.z,  t.z,
-        0,						0,						0,						1
+        ( 1 - yy - zz ) * s.x,  ( xy + wz ) * s.x,      ( xz - wy ) * s.x,      0,
+        ( xy - wz ) * s.y,      ( 1 - xx - zz ) * s.y,  ( yz + wx ) * s.y,      0,
+        ( xz + wy ) * s.z,      ( yz - wx ) * s.z,      ( 1 - xx - yy ) * s.z,  0,
+        t.x,                     t.y,                     t.z,                    1
     );
 }
 

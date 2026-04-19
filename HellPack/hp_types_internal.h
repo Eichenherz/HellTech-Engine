@@ -6,8 +6,6 @@
 #include <vector>
 #include <string>
 
-#include "ht_math.h"
-
 struct raw_mesh
 {
 	std::string         name;
@@ -46,67 +44,67 @@ enum class image_pixel_type : u8
 
 struct image_metadata
 {
-	u16 width;
-	u16 height;
-	image_channels_t component;
-	image_bit_depth_t  bits;
-	image_pixel_type pixelType;
+	u16					width;
+	u16					height;
+	image_channels_t	component;
+	image_bit_depth_t	bits;
+	image_pixel_type	pixelType;
 };
 
 struct raw_image_view
 {
 	std::span<const u8> data;
-	image_metadata metadata;
+	image_metadata		metadata;
 };
 
 struct raw_meshlet
 {
 	std::vector<packed_vtx> vertices;
-	std::vector<u8> triangles;
-	float3	aabbMin;
-	float3	aabbMax;
+	std::vector<u8>			triIndices;
+	float3					aabbMin;
+	float3					aabbMax;
 };
 
 struct raw_material_info
 {
 	std::string name;
 
-	float4 baseColFactor;
-	float metallicFactor;
-	float roughnessFactor;
-	float alphaCutoff;
-	float3 emissiveFactor;
+	float4		baseColFactor;
+	float		metallicFactor;
+	float		roughnessFactor;
+	float		alphaCutoff;
+	float3		emissiveFactor;
 
-	u16 baseColorIdx;
-	u16 metallicRoughnessIdx;
-	u16 normalIdx;
-	u16 occlusionIdx;
-	u16 emissiveIdx;
-	u16 samplerIdx;
+	u16 		baseColorIdx;
+	u16 		metallicRoughnessIdx;
+	u16 		normalIdx;
+	u16 		occlusionIdx;
+	u16 		emissiveIdx;
+	u16 		samplerIdx;
 
-	alpha_mode alphaMode;
+	alpha_mode	alphaMode;
 };
 
 struct range64
 {
-	u64 baseOffset : 32;
-	u64 count : 32;
+	u64 baseOffset	: 32;
+	u64 count		: 32;
 };
 
 struct mesh_asset
 {
 	std::vector<packed_vtx> vertices;
-	std::vector<u8> triangles;
-	std::vector<meshlet> meshlets;
-	std::array<float3, 2> aabb; // NOTE: helps with serialization { min, max }
+	std::vector<u8>			triIndices;
+	std::vector<meshlet>	meshlets;
+	std::array<float3, 2>	aabb; // NOTE: helps with serialization { min, max }
 };
 
 struct packed_trs;
 
 struct raw_node
 {
-	packed_trs toWorld;
-	u32 meshIdx;
+	packed_trs	toWorld;
+	u32			meshIdx;
 };
 
 #endif // !__HP_TYPES_INTERNAL_H__

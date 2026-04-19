@@ -90,14 +90,6 @@ bool SysWriteToFile( const char* filename, const u8* data, u32 sizeInBytes )
 constexpr char	ENGINE_NAME[] = "helltech_engine";
 constexpr char	WINDOW_TITLE[] = "HellTech Engine";
 
-constexpr u16 VK_W = 0x57;
-constexpr u16 VK_A = 0x41;
-constexpr u16 VK_S = 0x53;
-constexpr u16 VK_D = 0x44;
-constexpr u16 VK_C = 0x43;
-constexpr u16 VK_F = 0x46;
-constexpr u16 VK_O = 0x4F;
-
 using PFN_XMLookAtCoord = DirectX::XMMATRIX ( XM_CALLCONV * ) (
 	DirectX::FXMVECTOR eyePos,
 	DirectX::FXMVECTOR focusPos,
@@ -164,7 +156,8 @@ struct virtual_camera
 			.mainViewProj	= DX_XMStoreFloat4x4( XMMatrixMultiply( view, xmProj ) ),
 			.prevViewProj	= prevViewProj,
 			.worldPos		= worldPos,
-			.camViewDir		= DX_XMStoreFloat3( viewDir ),
+			// NOTE: this must not be negative for LH coords
+			.camViewDir		= DX_XMStoreFloat3( viewDir )
 		};
 	}
 };
@@ -203,13 +196,17 @@ static inline u64 SysTicks()
 }
 
 
-struct alignas( 4 ) input_state
+struct input_state
 {
-	float2	posMouse;
-	float2	dMouse;
-	bool 	keyStates[ 512 ];
+	float 	mouseX;
+	float 	mouseY;
+	i32 	mouseDx;
+	i32 	mouseDy;
+	bool	keyStates[ 512 ];
 	bool 	mouseButtons[ 5 ];
 };
+
+#include <System/Win32/win32_kbd_scancodes.h>
 
 struct move_cam_action
 {
@@ -217,24 +214,28 @@ struct move_cam_action
 	float2				dRot;
 };
 
-inline move_cam_action GetMoveCamAction( const input_state& inputState )
+inline move_cam_action GetMoveCamAction( const input_state& inputState, float mouseSensitivity )
 {
 	using namespace DirectX;
 
 	XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
-	if( inputState.keyStates[ VK_W ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, 1, 0 ) );
-	if( inputState.keyStates[ VK_A ] ) camMove = XMVectorAdd( camMove, XMVectorSet( -1, 0, 0, 0 ) );
-	if( inputState.keyStates[ VK_S ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, -1, 0 ) );
-	if( inputState.keyStates[ VK_D ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 1, 0, 0, 0 ) );
-	if( inputState.keyStates[ VK_SPACE ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
-	if( inputState.keyStates[ VK_C ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
+	if( inputState.keyStates[ HT_SC_W ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, 1, 0 ) );
+	if( inputState.keyStates[ HT_SC_A ] ) camMove = XMVectorAdd( camMove, XMVectorSet( -1, 0, 0, 0 ) );
+	if( inputState.keyStates[ HT_SC_S ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, -1, 0 ) );
+	if( inputState.keyStates[ HT_SC_D ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 1, 0, 0, 0 ) );
+	if( inputState.keyStates[ HT_SC_SPACE ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
+	if( inputState.keyStates[ HT_SC_C ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
 
 	if( !XMVector3Equal( camMove, XMVectorZero() ) )
 	{
 		camMove = XMVector3Normalize( camMove );
 	}
 
-	return { .camMove = camMove, .dRot = inputState.dMouse };
+	float2 yawPitch = {
+		( float ) inputState.mouseDx * mouseSensitivity,
+		( float ) inputState.mouseDx * mouseSensitivity
+	};
+	return { .camMove = camMove, .dRot = yawPitch };
 }
 
 static inline bool SysPumpUserInput()
@@ -250,22 +251,26 @@ static inline bool SysPumpUserInput()
 	return true;
 }
 
-static inline u16 KeyIndex( const RAWKEYBOARD& kb )
-{
-	bool isE0 = kb.Flags & RI_KEY_E0;
-	return ( u16 ) ( kb.MakeCode | ( isE0 ? 0x100 : 0 ) );
-}
-
 static void Win32ProcessRawInput( const RAWINPUT& ri, input_state& inputState )
 {
-	if( ri.header.dwType == RIM_TYPEKEYBOARD )
+	if( RIM_TYPEKEYBOARD == ri.header.dwType )
 	{
-		bool isPressed = !( ri.data.keyboard.Flags & RI_KEY_BREAK );
-		inputState.keyStates[ KeyIndex( ri.data.keyboard ) ] = isPressed;
+		const RAWKEYBOARD& kb = ri.data.keyboard;
+		if( KEYBOARD_OVERRUN_MAKE_CODE == kb.MakeCode ) return;
+
+		bool isPressed = !( kb.Flags & RI_KEY_BREAK );
+		bool isE0 = kb.Flags & RI_KEY_E0;
+		u16 keyIndex = ( u16 ) ( kb.MakeCode | ( isE0 ? 0x100 : 0 ) );
+		inputState.keyStates[ keyIndex ] = isPressed;
 	}
-	if( ( ri.header.dwType == RIM_TYPEMOUSE ) )
+	if( RIM_TYPEMOUSE == ri.header.dwType )
 	{
-		inputState.dMouse = { ( float ) ri.data.mouse.lLastX, ( float ) ri.data.mouse.lLastY };
+		if( !( ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE ) )
+		{
+			inputState.mouseDx += ri.data.mouse.lLastX;
+			inputState.mouseDy += ri.data.mouse.lLastY;
+		}
+
 		USHORT usButtonFlags =  ri.data.mouse.usButtonFlags;
 		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN )   inputState.mouseButtons[ 0 ] = 1;
 		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_UP )     inputState.mouseButtons[ 0 ] = 0;
@@ -293,8 +298,9 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		LONG_PTR pUserData = GetWindowLongPtr( hwnd, GWLP_USERDATA );
 		if( pUserData )
 		{
-			( ( input_state* ) pUserData )->posMouse = { ( float ) GET_X_LPARAM( lParam ), 
-				( float ) GET_Y_LPARAM( lParam ) };
+			input_state& inputState = *( input_state* ) pUserData;
+			inputState.mouseX = ( float ) GET_X_LPARAM( lParam );
+			inputState.mouseY = ( float ) GET_Y_LPARAM( lParam );
 		}
 		break;
 	}
@@ -355,7 +361,7 @@ struct im_gui_ctx
 	inline void UpdateTimeAndInputState( float elapsedSecs, const input_state& inputState )
 	{
 		io->DeltaTime = elapsedSecs;
-		io->MousePos = { inputState.posMouse.x, inputState.posMouse.y };
+		io->MousePos = { inputState.mouseX, inputState.mouseY };
 		io->MouseDown[ 0 ] = inputState.mouseButtons[ 0 ];
 		io->MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
 		io->MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];
@@ -403,10 +409,10 @@ void ImGuiLoadFileAction( const void* )
 
 struct imgui_widget
 {
-	imgui_widget_name name;
-	const void* pData;
-	PFN_ImGuiWidgetAction Action;
-	imgui_widget_type type;
+	imgui_widget_name		name;
+	const void*				pData;
+	PFN_ImGuiWidgetAction	Action;
+	imgui_widget_type		type;
 };
 
 struct imgui_window
@@ -499,8 +505,8 @@ constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 
 struct renderer_upload_job
 {
-	std::vector<mesh_upload_req> reqs;
-	renderer_interface* pRI;
+	std::vector<mesh_upload_req>	reqs;
+	renderer_interface*				pRI;
 
 	inline void operator()( virtual_arena& arena )
 	{
@@ -523,19 +529,17 @@ struct io_job
 
 	io_job() : upload{}, type{ UPLOAD } {}
 
-	inline io_job( const renderer_upload_job& up )
-		: upload{ up }, type{ UPLOAD } {}
+	io_job( const renderer_upload_job& up ) : upload{ up }, type{ UPLOAD } {}
 
-	inline io_job( renderer_upload_job&& up )
-		: upload{ std::move( up ) }, type{ UPLOAD } {}
+	io_job( renderer_upload_job&& up ) : upload{ MOV( up ) }, type{ UPLOAD } {}
 
 	~io_job() { upload.~renderer_upload_job(); }
 
 	io_job( const io_job& o ) : upload{ o.upload }, type{ o.type } {}
-	io_job( io_job&& o )      : upload{ std::move( o.upload ) }, type{ o.type } {}
+	io_job( io_job&& o )      : upload{ MOV( o.upload ) }, type{ o.type } {}
 
-	io_job& operator=( const io_job& o ) { type = o.type; upload = o.upload;            return *this; }
-	io_job& operator=( io_job&& o )      { type = o.type; upload = std::move( o.upload ); return *this; }
+	io_job& operator=( const io_job& o ) { type = o.type; upload = o.upload; return *this; }
+	io_job& operator=( io_job&& o )      { type = o.type; upload = MOV( o.upload ); return *this; }
 };
 
 
@@ -585,8 +589,6 @@ EXIT:
 }
 
 #include "ht_stretchybuff.h"
-
-#include "ht_slot_buffer.h"
 
 
 sys_thread SysCreateThread( 
@@ -691,17 +693,12 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	sys_thread& ioThread = threads[ 0 ];
 
-	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
-	float			mouseSensitivity = 0.1f;
-	float			camSpeed = 1.5f;
-	float			moveThreshold = 0.0001f;
-
 	constexpr float fovRads = XMConvertToRadians( 70.0f );
 	constexpr float aspecRatioWH = float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT );
 	constexpr float zNear = 0.5f;
 
-	virtual_camera mainActiveCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
-	virtual_camera debugCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
+	virtual_camera mainActiveCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
+	virtual_camera debugCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
 
 	{
 		view_data mainViewData = mainActiveCam.GetViewData();
@@ -745,22 +742,25 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
 
-
+	constexpr float almostPiDiv2 = 0.995f * DirectX::XM_PIDIV2;
+	float			mouseSensitivity = 0.1f;
+	float			camSpeed = 1.5f;
+	float			moveThreshold = 0.0001f;
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
-	bool				isRunning = true;
-	const double		cpuPeriod = 1.0 / double( SysGetCpuFreq() );
+	bool			isRunning = true;
+	const double	cpuPeriod = 1.0 / double( SysGetCpuFreq() );
 	//constexpr double	dt = 0.01;
 	//double				t = double( UINT64( 1ULL << 32 ) );
 	//double				accumulator = 0;
-	u64					currentTicks = SysTicks();
+	u64				currentTicks = SysTicks();
 
 	// TODO: vfs
 	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
 	mmap_file		mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
-	vfs_zip_mem			vfs = { mmappedFile };
+	vfs_zip_mem		vfs = { mmappedFile };
 
 	ht_stretchybuff<gpu_instance> flatSceneGraph;
 
@@ -775,7 +775,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		currentTicks = newTicks;
 		//accumulator += elapsedSecs;
 
-		inputState.dMouse = {};
+		inputState.mouseDx = 0.0f;
+		inputState.mouseDy = 0.0f;
 
 		isRunning = SysPumpUserInput();
 
@@ -843,7 +844,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		}
 
 
-		auto[ camMove, dRot ] = GetMoveCamAction( inputState );
+		auto[ camMove, dRot ] = GetMoveCamAction( inputState, mouseSensitivity );
 
 		mainActiveCam.Move( camMove, dRot, elapsedSecs );
 		debugCam.Move( camMove, dRot, elapsedSecs );
@@ -854,7 +855,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 		view_data mainViewData = mainActiveCam.GetViewData();
 
-		if( !inputState.keyStates[ VK_F ] )
+		if( !inputState.keyStates[ HT_SC_F ] )
 		{
 			views.push_back( mainViewData );
 			mainActiveCam.prevViewProj = mainViewData.mainViewProj;
@@ -865,12 +866,12 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		XMMATRIX frustMat = FrustumMatrixFromViewProj( XMLoadFloat4x4A( &mainViewData.mainViewProj ) );
 		
 		frame_data frameData = {
-			.views = views,
-			.instances = flatSceneGraph,
-			.frustTransf = DX_XMStoreFloat4x4( frustMat ),
+			.views 			= views,
+			.instances 		= flatSceneGraph,
+			.frustTransf	= DX_XMStoreFloat4x4( frustMat ),
 			.elapsedSeconds = ( float ) elapsedSecs,
-			.freezeMainView = inputState.keyStates[ VK_F ],
-			.dbgDraw = inputState.keyStates[ VK_O ]
+			.freezeMainView = inputState.keyStates[ HT_SC_F ],
+			.dbgDraw		= inputState.keyStates[ HT_SC_O ]
 		};
 
 		ImGuiRenderUI( imguiWnds, loadHpkReqs );

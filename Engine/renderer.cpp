@@ -634,7 +634,7 @@ struct culling_pass
 		drawCmds = dc.CreateBuffer( {
 			.name			= "Buff_DrawCmds",
 			.usageFlags		= usg | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT ,
-			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_command ),
+			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_indexed_command ),
 			.usage			= buffer_usage::GPU_ONLY } );
 		drawCmdsIdx = dc.AllocDescriptorIdx( drawCmds );
 	}
@@ -1188,7 +1188,7 @@ struct vbuffer_pass
 		};
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
 
-		u32 maxDraws = u32( drawCmds.sizeInBytes / sizeof( draw_command ) );
+		u32 maxDraws = u32( drawCmds.sizeInBytes / sizeof( draw_indexed_command ) );
 		cmdBuff.CmdDrawIndexedIndirectCount( indexBuff, indexType, drawCmds, drawCount, maxDraws );
 	}
 
