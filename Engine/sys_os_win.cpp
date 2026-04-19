@@ -17,6 +17,9 @@
 
 #include <Win32/win32_err.h>
 #include <System/sys_file.h>
+#include <System/sys_sync.h>
+#include <System/sys_thread.h>
+
 #include "zip_pack.h"
 
 #include "ht_math.h"
@@ -95,44 +98,46 @@ constexpr u16 VK_C = 0x43;
 constexpr u16 VK_F = 0x46;
 constexpr u16 VK_O = 0x4F;
 
-constexpr float ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
+using PFN_XMLookAtCoord = DirectX::XMMATRIX ( XM_CALLCONV * ) (
+	DirectX::FXMVECTOR eyePos,
+	DirectX::FXMVECTOR focusPos,
+	DirectX::FXMVECTOR upDir
+);
 
 struct virtual_camera
 {
-	float4x4	projection;
-	float4x4	prevViewProj = {};
+	float4x4			proj = {};
+	float4x4			prevView = {};
+	float4x4			prevViewProj = {};
+	float3 				fwdBasis = {};
+	float3 				upBasis = {};
+	float3				worldPos = { 0.0f, 0.0f, 0.0f };
 
-	float3		worldPos = { 0.0f, 0.0f, 0.0f };
+	PFN_XMLookAtCoord	LookAt = nullptr;
 
-	static constexpr float3 fwdBasis = { 0.0f, 0.0f, 1.0f };
-	static constexpr float3 upBasis = { 0.0f, 1.0f, 0.0f };
 	// NOTE: pitch must be in [-pi/2,pi/2]
-	float pitch = 0.0f;
-	float yaw = 0.0f;
+	float				pitch = 0.0f;
+	float				yaw = 0.0f;
 
-	float speed = 1.5f;
-
-	inline virtual_camera( DirectX::XMMATRIX proj )
-	{
-		DirectX::XMStoreFloat4x4A( &projection, proj );
-	}
+	float				speed = 1.5f;
 
 	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot, float elapsedSecs )
 	{
 		using namespace DirectX;
 
 		yaw = XMScalarModAngle( yaw + dRot.x * elapsedSecs );
-		pitch = std::clamp( pitch + dRot.y * elapsedSecs, -ALMOST_HALF_PI, ALMOST_HALF_PI );
+		pitch = std::clamp( pitch + dRot.y * elapsedSecs, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
 
 		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( speed, speed, speed );
 		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
 
 		XMVECTOR xmCamPos = XMLoadFloat3( &worldPos );
-		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, xmCamMove ), 0.18f * elapsedSecs / 0.0166f );
+		float lerpTimeFactor = 0.18f * elapsedSecs / 0.0166f;
+		XMVECTOR smoothNewCamPos = XMVectorLerp( xmCamPos, XMVectorAdd( xmCamPos, xmCamMove ), lerpTimeFactor );
 
 		// TODO: thresholds
 		//float moveLen = XMVectorGetX( XMVector3Length( smoothNewCamPos ) );
-		XMStoreFloat3( &worldPos, smoothNewCamPos );
+		worldPos = DX_XMStoreFloat3( smoothNewCamPos );
 	}
 
 	inline view_data GetViewData() const
@@ -144,86 +149,53 @@ struct virtual_camera
 		XMVECTOR xmWorldPos = XMLoadFloat3( &worldPos );
 
 		XMVECTOR camLookAt = XMVector3Transform( xmFwd, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = XMMatrixLookAtLH( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ), xmUp );
+		XMMATRIX view = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ), xmUp );
 
 		XMVECTOR viewDet = XMMatrixDeterminant( view );
 		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
 		XMVECTOR viewDir = XMVectorNegate( invView.r[ 2 ] );
 
-		XMMATRIX xmProj = XMLoadFloat4x4A( &projection );
+		XMMATRIX xmProj = XMLoadFloat4x4A( &proj );
 
-		view_data viewData = {};
-		viewData.proj = projection;
-		XMStoreFloat4x4A( &viewData.mainView, view );
-		XMStoreFloat4x4A( &viewData.mainViewProj, XMMatrixMultiply( view, xmProj ) );
-		viewData.prevViewProj = prevViewProj;
-		viewData.worldPos = worldPos;
-		XMStoreFloat3( &viewData.camViewDir, viewDir );
-
-		return viewData;
+		return {
+			.proj			= proj,
+			.mainView		= DX_XMStoreFloat4x4( view ),
+			//.prevView		= DX_XMStoreFloat4x4(),
+			.mainViewProj	= DX_XMStoreFloat4x4( XMMatrixMultiply( view, xmProj ) ),
+			.prevViewProj	= prevViewProj,
+			.worldPos		= worldPos,
+			.camViewDir		= DX_XMStoreFloat3( viewDir ),
+		};
 	}
 };
 
-// NOTE: this is useful when we want to draw the frozen frustum
-inline DirectX::XMMATRIX XM_CALLCONV FrustumMatrixFromViewProj( DirectX::XMMATRIX viewXProj )
+inline virtual_camera MakeVirtualCameraWithProjLH( float radsYFov, float aspectRatioWH, float zNear )
 {
-	using namespace DirectX;
-
-	// NOTE: inv( A * B ) = inv B * inv A
-	XMMATRIX invFrustMat = viewXProj; //XMMatrixMultiply( view, proj );
-	XMVECTOR det = XMMatrixDeterminant( invFrustMat );
-	HT_ASSERT( XMVectorGetX( det ) != 0 );
-	XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
-	return frustMat;
+	return {
+		.proj = ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, false ),
+		.fwdBasis = { 0.0f, 0.0f, 1.0f },
+		.upBasis = { 0.0f, 1.0f, 0.0f },
+		.LookAt = DirectX::XMMatrixLookAtLH
+	};
 }
 
-// TODO: templates ? 
-// TODO: fromalize world coord
-inline DirectX::XMMATRIX PerspRevInfFovLH( float fovYRads, float aspectRatioWH, float zNear )
+inline virtual_camera MakeVirtualCameraWithProjRH( float radsYFov, float aspectRatioWH, float zNear )
 {
-	float sinFov;
-	float cosFov;
-
-	DirectX::XMScalarSinCos( &sinFov, &cosFov, fovYRads * 0.5f );
-
-	float h = cosFov / sinFov;
-	float w = h / aspectRatioWH;
-
-	DirectX::XMMATRIX proj;
-	proj.r[ 0 ] = DirectX::XMVectorSet( w, 0, 0, 0 );
-	proj.r[ 1 ] = DirectX::XMVectorSet( 0, h, 0, 0 );
-	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, zNear );
-	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, 1, 0 );
-
-	return proj;
-}
-inline DirectX::XMMATRIX PerspRevInfFovRH( float fovYRads, float aspectRatioWH, float zNear )
-{
-	float sinFov;
-	float cosFov;
-
-	DirectX::XMScalarSinCos( &sinFov, &cosFov, fovYRads * 0.5f );
-
-	float h = cosFov / sinFov;
-	float w = h / aspectRatioWH;
-
-	DirectX::XMMATRIX proj;
-	proj.r[ 0 ] = DirectX::XMVectorSet( w, 0, 0, 0 );
-	proj.r[ 1 ] = DirectX::XMVectorSet( 0, h, 0, 0 );
-	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, zNear );
-	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, -1, 0 );
-
-	return proj;
+	return {
+		.proj = ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, true ),
+		.fwdBasis = { 0.0f, 0.0f, -1.0f },
+		.upBasis = { 0.0f, 1.0f, 0.0f },
+		.LookAt = DirectX::XMMatrixLookAtRH
+	};
 }
 
-
-static inline u64	SysGetCpuFreq()
+static inline u64 SysGetCpuFreq()
 {
 	LARGE_INTEGER freq;
 	QueryPerformanceFrequency( &freq );
 	return freq.QuadPart;
 }
-static inline u64	SysTicks()
+static inline u64 SysTicks()
 {
 	LARGE_INTEGER tick;
 	QueryPerformanceCounter( &tick );
@@ -241,8 +213,8 @@ struct alignas( 4 ) input_state
 
 struct move_cam_action
 {
-	DirectX::XMVECTOR camMove;
-	DirectX::XMFLOAT2 dRot;
+	DirectX::XMVECTOR	camMove;
+	float2				dRot;
 };
 
 inline move_cam_action GetMoveCamAction( const input_state& inputState )
@@ -265,7 +237,7 @@ inline move_cam_action GetMoveCamAction( const input_state& inputState )
 	return { .camMove = camMove, .dRot = inputState.dMouse };
 }
 
-static inline bool	SysPumpUserInput()
+static inline bool SysPumpUserInput()
 {
 	MSG msg;
 	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) )
@@ -332,7 +304,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		constexpr u64 cbSzHeader = sizeof( RAWINPUTHEADER );
 		HRAWINPUT hri = ( HRAWINPUT ) lParam;
 
-		// TODO: might wanna self supply this
+		// TODO: self supply this
 		static thread_local std::vector<u8> scratchPad;
 
 		UINT size = 0;
@@ -513,30 +485,13 @@ inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds, std::vect
 	ImGui::EndFrame();
 }
 
-inline void SysNameThread( HANDLE hThread, const wchar_t* name )
-{
-	HT_ASSERT( SUCCEEDED( SetThreadDescription( hThread, name ) ) );
-}
+
 
 constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 
 #define CACHE_ALIGN alignas( CACHE_LINE_SZ )
 
-// NOTE: bc Win32 expects LONG64
-#define ht_atomic64 volatile i64
 
-enum sys_thread_signal : i64
-{
-	SYS_THREAD_SIGNAL_SLEEP		= 0,
-	SYS_THREAD_SIGNAL_WAKEUP	= 1,
-	SYS_THREAD_SIGNAL_EXIT		= -1
-};
-
-void AtomicSignalSingleThread( ht_atomic64& signal, sys_thread_signal val )
-{
-	InterlockedExchange64( &signal, val );
-	WakeByAddressSingle( ( void* ) &signal );
-}
 
 #include "ht_mem_arena.h"
 #include "ht_mtx_queue.h"
@@ -609,8 +564,8 @@ DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 	{
 		for( ;; )
 		{
-			WaitOnAddress( &threadCtx.signal, ( void* ) &UNDESIRED_VAl, sizeof( threadCtx.signal ), INFINITE );
-			sys_thread_signal capturedVal = ( sys_thread_signal ) InterlockedAddAcquire64( &threadCtx.signal, 0 );
+			sys_thread_signal capturedVal = ( sys_thread_signal ) SysAtomicWaitOnAddr(
+				threadCtx.signal, ( void* ) &UNDESIRED_VAl, INFINITE );
 
 			[[unlikely]] if( SYS_THREAD_SIGNAL_EXIT == capturedVal ) goto EXIT;
 			if( UNDESIRED_VAl != capturedVal ) break;
@@ -650,7 +605,7 @@ sys_thread SysCreateThread(
 	HANDLE hThread = CreateThread( NULL, stackSize, Win32ThreadLoop, ( LPVOID ) pData, 0, &threadId );
 	HT_ASSERT( INVALID_HANDLE_VALUE != hThread );
 
-	SysNameThread( hThread, name );
+	SysNameThread( ( u64 ) hThread, name );
 
 	return {
 		.hndl		= hThread,
@@ -661,15 +616,13 @@ sys_thread SysCreateThread(
 
 #include "engine_types.h"
 
-#include <ranges>
-
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
 
 	SysOsCreateConsole();
 
-	SysNameThread( GetCurrentThread(), L"Main/Renderer Thread" );
+	SysNameThread( ( u64 ) GetCurrentThread(), L"Main/Renderer Thread" );
 #ifdef  _DEBUG
 	// TODO: fix sys_path whatever to work with this !
 	char workingDir[ MAX_PATH ] = {};
@@ -743,12 +696,12 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	float			camSpeed = 1.5f;
 	float			moveThreshold = 0.0001f;
 
+	constexpr float fovRads = XMConvertToRadians( 70.0f );
+	constexpr float aspecRatioWH = float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT );
 	constexpr float zNear = 0.5f;
-	XMMATRIX		proj = PerspRevInfFovLH( XMConvertToRadians( 70.0f ),
-		float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT ), zNear );
 
-	virtual_camera mainActiveCam = { proj };
-	virtual_camera debugCam = { proj };
+	virtual_camera mainActiveCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
+	virtual_camera debugCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
 
 	{
 		view_data mainViewData = mainActiveCam.GetViewData();
@@ -804,10 +757,10 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	u64					currentTicks = SysTicks();
 
 	// TODO: vfs
-	constexpr char		assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	unique_mmap_file	mmappedFile = SysCreateFile( assetFile, file_permissions_bits::READ,
+	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	mmap_file		mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
-	vfs_zip_mem			vfs = { *mmappedFile };
+	vfs_zip_mem			vfs = { mmappedFile };
 
 	ht_stretchybuff<gpu_instance> flatSceneGraph;
 
@@ -859,7 +812,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 			ioThread.pData->jobs.TryPush( renderer_upload_job{ .reqs = std::move( uploads ), .pRI = pRenderer.get() } );
 
-			AtomicSignalSingleThread( ioThread.pData->signal, SYS_THREAD_SIGNAL_WAKEUP );
+			SysAtomicSignalSingleThread( ioThread.pData->signal, SYS_THREAD_SIGNAL_WAKEUP );
 
 			//ankerl::unordered_dense::map<u64, u32> texIdMap;
 			//for( const vfs_path& vpath : texFiles )

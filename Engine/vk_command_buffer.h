@@ -156,14 +156,16 @@ struct vk_command_buffer
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
 
-	void CmdCopyBuffer( const vk_buffer& src, const vk_buffer& dst, const VkBufferCopy& copyRegion )
+	inline void CmdCopyBuffer( const vk_buffer& src, const vk_buffer& dst, std::span<const VkBufferCopy2> copyRegions )
 	{
-		vkCmdCopyBuffer( hndl, src.hndl, dst.hndl, 1, &copyRegion );
-	}
-
-	inline void CmdCopyBuffer( const VkCopyBufferInfo2& cpy )
-	{
-		vkCmdCopyBuffer2( hndl, &cpy );
+		VkCopyBufferInfo2 cpyInfo = {
+			.sType			= VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+			.srcBuffer		= src.hndl,
+			.dstBuffer		= dst.hndl,
+			.regionCount	= ( u32 ) std::size( copyRegions ),
+			.pRegions		= std::data( copyRegions )
+		};
+		vkCmdCopyBuffer2( hndl, &cpyInfo );
 	}
 
 	void CmdCopyBufferToImageMipsLayers( 

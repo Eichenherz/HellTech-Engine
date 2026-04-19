@@ -136,17 +136,6 @@ inline VkBufferCopy2 MakeVkBufferCopy2( VkDeviceSize srcOffset, VkDeviceSize dst
 	};
 }
 
-inline VkCopyBufferInfo2 MakeVkCopyBufferInfo2( VkBuffer src, VkBuffer dst, std::span<const VkBufferCopy2> copyRegions )
-{
-	return {
-		.sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-		.srcBuffer   = src,
-		.dstBuffer   = dst,
-		.regionCount = ( u32 ) std::size( copyRegions ),
-		.pRegions    = std::data( copyRegions )
-	};
-}
-
 // TODO: enforce some clearOp ---> clearVals params correctness ?
 inline static VkRenderingAttachmentInfo VkMakeAttachmentInfo(
 	VkImageView				view,

@@ -75,4 +75,5 @@ __forceinline float4x4 XM_CALLCONV DX_XMStoreFloat4x4( DirectX::XMMATRIX m )
 	return out;
 }
 
+
 #endif // !__HT_VEC_TYPES_H__

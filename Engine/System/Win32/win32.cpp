@@ -1,6 +1,7 @@
 #include <System/sys_sync.h>
 #include <ht_mem_arena.h>
 #include <System/sys_file.h>
+#include <System/sys_thread.h>
 
 #include "Win32/DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
@@ -21,6 +22,18 @@ copyable_srwlock& copyable_srwlock::operator=( copyable_srwlock&& )      { retur
 
 void copyable_srwlock::lock()   const { AcquireSRWLockExclusive( ( SRWLOCK* ) ( &osLock ) ); }
 void copyable_srwlock::unlock() const { ReleaseSRWLockExclusive( ( SRWLOCK* ) ( &osLock ) ); }
+
+void SysAtomicSignalSingleThread( ht_atomic64& signal, sys_thread_signal val )
+{
+	InterlockedExchange64( &signal, val );
+	WakeByAddressSingle( ( void* ) &signal );
+}
+
+i64 SysAtomicWaitOnAddr( ht_atomic64& signal, void* compareAddr, u32 millisecs )
+{
+	WaitOnAddress( &signal, compareAddr, sizeof( signal ), millisecs );
+	return InterlockedAddAcquire64( &signal, 0 );
+}
 // ===============================================================================================================
 
 // ===============================================================================================================
@@ -82,18 +95,18 @@ constexpr DWORD MakeMapViewFlags( file_permissions_flags openFlags )
 	return 0;
 }
 
-constexpr DWORD MakeCreateFalgs( file_create_flags createFlags )
+constexpr DWORD MakeCreateFlags( file_create_flags createFlags )
 {
 	using enum file_create_flags;
 	switch( createFlags )
 	{
 	case CREATE: return CREATE_NEW;
 	case OPEN_IF_EXISTS: return OPEN_EXISTING;
-	default: HT_ASSERT( 0 && "Wrong falgs" ); return 0;
+	default: HT_ASSERT( 0 && "Wrong flags" ); return 0;
 	}
 }
 
-constexpr DWORD MakeAccessFalgs( file_access_flags accessFlags )
+constexpr DWORD MakeAccessFlags( file_access_flags accessFlags )
 {
 	using enum file_access_flags;
 	switch( accessFlags )
@@ -104,87 +117,68 @@ constexpr DWORD MakeAccessFalgs( file_access_flags accessFlags )
 	}
 }
 
-struct win32_mmaped_file final : mmap_file
+u64 mmap_file::Timestamp()
 {
-	std::span<u8> dataView;
-	HANDLE hFile = INVALID_HANDLE_VALUE;
-	HANDLE hFileMapping = INVALID_HANDLE_VALUE;
+	FILETIME fileTime = {};
+	WIN_CHECK( !GetFileTime( ( HANDLE ) hFile, 0, 0, &fileTime ) );
 
-	win32_mmaped_file( 
-		LPCSTR fileName, 
-		DWORD filePermFlags, 
-		DWORD createFlags, 
-		DWORD accessFlags, 
-		DWORD fileMappingAccess,
-		DWORD dataViewAccess
-	) {
-		hFile = CreateFileA( fileName, filePermFlags, FILE_SHARE_READ, 0, createFlags, accessFlags, NULL );
-		WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
+	ULARGE_INTEGER timestamp = {};
+	timestamp.LowPart = fileTime.dwLowDateTime;
+	timestamp.HighPart = fileTime.dwHighDateTime;
 
-		hFileMapping = CreateFileMappingA( hFile, 0, fileMappingAccess, 0, 0, 0 );
-		WIN_CHECK( INVALID_HANDLE_VALUE != hFileMapping );
-
-		DWORD dwFileSizeHigh;
-		u64 qwFileSize = GetFileSize( hFile, &dwFileSizeHigh );
-		qwFileSize += ( u64( dwFileSizeHigh ) << 32 );
-		WIN_CHECK( 0 != qwFileSize );
-
-		u8* pData = ( u8* ) MapViewOfFile( hFileMapping, dataViewAccess, 0, 0, qwFileSize );
-		WIN_CHECK( 0 != pData );
-		dataView = { pData, qwFileSize };
-	}
-
-	virtual u64 size() const override
-	{
-		return std::size( dataView );
-	}
-
-	virtual u8* data() override
-	{
-		return std::data( dataView );
-	}
-	virtual const u8* data() const override
-	{
-		return std::data( dataView );
-	}
-
-	virtual u64 Timestamp() override
-	{
-		FILETIME fileTime = {};
-		WIN_CHECK( !GetFileTime( hFile, 0, 0, &fileTime ) );
-
-		ULARGE_INTEGER timestamp = {};
-		timestamp.LowPart = fileTime.dwLowDateTime;
-		timestamp.HighPart = fileTime.dwHighDateTime;
-
-		return u64( timestamp.QuadPart ); 
-	}
-};
-
-void Win32MmapFileDestroyer( mmap_file* pFile )
-{
-	win32_mmaped_file* pWin32File = ( win32_mmaped_file* ) pFile;
-	if( pWin32File )
-	{
-		UnmapViewOfFile( std::data( pWin32File->dataView ) );
-		CloseHandle( pWin32File->hFileMapping );
-		CloseHandle( pWin32File->hFile );
-		pFile = nullptr;
-	}
+	return u64( timestamp.QuadPart );
 }
 
-unique_mmap_file SysCreateFile( 
-	std::string_view path, 
-	file_permissions_flags permissionFlags,
-	file_create_flags createFlags,
-	file_access_flags accessFalgs
+mmap_file SysCreateMmapFile(
+	const char*				path,
+	file_permissions_flags	permissionFlags,
+	file_create_flags		createFlags,
+	file_access_flags		accessFlags
 ) {
-	DWORD dwPermissionFlags = MakeGenericAccessFlags( permissionFlags );
-	DWORD dwCreateFlags = MakeCreateFalgs( createFlags );
-	DWORD dwAccessFalgs = MakeAccessFalgs( accessFalgs );
-	DWORD dwFileMappingAccess = MakeFileMappingFlags( permissionFlags );
-	DWORD dwDataViewAccess = MakeMapViewFlags( permissionFlags );
-	return { new win32_mmaped_file{ std::data( path ), dwPermissionFlags, dwCreateFlags, 
-		dwAccessFalgs, dwFileMappingAccess, dwDataViewAccess }, Win32MmapFileDestroyer };
+	DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
+	DWORD dwCreateFlags			= MakeCreateFlags( createFlags );
+	DWORD dwAccessFlags			= MakeAccessFlags( accessFlags );
+	DWORD dwFileMappingAccess	= MakeFileMappingFlags( permissionFlags );
+	DWORD dwDataViewAccess		= MakeMapViewFlags( permissionFlags );
+
+	HANDLE hFile = CreateFileA( path, dwPermissionFlags, FILE_SHARE_READ, 0, dwCreateFlags, dwAccessFlags, NULL );
+	WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
+
+	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFileMappingAccess, 0, 0, 0 );
+	WIN_CHECK( INVALID_HANDLE_VALUE != hFileMapping );
+
+	DWORD dwFileSizeHigh;
+	u64 qwFileSize = GetFileSize( hFile, &dwFileSizeHigh );
+	qwFileSize += u64( dwFileSizeHigh ) << 32;
+	WIN_CHECK( 0 != qwFileSize );
+
+	u8* pData = ( u8* ) MapViewOfFile( hFileMapping, dwDataViewAccess, 0, 0, qwFileSize );
+	WIN_CHECK( 0 != pData );
+
+	return {
+		.hFile			= ( u64 ) hFile,
+		.hFileMapping	= ( u64 ) hFileMapping,
+		.dataView		= { pData, qwFileSize }
+	};
+}
+
+void SysDestroyMmapFile( mmap_file* mmapFile )
+{
+	if( mmapFile )
+	{
+		UnmapViewOfFile( std::data( mmapFile->dataView ) );
+		CloseHandle( ( HANDLE ) mmapFile->hFileMapping );
+		CloseHandle( ( HANDLE ) mmapFile->hFile );
+		mmapFile = nullptr;
+	}
+}
+// ===============================================================================================================
+
+// ===============================================================================================================
+// sys_thread.h
+// ===============================================================================================================
+void SysNameThread( u64 hThread, const wchar_t* name )
+{
+	HT_ASSERT( SUCCEEDED( SetThreadDescription( ( HANDLE ) hThread, name ) ) );
 }
 // ===============================================================================================================

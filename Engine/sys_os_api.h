@@ -5,23 +5,12 @@
 
 #include "ht_core_types.h"
 
-#include <cstdarg>
 #include <vector>
 #include <memory>
 
 //////////////////////////////////////
 // MACROS
 //////////////////////////////////////
-
-
-#ifdef _WIN32
-//////////////////////////////////////
-//  WRITE WIN ABSTRACTIONS HERE
-// TO AVOID include WIN every where
-//////////////////////////////////////
-
-#endif // _WIN32
-
 
 struct frame_data;
 struct mesh_upload_req;
@@ -39,10 +28,10 @@ constexpr u32 SCREEN_HEIGHT = 640;
 //////////////////////////////////////
 struct renderer_interface
 {
-	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) = 0;
-	virtual HRNDMESH32 AllocMeshComponent() = 0;
-	virtual void UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) = 0;
-	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) = 0;
+	virtual void		InitBackend( uintptr_t hInst, uintptr_t hWnd ) = 0;
+	virtual HRNDMESH32	AllocMeshComponent() = 0;
+	virtual void		UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) = 0;
+	virtual void		HostFrames( const frame_data& frameData, gpu_data& gpuData ) = 0;
 };
 
 std::unique_ptr<renderer_interface> MakeRenderer();

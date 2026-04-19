@@ -10,6 +10,8 @@
 
 namespace DXPacked = DirectX::PackedVector;
 
+constexpr float HT_ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
+
 inline float2 fminf( float2 a, float2 b )
 {
 	return { fminf( a.x,b.x ), fminf( a.y,b.y ) };
@@ -268,6 +270,56 @@ inline u32 GetImgMipCount( u32 width, u32 height, u32 mipLevels )
 	HT_ASSERT( width && height );
 	// NOTE: floor( log2 () ) == bit_width -1
 	return std::min( ( u32 ) std::bit_width( std::max( width, height ) ) - 1, mipLevels );
+}
+
+struct sincos
+{
+	float sin;
+	float cos;
+};
+
+__forceinline sincos DX_XMScalarSinCos( float rads )
+{
+	float sin;
+	float cos;
+
+	DirectX::XMScalarSinCos( &sin, &cos, rads );
+	return {.sin = sin, .cos = cos };
+}
+
+// NOTE: this is useful when we want to draw the frozen frustum
+inline DirectX::XMMATRIX XM_CALLCONV FrustumMatrixFromViewProj( DirectX::XMMATRIX viewXProj )
+{
+	using namespace DirectX;
+
+	// NOTE: inv( A * B ) = inv B * inv A
+	XMMATRIX invFrustMat = viewXProj; //XMMatrixMultiply( view, proj );
+	XMVECTOR det = XMMatrixDeterminant( invFrustMat );
+	HT_ASSERT( XMVectorGetX( det ) != 0 );
+	XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
+	return frustMat;
+}
+
+inline float4x4 ProjWithRevZInfFarFromFovAndAspectRatio(
+	float	fovYRads,
+	float	aspectRatioWH,
+	float	inZNear,
+	bool	isRightHandedCoord
+) {
+	auto[ sinFov, cosFov ] = DX_XMScalarSinCos( fovYRads * 0.5f );
+
+	float h = cosFov / sinFov;
+	float w = h / aspectRatioWH;
+
+	float zNear = isRightHandedCoord ? -inZNear : inZNear;
+
+	DirectX::XMMATRIX proj = {};
+	proj.r[ 0 ] = DirectX::XMVectorSet( w, 0, 0, 0 );
+	proj.r[ 1 ] = DirectX::XMVectorSet( 0, h, 0, 0 );
+	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, 1 );
+	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, zNear, 0 );
+
+	return DX_XMStoreFloat4x4( proj );
 }
 
 #endif // !__HT_MATH_H__

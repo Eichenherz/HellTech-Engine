@@ -1115,13 +1115,13 @@ struct vbuffer_pass
 			unique_shader_ptr frag = dc.CreateShaderFromSpirv( SysReadFile( "bin/SpirV/pixel_VBufferPsMain.spirv" ) );
 
 			vk_gfx_pso_config vbuffState = {
-				.polyMode				= VK_POLYGON_MODE_FILL,
-				.cullFlags				= VK_CULL_MODE_BACK_BIT,
-				.frontFace				= VK_FRONT_FACE_COUNTER_CLOCKWISE,
-				.primTopology			= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-				.depthWrite				= true,
-				.depthTestEnable		= true,
-				.blendCol				= false
+				.polyMode			= VK_POLYGON_MODE_FILL,
+				.cullFlags			= VK_CULL_MODE_BACK_BIT,
+				.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
+				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+				.depthWrite			= true,
+				.depthTestEnable	= true,
+				.blendCol			= false
 			};
 
 			vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
@@ -1659,9 +1659,9 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 
 	copyCmdBuff.CmdPipelineBufferBarriers( buffInitCpyBarriers );
 
-	copyCmdBuff.CmdCopyBuffer( MakeVkCopyBufferInfo2( stagingBuff.hndl, megaGpuMeshletBuff.hndl, mltRegionCopies ) );
-	copyCmdBuff.CmdCopyBuffer( MakeVkCopyBufferInfo2( stagingBuff.hndl, megaGpuVtxBuff.hndl, vtxRegionCopies ) );
-	copyCmdBuff.CmdCopyBuffer( MakeVkCopyBufferInfo2( stagingBuff.hndl, megaGpuTriBuff.hndl, triRegionCopies ) );
+	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuMeshletBuff, mltRegionCopies );
+	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuVtxBuff, vtxRegionCopies );
+	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuTriBuff, triRegionCopies );
 
 	copyCmdBuff.CmdPipelineBufferBarriers( buffEndCpyBarriers );
 
