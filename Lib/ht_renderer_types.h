@@ -252,6 +252,15 @@ struct vbuffer_dbg_draw_params
 	u32 dstIdx;
 };
 
+struct lambertian_clay_params
+{
+	float2	texResolution; // NOTE: asserted in the renderer that they're eq size
+	u32		vbuffIdx;
+	u32		dstIdx;
+	u32		instDescIdx;
+	u32		camIdx;
+};
+
 struct global_data
 {
 	u64 mltAddr;

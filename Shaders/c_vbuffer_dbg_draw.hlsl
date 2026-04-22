@@ -1,13 +1,15 @@
 #include "ht_renderer_types.h"
 #include "ht_hlsl_lang.h"
 
+#include "vbuffer.h"
+
 [[vk::push_constant]]
 vbuffer_dbg_draw_params pushBlock;
 
 // NOTE: src and dst assumed to be the same dimensions, asserted on the host
-float3 ColorHash( float2 v )
+float3 ColorHash( u32x2 v )
 {
-	u32 seed = asuint( v.x ) ^ ( asuint( v.y ) * 2654435761u );
+	u32 seed = v.x ^ ( v.y * 2654435761u );
 	seed ^= seed >> 16;
 	seed *= 0x45d9f3bu;
 	seed ^= seed >> 16;
@@ -22,8 +24,12 @@ float3 ColorHash( float2 v )
 [shader("compute")]
 void VBufferDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
-	float2 texel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
-	float3 col   = ColorHash( texel );
+	u32x2 vbuffPixel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
+	if( !VBufferIsValidPixel( vbuffPixel ) )
+	{
+		return;
+	}
 
+	float3 col = ColorHash( vbuffPixel );
 	gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( col, 1.0f );
 }

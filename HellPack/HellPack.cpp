@@ -473,7 +473,7 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 	{
 		//ProcessImageView( material.occlusionIdx, bc_format_t::BC7_RGBA );
 		// NOTE: currently not supporting ambient occlusion which must be packed into MR
-		HT_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
+		//HT_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
 
 		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { mtrl.name + "_albedo.dds" } );
 		u64 normalHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, { mtrl.name + "_normal.dds" } );
@@ -540,9 +540,19 @@ inline std::vector<u8> ReadFileBinary( const char* path )
 
 constexpr bool CHECK_CORRECTNESS = true;
 
-int main()
+i32 main( i32 argc, char** argv  )
 {
-	const std::string gltfFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.glb";
+	if( argc < 3 )
+	{
+		std::cout << "Missing arguments\n";
+		return 1;
+	}
+
+	//const std::string gltfFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.glb";
+	//const std::string hpkFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+
+	const std::string gltfFilePath = argv[ 1 ];
+	const std::string hpkFilePath = argv[ 2 ];
 
 	HT_ASSERT( fs::exists( gltfFilePath ) );
 
@@ -603,7 +613,6 @@ int main()
 
 	std::cout << "Processing meshes done ! Dumping to file.\n";
 
-	const std::string hpkFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
 	{
 		zip_writer zipArchive = { hpkFilePath.c_str() };
 

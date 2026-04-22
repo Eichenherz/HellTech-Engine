@@ -45,18 +45,16 @@ static inline void SysOsCreateConsole()
 	std::wcerr.clear();
 }
 
-static inline HANDLE WinGetReadOnlyFileHandle( const char* fileName )
+std::vector<u8> SysReadFile( const char* fileName )
 {
 	DWORD accessMode = GENERIC_READ;
 	DWORD shareMode = 0;
 	DWORD creationDisp = OPEN_EXISTING;
 	DWORD flagsAndAttrs = FILE_ATTRIBUTE_READONLY;
-	return CreateFile( fileName, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
-}
-std::vector<u8> SysReadFile( const char* fileName )
-{
-	HANDLE hfile = WinGetReadOnlyFileHandle( fileName );
-	if( hfile == INVALID_HANDLE_VALUE ) return{};
+
+	HANDLE hfile = CreateFile( fileName, accessMode, shareMode, 0, creationDisp, flagsAndAttrs, 0 );
+
+	if( INVALID_HANDLE_VALUE == hfile ) return{};
 
 	LARGE_INTEGER fileSize = {};
 	WIN_CHECK( GetFileSizeEx( hfile, &fileSize ) );
@@ -87,6 +85,19 @@ bool SysWriteToFile( const char* filename, const u8* data, u32 sizeInBytes )
 	return true;
 }
 
+static inline u64 SysGetCpuFreq()
+{
+	LARGE_INTEGER freq;
+	QueryPerformanceFrequency( &freq );
+	return freq.QuadPart;
+}
+static inline u64 SysTicks()
+{
+	LARGE_INTEGER tick;
+	QueryPerformanceCounter( &tick );
+	return tick.QuadPart;
+}
+
 constexpr char	ENGINE_NAME[] = "helltech_engine";
 constexpr char	WINDOW_TITLE[] = "HellTech Engine";
 
@@ -111,8 +122,6 @@ struct virtual_camera
 	float				pitch = 0.0f;
 	float				yaw = 0.0f;
 
-	float				speed = 1.5f;
-
 	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot )
 	{
 		using namespace DirectX;
@@ -120,7 +129,7 @@ struct virtual_camera
 		yaw = XMScalarModAngle( yaw + dRot.x );
 		pitch = std::clamp( pitch + dRot.y, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
 
-		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) * XMMatrixScaling( speed, speed, speed );
+		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 );
 		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
 		worldPos = DX_XMStoreFloat3( XMVectorAdd( XMLoadFloat3( &worldPos ), xmCamMove ) );
 	}
@@ -129,16 +138,12 @@ struct virtual_camera
 	{
 		using namespace DirectX;
 
-		XMVECTOR xmFwd = XMLoadFloat3( &fwdBasis );
-		XMVECTOR xmUp = XMLoadFloat3( &upBasis );
 		XMVECTOR xmWorldPos = XMLoadFloat3( &worldPos );
 
-		XMVECTOR camLookAt = XMVector3Transform( xmFwd, XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ), xmUp );
-
-		XMVECTOR viewDet = XMMatrixDeterminant( view );
-		XMMATRIX invView = XMMatrixInverse( &viewDet, view );
-		XMVECTOR viewDir = XMVectorNegate( invView.r[ 2 ] );
+		XMVECTOR camLookAt = XMVector3Transform( XMLoadFloat3( &fwdBasis ),
+			XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
+		XMMATRIX view = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ),
+			XMLoadFloat3( &upBasis ) );
 
 		XMMATRIX xmProj = XMLoadFloat4x4A( &proj );
 
@@ -151,7 +156,7 @@ struct virtual_camera
 			.prevViewProj	= prevViewProj,
 			.worldPos		= worldPos,
 			// NOTE: this must not be negative for LH coords
-			.camViewDir		= DX_XMStoreFloat3( viewDir )
+			.camViewDir		= DX_XMStoreFloat3( XMVectorNegate( camLookAt ) )
 		};
 	}
 };
@@ -159,34 +164,21 @@ struct virtual_camera
 inline virtual_camera MakeVirtualCameraWithProjLH( float radsYFov, float aspectRatioWH, float zNear )
 {
 	return {
-		.proj = ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, false ),
-		.fwdBasis = { 0.0f, 0.0f, 1.0f },
-		.upBasis = { 0.0f, 1.0f, 0.0f },
-		.LookAt = DirectX::XMMatrixLookAtLH
+		.proj		= ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, false ),
+		.fwdBasis	= { 0.0f, 0.0f, 1.0f },
+		.upBasis	= { 0.0f, 1.0f, 0.0f },
+		.LookAt		= DirectX::XMMatrixLookAtLH
 	};
 }
 
 inline virtual_camera MakeVirtualCameraWithProjRH( float radsYFov, float aspectRatioWH, float zNear )
 {
 	return {
-		.proj = ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, true ),
-		.fwdBasis = { 0.0f, 0.0f, -1.0f },
-		.upBasis = { 0.0f, 1.0f, 0.0f },
-		.LookAt = DirectX::XMMatrixLookAtRH
+		.proj		= ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, true ),
+		.fwdBasis	= { 0.0f, 0.0f, -1.0f },
+		.upBasis	= { 0.0f, 1.0f, 0.0f },
+		.LookAt		= DirectX::XMMatrixLookAtRH
 	};
-}
-
-static inline u64 SysGetCpuFreq()
-{
-	LARGE_INTEGER freq;
-	QueryPerformanceFrequency( &freq );
-	return freq.QuadPart;
-}
-static inline u64 SysTicks()
-{
-	LARGE_INTEGER tick;
-	QueryPerformanceCounter( &tick );
-	return tick.QuadPart;
 }
 
 
@@ -243,7 +235,7 @@ static inline bool SysPumpUserInput()
 	{
 		TranslateMessage( &msg );
 		DispatchMessageA( &msg );
-		if( msg.message == WM_QUIT ) return false;
+		if( WM_QUIT == msg.message ) return false;
 	}
 
 	return true;
@@ -366,7 +358,7 @@ struct im_gui_ctx
 	}
 };
 
-using imgui_widget_name = fixed_string<16>;
+using imgui_widget_name = fixed_string<24>;
 
 using imgui_window_name = fixed_string<32>;
 
@@ -405,6 +397,12 @@ void ImGuiLoadFileAction( const void* )
 	ImGuiFileDialog::Instance()->OpenDialog( "loadFileDlg", "Choose File", ".hpk" );
 }
 
+inline void ImGuiPrintFloatAction( const void* pData )
+{
+	HT_ASSERT( pData );
+	ImGui::Text( "%.2f", *( const float* ) pData );
+}
+
 struct imgui_widget
 {
 	imgui_widget_name		name;
@@ -415,9 +413,9 @@ struct imgui_widget
 
 struct imgui_window
 {
-	std::vector<imgui_widget> widgets;
-	imgui_window_name name;
-	ImGuiWindowFlags flags;
+	std::vector<imgui_widget>	widgets;
+	imgui_window_name			name;
+	ImGuiWindowFlags			flags;
 };
 
 void ImGuiHandleWidget( const imgui_widget& widget )
@@ -436,7 +434,13 @@ void ImGuiHandleWidget( const imgui_widget& widget )
 	}
 	case TEXT:    
 	{
-		ImGui::Text( std::data( widget.name ) );         
+		ImGui::Text( "%s\x20", std::data( widget.name ) );
+		ImGui::SameLine();
+		if( widget.pData )
+		{
+			widget.Action( widget.pData );
+		}
+
 		break;
 	}
 	default: break;
@@ -494,7 +498,6 @@ inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds, std::vect
 constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 
 #define CACHE_ALIGN alignas( CACHE_LINE_SZ )
-
 
 
 #include "ht_mem_arena.h"
@@ -616,6 +619,12 @@ sys_thread SysCreateThread(
 
 #include "engine_types.h"
 
+struct ht_engine_stats
+{
+	float gpuMs;
+	float cpuFrameMs;
+};
+
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
 	using namespace DirectX;
@@ -707,16 +716,24 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	im_gui_ctx imGuiCtx = { SCREEN_WIDTH, SCREEN_HEIGHT };
 
-
+	ht_engine_stats engineStats = {};
 	std::vector<imgui_window> imguiWnds;
 	imguiWnds.push_back( {
 		.widgets = { 
 			imgui_widget {
 				.name = "GPU ms: ",
+				.pData = &engineStats.gpuMs,
+				.Action = ImGuiPrintFloatAction,
 				.type = imgui_widget_type::TEXT
-			} 
+			},
+			imgui_widget {
+				.name = "CPU frame ms: ",
+				.pData = &engineStats.cpuFrameMs,
+				.Action = ImGuiPrintFloatAction,
+				.type = imgui_widget_type::TEXT
+			}
 		},
-		.name	= "Renderer Stats",
+		.name	= "Engine Stats",
 		.flags	= ImGuiWindowFlags_NoScrollbar
 	} );
 
@@ -738,11 +755,23 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	std::unique_ptr<renderer_interface> pRenderer = MakeRenderer();
 
-	pRenderer->InitBackend( ( uintptr_t ) hInst, ( uintptr_t ) hWnd );
+	pRenderer->InitBackend( ( u64 ) hInst, ( u64 ) hWnd );
+
+	// TODO: vfs
+	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	constexpr char	assetFile[] = "D:/3d models/cyberbaron.hpk";
+	mmap_file		mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
+		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
+	vfs_zip_mem		vfs = { mmappedFile };
+
+	ht_stretchybuff<gpu_instance> flatSceneGraph;
+
+	bool			vfsMounted = false;
+
 
 	float			moveSpeed = 1.2f;
-	float			mouseSensitivity = 0.001f;
-	float			moveThreshold = 0.0002f;
+	float			mouseSensitivity = 0.002f;
+
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
@@ -753,24 +782,16 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	//double				accumulator = 0;
 	u64				currentTicks = SysTicks();
 
-	// TODO: vfs
-	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	mmap_file		mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
-		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
-	vfs_zip_mem		vfs = { mmappedFile };
-
-	ht_stretchybuff<gpu_instance> flatSceneGraph;
-
-	bool vfsMounted = false;
-
 	while( isRunning )
 	{
-		stack_adaptor virtualStack = { scratchArena };
-
 		const u64 newTicks = SysTicks();
 		const double elapsedTime = double( newTicks - currentTicks ) * cpuPeriod;
 		currentTicks = newTicks;
 		//accumulator += elapsedTime;
+
+
+		stack_adaptor virtualStack = { scratchArena };
+
 
 		inputState.mouseDx = 0;
 		inputState.mouseDy = 0;
@@ -870,6 +891,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 			.freezeMainView = inputState.keyStates[ HT_SC_F ],
 			.dbgDraw		= inputState.keyStates[ HT_SC_O ]
 		};
+
+		engineStats = { .gpuMs = 0.0f, .cpuFrameMs = ( float )( elapsedTime * 1000.0 ) };
 
 		ImGuiRenderUI( imguiWnds, loadHpkReqs );
 

@@ -28,7 +28,7 @@ constexpr u32 SCREEN_HEIGHT = 640;
 //////////////////////////////////////
 struct renderer_interface
 {
-	virtual void		InitBackend( uintptr_t hInst, uintptr_t hWnd ) = 0;
+	virtual void		InitBackend( u64 hInst, u64 hWnd ) = 0;
 	virtual HRNDMESH32	AllocMeshComponent() = 0;
 	virtual void		UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) = 0;
 	virtual void		HostFrames( const frame_data& frameData, gpu_data& gpuData ) = 0;

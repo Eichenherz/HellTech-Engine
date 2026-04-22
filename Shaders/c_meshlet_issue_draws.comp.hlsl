@@ -20,8 +20,8 @@ void IssueMeshletDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 
     {
         waveDrawBase = BufferAtomicAdd( pushBlock.drawCmdCounterIdx, waveDrawOffset );
     }
-    
     waveDrawBase = WaveReadLaneFirst( waveDrawBase );
+
     u32 drawSlot = waveDrawBase + WavePrefixCountBits( true );
 
 	visible_meshlet currentMeshlet = BufferLoad<visible_meshlet>( pushBlock.srcBufferIdx, globalDispatchID.x );

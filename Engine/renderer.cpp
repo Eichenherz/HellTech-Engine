@@ -396,7 +396,6 @@ constexpr const char* ToString( debug_draw_type t )
 }
 
 // TODO: use instancing for drawing ?
-// TODO: double buffer debug geometry ?
 struct debug_draw_passes
 {
 	vk_buffer	linesBuff;
@@ -406,57 +405,63 @@ struct debug_draw_passes
 	VkPipeline	drawAsLines;
 	VkPipeline	drawAsTriangles;
 
-	void Init( vk_context& dc, VkPipelineLayout globalLayout, vk_renderer_config& rndCfg )
+	VkPipeline compLambertianClay;
+
+	void Init( vk_context& dc, vk_renderer_config& rndCfg )
 	{
-		unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
-			SysReadFile( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
-		unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
-			SysReadFile( "Shaders/f_pass_col.frag.spv" ) );
-
-		static_assert( worldLeftHanded );
-
+		if constexpr( false )
 		{
-			vk_gfx_pso_config lineDrawPipelineState = {
-				.polyMode			= VK_POLYGON_MODE_LINE,
-				.cullFlags			= VK_CULL_MODE_NONE,
-				.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
-				.primTopology		= VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
-				.depthWrite			= VK_FALSE,
-				.depthTestEnable	= VK_FALSE,
-				.blendCol			= VK_FALSE,
-			};
-			VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+			unique_shader_ptr vtx = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
+			unique_shader_ptr frag = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/f_pass_col.frag.spv" ) );
 
-			vk_gfx_shader_stage shaders[] = { *vtx, *frag };
-			drawAsLines = dc.CreateGfxPipeline(  
-				shaders, dynamicStates, &rndCfg.desiredColorFormat, 1, VK_FORMAT_UNDEFINED, lineDrawPipelineState );
+			static_assert( worldLeftHanded );
+
+			{
+				vk_gfx_pso_config lineDrawPipelineState = {
+					.polyMode			= VK_POLYGON_MODE_LINE,
+					.cullFlags			= VK_CULL_MODE_NONE,
+					.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
+					.primTopology		= VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+					.depthWrite			= VK_FALSE,
+					.depthTestEnable	= VK_FALSE,
+					.blendCol			= VK_FALSE,
+				};
+				VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+				vk_gfx_shader_stage shaders[] = { *vtx, *frag };
+				drawAsLines = dc.CreateGfxPipeline(
+					shaders, dynamicStates, &rndCfg.desiredColorFormat, 1, VK_FORMAT_UNDEFINED, lineDrawPipelineState );
+			}
+
+			{
+				vk_gfx_pso_config triDrawPipelineState = {
+					.polyMode			= VK_POLYGON_MODE_FILL,
+					.cullFlags			= VK_CULL_MODE_NONE,
+					.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
+					.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+					.depthWrite			= VK_TRUE,
+					.depthTestEnable	= VK_TRUE,
+					.blendCol			= VK_TRUE
+				};
+
+				vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
+				VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+				drawAsTriangles = dc.CreateGfxPipeline(
+					shaderStages, dynamicStates, &rndCfg.desiredColorFormat, 1, rndCfg.desiredDepthFormat, triDrawPipelineState );
+			}
+
+			constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+			drawCount = dc.CreateBuffer( {
+				.name			= "Buff_DbgDrawCount",
+				.usageFlags		= usgFlags,
+				.sizeInBytes	= 1 * sizeof( u32 ),
+				.usage			= buffer_usage::GPU_ONLY } );
 		}
-		
-		{
-			vk_gfx_pso_config triDrawPipelineState = {
-				.polyMode			= VK_POLYGON_MODE_FILL,
-				.cullFlags			= VK_CULL_MODE_NONE,
-				.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
-				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-				.depthWrite			= VK_TRUE,
-				.depthTestEnable	= VK_TRUE,
-				.blendCol			= VK_TRUE
-			};
 
-			vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
-			VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-
-			drawAsTriangles = dc.CreateGfxPipeline( 
-				shaderStages, dynamicStates, &rndCfg.desiredColorFormat, 1, rndCfg.desiredDepthFormat, triDrawPipelineState );
-		}
-
-		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-		drawCount = dc.CreateBuffer( {
-			.name			= "Buff_DbgDrawCount",
-			.usageFlags		= usgFlags,
-			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY } );
+		unique_shader_ptr comp = dc.CreateShaderFromSpirv( SysReadFile( "bin/SpirV/compute_LambertianClayCsMain.spirv" ) );
+		compLambertianClay = dc.CreateComputePipeline( *comp );
 	}
 
 	void InitData( vk_context& dc, u32 dbgLinesSizeInBytes, u32 dbgTrianglesSizeInBytes )
@@ -524,6 +529,35 @@ struct debug_draw_passes
 	#pragma pack(pop)
 		cmdBuff.CmdPushConstants( &pc, sizeof( pc ) );
 		vkCmdDraw( cmdBuff.hndl, vertexCount, 1, 0, 0 );
+	}
+
+	void DrawAsLamberitanClay(
+		vk_command_buffer&        		cmdBuff,
+		vk_rsc_state_tracker&			rscTracker,
+		const vk_image&					vbuff,
+		const vk_image&					dstImg,
+		const lambertian_clay_params&	pushBlock
+	) {
+		HT_ASSERT( ( vbuff.width == dstImg.width ) && ( vbuff.height == dstImg.height ) );
+
+		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "DBG_LambertianClayPass", {} );
+
+		rscTracker.UseImage( dstImg, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
+			VK_IMAGE_LAYOUT_GENERAL );
+		rscTracker.UseImage( vbuff,{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
+			VK_IMAGE_LAYOUT_GENERAL );
+		rscTracker.FlushBarriers( cmdBuff );
+
+		cmdBuff.CmdBindPipelineAndBindlessDesc( compLambertianClay, VK_PIPELINE_BIND_POINT_COMPUTE );
+
+		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
+
+		group_size groupSize = { 16, 16, 1 };
+		u32x3 numWorkGrs = {
+			GroupCount( dstImg.width, groupSize.x ),
+			GroupCount( dstImg.height, groupSize.y ), 1
+		};
+		cmdBuff.CmdDispatch( numWorkGrs );
 	}
 };
 
@@ -1118,6 +1152,8 @@ struct vbuffer_pass
 				.polyMode			= VK_POLYGON_MODE_FILL,
 				.cullFlags			= VK_CULL_MODE_BACK_BIT,
 				.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
+				//.cullFlags			= VK_CULL_MODE_FRONT_BIT,
+				//.frontFace			= VK_FRONT_FACE_CLOCKWISE,
 				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
 				.depthWrite			= true,
 				.depthTestEnable	= true,
@@ -1163,9 +1199,12 @@ struct vbuffer_pass
 
 		// NOTE: since we do this incrementally we want the 2nd pass to just load
 		const VkAttachmentLoadOp loadOp = latePass ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+		// NOTE: for vbuff ~u64( 0 ) is the clear val
+		VkClearColorValue vbuffClearVal = {};
+		memset( &vbuffClearVal, 0xFF, sizeof( vbuffClearVal ) );
 
 		VkRenderingAttachmentInfo attInfos[] = {
-			VkMakeAttachmentInfo( colorTarget.view, loadOp, VK_ATTACHMENT_STORE_OP_STORE, {} )
+			VkMakeAttachmentInfo( colorTarget.view, loadOp, VK_ATTACHMENT_STORE_OP_STORE, { .color = vbuffClearVal } )
 		};
 		VkRenderingAttachmentInfo depthWrite = VkMakeAttachmentInfo( depthTarget.view, loadOp,
 			VK_ATTACHMENT_STORE_OP_STORE, {} );
@@ -1408,7 +1447,7 @@ struct renderer_context final : renderer_interface
 	const u32								framesInFlight = 2;
 
 
-	virtual void InitBackend( uintptr_t hInst, uintptr_t hWnd ) override;
+	virtual void InitBackend( u64 hInst, u64 hWnd ) override;
 
 	inline virtual HRNDMESH32 AllocMeshComponent() override
 	{
@@ -1418,8 +1457,6 @@ struct renderer_context final : renderer_interface
 	}
 
 	virtual void UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) override;
-	// TODO:
-	void RecordTextureUploads( std::span<const tex_upload> meshAssets, virtual_arena& arena );
 
 	u32 /* numValidInstances */ UpdateSceneData( const virtual_frame& thisVFrame, const frame_data& frameData )
 	{
@@ -1477,7 +1514,7 @@ std::unique_ptr<renderer_interface> MakeRenderer()
 	return std::make_unique<renderer_context>();
 }
 
-void renderer_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
+void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 {
 	pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, config ) );
 
@@ -1493,6 +1530,7 @@ void renderer_context::InitBackend( uintptr_t hInst, uintptr_t hWnd )
 	cullingPass.Init( *pVkCtx );
 	tonemapPass.Init( *pVkCtx );
 	hizbPass.Init( *pVkCtx );
+	dbgPass.Init( *pVkCtx, config );
 
 	imguiPass = MakeImguiPass( *pVkCtx, pVkCtx->scConfig.format );
 
@@ -1704,65 +1742,6 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 	}
 }
 
-
-void renderer_context::RecordTextureUploads( std::span<const tex_upload> meshAssets, virtual_arena& arena )
-{
-	//ankerl::unordered_dense::pmr::map<u64, u32> texIdMap{ &vaStack };
-	//for( const vfs_path& vpath : texFiles )
-	//{
-	//	u64 pathHash = std::hash<vfs_path>{}( vpath );
-	//	// TODO: might wanna check on content hash too
-	//	if( std::cend( texIdMap ) != texIdMap.find( pathHash ) ) continue;
-	//
-	//	u64 stagingOffsetInBytes = std::size( staginScratch );
-	//
-	//	std::span<const u8> dataView = vfs.GetFileByteView( vpath );
-	//	byte_view texRawBytes = HpkReadBinaryBlob<byte_view>( dataView );
-	//	dds::Header header = dds::read_header( std::data( texRawBytes ), std::size( texRawBytes ) );
-	//
-	//	if( !header.is_valid() ) /*log*/ continue;
-	//
-	//	fixed_string<256> name = { vpath };
-	//	vk_image tex = pVkCtx->CreateImage( ImageInfoFromDds( header, std::data( name ) ) );
-	//	desc_hndl32 hTex = pVkCtx->AllocDescriptor( { tex.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
-	//
-	//	staginScratch.reserve( stagingOffsetInBytes + header.data_size() );
-	//	std::memcpy( std::data( staginScratch ) + stagingOffsetInBytes,
-	//		std::data( texRawBytes ) + header.data_offset(), header.data_size() );
-	//
-	//	u32 mips   = header.mip_levels();
-	//	u32 layers = header.array_size();
-	//
-	//	stack_adaptor copyStack = { arena };
-	//
-	//	std::pmr::vector<VkBufferImageCopy> regions{ &copyStack };
-	//	regions.reserve( mips * layers );
-	//
-	//	for( u32 layer = 0; layer < layers; ++layer )
-	//	{
-	//		for( u32 mip = 0; mip < mips; ++mip )
-	//		{
-	//			u32 w = std::max( 1u, header.width() >> mip );
-	//			u32 d = std::max( 1u, header.depth() >> mip );
-	//
-	//			u64 mipLayerOffsetInBytes = header.mip_offset( mip, layer ) - header.data_offset();
-	//			regions.push_back( {
-	//				.bufferOffset       = stagingOffsetInBytes + mipLayerOffsetInBytes,
-	//				.imageSubresource   = {
-	//					.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-	//					.mipLevel       = mip,
-	//					.baseArrayLayer = layer,
-	//					.layerCount     = 1,
-	//				},
-	//				.imageExtent        = { w, std::max( 1u, header.height() >> mip ), d },
-	//				} );
-	//		}
-	//	}
-	//
-	//	copyCmdBuff.CmdCopyBufferToImageMipsLayers( stagingBuff, tex, regions );
-	//}
-}
-
 void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
 {
 	const u64 currentFrameIdx			= vFrameIdx++;
@@ -1803,8 +1782,6 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			.vtxAddr = megaGpuVtxBuff.devicePointer,
 			.triAddr = megaGpuTriBuff.devicePointer
 		};
-
-		//InitGlobalResources();
 
 		imguiPass.CreateUploadFontAtlasSync( *pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
 
@@ -1876,13 +1853,23 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		if( false )
 		{
-			tonemapPass.AverageLuminancePass( thisFrameCmdBuffer, rscStateTracker, vBuffPass.colorTarget, vBuffPass.colSrv,
-				frameData.elapsedSeconds );
+			lambertian_clay_params pushBlock = {
+				.texResolution = { ( float ) scImg.img.width, ( float ) scImg.img.height },
+				.vbuffIdx = vBuffPass.colSrv.slot,
+				.dstIdx = scImg.writeDescIdx.slot,
+				.instDescIdx = thisVFrame.instDesc.slot,
+				.camIdx = thisVFrame.viewDataIdx.slot
+			};
+			dbgPass.DrawAsLamberitanClay(
+				thisFrameCmdBuffer, rscStateTracker, vBuffPass.colorTarget, scImg.img, pushBlock );
 
-			u32x2 colorTargetSize = { vBuffPass.colorTarget.width, vBuffPass.colorTarget.height };
-
-			tonemapPass.TonemappingGammaPass( thisFrameCmdBuffer, rscStateTracker, scImg.img, vBuffPass.colSrv,
-				scImg.writeDescIdx, colorTargetSize );
+			//tonemapPass.AverageLuminancePass( thisFrameCmdBuffer, rscStateTracker, vBuffPass.colorTarget, vBuffPass.colSrv,
+			//	frameData.elapsedSeconds );
+			//
+			//u32x2 colorTargetSize = { vBuffPass.colorTarget.width, vBuffPass.colorTarget.height };
+			//
+			//tonemapPass.TonemappingGammaPass( thisFrameCmdBuffer, rscStateTracker, scImg.img, vBuffPass.colSrv,
+			//	scImg.writeDescIdx, colorTargetSize );
 		}
 		else // DBG draw vbuffer
 		{

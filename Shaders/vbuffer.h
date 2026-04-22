@@ -17,4 +17,8 @@ struct vbuffer_ps_out
     u32x2 pixel : SV_Target0;
 };
 
+bool VBufferIsValidPixel( u32x2 vbuffPixel )
+{
+    return ( ~u32( 0 ) != vbuffPixel.x ) && ( ~u32( 0 ) != vbuffPixel.y );
+}
 #endif //!__HELLTECH_VBUFFER_H__

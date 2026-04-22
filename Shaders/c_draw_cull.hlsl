@@ -77,6 +77,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		}
 	}
 	u32 laneOffset = WavePrefixCountBits( visible );
+
 	u32 slotIdx = WaveReadLaneFirst( offsetForWave ) + laneOffset;
 	if( visible )
 	{
