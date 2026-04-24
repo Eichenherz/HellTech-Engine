@@ -15,8 +15,8 @@ vbuffer_vs_out VBufferVsMain(
 ) {
     draw_indexed_command draw = BufferLoad<draw_indexed_command>( pushBlock.drawBuffIdx, drawId );
 
-    instance_desc currentInst = BufferLoad<instance_desc>( pushBlock.instBuffIdx, draw.instIdx );
-    float4x4 toWorld = TrsToFloat4x4( currentInst.toWorld.t, currentInst.toWorld.r, currentInst.toWorld.s );
+    visible_meshlet mlt = BufferLoad<visible_meshlet>( pushBlock.visMltBuffIdx, draw.visMltIdx );
+    float4x4 toWorld = TrsToFloat4x4( mlt.toWorld.t, mlt.toWorld.r, mlt.toWorld.s );
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
     float4x4 mvp = mul( toWorld, mul( cam.mainView, cam.proj ) );
@@ -25,6 +25,6 @@ vbuffer_vs_out VBufferVsMain(
     packed_vtx vtx = ptr[ vtxID ];
     float4 pos = mul( float4( vtx.px, vtx.py, vtx.pz, 1.0f ), mvp );
 
-    vbuffer_vs_out vsOut = { pos, draw.instIdx, draw.firstIndex };
+    vbuffer_vs_out vsOut = { pos, draw.visMltIdx };
     return vsOut;
 }

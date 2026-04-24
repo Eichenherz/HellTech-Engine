@@ -14,36 +14,48 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     u32x2 vbuffPixel = gTexture2D_u32x2[ pushBlock.vbuffIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
     if( !VBufferIsValidPixel( vbuffPixel ) )
     {
+        gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( 0.0f, 0.0f, 0.0f, 1.0f );
         return;
     }
 
     u32 triIdx = vbuffPixel.x;
-    u32 instIdx = vbuffPixel.y;
+    u32 mltIdx = vbuffPixel.y;
+
+    visible_meshlet mlt = BufferLoad<visible_meshlet>( pushBlock.visMltBuffIdx, mltIdx );
+
+    u32x3 tris = UnpackU8TriFromMegaTriBuff( triIdx * 3 + mlt.absTriOffset ) + mlt.absVtxOffset;
 
     device_addr<packed_vtx> vtxBuff = { gGlobData.vtxAddr };
-    packed_vtx v0 = vtxBuff[ triIdx * 3 + 0 ];
-    packed_vtx v1 = vtxBuff[ triIdx * 3 + 1 ];
-    packed_vtx v2 = vtxBuff[ triIdx * 3 + 2 ];
+    packed_vtx v0 = vtxBuff[ tris.x ];
+    packed_vtx v1 = vtxBuff[ tris.y ];
+    packed_vtx v2 = vtxBuff[ tris.z ];
 
-    instance_desc instDesc = BufferLoad<instance_desc>( pushBlock.instDescIdx, instIdx );
-    float4x4 toWorld = TrsToFloat4x4( instDesc.toWorld.t, instDesc.toWorld.r, instDesc.toWorld.s );
+    packed_trs toWorld = mlt.toWorld;
+    float4x4 toWorld4x4 = TrsToFloat4x4( toWorld.t, toWorld.r, toWorld.s );
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
-    float4x4 mvp = mul( toWorld, mul( cam.mainView, cam.proj ) );
+    float4x4 mvp = mul( toWorld4x4, mul( cam.mainView, cam.proj ) );
 
-    float4 p0 = mul( float4( v0.px, v0.py, v0.pz, 1.0f ), mvp );
-    float4 p1 = mul( float4( v1.px, v1.py, v1.pz, 1.0f ), mvp );
-    float4 p2 = mul( float4( v2.px, v2.py, v2.pz, 1.0f ), mvp );
+    float3 p0 = float3( v0.px, v0.py, v0.pz );
+    float3 p1 = float3( v1.px, v1.py, v1.pz );
+    float3 p2 = float3( v2.px, v2.py, v2.pz );
 
-    float2 s0 = ClipSpaceToScreenSpace( p0, pushBlock.texResolution );
-    float2 s1 = ClipSpaceToScreenSpace( p1, pushBlock.texResolution );
-    float2 s2 = ClipSpaceToScreenSpace( p2, pushBlock.texResolution );
+    float4 clip0 = mul( float4( p0, 1.0f ), mvp );
+    float4 clip1 = mul( float4( p1, 1.0f ), mvp );
+    float4 clip2 = mul( float4( p2, 1.0f ), mvp );
 
-    float3 affineBary = ComputeAffineBarycentricsFromScreenSapce( float2( globalDispatchID.xy ), s0, s1, s2 );
+    float3 ndc0 = clip0.xyz / clip0.w;
+    float3 ndc1 = clip1.xyz / clip1.w;
+    float3 ndc2 = clip2.xyz / clip2.w;
+
+    float2 pixelNdc = float2( 2.0f, -2.0f ) * ( float2( globalDispatchID.xy ) + 0.5f ) / pushBlock.texResolution
+        + float2( -1.0f, 1.0f );
+
+    float3 ndcBary = ComputeNDCBarycentrics( pixelNdc, ndc0.xy, ndc1.xy, ndc2.xy );
 
     // Perspective-correct — need per-vertex W
-    float3 invW = float3( 1.0f / p0.w, 1.0f / p1.w, 1.0f / p2.w );
-    float3 baryW = affineBary * invW;
+    float3 invW = float3( 1.0f / clip0.w, 1.0f / clip1.w, 1.0f / clip2.w );
+    float3 baryW = ndcBary * invW;
     float3 perspBary  = baryW / ( baryW.x + baryW.y + baryW.z );
 
     float3 n0 = DecodeOctaNormal( float2( v0.octNX, v0.octNY ) );
@@ -51,11 +63,29 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     float3 n2 = DecodeOctaNormal( float2( v2.octNX, v2.octNY ) );
 
     float3 nInterp = perspBary.x * n0 + perspBary.y * n1 + perspBary.z * n2;
-    float3 N = normalize( QuatRot( instDesc.toWorld.r, nInterp ) );
+    float3 N = normalize( QuatRot( toWorld.r, nInterp ) );
 
-    float3 greyClay = float3( 0.7, 0.7, 0.7 );
-    float  shade     = saturate( dot( N, normalize( float3( 0.5f, 1.0f, 0.3f ) ) ) );
-    float3 col       = greyClay * ( shade * 0.8f + 0.2f );
+    float3 pInterp = perspBary.x * p0 + perspBary.y * p1 + perspBary.z * p2;
+    float3 worldPos = QuatRot( toWorld.r, pInterp ) + toWorld.t;
+
+    float3 L   = normalize( float3( 0.5f, 1.0f, 0.3f ) );
+    float3 V   = normalize( cam.worldPos - worldPos );   // view dir
+    float  nDotL = dot( N, L );
+
+    // Warm-cool hemispheric (Gooch-ish)
+    float3 warm = float3( 0.55f, 0.52f, 0.48f );   // lit side
+    float3 cool = float3( 0.28f, 0.29f, 0.32f );   // shadow side
+    float  t    = nDotL * 0.5f + 0.5f;             // [-1,1] -> [0,1]
+    float3 col  = lerp( cool, warm, t );
+
+    // Soft rim
+    float  rim  = pow( 1.0f - saturate( dot( N, V ) ), 2.0f );
+    col += rim * 0.15f;
+
+    // Broad soft spec (Blinn-Phong-ish, low exponent)
+    float3 H    = normalize( L + V );
+    float  spec = pow( saturate( dot( N, H ) ), 16.0f );
+    col += spec * 0.1f;
 
     gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( col, 1.0f );
 }

@@ -8,8 +8,7 @@
 struct vbuffer_vs_out
 {
     float4              pos     : SV_Position;
-    nointerpolation u32 instIdx : TEXCOORD0;
-    nointerpolation u32 triOff  : TEXCOORD1;
+    nointerpolation u32 mltIdx  : TEXCOORD0;
 };
 
 struct vbuffer_ps_out

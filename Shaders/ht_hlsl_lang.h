@@ -96,4 +96,21 @@ struct device_addr
 	}
 };
 
+u32x3 UnpackU8TriFromMegaTriBuff( u32 globalIdxInBytes )
+{
+	u32 bucketIdx  = globalIdxInBytes >> 2;
+	u32 byteLane   = globalIdxInBytes & 3u;
+
+	device_addr<u32> triBuff = { gGlobData.triAddr };
+	u32x4 byte0 = unpack_u8u32( triBuff[ bucketIdx ] );
+
+	if( 0 == byteLane ) return byte0.xyz;
+	if( 1 == byteLane ) return byte0.yzw;
+
+	// NOTE: this might perform out of bound reads should pad for that
+	u32x4 byte1 = unpack_u8u32( triBuff[ bucketIdx + 1 ] );
+	if( 2 == byteLane ) return u32x3( byte0.z, byte0.w, byte1.x );
+	/* lane == 3 */		return u32x3( byte0.w, byte1.x, byte1.y );
+}
+
 #endif //!__HELLTECH_HT_HLSL_LANG_H__

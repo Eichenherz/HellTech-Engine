@@ -14,16 +14,6 @@ struct imgui_vertex
 
 [[vk::binding( 0 )]] StructuredBuffer<imgui_vertex> uiVtxBuff;
 
-float4 UnpackU8U32( uint packedRGBA )
-{
-	return float4(
-        (packedRGBA & 0xFF) / 255.0f,
-        ((packedRGBA >> 8) & 0xFF) / 255.0f,
-        ((packedRGBA >> 16) & 0xFF) / 255.0f,
-        ((packedRGBA >> 24) & 0xFF) / 255.0f
-    );
-}
-
 [ shader( "vertex" ) ]
 void ImGuiVsMain( 
 	in uint		vtxID : SV_VertexID,
@@ -36,6 +26,6 @@ void ImGuiVsMain(
 	imgui_vertex uiVtxAttrs = uiVtxBuff[ vtxID ];
 	
 	pos = float4( float2( uiVtxAttrs.x, uiVtxAttrs.y ) * pushBlock.scale + pushBlock.translate, 0.0f, 1.0f );
-	col = UnpackU8U32( uiVtxAttrs.rgba8Unorm ).rgba;
+	col = float4( unpack_u8u32( uiVtxAttrs.rgba8Unorm ).rgba ) / 255.0f;
 	uv = float2( uiVtxAttrs.u, uiVtxAttrs.v );
 }

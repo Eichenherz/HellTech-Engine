@@ -18,13 +18,7 @@ float4x4 TrsToFloat4x4( float3 t, float4 q, float3 s )
     );
 }
 
-float2 ClipSpaceToScreenSpace( float4 clipPos, float2 screenRes )
-{
-    float3 ndcPos = clipPos.xyz / clipPos.w;
-    return ( ndcPos.xy * 0.5f + 0.5f ) * screenRes;
-}
-
-float3 ComputeAffineBarycentricsFromScreenSapce( float2 pixelCenter, float2 s0, float2 s1, float2 s2 )
+float3 ComputeNDCBarycentrics( float2 pixelCenter, float2 s0, float2 s1, float2 s2 )
 {
     float2 e1 = s1 - s0;
     float2 e2 = s2 - s0;

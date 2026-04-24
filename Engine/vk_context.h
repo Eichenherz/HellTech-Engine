@@ -33,7 +33,7 @@
 struct vk_timeline
 {
 	VkSemaphore sema;
-	u64 submitsIssuedCount;
+	u64			submitsIssuedCount;
 
 	inline VkSemaphoreSubmitInfo GetWaitAtPoint( VkPipelineStageFlags2 stage ) const
 	{

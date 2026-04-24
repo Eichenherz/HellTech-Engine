@@ -85,6 +85,7 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
         "-fspv-use-vulkan-memory-model",
         #"-fvk-use-dx-layout",
         "-fvk-use-scalar-layout",
+        "-HV", "2021",
         "-enable-16bit-types",
         "-fspv-extension=SPV_KHR_16bit_storage",
         "-fspv-extension=SPV_KHR_physical_storage_buffer",

@@ -125,7 +125,7 @@ struct dispatch_command
 
 struct draw_indexed_command
 {
-	u32		instIdx;
+	u32		visMltIdx;
 #if defined( __cplusplus ) && defined( __VK )
 	VkDrawIndexedIndirectCommand cmd;
 #else
@@ -185,21 +185,22 @@ struct luminance_histogram
 
 struct visible_instance
 {
-	u32 instId;
-	u32 meshletOffset;
-	u32 meshletCount;
-	u32 vtxOffset;
-	u32 triOffset;
+	u32 		instId;
+	u32 		meshletOffset;
+	u32 		meshletCount;
+	u32 		vtxOffset;
+	u32 		triOffset;
 };
 
 struct visible_meshlet
 {
-	u32 instId;
-	u32 vtxOffset;
-	u32 triOffset;
-	u32	vtxCount : 8;
-	u32	triCount : 8;
-	u32	padding : 16;
+	packed_trs	toWorld;
+	//u32 		instId;
+	u32 		absVtxOffset;
+	u32 		absTriOffset;
+	u32			vtxCount : 8;
+	u32			triCount : 8;
+	u32			padding : 16;
 };
 
 struct culling_params
@@ -220,13 +221,16 @@ struct draw_expansion_params
 {
 	u32 drawsCount;
 	u32 srcBufferIdx;
-	u32 dstBufferIdx;
+	u32 visMltBufferIdx;
+	u32 visMltCounterIdxIdx;
 	u32 counterIdx;
+	u32 instDescIdx;
 };
 
 struct meshlet_issue_draws_params
 {
-	u32 mltCounterIdx;
+	u32 visMltCountIdx;
+	u32 workCountIdx;
 	u32 srcBufferIdx;
 	u32 drawCmdCounterIdx;
 	u32 drawCmdsBuffIdx;
@@ -242,7 +246,7 @@ struct indirect_dispatcher_params
 struct vbuffer_params
 {
 	u32 drawBuffIdx;
-	u32 instBuffIdx;
+	u32 visMltBuffIdx;
 	u32 camIdx;
 };
 
@@ -257,7 +261,7 @@ struct lambertian_clay_params
 	float2	texResolution; // NOTE: asserted in the renderer that they're eq size
 	u32		vbuffIdx;
 	u32		dstIdx;
-	u32		instDescIdx;
+	u32		visMltBuffIdx;
 	u32		camIdx;
 };
 

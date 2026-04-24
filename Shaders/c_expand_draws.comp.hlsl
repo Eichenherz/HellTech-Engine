@@ -21,19 +21,21 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
     u32 waveBase = 0;
     if( WaveIsFirstLane() )
     {
-        waveBase = BufferAtomicAdd( pushBlock.counterIdx, waveTotal );
+        waveBase = BufferAtomicAdd( pushBlock.visMltCounterIdxIdx, waveTotal );
+        BufferAtomicAdd( pushBlock.counterIdx, waveTotal );
     }
     waveBase = WaveReadLaneFirst( waveBase );
 
     u32 globalOffset = waveBase + laneOffset;
 
+    instance_desc inst_desc = BufferLoad<instance_desc>( pushBlock.instDescIdx, thisVisInstance.instId );
     for( u32 mlti = 0; mlti < meshletCount; ++mlti )
     {
         device_addr<gpu_meshlet> ptr = { gGlobData.mltAddr };
         gpu_meshlet currentMeshlet = ptr[ mlti + thisVisInstance.meshletOffset ];
 
         visible_meshlet visMeshlet = {
-            thisVisInstance.instId,
+            inst_desc.toWorld,
             currentMeshlet.vtxOffset + thisVisInstance.vtxOffset,
             currentMeshlet.triOffset + thisVisInstance.triOffset,
             currentMeshlet.vtxCount,
@@ -42,6 +44,6 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
         };
 
         u32 slotIdx = globalOffset + mlti;
-        BufferStore<visible_meshlet>( pushBlock.dstBufferIdx, visMeshlet, slotIdx );
+        BufferStore<visible_meshlet>( pushBlock.visMltBufferIdx, visMeshlet, slotIdx );
     }
 }
