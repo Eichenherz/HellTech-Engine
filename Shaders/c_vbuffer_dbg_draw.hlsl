@@ -25,11 +25,12 @@ float3 ColorHash( u32x2 v )
 void VBufferDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
 	u32x2 vbuffPixel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
-	if( !VBufferIsValidPixel( vbuffPixel ) )
+
+	float3 col = float3( 0.0f, 0.0f, 0.0f );
+	if( VBufferIsValidPixel( vbuffPixel ) )
 	{
-		return;
+		col = ColorHash( vbuffPixel );
 	}
 
-	float3 col = ColorHash( vbuffPixel );
 	gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( col, 1.0f );
 }

@@ -153,5 +153,19 @@ inline static VkRenderingAttachmentInfo VkMakeAttachmentInfo(
 	};
 }
 
+// NOTE: we RevZ means 0 is the furthest away value
+constexpr VkClearDepthStencilValue REV_Z_DEPTH_BUFFER_CLEAR_VAL = {};
+// NOTE: we can't clear to 0 bc it's an index, instead we sacrifice the highest u32 val
+constexpr VkClearColorValue GetVBufferClearValue()
+{
+	VkClearColorValue clearVal = {};
+	clearVal.uint32[ 0 ] = ~u32( 0 );
+	clearVal.uint32[ 1 ] = ~u32( 0 );
+	clearVal.uint32[ 2 ] = ~u32( 0 );
+	clearVal.uint32[ 3 ] = ~u32( 0 );
+
+	return clearVal;
+}
+
 #endif // !__VK_UTILS_H__
 

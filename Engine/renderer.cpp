@@ -1113,13 +1113,11 @@ struct vbuffer_pass
 
 	void Init( vk_context& dc, u16 width, u16 height )
 	{
-		constexpr VkImageUsageFlags depthUsgFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-
 		depthTarget = dc.CreateImage( {
 			.name		= "Img_DepthTarget",
 			.format		= DEPTH_FORMAT,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= depthUsgFlags,
+			.usgFlags	= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			.width		= width,
 			.height		= height,
 			.layerCount = 1,
@@ -1128,14 +1126,11 @@ struct vbuffer_pass
 
 		depthSrv = dc.AllocDescriptorIdx( { depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		constexpr VkImageUsageFlags colUsgFlags =
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-
 		colorTarget = dc.CreateImage( {
-			.name		= "Img_ColorTarget",
+			.name		= "Img_VBufferTarget",
 			.format		= VBUFF_FORMAT,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= colUsgFlags,
+			.usgFlags	= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			.width		= width,
 			.height		= height,
 			.layerCount = 1,
@@ -1168,7 +1163,7 @@ struct vbuffer_pass
 		}
 		{
 			unique_shader_ptr comp = dc.CreateShaderFromSpirv(
-				SysReadFile( "bin/SpirV/compute_VBufferTriHashDbgDrawCsMain.spirv" ) );
+				SysReadFile( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv" ) );
 			compDbgHashTriToScPipeline = dc.CreateComputePipeline( *comp );
 		}
 	}
@@ -1199,15 +1194,14 @@ struct vbuffer_pass
 
 		// NOTE: since we do this incrementally we want the 2nd pass to just load
 		const VkAttachmentLoadOp loadOp = latePass ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
-		// NOTE: for vbuff ~u64( 0 ) is the clear val
-		VkClearColorValue vbuffClearVal = {};
-		memset( &vbuffClearVal, 0xFF, sizeof( vbuffClearVal ) );
+
+		VkClearValue clear = { .color = GetVBufferClearValue() };
 
 		VkRenderingAttachmentInfo attInfos[] = {
-			VkMakeAttachmentInfo( colorTarget.view, loadOp, VK_ATTACHMENT_STORE_OP_STORE, { .color = vbuffClearVal } )
+			VkMakeAttachmentInfo( colorTarget.view, loadOp, VK_ATTACHMENT_STORE_OP_STORE, clear )
 		};
 		VkRenderingAttachmentInfo depthWrite = VkMakeAttachmentInfo( depthTarget.view, loadOp,
-			VK_ATTACHMENT_STORE_OP_STORE, {} );
+			VK_ATTACHMENT_STORE_OP_STORE, { .depthStencil = REV_Z_DEPTH_BUFFER_CLEAR_VAL } );
 
 		vk_rendering_info renderingInfo = {
 			.viewport = VkGetViewport( colorTarget.width, colorTarget.height ),
@@ -1851,7 +1845,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
 
-		if( false )
+		if( true )
 		{
 			lambertian_clay_params pushBlock = {
 				.texResolution = { ( float ) scImg.img.width, ( float ) scImg.img.height },
