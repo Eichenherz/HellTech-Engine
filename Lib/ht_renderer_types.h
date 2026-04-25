@@ -219,7 +219,7 @@ struct culling_params
 
 struct draw_expansion_params
 {
-	u32 drawsCount;
+	u32 workCounterIdxConst;
 	u32 srcBufferIdx;
 	u32 visMltBufferIdx;
 	u32 visMltCounterIdxIdx;

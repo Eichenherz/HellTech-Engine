@@ -8,7 +8,8 @@ draw_expansion_params pushBlock;
 [shader("compute")]
 void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlatIdx : SV_GroupIndex )
 {
-    if( globalDispatchID.x >= pushBlock.drawsCount )
+	u32 workItems = BufferLoad<u32>( pushBlock.workCounterIdxConst, 0 );
+    if( globalDispatchID.x >= workItems )
 	{
 		return;
 	}
