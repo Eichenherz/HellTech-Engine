@@ -23,12 +23,12 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     visible_meshlet mlt = BufferLoad<visible_meshlet>( pushBlock.visMltBuffIdx, mltIdx );
 
-    u32x3 tris = UnpackU8TriFromMegaTriBuff( triIdx * 3 + mlt.absTriOffset ) + mlt.absVtxOffset;
+    u32x3 tri = FetchTriangleFromMegaBuff( triIdx * 3 + mlt.absTriOffset ) + mlt.absVtxOffset;
 
     device_addr<packed_vtx> vtxBuff = { gGlobData.vtxAddr };
-    packed_vtx v0 = vtxBuff[ tris.x ];
-    packed_vtx v1 = vtxBuff[ tris.y ];
-    packed_vtx v2 = vtxBuff[ tris.z ];
+    packed_vtx v0 = vtxBuff[ tri.x ];
+    packed_vtx v1 = vtxBuff[ tri.y ];
+    packed_vtx v2 = vtxBuff[ tri.z ];
 
     packed_trs toWorld = mlt.toWorld;
     float4x4 toWorld4x4 = TrsToFloat4x4( toWorld.t, toWorld.r, toWorld.s );

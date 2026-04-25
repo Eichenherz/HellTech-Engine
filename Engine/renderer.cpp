@@ -1501,7 +1501,7 @@ struct renderer_context final : renderer_interface
 			numValidInstances++;
 		}
 
-		return numValidInstances;
+		return std::min( 20u, numValidInstances );
 	}
 
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
@@ -1553,12 +1553,17 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		.sizeInBytes	= sizeof( packed_vtx ) * MAX_VERTICES_IN_SCENE,
 		.usage			= buffer_usage::GPU_ONLY
 	} );
+
+	// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
+	// bounds accesses, essentially we'll read garbage data safely
+	u64 triMegaBuffSzInBytes = FwdAlign( sizeof( index_t ) * MAX_TRIANGLES_IN_SCENE, sizeof( u32 ) );
 	megaGpuTriBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuTriBuff",
 		.usageFlags		= megaBuffUsg | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-		.sizeInBytes	= sizeof( index_t ) * MAX_TRIANGLES_IN_SCENE,
+		.sizeInBytes	= triMegaBuffSzInBytes,
 		.usage			= buffer_usage::GPU_ONLY
 	} );
+	HT_ASSERT( FwdAlign( megaGpuTriBuff.sizeInBytes, sizeof( u64 ) ) == megaGpuTriBuff.sizeInBytes );
 
 	meshletAllocator= { ( u32 ) megaGpuMeshletBuff.sizeInBytes };
 	vtxAllocator	= { ( u32 ) megaGpuVtxBuff.sizeInBytes };
