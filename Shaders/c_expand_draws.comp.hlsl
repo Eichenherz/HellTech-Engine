@@ -40,8 +40,7 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
             currentMeshlet.vtxOffset + thisVisInstance.vtxOffset,
             currentMeshlet.triOffset + thisVisInstance.triOffset,
             currentMeshlet.vtxCount,
-            currentMeshlet.triCount,
-            0 // padding
+            currentMeshlet.triCount
         };
 
         u32 slotIdx = globalOffset + mlti;

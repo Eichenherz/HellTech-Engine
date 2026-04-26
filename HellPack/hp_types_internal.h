@@ -85,18 +85,12 @@ struct raw_material_info
 	alpha_mode	alphaMode;
 };
 
-struct range64
-{
-	u64 baseOffset	: 32;
-	u64 count		: 32;
-};
-
 struct mesh_asset
 {
-	std::vector<packed_vtx> vertices;
-	std::vector<u8>			triIndices;
-	std::vector<meshlet>	meshlets;
-	std::array<float3, 2>	aabb; // NOTE: helps with serialization { min, max }
+	std::vector<packed_vtx>		vertices;
+	std::vector<u8>				triIndices;
+	std::vector<gpu_meshlet>	meshlets;
+	std::array<float3, 2>		aabb; // NOTE: helps with serialization { min, max }
 };
 
 struct packed_trs;

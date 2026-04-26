@@ -22,21 +22,22 @@
 
 constexpr u64 DEFAULT_SAMPLER_IDX = 0;
 
-inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs a, packed_trs b )
+inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs parent, packed_trs child )
 {
 	using namespace DirectX;
 
-	XMVECTOR xmA_T = XMLoadFloat3( &a.t );
-	XMVECTOR xmA_R = XMLoadFloat4( &a.r );
-	XMVECTOR xmA_S = XMLoadFloat3( &a.s );
+	XMVECTOR parentT = XMLoadFloat3( &parent.t );
+	XMVECTOR parentR = XMLoadFloat4( &parent.r );
+	XMVECTOR parentS = XMLoadFloat3( &parent.s );
 
-	XMVECTOR xmB_T = XMLoadFloat3( &b.t );
-	XMVECTOR xmB_R = XMLoadFloat4( &b.r );
-	XMVECTOR xmB_S = XMLoadFloat3( &b.s );
+	XMVECTOR childT = XMLoadFloat3( &child.t );
+	XMVECTOR childR = XMLoadFloat4( &child.r );
+	XMVECTOR childS = XMLoadFloat3( &child.s );
 
-	float3 outT = DX_XMStoreFloat3( XMVectorAdd( xmA_T, xmB_T ) );
-	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( xmA_R, xmB_R ) ); // World = Parent * Local
-	float3 outS = DX_XMStoreFloat3( XMVectorAdd( xmA_S, xmB_S ) );
+	float3 outS = DX_XMStoreFloat3( XMVectorMultiply( parentS, childS ) );
+	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( parentR, childR ) );
+	XMVECTOR transfT = XMVector3Rotate( XMVectorMultiply( childT, parentS ), parentR );
+	float3 outT = DX_XMStoreFloat3( XMVectorAdd( parentT, transfT ) );
 
 	return { .t = outT, .r = outR, .s = outS };
 }
@@ -44,11 +45,11 @@ inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs a, packed_trs b )
 
 struct gltf_raw_attr_stream
 {
-	const u8* data;
-	u64 elemCount;
-	u64 componentCount;
-	u64 componentByteSize;
-	u64 strideBytes; 
+	const u8*	data;
+	u64			elemCount;
+	u64			componentCount;
+	u64			componentByteSize;
+	u64			strideBytes;
 
 	constexpr u64 size() const noexcept
 	{
@@ -63,13 +64,13 @@ struct gltf_typed_attr_stream : gltf_raw_attr_stream
 	{
 		// NOTE: don't change these names !
 		using iterator_category = std::input_iterator_tag;
-		using value_type = T;
-		using difference_type = std::ptrdiff_t;
-		using pointer = void;
-		using reference = T;
+		using value_type		= T;
+		using difference_type	= std::ptrdiff_t;
+		using pointer			= void;
+		using reference			= T;
 
-		const u8* ptr;
-		u64 strideBytes;
+		const u8*	ptr;
+		u64			strideBytes;
 
 		T operator*() const
 		{
@@ -227,17 +228,17 @@ inline sampler_wrap_mode_flags GltfWrapToFlags( i32 gltfWrap )
 inline image_metadata GetGltfTextureMetadata( const tinygltf::Image& img )
 {
 	image_metadata out = {
-		.width = ( u16 ) img.width,
+		.width	= ( u16 ) img.width,
 		.height = ( u16 ) img.height,
 	};
 
 	switch( img.component )
 	{
-	case 1: out.component = image_channels_t::R; break;
-	case 2: out.component = image_channels_t::RG; break;
-	case 3: out.component = image_channels_t::RGB; break;
-	case 4: out.component = image_channels_t::RGBA; break;
-	default: out.component = image_channels_t::UNKNOWN;
+	case 1: out.component	= image_channels_t::R; break;
+	case 2: out.component	= image_channels_t::RG; break;
+	case 3: out.component	= image_channels_t::RGB; break;
+	case 4: out.component	= image_channels_t::RGBA; break;
+	default: out.component	= image_channels_t::UNKNOWN;
 	}
 
 	switch( img.bits )
@@ -250,10 +251,10 @@ inline image_metadata GetGltfTextureMetadata( const tinygltf::Image& img )
 
 	switch( img.pixel_type )
 	{
-	case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:  out.pixelType = image_pixel_type::UBYTE; break;
-	case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: out.pixelType = image_pixel_type::USHORT; break;
-	case TINYGLTF_COMPONENT_TYPE_FLOAT:          out.pixelType = image_pixel_type::FLOAT32; break;
-	default: out.pixelType = image_pixel_type::UNKNOWN;
+	case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:		out.pixelType = image_pixel_type::UBYTE; break;
+	case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:	out.pixelType = image_pixel_type::USHORT; break;
+	case TINYGLTF_COMPONENT_TYPE_FLOAT:				out.pixelType = image_pixel_type::FLOAT32; break;
+	default:										out.pixelType = image_pixel_type::UNKNOWN;
 	}
 
 	return out;
@@ -322,8 +323,8 @@ struct gltf_loader
 
 		struct queued_node
 		{
-			packed_trs parentTRS;
-			u32 nodeIdx;
+			packed_trs	parentTRS;
+			u32			nodeIdx;
 		};
 		std::vector<queued_node> nodeQueue;
 		// NOTE: we need this bc our tree is flattened
@@ -338,15 +339,20 @@ struct gltf_loader
 
 			const tinygltf::Node& n = nodes[ nodeIdx ];
 
-			packed_trs pkTrs = GetTrsFromNode( n );
+			constexpr packed_trs identityTrs ={
+				.t = {},
+				.r={ 0.0f, 0.0f, 0.0f, 1.0f },
+				.s={ 1.0f, 1.0f, 1.0f }
+			};
 
-			nodeQueue.push_back( { pkTrs, nodeIdx } );
+			nodeQueue.push_back( { identityTrs, nodeIdx } );
 			while( std::size( nodeQueue ) > 0 )
 			{
 				queued_node curr = nodeQueue.back();
 				nodeQueue.pop_back();
 
 				const tinygltf::Node& currentNode = nodes[ curr.nodeIdx ];
+
 				packed_trs currentTrs = GetTrsFromNode( currentNode );
 
 				packed_trs parentTrs = XMComposePackedTRS( curr.parentTRS, currentTrs );
@@ -387,14 +393,14 @@ struct gltf_loader
 				const gltf_typed_attr_stream<float3> posStream = {
 					GetRawAttributeStream( *GetAccessorByName( "POSITION", primMesh ) ) };
 
-				// NOTE: gltf guarentees that all present attr streams have the same element count 
+				// NOTE: gltf guarantees that all present attr streams have the same element count
 				const u64 attrStreamCount = std::size( posStream );
 
 				raw_mesh mesh = {
-					.name = m.name.c_str(),
-					.pos = { std::cbegin( posStream ), std::cend( posStream ) },
-					.indices = std::move( normalizedIndexBuffer ),
-					.materialIdx = std::bit_cast<u32>( primMesh.material )
+					.name			= m.name.c_str(),
+					.pos			= { std::cbegin( posStream ), std::cend( posStream ) },
+					.indices		= std::move( normalizedIndexBuffer ),
+					.materialIdx	= std::bit_cast<u32>( primMesh.material )
 				};
 
 				if( const tinygltf::Accessor* pAccessor = GetAccessorByName( "NORMAL", primMesh ); pAccessor )
@@ -431,13 +437,12 @@ struct gltf_loader
 		samplersOut.reserve( std::size( model.samplers ) );
 		for( const tinygltf::Sampler& sampler : model.samplers )
 		{
-			sampler_config samplerConfig = {
-				.filterModeS = GltfFilterToFlags( sampler.minFilter ),
-				.filterModeT = GltfFilterToFlags( sampler.magFilter ),
-				.wrapModeS = GltfWrapToFlags( sampler.wrapS ),
-				.wrapModeT = GltfWrapToFlags( sampler.wrapT )
-			};
-			samplersOut.push_back( samplerConfig );
+			samplersOut.push_back( {
+				.filterModeS	= GltfFilterToFlags( sampler.minFilter ),
+				.filterModeT	= GltfFilterToFlags( sampler.magFilter ),
+				.wrapModeS		= GltfWrapToFlags( sampler.wrapS ),
+				.wrapModeT		= GltfWrapToFlags( sampler.wrapT )
+			} );
 		}
 
 		return samplersOut;
@@ -456,22 +461,22 @@ struct gltf_loader
 			std::string materialName = ( std::size( material.name ) ) ? material.name.c_str() : std::format( "mtrl_{}", mi );
 
 			raw_material_info metadata = {
-				.name = std::move( materialName ),
-				.baseColFactor = {
+				.name				= std::move( materialName ),
+				.baseColFactor		= {
 					( float ) pbrInfo.baseColorFactor[ 0 ],
 					( float ) pbrInfo.baseColorFactor[ 1 ],
 					( float ) pbrInfo.baseColorFactor[ 2 ],
 					( float ) pbrInfo.baseColorFactor[ 3 ]
 			    },
-				.metallicFactor = ( float ) pbrInfo.metallicFactor,
-				.roughnessFactor = ( float ) pbrInfo.roughnessFactor,
-				.alphaCutoff = ( float ) material.alphaCutoff,
-				.emissiveFactor = {
+				.metallicFactor		= ( float ) pbrInfo.metallicFactor,
+				.roughnessFactor	= ( float ) pbrInfo.roughnessFactor,
+				.alphaCutoff		= ( float ) material.alphaCutoff,
+				.emissiveFactor		= {
 					( float ) material.emissiveFactor[ 0 ],
 					( float ) material.emissiveFactor[ 1 ],
 					( float ) material.emissiveFactor[ 2 ]
 			    },
-				.alphaMode = GltfAlphaModeToEnum( material.alphaMode )
+				.alphaMode			= GltfAlphaModeToEnum( material.alphaMode )
 			};
 
 			ankerl::unordered_dense::set<i32> samplers;
@@ -519,8 +524,8 @@ struct gltf_loader
 		{
 			HT_ASSERT( std::size( img.image ) );
 			imgOut.push_back( {
-				.data = { std::cbegin( img.image ), std::cend( img.image ) },
-				.metadata = GetGltfTextureMetadata( img )
+				.data		= { std::cbegin( img.image ), std::cend( img.image ) },
+				.metadata	= GetGltfTextureMetadata( img )
 			} );
 		}
 
@@ -528,7 +533,7 @@ struct gltf_loader
 	}
 
 	template<TinyGltfTextureInfoConcept TexInfo>
-	inline gltf_texture ProcessTexture( const TexInfo& texInfo ) const
+	gltf_texture ProcessTexture( const TexInfo& texInfo ) const
 	{
 		if( INVALID_IDX == texInfo.index ) return {};
 
@@ -538,8 +543,7 @@ struct gltf_loader
 		return { .imageIdx = tex.source, .samplerIdx = tex.sampler };
 	}
 
-	inline const tinygltf::Accessor* 
-		GetAccessorByName( std::string_view name, const tinygltf::Primitive& primMesh ) const
+	const tinygltf::Accessor* GetAccessorByName( std::string_view name, const tinygltf::Primitive& primMesh ) const
 	{
 		const auto it = primMesh.attributes.find( std::string{ name } );
 		if( std::cend( primMesh.attributes ) == it ) return nullptr;

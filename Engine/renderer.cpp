@@ -405,7 +405,7 @@ struct debug_draw_passes
 	VkPipeline	drawAsLines;
 	VkPipeline	drawAsTriangles;
 
-	VkPipeline compLambertianClay;
+	VkPipeline	compLambertianClay;
 
 	void Init( vk_context& dc, vk_renderer_config& rndCfg )
 	{
@@ -719,7 +719,6 @@ struct culling_pass
 		{
 			rscTracker.UseBuffer( instOccludedCache, COMPUTE_READWRITE );
 			rscTracker.UseBuffer( visibleClustersCount, TRANSFER_WRITE );
-
 		}
 		rscTracker.UseBuffer( drawCount, TRANSFER_WRITE );
 		rscTracker.UseBuffer( compactedInstCounter, TRANSFER_WRITE );
@@ -755,7 +754,7 @@ struct culling_pass
 				.srcStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 				.srcAccessMask	= VK_ACCESS_2_SHADER_WRITE_BIT,
 				.dstStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-				.dstAccessMask	= VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT,
+				.dstAccessMask	= HT_SHADER_ACCESS_READ_WRITE,
 			},
 		};
 		constexpr VkMemoryBarrier2 computeToIndirectComputeExecDependency[] = {
@@ -764,7 +763,7 @@ struct culling_pass
 				.srcStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 				.srcAccessMask	= VK_ACCESS_2_SHADER_WRITE_BIT,
 				.dstStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-				.dstAccessMask	= VK_ACCESS_2_SHADER_READ_BIT_KHR | VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+				.dstAccessMask	= HT_SHADER_ACCESS_READ_WRITE | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
 			},
 		};
 
@@ -800,7 +799,7 @@ struct culling_pass
 		cmdBuff.CmdPipelineMemoryBarriers( computeToIndirectComputeExecDependency );
 		{
 			draw_expansion_params pushBlock = {
-				.drawsCount				= instCount,
+				.workCounterIdxConst	= compactedInstCounterIdx.slot,
 				.srcBufferIdx			= compactedInstIdx.slot,
 				.visMltBufferIdx		= visibleClustersIdx.slot,
 				.visMltCounterIdxIdx	= visibleClustersCountIdx.slot,
@@ -1369,20 +1368,34 @@ inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes
 	fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
 
 	VkSemaphore canGetImgSema = vkCtx.CreateBinarySemaphore();
-	vk_buffer viewData = vkCtx.CreateBuffer( { .name = std::data( name ), .usageFlags = usg, .sizeInBytes = sizeInBytes,
-		.usage = buffer_usage::HOST_VISIBLE } );
+	vk_buffer viewData = vkCtx.CreateBuffer( {
+		.name			= std::data( name ),
+		.usageFlags		= usg,
+		.sizeInBytes	= sizeInBytes,
+		.usage			= buffer_usage::HOST_VISIBLE
+	} );
 	desc_hndl32 viewDataIdx = vkCtx.AllocDescriptorIdx( viewData );
 
 	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 512 * sizeof( gpu_mesh );
 	fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
-	vk_buffer gpuMeshTable = vkCtx.CreateBuffer( { .name = std::data( meshTableName ), .usageFlags = usg,
-		.sizeInBytes = DEFAULT_MESH_TABLE_SIZE, .usage = buffer_usage::HOST_VISIBLE } );
+
+	vk_buffer gpuMeshTable = vkCtx.CreateBuffer( {
+		.name			= std::data( meshTableName ),
+		.usageFlags		= usg,
+		.sizeInBytes	= DEFAULT_MESH_TABLE_SIZE,
+		.usage			= buffer_usage::HOST_VISIBLE
+	} );
 	desc_hndl32 gpuMeshTableDesc = vkCtx.AllocDescriptorIdx( gpuMeshTable );
 
 	constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( gpu_instance );
 	fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
-	vk_buffer gpuInstances = vkCtx.CreateBuffer( { .name = std::data( instName ), .usageFlags = usg,
-		.sizeInBytes = DEFAULT_INST_COUNT, .usage = buffer_usage::HOST_VISIBLE } );
+
+	vk_buffer gpuInstances = vkCtx.CreateBuffer( {
+		.name			= std::data( instName ),
+		.usageFlags		= usg,
+		.sizeInBytes	= DEFAULT_INST_COUNT,
+		.usage			= buffer_usage::HOST_VISIBLE
+	} );
 	desc_hndl32 instDesc = vkCtx.AllocDescriptorIdx( gpuInstances );
 
 	return {
@@ -1396,7 +1409,6 @@ inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes
 		.fifIdx				= fifIdx,
 	};
 }
-
 
 
 struct renderer_context final : renderer_interface
@@ -1501,7 +1513,7 @@ struct renderer_context final : renderer_interface
 			numValidInstances++;
 		}
 
-		return std::min( 20u, numValidInstances );
+		return numValidInstances;
 	}
 
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
@@ -1637,7 +1649,7 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 			.triOffset		= triAlloc.offset / TypedViewStrideSizeInBytes( mesh.triangles ),
 			.meshletCount	= ( u32 ) std::size( mesh.meshlets ),
 			.vtxCount		= ( u32 ) std::size( mesh.vertices ),
-			.triCount		= ( u32 ) std::size( mesh.triangles )
+			.triCount		= ( u32 ) std::size( mesh.triangles ) // NOTE: in this particular case it will double as byte count too
 		};
 		gpu_mesh_allocation gpuMeshAlloc = { .meshletAlloc = mltAlloc, .vtxAlloc = vtxAlloc, .triAlloc = triAlloc };
 
@@ -1825,15 +1837,15 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
-		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
-			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx,
-			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
-
-		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
-			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
-			cullingPass.visibleClustersIdx, thisVFrame.viewDataIdx, true );
-
-		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
+		//cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
+		//	thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx,
+		//	hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
+		//
+		//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
+		//	VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
+		//	cullingPass.visibleClustersIdx, thisVFrame.viewDataIdx, true );
+		//
+		//hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
 		if( frameData.freezeMainView )
 		{

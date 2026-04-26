@@ -10,31 +10,17 @@
 
 struct vertex_attrs
 {
-	float2 octNormal;
-	float tanAngle;
-	float u, v;
-	u8 tanSign;
-};
-
-struct meshlet
-{
-	float3	aabbMin;
-	float3	aabbMax;
-
-	u32		vtxOffset;
-	u32		triOffset;
-
-	u32		vtxCount : 8;
-	u32		triCount : 8;
-
-	u32		padding : 16;
+	float2	octNormal;
+	float	tanAngle;
+	float	u, v;
+	u8		tanSign;
 };
 
 struct world_node
 {
-	packed_trs toWorld;
-	u64 meshHash;
-	u16 materialIdx;
+	packed_trs	toWorld;
+	u64			meshHash;
+	u16			materialIdx;
 };
 
 enum alpha_mode : u8
@@ -46,12 +32,12 @@ enum alpha_mode : u8
 
 enum sampler_filter_mode_flags : u8
 {
-	FILTER_NEAREST = 1 << 0,
-	FILTER_LINEAR = 1 << 1,
-	FILTER_NEAREST_MIPMAP_NEAREST = 1 << 2,
-	FILTER_LINEAR_MIPMAP_NEAREST = 1 << 3,
-	FILTER_NEAREST_MIPMAP_LINEAR = 1 << 4,
-	FILTER_LINEAR_MIPMAP_LINEAR = 1 << 5,
+	FILTER_NEAREST					= 1 << 0,
+	FILTER_LINEAR					= 1 << 1,
+	FILTER_NEAREST_MIPMAP_NEAREST	= 1 << 2,
+	FILTER_LINEAR_MIPMAP_NEAREST	= 1 << 3,
+	FILTER_NEAREST_MIPMAP_LINEAR	= 1 << 4,
+	FILTER_LINEAR_MIPMAP_LINEAR		= 1 << 5,
 };
 
 enum sampler_wrap_mode_flags : u8
@@ -65,15 +51,15 @@ struct sampler_config
 {
 	u32 filterModeS : 8;
 	u32 filterModeT : 8;
-	u32 wrapModeS : 8;
-	u32 wrapModeT : 8;
+	u32 wrapModeS	: 8;
+	u32 wrapModeT	: 8;
 
 	inline bool operator==( const sampler_config& rhs ) const
 	{
-		return filterModeS == rhs.filterModeS
-			&& filterModeT == rhs.filterModeT
-			&& wrapModeS == rhs.wrapModeS
-			&& wrapModeT == rhs.wrapModeT;
+		return filterModeS	== rhs.filterModeS
+			&& filterModeT	== rhs.filterModeT
+			&& wrapModeS	== rhs.wrapModeS
+			&& wrapModeT	== rhs.wrapModeT;
 	}
 	inline bool operator!=( const sampler_config& rhs ) const
 	{
@@ -82,28 +68,28 @@ struct sampler_config
 };
 
 constexpr sampler_config DEFAULT_SAMPLER = {
-	.filterModeS = sampler_filter_mode_flags::FILTER_LINEAR,
-	.filterModeT = sampler_filter_mode_flags::FILTER_LINEAR,
-	.wrapModeS = sampler_wrap_mode_flags::WRAP_REPEAT,
-	.wrapModeT = sampler_wrap_mode_flags::WRAP_REPEAT
+	.filterModeS	= sampler_filter_mode_flags::FILTER_LINEAR,
+	.filterModeT	= sampler_filter_mode_flags::FILTER_LINEAR,
+	.wrapModeS		= sampler_wrap_mode_flags::WRAP_REPEAT,
+	.wrapModeT		= sampler_wrap_mode_flags::WRAP_REPEAT
 };
 
 struct material_desc
 {
-	u64 baseColorHash;
-	u64 metallicRoughnessHash;
-	u64 normalHash;
-	u64 emissiveHash;
+	u64			baseColorHash;
+	u64			metallicRoughnessHash;
+	u64			normalHash;
+	u64			emissiveHash;
 
-	float4 baseColFactor;
-	float3 emissiveFactor;
-	float metallicFactor;
-	float roughnessFactor;
-	float alphaCutoff;
+	float4		baseColFactor;
+	float3		emissiveFactor;
+	float		metallicFactor;
+	float		roughnessFactor;
+	float		alphaCutoff;
 
-	u16 samplerIdx;
+	u16			samplerIdx;
 
-	alpha_mode alphaMode;
+	alpha_mode	alphaMode;
 };
 
 #endif // !__HT_GFX_TYPES_H__

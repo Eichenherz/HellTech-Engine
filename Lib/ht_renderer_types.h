@@ -47,7 +47,7 @@ struct view_data
 	float		pad1;
 };
 
-struct ALIGNAS( 16 ) packed_trs
+struct packed_trs
 {
 	float3	t;
 	float	pad0;
@@ -81,7 +81,7 @@ struct vertex
 };
 
 // TODO: compress data more ?
-struct ALIGNAS( 16 ) instance_desc
+struct instance_desc
 {
 	packed_trs	toWorld;
 	u32			meshIdx;
@@ -107,9 +107,8 @@ struct gpu_meshlet
 	float3	maxAabb;
 	u32		vtxOffset;
 	u32		triOffset;
-	u32		vtxCount	: 8;
-	u32		triCount	: 8;
-	u32		padding		: 16;
+	u16		vtxCount;
+	u16		triCount;
 };
 
 struct dispatch_command
@@ -164,7 +163,7 @@ struct avg_luminance_info
 	float dt;
 };
 
-struct ALIGNAS( 16 ) dbg_vertex
+struct dbg_vertex
 {
 	float4 pos;
 	float4 col;
@@ -198,9 +197,8 @@ struct visible_meshlet
 	//u32 		instId;
 	u32 		absVtxOffset;
 	u32 		absTriOffset;
-	u32			vtxCount : 8;
-	u32			triCount : 8;
-	u32			padding : 16;
+	u16			vtxCount;
+	u16			triCount;
 };
 
 struct culling_params

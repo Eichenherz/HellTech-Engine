@@ -37,7 +37,7 @@ namespace fs = std::filesystem;
 #include <ht_macros.h>
 
 template<typename TriIdx, typename PrimIdx>
-inline auto PermuteTrianglesByPrimitiveRemap( const std::vector<TriIdx>& oldIdx, const std::vector<PrimIdx>& primitiveIndices )
+inline std::vector<TriIdx> PermuteTrianglesByPrimitiveRemap( const std::vector<TriIdx>& oldIdx, const std::vector<PrimIdx>& primitiveIndices )
 {
 	u64 triangleCount = std::size( primitiveIndices );
 	HP_ASSERT( ( triangleCount * 3 ) == std::size( oldIdx ) );
@@ -58,7 +58,7 @@ inline auto PermuteTrianglesByPrimitiveRemap( const std::vector<TriIdx>& oldIdx,
 }
 
 template<typename Idx>
-inline auto BuildVertexRemapFromPermutedIndices( const std::vector<Idx>& permutedIndices, u64 vtxCount )
+inline std::vector<Idx> BuildVertexRemapFromPermutedIndices( const std::vector<Idx>& permutedIndices, u64 vtxCount )
 {
 	constexpr Idx invalidIdx = Idx{ INVALID_IDX };
 
@@ -107,17 +107,17 @@ raw_mesh ValidateAndNormalizeRawMesh( const raw_mesh& inRawMesh )
 
 struct meshlet_config
 {
-	float   coneWeight = 0.8f;
-	u16		maxVertices = 64;
-	u16		maxTriangles = 128;
+	float   coneWeight		= 0.8f;
+	u16		maxVertices		= 64;
+	u16		maxTriangles	= 128;
 };
 
 struct rt_cluster_config
 {
-	float   fillWeight = 0.5f;
-	u16		maxVertices = 64;
-	u16		minTriangles = 16;
-	u16		maxTriangles = 64;
+	float   fillWeight		= 0.5f;
+	u16		maxVertices		= 64;
+	u16		minTriangles	= 16;
+	u16		maxTriangles	= 64;
 };
 
 // TODO: no inplace remap !
@@ -164,13 +164,13 @@ void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 
 
 	meshopt_remapVertexBuffer( std::data( rawMesh.pos ),std::data( rawMesh.pos ), newVtxCount,
-		sizeof( rawMesh.pos[0] ), std::data( fetchRemap ) );
+		sizeof( rawMesh.pos[ 0 ] ), std::data( fetchRemap ) );
 	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ), newVtxCount,
-		sizeof( rawMesh.normals[0] ), std::data( fetchRemap ) );
+		sizeof( rawMesh.normals[ 0 ] ), std::data( fetchRemap ) );
 	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ), newVtxCount,
-		sizeof( rawMesh.tans[0] ), std::data( fetchRemap ) );
+		sizeof( rawMesh.tans[ 0 ] ), std::data( fetchRemap ) );
 	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ),std::data( rawMesh.uvs ), newVtxCount,
-		sizeof( rawMesh.uvs[0] ), std::data( fetchRemap ) );
+		sizeof( rawMesh.uvs[ 0 ] ), std::data( fetchRemap ) );
 }
 
 struct __meshopt_meshlets
@@ -272,9 +272,9 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 	std::span<const float4> tan		= rawMesh.tans;
 	std::span<const float2> uvs		= rawMesh.uvs;
 
-	std::vector<packed_vtx> vertices;
-	std::vector<u8>			triIndices;
-	std::vector<meshlet>	meshlets;
+	std::vector<packed_vtx>		vertices;
+	std::vector<u8>				triIndices;
+	std::vector<gpu_meshlet>	meshlets;
 
 	vertices.reserve( std::size( meshoptMeshlets.vertices ) );
 	triIndices.reserve( std::size( meshoptMeshlets.triIndices ) );
@@ -319,13 +319,13 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 			};
 		}
 
-		meshlet outMeshlet = {
-			.aabbMin	= aabb.min,
-			.aabbMax	= aabb.max,
+		gpu_meshlet outMeshlet = {
+			.minAabb	= aabb.min,
+			.maxAabb	= aabb.max,
 			.vtxOffset	= ( u32 ) std::size( vertices ),
 			.triOffset	= ( u32 ) std::size( triIndices ),
-			.vtxCount	= ( u8 ) m.vertex_count,
-			.triCount	= ( u8 ) m.triangle_count
+			.vtxCount	= ( u16 ) m.vertex_count,
+			.triCount	= ( u16 ) m.triangle_count
 		};
 		meshlets.push_back( outMeshlet );
 
@@ -337,7 +337,7 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 	}
 
 	auto aabbView = meshlets | std::views::transform( 
-		[] ( const meshlet& m ) { return aabb_t<float3>{ .min = m.aabbMin, .max = m.aabbMax }; } );
+		[] ( const gpu_meshlet& m ) { return aabb_t<float3>{ .min = m.minAabb, .max = m.maxAabb }; } );
 
 	aabb_t<float3> aabb = MergeAabbs( aabbView );
 
@@ -347,38 +347,6 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 		.meshlets	= MOV( meshlets ),
 		.aabb		= { aabb.min, aabb.max }
 	};
-}
-
-std::vector<vertex_attrs> PackVertexAttributes( 
-	std::span<const float3> normals, 
-	std::span<const float4> tans, 
-	std::span<const float2> uvs 
-) {
-	u64 vtxCount = std::size( normals );
-
-	HT_ASSERT( ( vtxCount == std::size( tans ) ) && ( vtxCount == std::size( uvs ) ) );
-
-	std::vector<vertex_attrs> packedAttrs;
-	packedAttrs.resize( vtxCount );
-
-	for( u64 vi = 0; vi < vtxCount; ++vi )
-	{
-		float3 n = normals[ vi ];
-		float4 t = tans[ vi ];
-		float2 uv = uvs[ vi ];
-		float2 octNormal = OctaNormalEncode( n );
-		float tanAngle = EncodeTanToAngle( n, { t.x,t.y,t.z } );
-		u8 tanSign = ( -1.0f == t.w ) ? 1 : 0;
-
-		packedAttrs[ vi ] = {
-			.octNormal = octNormal, 
-			.tanAngle = tanAngle, 
-			.u = uv.x, .v = uv.y, 
-			.tanSign = tanSign 
-		};
-	}
-
-	return packedAttrs;
 }
 
 using position_t = float3;
@@ -548,9 +516,6 @@ i32 main( i32 argc, char** argv  )
 		return 1;
 	}
 
-	//const std::string gltfFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.glb";
-	//const std::string hpkFilePath = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-
 	const std::string gltfFilePath = argv[ 1 ];
 	const std::string hpkFilePath = argv[ 2 ];
 
@@ -585,7 +550,7 @@ i32 main( i32 argc, char** argv  )
 
 	for( u64 ti = 0; ti < std::thread::hardware_concurrency(); ++ti ) tasks.emplace_back( WorkerLoop );
 
-	std::vector<world_node> instances;
+	std::vector<world_node> worldNodes;
 
 	ankerl::unordered_dense::map<vfs_path, mesh_asset> meshAssetMap;
 
@@ -598,13 +563,15 @@ i32 main( i32 argc, char** argv  )
 
 		vfs_path assetPath = { "{}{}.mesh", HELLPACK_MESH_DIR, std::data( mesh.name ) };
 
+		if( meshAssetMap.contains( assetPath ) ) continue;
+
 		// NOTE: it moves stuff
 		raw_mesh validatedRawMesh = ValidateAndNormalizeRawMesh( mesh );
 		mesh_asset meshAsset = HpkMakeMeshAssetFromMeshlets( validatedRawMesh );
 		
 		meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
 
-		instances.push_back( {
+		worldNodes.push_back( {
 			.toWorld		= n.toWorld,
 			.meshHash		= std::hash<vfs_path>{}( assetPath ),
 			.materialIdx	= ( u16 ) mesh.materialIdx // NOTE: these should match 1:1 with ours
@@ -619,7 +586,7 @@ i32 main( i32 argc, char** argv  )
 		HT_ASSERT( fs::exists( hpkFilePath ) );
 
 		{
-			hellpack_serializble_buffer buffs[] = { instances, materialTable };
+			hellpack_serializble_buffer buffs[] = { worldNodes, materialTable };
 			std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::LEVEL );
 			zipArchive.WriteBytesToFile( { "world.lvl" }, bytes );
 		}

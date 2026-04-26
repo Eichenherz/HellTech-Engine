@@ -20,11 +20,11 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	}
 
 	bool instanceIsOccluded = false;
-	//if( bool( pushBlock.isLatePass ) )
-	//{
-	//	instanceIsOccluded = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
-	//	if( !instanceIsOccluded ) return;
-	//}
+	if( bool( pushBlock.isLatePass ) )
+	{
+		instanceIsOccluded = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
+		if( !instanceIsOccluded ) return;
+	}
 
 	instance_desc currentInst = BufferLoad<instance_desc>( pushBlock.instDescIdx, instId );
 	float4x4 toWorld = TrsToFloat4x4( currentInst.toWorld.t, currentInst.toWorld.r, currentInst.toWorld.s );

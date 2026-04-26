@@ -62,7 +62,7 @@ struct hellpack_mesh_asset
 {
 	typed_view<packed_vtx>	vertices;
 	typed_view<index_t>		triangles;
-	typed_view<meshlet>		meshlets;
+	typed_view<gpu_meshlet>	meshlets;
 	float3					aabbMin;
 	float3					aabbMax;
 };
@@ -96,14 +96,8 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 		HT_ASSERT( 2 == h.entriesCount );
 
 		return hellpack_level{
-			.nodes = { 
-				( const world_node* ) ( base + entryTable[ 0 ].offsetInBytes ), 
-				( u32 ) ( entryTable[ 0 ].sizeInBytes / sizeof( world_node ) ) 
-		    },
-			.materials = { 
-				( const material_desc* ) ( base + entryTable[ 1 ].offsetInBytes ), 
-				( u32 ) ( entryTable[ 1 ].sizeInBytes / sizeof( material_desc ) ) 
-		    }
+			.nodes		= MakeTypedView<world_node>( base + entryTable[ 0 ].offsetInBytes, entryTable[ 0 ].sizeInBytes ),
+			.materials	= MakeTypedView<material_desc>( base + entryTable[ 1 ].offsetInBytes, entryTable[ 1 ].sizeInBytes )
 		};
 	}
 	else if constexpr( std::is_same_v<HPK_T, hellpack_mesh_asset> )
@@ -112,25 +106,16 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 		HT_ASSERT( 4 == h.entriesCount );
 
 		return hellpack_mesh_asset{
-			.vertices = { 
-				( const packed_vtx* ) ( base + entryTable[ 0 ].offsetInBytes ), 
-				( u32 ) ( entryTable[ 0 ].sizeInBytes / sizeof( packed_vtx ) ) 
-			},
-			.triangles = { 
-				( const u8* ) ( base + entryTable[ 1 ].offsetInBytes ), 
-				( u32 ) entryTable[ 1 ].sizeInBytes
-			},
-			.meshlets = { 
-				( const meshlet* ) ( base + entryTable[ 2 ].offsetInBytes ), 
-				( u32 ) ( entryTable[ 2 ].sizeInBytes / sizeof( meshlet ) ) 
-			},
-			.aabbMin = *( const float3* ) ( base + entryTable[ 3 ].offsetInBytes ),
-			.aabbMax = *( const float3* ) ( base + entryTable[ 3 ].offsetInBytes + sizeof( float3 ) )
+			.vertices	= MakeTypedView<packed_vtx>( base + entryTable[ 0 ].offsetInBytes, entryTable[ 0 ].sizeInBytes ),
+			.triangles	= MakeTypedView<u8>( base + entryTable[ 1 ].offsetInBytes, entryTable[ 1 ].sizeInBytes ),
+			.meshlets	= MakeTypedView<gpu_meshlet>( base + entryTable[ 2 ].offsetInBytes, entryTable[ 2 ].sizeInBytes ),
+			.aabbMin	= *( const float3* ) ( base + entryTable[ 3 ].offsetInBytes ),
+			.aabbMax	= *( const float3* ) ( base + entryTable[ 3 ].offsetInBytes + sizeof( float3 ) )
 		};
 	}
 	else if constexpr( std::is_same_v<HPK_T, hellpack_texture_asset> )
 	{
-		//NOTE: hellpack_texture_asset is used directly as a .dds
+		// NOTE: hellpack_texture_asset is used directly as a .dds
 		return byte_view{ blob };
 	}
 	else static_assert( false, "Unsupported HPK_T" );

@@ -689,7 +689,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	WIN_CHECK( RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
 
-	virtual_arena persistentArena = { 10 * GB };
+	virtual_arena persistentArena = { 1 * GB };
 	virtual_arena scratchArena = { 10 * MB };
 
 	ht_stretchybuff<sys_thread_data> threadDataBuff = HtANewStretchyBuffFromArena<sys_thread_data>(
@@ -704,8 +704,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	constexpr float aspecRatioWH = float( SCREEN_WIDTH ) / float( SCREEN_HEIGHT );
 	constexpr float zNear = 0.5f;
 
-	virtual_camera mainActiveCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
-	virtual_camera debugCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
+	virtual_camera mainActiveCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
+	virtual_camera debugCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
 
 	{
 		view_data mainViewData = mainActiveCam.GetViewData();
@@ -758,8 +758,9 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	pRenderer->InitBackend( ( u64 ) hInst, ( u64 ) hWnd );
 
 	// TODO: vfs
-	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	constexpr char	assetFile[] = "D:/3d models/cyberbaron.hpk";
+	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	//constexpr char	assetFile[] = "D:/3d models/cyberbaron.hpk";
+	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
 	mmap_file		mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
 	vfs_zip_mem		vfs = { mmappedFile };

@@ -10,15 +10,15 @@
 template<typename T>
 struct typed_view
 {
-	const T* ptr = nullptr;
-	u32 count = 0;
+	const T*	ptr = nullptr;
+	u64			count = 0;
 
 	constexpr const T* data()  const { return ptr; }
 	constexpr u64      size()  const { return count; }
 	constexpr const T* begin() const { return ptr; }
 	constexpr const T* end()   const { return ptr + count; }
 	
-	constexpr const T& operator[]( u32 i ) const
+	constexpr const T& operator[]( u64 i ) const
 	{
 		HT_ASSERT( i < count );
 		return ptr[ i ];
@@ -44,6 +44,12 @@ template<typename T>
 inline typed_view<T> MakeTypedView( std::span<const T> s )
 {
 	return { std::data( s ), ( u32 ) std::size( s ) };
+}
+
+template<typename T>
+inline typed_view<T> MakeTypedView( const u8* pData, u64 sizeInBytes )
+{
+	return { ( const T* ) pData, sizeInBytes / sizeof( T ) };
 }
 
 template<std::ranges::contiguous_range R>
