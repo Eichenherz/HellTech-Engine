@@ -27,18 +27,18 @@ struct test_entry
 
 MU_TEST( PushAndAccess )
 {
-    slot_buffer<test_entry> sb = {};
-    slot_buffer<test_entry>::hndl32 h = sb.PushEntry( { 10, 20 } );
+    slot_vector<test_entry> sb = {};
+    slot_vector<test_entry>::hndl32 h = sb.PushEntry( { 10, 20 } );
     mu_check( 10 == sb[ h ].a );
     mu_check( 20 == sb[ h ].b );
 }
 
 MU_TEST( PushMultipleSequential )
 {
-    slot_buffer<test_entry> sb = {};
-    slot_buffer<test_entry>::hndl32 h0 = sb.PushEntry( { 1, 2 } );
-    slot_buffer<test_entry>::hndl32 h1 = sb.PushEntry( { 3, 4 } );
-    slot_buffer<test_entry>::hndl32 h2 = sb.PushEntry( { 5, 6 } );
+    slot_vector<test_entry> sb = {};
+    slot_vector<test_entry>::hndl32 h0 = sb.PushEntry( { 1, 2 } );
+    slot_vector<test_entry>::hndl32 h1 = sb.PushEntry( { 3, 4 } );
+    slot_vector<test_entry>::hndl32 h2 = sb.PushEntry( { 5, 6 } );
 
     mu_check( 0 == h0.slotIdx );
     mu_check( 1 == h1.slotIdx );
@@ -55,15 +55,15 @@ MU_TEST( PushMultipleSequential )
 
 MU_TEST( RemoveThenReuse )
 {
-    slot_buffer<test_entry> sb = {};
-    slot_buffer<test_entry>::hndl32 h0 = sb.PushEntry( { 100, 200 } );
-    slot_buffer<test_entry>::hndl32 h1 = sb.PushEntry( { 300, 400 } );
+    slot_vector<test_entry> sb = {};
+    slot_vector<test_entry>::hndl32 h0 = sb.PushEntry( { 100, 200 } );
+    slot_vector<test_entry>::hndl32 h1 = sb.PushEntry( { 300, 400 } );
 
     u32 removedIdx = h0.slotIdx;
     sb.RemoveEntry( h0 );
 
     // NOTE: next push should reuse the freed slot
-    slot_buffer<test_entry>::hndl32 h2 = sb.PushEntry( { 500, 600 } );
+    slot_vector<test_entry>::hndl32 h2 = sb.PushEntry( { 500, 600 } );
     mu_check( removedIdx == h2.slotIdx );
     mu_check( 500 == sb[ h2 ].a );
     mu_check( 600 == sb[ h2 ].b );
@@ -75,18 +75,18 @@ MU_TEST( RemoveThenReuse )
 
 MU_TEST( RemoveMultipleLIFO )
 {
-    slot_buffer<test_entry> sb = {};
-    slot_buffer<test_entry>::hndl32 h0 = sb.PushEntry( { 1, 0 } );
-    slot_buffer<test_entry>::hndl32 h1 = sb.PushEntry( { 2, 0 } );
-    slot_buffer<test_entry>::hndl32 h2 = sb.PushEntry( { 3, 0 } );
+    slot_vector<test_entry> sb = {};
+    slot_vector<test_entry>::hndl32 h0 = sb.PushEntry( { 1, 0 } );
+    slot_vector<test_entry>::hndl32 h1 = sb.PushEntry( { 2, 0 } );
+    slot_vector<test_entry>::hndl32 h2 = sb.PushEntry( { 3, 0 } );
 
     // NOTE: remove in order 0, 1 — freelist head should be 1 -> 0 -> sentinel
     sb.RemoveEntry( h0 );
     sb.RemoveEntry( h1 );
 
     // NOTE: LIFO — first push gets slot 1, second gets slot 0
-    slot_buffer<test_entry>::hndl32 r0 = sb.PushEntry( { 10, 0 } );
-    slot_buffer<test_entry>::hndl32 r1 = sb.PushEntry( { 20, 0 } );
+    slot_vector<test_entry>::hndl32 r0 = sb.PushEntry( { 10, 0 } );
+    slot_vector<test_entry>::hndl32 r1 = sb.PushEntry( { 20, 0 } );
 
     mu_check( h1.slotIdx == r0.slotIdx );
     mu_check( h0.slotIdx == r1.slotIdx );
@@ -103,9 +103,9 @@ MU_TEST( RemoveMultipleLIFO )
 
 MU_TEST( FillRemoveAllRefill )
 {
-    slot_buffer<test_entry> sb = {};
+    slot_vector<test_entry> sb = {};
     constexpr u32 N = 16;
-    slot_buffer<test_entry>::hndl32 handles[ N ];
+    slot_vector<test_entry>::hndl32 handles[ N ];
 
     for( u32 i = 0; i < N; ++i )
     {
@@ -139,10 +139,10 @@ MU_TEST( FillRemoveAllRefill )
 
 MU_TEST( MemcpyToPlainBuffer )
 {
-    slot_buffer<test_entry> sb = {};
-    slot_buffer<test_entry>::hndl32 h0 = sb.PushEntry( { 11, 22 } );
-    slot_buffer<test_entry>::hndl32 h1 = sb.PushEntry( { 33, 44 } );
-    slot_buffer<test_entry>::hndl32 h2 = sb.PushEntry( { 55, 66 } );
+    slot_vector<test_entry> sb = {};
+    slot_vector<test_entry>::hndl32 h0 = sb.PushEntry( { 11, 22 } );
+    slot_vector<test_entry>::hndl32 h1 = sb.PushEntry( { 33, 44 } );
+    slot_vector<test_entry>::hndl32 h2 = sb.PushEntry( { 55, 66 } );
 
     // NOTE: remove middle entry so the buffer has a mix of live + dead slots
     sb.RemoveEntry( h1 );
@@ -170,10 +170,10 @@ MU_TEST( MemcpyToPlainBuffer )
 
 MU_TEST( AccessOutOfRange )
 {
-    slot_buffer<test_entry> sb = {};
+    slot_vector<test_entry> sb = {};
     sb.PushEntry( { 1, 2 } );
 
-    slot_buffer<test_entry>::hndl32 bad = { .slotIdx = 999 };
+    slot_vector<test_entry>::hndl32 bad = { .slotIdx = 999 };
     MU_ASSERT_FIRES( sb[ bad ] );
 }
 

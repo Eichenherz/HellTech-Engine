@@ -14,7 +14,6 @@
 
 #include <System/sys_file.h>
 #include <System/sys_sync.h>
-#include <System/sys_thread.h>
 
 #include "zip_pack.h"
 
@@ -155,22 +154,22 @@ void job_system_ctx::SubmitJob( job_t job )
 }
 
 // Uploads
-struct renderer_upload_job
+// TODO: use own arenas and allocators
+struct upload_job_payload
 {
 	std::vector<mesh_upload_req>	reqs;
+	std::vector<instance_desc>		entitiesToPromote;
 	renderer_interface*				pRI;
+	HJOBFENCE32						hUpload;
 };
 
 void PfnRendererUploadJob( void* payload, virtual_arena* arena )
 {
-	renderer_upload_job* pJob = ( renderer_upload_job* ) payload;
-
-	pJob->pRI->UploadMeshes( pJob->reqs, *arena );
-	// TODO: use own arenas and allocators
-	delete payload;
+	upload_job_payload* pJob = ( upload_job_payload* ) payload;
+	pJob->pRI->UploadMeshes( pJob->hUpload, pJob->reqs, *arena );
 }
 
-// Enigne
+// Engine
 struct helltech final : helltech_interface
 {
 	virtual_arena						persistentArena = { 1 * GB };
@@ -187,11 +186,13 @@ struct helltech final : helltech_interface
 
 	ht_engine_stats						engineStats		= {};
 
-	ht_stretchybuff<gpu_instance>		flatSceneGraph	= {};
-
+	std::vector<instance_desc>			drawables		= {};
+	// TODO: not a unique ptr
 	std::unique_ptr<renderer_interface> pRenderer		= {};
 
 	job_system_ctx*						pJobSys			= nullptr;
+	// TODO: no vector
+	std::vector<upload_job_payload*>	jobCache		= {};
 
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
@@ -199,8 +200,25 @@ struct helltech final : helltech_interface
 	void Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height ) override;
 	void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const input_state& inputState ) override;
 
-	void UploadAssests( stack_adaptor<virtual_arena>& virtualStack );
+	// TODO: must use own memory
+	inline upload_job_payload* IssueUploadBatch( std::vector<mesh_upload_req>&& uploadReqs, std::vector<instance_desc>&& entities )
+	{
+		// TODO: use own arenas and allocators
+		upload_job_payload* pPayload = new upload_job_payload{
+			.reqs				= MOV( uploadReqs ),
+			.entitiesToPromote	= MOV( entities ),
+			.pRI				= pRenderer.get(),
+			.hUpload			= pRenderer->AllocJobFence()
+		};
+
+		pJobSys->SubmitJob( { .PfnJob = PfnRendererUploadJob, .payload = pPayload } );
+
+		return pPayload;
+	}
+	void UploadAssets( stack_adaptor<virtual_arena>& virtualStack );
+
 };
+
 
 void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height )
 {
@@ -264,7 +282,8 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 	pJobSys = jobSystemCtx;
 }
 
-void helltech::UploadAssests( stack_adaptor<virtual_arena>& virtualStack )
+// TODO: revisit this logic
+void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 {
 	// TODO: vfs
 	vfs_zip_mem	 vfs = { mmappedFile };
@@ -291,19 +310,17 @@ void helltech::UploadAssests( stack_adaptor<virtual_arena>& virtualStack )
 		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
 		hellpack_mesh_asset mesh = HpkReadBinaryBlob<hellpack_mesh_asset>( rawBytes );
 
-		HRNDMESH32 hMesh =  pRenderer->AllocMeshComponent();
+		HRNDMESH32 hMesh = pRenderer->AllocMeshComponent( mesh );
 
-		uploads.push_back( { .filepath = vpath, .htAsset = mesh, .hSlot = hMesh } );
+		uploads.push_back( {
+			.mltAsBytes = AsBytes( mesh.meshlets ),
+			.vtxAsBytes = AsBytes( mesh.vertices ),
+			.triAsBytes = AsBytes( mesh.triangles ),
+			.hSlot		= hMesh
+		} );
 
 		meshIdMap.emplace( pathHash, hMesh );
 	}
-
-	// TODO: use own arenas and allocators
-	job_t job = {
-		.PfnJob = PfnRendererUploadJob,
-		.payload = new renderer_upload_job{ .reqs = std::move( uploads ), .pRI = pRenderer.get() }
-	};
-	pJobSys->SubmitJob( job );
 
 	//ankerl::unordered_dense::map<u64, u32> texIdMap;
 	//for( const vfs_path& vpath : texFiles )
@@ -313,21 +330,24 @@ void helltech::UploadAssests( stack_adaptor<virtual_arena>& virtualStack )
 	//	if( std::cend( texIdMap ) != texIdMap.find( pathHash ) ) continue;
 	//}
 
-	// TODO: must reserve before alloc
-	HT_ASSERT( 1 == std::ranges::distance( levelFiles ) );
+	std::vector<instance_desc> entities;
+	entities.reserve( std::ranges::distance( levelFiles ) );
+
 	for( const vfs_path& vpath : levelFiles )
 	{
 		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
 		hellpack_level lvl = HpkReadBinaryBlob<hellpack_level>( rawBytes );
 
-		flatSceneGraph = HtANewStretchyBuffFromArena<gpu_instance>( persistentArena, std::size( lvl.nodes ) );
+		entities.reserve( std::size( entities ) + std::size( lvl.nodes ) );
 		for( const world_node& node : lvl.nodes )
 		{
 			auto it = meshIdMap.find( node.meshHash );
 			if( std::cend( meshIdMap ) == it ) continue;
-			flatSceneGraph.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
+			entities.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
 		}
 	}
+
+	jobCache.push_back( IssueUploadBatch( MOV( uploads ), MOV( entities ) ) );
 }
 
 void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const input_state& inputState )
@@ -339,7 +359,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	static bool vfsMounted = false;
 	if( !vfsMounted )
 	{
-		UploadAssests( virtualStack );
+		UploadAssets( virtualStack );
 		vfsMounted = true;
 	}
 
@@ -365,9 +385,25 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	XMMATRIX frustMat = FrustumMatrixFromViewProj( XMLoadFloat4x4A( &mainViewData.mainViewProj ) );
 
+	// NOTE: this is a temp thing and will work bc we have JUST 1 upload
+	if( std::size( jobCache ) )
+	{
+		upload_job_payload* pPayload = jobCache[ 0 ];
+		if( pRenderer->PollJobFenceAndRemoveOnCompletion( pPayload->hUpload, 100'000 ) )
+		{
+			drawables.reserve( std::size( drawables ) + std::size( pPayload->entitiesToPromote ) );
+			drawables.append_range( pPayload->entitiesToPromote );
+			// TODO: use own arenas and allocators
+			delete pPayload;
+			jobCache.pop_back();
+		}
+	}
+
+	// here we assemble the drawables instances
+
 	frame_data frameData = {
 		.views 			= views,
-		.instances 		= flatSceneGraph,
+		.instances 		= drawables,
 		.frustTransf	= DX_XMStoreFloat4x4( frustMat ),
 		.elapsedSeconds = ( float ) elapsedTime,
 		.freezeMainView = inputState.keyStates[ HT_SC_F ],

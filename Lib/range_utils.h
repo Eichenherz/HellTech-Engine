@@ -10,6 +10,8 @@
 template<typename T>
 struct typed_view
 {
+	static constexpr u32 STRIDE = sizeof( T );
+
 	const T*	ptr = nullptr;
 	u64			count = 0;
 
@@ -26,12 +28,6 @@ struct typed_view
 };
 
 using byte_view = typed_view<u8>;
-
-template<typename T>
-constexpr inline u32 TypedViewStrideSizeInBytes( typed_view<T> v )
-{
-	return sizeof( T );
-}
 
 template<typename T>
 inline byte_view AsBytes( typed_view<T> v )

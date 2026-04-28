@@ -65,7 +65,7 @@ struct ht_stretchybuff
 template<typename T>
 inline ht_stretchybuff<T> HtNewStretchyBuffFromMem( void* mem, u64 cap )
 {
-    return { .elems = (T*) mem, .currentCap = cap / sizeof( T ) };
+    return { .elems = ( T* ) mem, .currentCap = cap / sizeof( T ) };
 }
 
 template<typename T, arena_t Arena>

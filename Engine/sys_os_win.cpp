@@ -284,8 +284,9 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr u64 NUM_CORES = 8;
 
+	// TODO: mem system
 	virtual_arena platformArena = { 10 * MB };
-	virtual_arena scratchArena    = { 10 * MB };
+	virtual_arena scratchArena = { 10 * MB };
 
 	job_system_ctx* jobSystemCtx = ArenaNew<job_system_ctx>( platformArena );
 	ht_stretchybuff<sys_thread_data> threadDataBuff  = HtANewStretchyBuffFromArena<sys_thread_data>(

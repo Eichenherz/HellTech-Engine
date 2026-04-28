@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HT_SLOT_BUFFER_H__
-#define __HT_SLOT_BUFFER_H__
+#ifndef __HT_SLOT_VECTOR_H__
+#define __HT_SLOT_VECTOR_H__
 
 #include "ht_core_types.h"
 
@@ -9,8 +9,8 @@
 
 // NOTE: this is capped at MAX_ENTRIES_RESERVED
 
-template<TRIVIAL_T T>
-struct slot_buffer
+template<typename T>
+struct slot_vector
 {
     static constexpr u64   BIT_WIDTH_MAX_IDX      = 20;
     static constexpr u64   BIT_WIDTH_MAX_GENS     = 11;
@@ -64,8 +64,7 @@ struct slot_buffer
         freelistHead.slotIdx = currentFreelistCursor.slotIdx;
 
         std::memset( &items[ currentFreeSlotIdx ], 0, sizeof( items[ currentFreeSlotIdx ] ) );
-
-        items[ currentFreeSlotIdx ] = val;
+        new( &items[ currentFreeSlotIdx ] ) T( val );
 
         return { .slotIdx = currentFreeSlotIdx };
     }
@@ -77,6 +76,7 @@ struct slot_buffer
         //HT_ASSERT( slots[ h.slotIdx ].valid );
         //HT_ASSERT( slots[ h.slotIdx ].generation == h.generation );
 
+        items[ h.slotIdx ].~T();
         std::memset( &items[ h.slotIdx ], 0, sizeof( items[ h.slotIdx ] ) );
 
         freelist_cursor& currentFreeListCursor = ( freelist_cursor& ) items[ h.slotIdx ];
@@ -94,5 +94,5 @@ struct slot_buffer
 
 };
 
-#endif // !__HT_SLOT_BUFFER_H__
+#endif // !__HT_SLOT_VECTOR_H__
 

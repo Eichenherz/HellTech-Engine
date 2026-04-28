@@ -24,7 +24,7 @@
 
 #include "ht_fixed_vector.h"
 #include "ht_fixed_string.h"
-#include "ht_slot_buffer.h"
+#include "ht_slot_vector.h"
 
 #include "engine_types.h"
 
@@ -1325,25 +1325,12 @@ struct offset_allocator_t
 	void				Free( offset_alloc_t alloc ) { mAlloc->free( alloc ); }
 };
 
-struct gpu_mesh_allocation
-{
-	offset_alloc_t 				meshletAlloc;
-	offset_alloc_t 				vtxAlloc;
-	offset_alloc_t 				triAlloc;
-};
-
-struct renderer_upload_resp
-{
-	gpu_mesh					gpuMesh;
-	gpu_mesh_allocation 		alloc;
-	HRNDMESH32					hSlot;
-	upload_t					uploadType;
-};
-
 struct ht_mesh_component
 {
 	gpu_mesh					desc;
-	gpu_mesh_allocation			alloc;
+	offset_alloc_t 				mltAlloc;
+	offset_alloc_t 				vtxAlloc;
+	offset_alloc_t 				triAlloc;
 };
 
 
@@ -1392,7 +1379,7 @@ inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes
 	} );
 	desc_hndl32 gpuMeshTableDesc = vkCtx.AllocDescriptorIdx( gpuMeshTable );
 
-	constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( gpu_instance );
+	constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( instance_desc );
 	fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
 
 	vk_buffer gpuInstances = vkCtx.CreateBuffer( {
@@ -1418,7 +1405,8 @@ inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes
 
 struct renderer_context final : renderer_interface
 {
-	using mesh_hndl32 = slot_buffer<ht_mesh_component>::hndl32;
+	using mesh_hndl32 = slot_vector<ht_mesh_component>::hndl32;
+	using fence_hndl32 = slot_vector<VkFence>::hndl32;
 
 	alignas( 8 ) vk_renderer_config         config = {};
 
@@ -1430,10 +1418,10 @@ struct renderer_context final : renderer_interface
 	tone_mapping_pass						tonemapPass;
 	debug_draw_passes						dbgPass;
 	vbuffer_pass							vBuffPass;
+	// NOTE: will hold all the renderer components, both available and pending upload
+	slot_vector<ht_mesh_component>			rendererComponents;
 
-	slot_buffer<ht_mesh_component>			renderables;
-
-	mtx_queue<renderer_upload_resp>         copyToMainQueue = { 256 };
+	slot_vector<VkFence>					jobFences;
 
 	fixed_vector<virtual_frame, MAX_FIF>	vrtFrames;
 
@@ -1463,61 +1451,62 @@ struct renderer_context final : renderer_interface
 
 	virtual void InitBackend( u64 hInst, u64 hWnd ) override;
 
-	inline virtual HRNDMESH32 AllocMeshComponent() override
-	{
-		mesh_hndl32 hndl = renderables.PushEntry( {} );
-		ZeroStruct( renderables[ hndl ] );
-		return std::bit_cast<u32>( hndl );
-	}
+	virtual HRNDMESH32 AllocMeshComponent( const hellpack_mesh_asset& mesh ) override;
 
-	virtual void UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) override;
+	inline virtual HJOBFENCE32 AllocJobFence() override
+	{
+		return std::bit_cast<HJOBFENCE32>( jobFences.PushEntry( pVkCtx->AllocFence() ) );
+	}
+	inline virtual bool PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) override
+	{
+		VkFence fence = jobFences[ ( fence_hndl32 ) hJobFence ];
+		return pVkCtx->FenceWaitAndResetOnDone( fence, timeoutNanosecs );
+	}
+	virtual void UploadMeshes(
+		HJOBFENCE32							hRndUpload,
+		std::span<const mesh_upload_req>	meshAssets,
+		virtual_arena&						arena
+	) override;
 
 	u32 /* numValidInstances */ UpdateSceneData( const virtual_frame& thisVFrame, const frame_data& frameData )
 	{
-		for( renderer_upload_resp uploadResp = {}; copyToMainQueue.TryPop( uploadResp ); )
-		{
-			mesh_hndl32 hndl = std::bit_cast<mesh_hndl32>( uploadResp.hSlot );
-			renderables[ hndl ] = { .desc = uploadResp.gpuMesh, .alloc = uploadResp.alloc };
-		}
-
 		HT_ASSERT( BYTE_COUNT( frameData.views ) == thisVFrame.viewData.sizeInBytes );
 		std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
+		ht_stretchybuff<gpu_mesh> gpuMeshTable = HtNewStretchyBuffFromMem<gpu_mesh>(
+			thisVFrame.gpuMeshTable.hostVisible, thisVFrame.gpuMeshTable.sizeInBytes );
 		// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accessed anyways
-		HT_ASSERT( std::size( renderables ) * sizeof( gpu_mesh ) <= thisVFrame.gpuMeshTable.sizeInBytes );
+		HT_ASSERT( std::size( rendererComponents ) <= gpuMeshTable.capacity() );
 
-		std::memset( thisVFrame.gpuMeshTable.hostVisible, 0, thisVFrame.gpuMeshTable.sizeInBytes );
-		gpu_mesh* pDstGpuMesh = ( gpu_mesh* ) thisVFrame.gpuMeshTable.hostVisible;
-
-		for( u64 si = 0; si < std::size( renderables.items ); ++si )
+		for( const ht_mesh_component& component : rendererComponents.items )
 		{
-			if( slot_buffer<ht_mesh_component>::IsDeadSlot( renderables.items[ si ] ) )
+			gpu_mesh gpuMesh = {};
+			if( !slot_vector<ht_mesh_component>::IsDeadSlot( component ) )
 			{
-				continue;
+				gpuMesh = component.desc;
 			}
-			pDstGpuMesh[ si ] = renderables.items[ si ].desc;
+			gpuMeshTable.push_back( gpuMesh );
 		}
 
-		HT_ASSERT( std::size( frameData.instances ) * sizeof( instance_desc ) <= thisVFrame.gpuInstances.sizeInBytes );
+		ht_stretchybuff<gpu_instance> gpuInstList = HtNewStretchyBuffFromMem<gpu_instance>(
+			thisVFrame.gpuInstances.hostVisible, thisVFrame.gpuInstances.sizeInBytes );
+		HT_ASSERT( std::size( frameData.instances ) <= gpuInstList.capacity() );
 
-		u32 numValidInstances = 0;
-		instance_desc* pDstGpuInst = ( instance_desc* ) thisVFrame.gpuInstances.hostVisible;
-		for( const gpu_instance& sceneNode : frameData.instances )
+		for( const instance_desc& sceneNode : frameData.instances )
 		{
 			mesh_hndl32 hMesh = std::bit_cast<mesh_hndl32>( sceneNode.meshIdx );
-			if( IsStructZero( renderables[ hMesh ] ) )
+			if( IsStructZero( rendererComponents[ hMesh ] ) )
 			{
 				continue;
 			}
-			pDstGpuInst[ numValidInstances ] = {
+			gpuInstList.push_back( {
 				.toWorld = sceneNode.transform,
 				.meshIdx = hMesh.slotIdx
 				//.mtrlIdx =
-			};
-			numValidInstances++;
+			} );
 		}
 
-		return numValidInstances;
+		return std::size( gpuInstList );
 	}
 
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
@@ -1607,110 +1596,92 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	pbrSamplerIdx	= pVkCtx->AllocDescriptorIdx( { pbrSampler } );
 }
 
-void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUploads, virtual_arena& arena )
+HRNDMESH32 renderer_context::AllocMeshComponent( const hellpack_mesh_asset& mesh )
 {
-	stack_adaptor vaStack = { arena };
+	byte_view mltAsBytes = AsBytes( mesh.meshlets );
+	byte_view vtxAsBytes = AsBytes( mesh.vertices );
+	byte_view triAsBytes = AsBytes( mesh.triangles );
+
+	HT_ASSERT( std::size( mltAsBytes ) );
+	HT_ASSERT( std::size( vtxAsBytes ) );
+	HT_ASSERT( std::size( triAsBytes ) );
+
+	offset_alloc_t mltAlloc	= meshletAllocator.Alloc( ( u32 ) std::size( mltAsBytes ) );
+	offset_alloc_t vtxAlloc	= vtxAllocator.Alloc( ( u32 ) std::size( vtxAsBytes ) );
+	offset_alloc_t triAlloc	= triAllocator.Alloc( ( u32 ) std::size( triAsBytes ) );
+
+	// NOTE: this MUST be in elements bc we use it on the gpu as such
+	gpu_mesh gpuMesh = {
+		.minAabb		= mesh.aabbMin,
+		.maxAabb		= mesh.aabbMax,
+		.meshletOffset	= mltAlloc.offset / mesh.meshlets.STRIDE,
+		.vtxOffset		= vtxAlloc.offset / mesh.vertices.STRIDE,
+		.triOffset		= triAlloc.offset / mesh.triangles.STRIDE,
+		.meshletCount	= ( u32 ) std::size( mesh.meshlets ),
+		.vtxCount		= ( u32 ) std::size( mesh.vertices ),
+		.triCount		= ( u32 ) std::size( mesh.triangles ) // NOTE: in this particular case it will double as byte count too
+	};
+
+	ht_mesh_component htMesh = { .desc = gpuMesh, .mltAlloc = mltAlloc, .vtxAlloc = vtxAlloc, .triAlloc = triAlloc };
+
+	return std::bit_cast<u32>( rendererComponents.PushEntry( htMesh ) );
+}
+
+void renderer_context::UploadMeshes(
+	HJOBFENCE32							hRndUpload,
+	std::span<const mesh_upload_req>	meshUploadReqs,
+	virtual_arena&						arena
+) {
+	stack_adaptor<virtual_arena> vaStack = { arena };
 
 	ht_stretchybuff<u8> stagingScratch = HtNewStretchyBuffFromMem<u8>( stagingBuff.hostVisible, stagingBuff.sizeInBytes  );
 
-	std::pmr::vector<renderer_upload_resp> meshesBuff{ &vaStack };
-	meshesBuff.reserve( std::size( meshUploads ) );
+	u64 barrierCount = std::size( meshUploadReqs ) * 3;
+	u64 copyCmdCount = std::size( meshUploadReqs );
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &vaStack };
-	buffInitCpyBarriers.reserve( std::size( meshUploads ) * 3 );
-	// TODO: add some guards for stack frame overflow
+	buffInitCpyBarriers.reserve( barrierCount );
+
 	std::pmr::vector<VkBufferCopy2> mltRegionCopies{ &vaStack };
-	mltRegionCopies.reserve( std::size( meshUploads ) );
+	mltRegionCopies.reserve( copyCmdCount );
 	std::pmr::vector<VkBufferCopy2> vtxRegionCopies{ &vaStack };
-	vtxRegionCopies.reserve( std::size( meshUploads ) );
+	vtxRegionCopies.reserve( copyCmdCount );
 	std::pmr::vector<VkBufferCopy2> triRegionCopies{ &vaStack };
-	triRegionCopies.reserve( std::size( meshUploads ) );
+	triRegionCopies.reserve( copyCmdCount );
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &vaStack };
-	buffEndCpyBarriers.reserve( std::size( meshUploads ) * 3 );
+	buffEndCpyBarriers.reserve( barrierCount );
 
-	for( const mesh_upload_req& meshUpload : meshUploads )
+	auto CopyScaffoldingLambda = [ & ] (
+		const vk_buffer&					dstBuff,
+		std::pmr::vector<VkBufferCopy2>&	regionCopies,
+		byte_view							bytesSrc,
+		u32									dstOffsetInBytes
+	){
+		u64 srcOffsetInBytes = std::size( stagingScratch );
+		stagingScratch.append_range( bytesSrc );
+
+		u64 payloadSizeInBytes = std::size( bytesSrc );
+
+		buffInitCpyBarriers.push_back( VkMakeBufferBarrier( dstBuff.hndl, 0, 0,
+			VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+			dstOffsetInBytes, payloadSizeInBytes ) );
+
+		regionCopies.push_back( MakeVkBufferCopy2( srcOffsetInBytes, dstOffsetInBytes, payloadSizeInBytes ) );
+
+		buffEndCpyBarriers.push_back( VkMakeBufferBarrier( dstBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+			VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
+			dstOffsetInBytes, payloadSizeInBytes,
+			pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
+	};
+
+	for( const mesh_upload_req& meshUpload : meshUploadReqs )
 	{
-		const hellpack_mesh_asset& mesh = meshUpload.htAsset;
+		const ht_mesh_component& htMesh = rendererComponents[ ( mesh_hndl32 ) meshUpload.hSlot ];
 
-		byte_view mltAsBytes = AsBytes( mesh.meshlets );
-		byte_view vtxAsBytes = AsBytes( mesh.vertices );
-		byte_view triAsBytes = AsBytes( mesh.triangles );
-
-		HT_ASSERT( std::size( mltAsBytes ) );
-		HT_ASSERT( std::size( vtxAsBytes ) );
-		HT_ASSERT( std::size( triAsBytes ) );
-
-		offset_alloc_t mltAlloc	= meshletAllocator.Alloc( ( u32 ) std::size( mltAsBytes ) );
-		offset_alloc_t vtxAlloc	= vtxAllocator.Alloc( ( u32 ) std::size( vtxAsBytes ) );
-		offset_alloc_t triAlloc	= triAllocator.Alloc( ( u32 ) std::size( triAsBytes ) );
-
-
-		// NOTE: this MUST be in elements bc we use it on the gpu as such
-		gpu_mesh gpuMesh = {
-			.minAabb		= mesh.aabbMin,
-			.maxAabb		= mesh.aabbMax,
-			.meshletOffset	= mltAlloc.offset / TypedViewStrideSizeInBytes( mesh.meshlets ),
-			.vtxOffset		= vtxAlloc.offset / TypedViewStrideSizeInBytes( mesh.vertices ),
-			.triOffset		= triAlloc.offset / TypedViewStrideSizeInBytes( mesh.triangles ),
-			.meshletCount	= ( u32 ) std::size( mesh.meshlets ),
-			.vtxCount		= ( u32 ) std::size( mesh.vertices ),
-			.triCount		= ( u32 ) std::size( mesh.triangles ) // NOTE: in this particular case it will double as byte count too
-		};
-		gpu_mesh_allocation gpuMeshAlloc = { .meshletAlloc = mltAlloc, .vtxAlloc = vtxAlloc, .triAlloc = triAlloc };
-
-		meshesBuff.emplace_back( gpuMesh, gpuMeshAlloc, meshUpload.hSlot, upload_t::MESH );
-
-		{
-			u64 offsetInBytes = std::size( stagingScratch );
-			stagingScratch.append_range( mltAsBytes );
-
-			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuMeshletBuff.hndl, 0, 0,
-				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-				mltAlloc.offset, std::size( mltAsBytes ) ) );
-
-			mltRegionCopies.push_back(
-				MakeVkBufferCopy2(offsetInBytes, mltAlloc.offset, std::size( mltAsBytes ) ) );
-
-			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuMeshletBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
-				mltAlloc.offset, std::size( mltAsBytes ),
-				pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
-		}
-
-		{
-			u64 offsetInBytes = std::size( stagingScratch );
-			stagingScratch.append_range( vtxAsBytes );
-
-			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuVtxBuff.hndl, 0, 0,
-				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-				vtxAlloc.offset, std::size( vtxAsBytes ) ) );
-
-			vtxRegionCopies.push_back(
-				MakeVkBufferCopy2(offsetInBytes, vtxAlloc.offset, std::size( vtxAsBytes ) ) );
-
-			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuVtxBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
-				vtxAlloc.offset, std::size( vtxAsBytes ), pVkCtx->copyQueue.familyIdx,
-				pVkCtx->gfxQueue.familyIdx ) );
-		}
-
-		{
-			u64 offsetInBytes = std::size( stagingScratch );
-			stagingScratch.append_range( triAsBytes );
-
-			buffInitCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuTriBuff.hndl, 0, 0,
-				VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-				triAlloc.offset, std::size( triAsBytes ) ) );
-
-			triRegionCopies.push_back(
-				MakeVkBufferCopy2(offsetInBytes, triAlloc.offset, std::size( triAsBytes ) ) );
-
-			buffEndCpyBarriers.push_back( VkMakeBufferBarrier( megaGpuTriBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-				VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
-				triAlloc.offset, std::size( triAsBytes ),
-				pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
-		}
+		CopyScaffoldingLambda( megaGpuMeshletBuff, mltRegionCopies, meshUpload.mltAsBytes, htMesh.mltAlloc.offset );
+		CopyScaffoldingLambda( megaGpuVtxBuff, vtxRegionCopies, meshUpload.vtxAsBytes, htMesh.vtxAlloc.offset );
+		CopyScaffoldingLambda( megaGpuTriBuff, triRegionCopies, meshUpload.triAsBytes, htMesh.triAlloc.offset );
 	}
 
 	vk_cmd_pool_buff copyCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
@@ -1732,7 +1703,7 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 	vk_command_buffer gfxCmdBuff = { gfxCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &vaStack };
-	buffTransferOwnershipBarriers.reserve( std::size( meshUploads ) * 3 );
+	buffTransferOwnershipBarriers.reserve( barrierCount );
 
 	for( const VkBufferMemoryBarrier2& barr : buffEndCpyBarriers )
 	{
@@ -1752,15 +1723,7 @@ void renderer_context::UploadMeshes( std::span<const mesh_upload_req> meshUpload
 		.stageMask	= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 
-	VkFence fence = pVkCtx->GetOrCreateFence();
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCB, waitCpyDone, {}, fence );
-
-	pVkCtx->FenceWaitBlocking( fence );
-
-	for( const renderer_upload_resp& mesh : meshesBuff )
-	{
-		HT_ASSERT( copyToMainQueue.TryPush( mesh ) );
-	}
+	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCB, waitCpyDone, {}, jobFences[ ( fence_hndl32 ) hRndUpload ] );
 }
 
 void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )

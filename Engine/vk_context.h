@@ -280,7 +280,7 @@ struct vk_context
 		return VK_SUCCESS;
 	}
 
-	inline VkFence GetOrCreateFence()
+	inline VkFence AllocFence()
 	{
 		if( std::size( copyFencesPool ) != 0 )
 		{
@@ -289,7 +289,7 @@ struct vk_context
 			return fence;
 		}
 
-		VkFenceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, };
+		VkFenceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 
 		VkFence fence;
 		vkCreateFence( device, &ci, NULL, &fence );
@@ -297,13 +297,16 @@ struct vk_context
 		return fence;
 	}
 
-	inline void FenceWaitBlocking( VkFence vkFence )
+	inline bool FenceWaitAndResetOnDone( VkFence vkFence, u64 timeoutNanosecs )
 	{
-		VkResult vkRes = vkWaitForFences( device, 1, &vkFence, VK_TRUE, UINT64_MAX );
+		VkResult vkRes = vkWaitForFences( device, 1, &vkFence, VK_TRUE, timeoutNanosecs );
+		if( VK_TIMEOUT == vkRes ) return false;
+
 		HT_ASSERT( vkRes < VK_TIMEOUT );
 		vkResetFences( device, 1, &vkFence );
 
 		copyFencesPool.push_back( vkFence );
+		return true;
 	}
 
 	inline void HostTransitionImageLayout( const VkHostImageLayoutTransitionInfo* transitions, u32 transitionCount ) const

@@ -81,7 +81,7 @@ struct vertex
 };
 
 // TODO: compress data more ?
-struct instance_desc
+struct gpu_instance
 {
 	packed_trs	toWorld;
 	u32			meshIdx;

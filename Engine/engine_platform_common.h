@@ -12,6 +12,7 @@
 
 // TODO: maybe make ht_engine_systems.h ?
 #include "ht_mtx_queue.h"
+#include "ht_stretchybuff.h"
 
 struct virtual_arena;
 struct sys_semaphore;
@@ -48,10 +49,12 @@ struct job_system_ctx
 
 struct renderer_interface
 {
-    virtual void		InitBackend( u64 hInst, u64 hWnd ) = 0;
-    virtual HRNDMESH32	AllocMeshComponent() = 0;
-    virtual void		UploadMeshes( std::span<const mesh_upload_req> meshAssets, virtual_arena& arena ) = 0;
-    virtual void		HostFrames( const frame_data& frameData, gpu_data& gpuData ) = 0;
+    virtual void		    InitBackend( u64 hInst, u64 hWnd ) = 0;
+    virtual HRNDMESH32	    AllocMeshComponent( const hellpack_mesh_asset& ) = 0;
+    virtual HJOBFENCE32     AllocJobFence() = 0;
+    virtual bool            PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) = 0;
+    virtual void		    UploadMeshes( HJOBFENCE32, std::span<const mesh_upload_req>, virtual_arena& ) = 0;
+    virtual void		    HostFrames( const frame_data&, gpu_data& ) = 0;
 };
 
 std::unique_ptr<renderer_interface> MakeRenderer();

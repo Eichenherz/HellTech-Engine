@@ -26,7 +26,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		if( !instanceIsOccluded ) return;
 	}
 
-	instance_desc currentInst = BufferLoad<instance_desc>( pushBlock.instDescIdx, instId );
+	gpu_instance currentInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, instId );
 	float4x4 toWorld = TrsToFloat4x4( currentInst.toWorld.t, currentInst.toWorld.r, currentInst.toWorld.s );
 
 	gpu_mesh currentMesh = BufferLoad<gpu_mesh>( pushBlock.meshDescIdx, currentInst.meshIdx );

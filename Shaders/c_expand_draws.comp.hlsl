@@ -29,14 +29,14 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
 
     u32 globalOffset = waveBase + laneOffset;
 
-    instance_desc inst_desc = BufferLoad<instance_desc>( pushBlock.instDescIdx, thisVisInstance.instId );
+    gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, thisVisInstance.instId );
     for( u32 mlti = 0; mlti < meshletCount; ++mlti )
     {
         device_addr<gpu_meshlet> ptr = { gGlobData.mltAddr };
         gpu_meshlet currentMeshlet = ptr[ mlti + thisVisInstance.meshletOffset ];
 
         visible_meshlet visMeshlet = {
-            inst_desc.toWorld,
+            inst.toWorld,
             currentMeshlet.vtxOffset + thisVisInstance.vtxOffset,
             currentMeshlet.triOffset + thisVisInstance.triOffset,
             currentMeshlet.vtxCount,
