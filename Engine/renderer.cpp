@@ -13,7 +13,7 @@
 
 #include "ht_core_types.h"
 #include "ht_utils.h"
-#include "sys_os_api.h"
+#include "engine_platform_common.h"
 
 #include "vk_error.h"
 #include "vk_resources.h"
@@ -24,12 +24,16 @@
 
 #include "ht_fixed_vector.h"
 #include "ht_fixed_string.h"
+#include "ht_slot_buffer.h"
 
 #include "engine_types.h"
 
 #include "ht_geometry.h"
 #include "ht_math.h"
 #include <imgui.h>
+
+// TODO: move sys_file to HtLib too ?
+#include "ht_file.h"
 
 #include <DirectXPackedVector.h>
 
@@ -343,9 +347,9 @@ imgui_pass MakeImguiPass( vk_context& dc, VkFormat colDstFormat )
 	VK_CHECK( vkCreateDescriptorUpdateTemplate( dc.device, &templateInfo, 0, &descTemplate ) );
 
 	unique_shader_ptr vtx = dc.CreateShaderFromSpirv( 
-		SysReadFile( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
+		ReadFileBinary( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
 	unique_shader_ptr frag = dc.CreateShaderFromSpirv( 
-		SysReadFile( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
+		ReadFileBinary( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
 
 	vk_gfx_pso_config guiState = {
 		.polyMode				= VK_POLYGON_MODE_FILL,
@@ -411,8 +415,8 @@ struct debug_draw_passes
 	{
 		if constexpr( false )
 		{
-			unique_shader_ptr vtx = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
-			unique_shader_ptr frag = dc.CreateShaderFromSpirv( SysReadFile( "Shaders/f_pass_col.frag.spv" ) );
+			unique_shader_ptr vtx = dc.CreateShaderFromSpirv( ReadFileBinary( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
+			unique_shader_ptr frag = dc.CreateShaderFromSpirv( ReadFileBinary( "Shaders/f_pass_col.frag.spv" ) );
 
 			static_assert( worldLeftHanded );
 
@@ -460,7 +464,8 @@ struct debug_draw_passes
 				.usage			= buffer_usage::GPU_ONLY } );
 		}
 
-		unique_shader_ptr comp = dc.CreateShaderFromSpirv( SysReadFile( "bin/SpirV/compute_LambertianClayCsMain.spirv" ) );
+		unique_shader_ptr comp = dc.CreateShaderFromSpirv(
+			ReadFileBinary( "bin/SpirV/compute_LambertianClayCsMain.spirv" ) );
 		compLambertianClay = dc.CreateComputePipeline( *comp );
 	}
 
@@ -600,18 +605,18 @@ struct culling_pass
 
 	void Init( vk_context& dc )
 	{
-		unique_shader_ptr instCull = dc.CreateShaderFromSpirv( SysReadFile( "bin/SpirV/compute_DrawCullCsMain.spirv" ) );
+		unique_shader_ptr instCull = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/compute_DrawCullCsMain.spirv" ) );
 		instCullPass = dc.CreateComputePipeline( *instCull );
 
-		unique_shader_ptr instExp = dc.CreateShaderFromSpirv( SysReadFile( "bin/SpirV/compute_ExpandDrawsCsMain.spirv" ) );
+		unique_shader_ptr instExp = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/compute_ExpandDrawsCsMain.spirv" ) );
 		instExpansionPass = dc.CreateComputePipeline( *instExp );
 
 		unique_shader_ptr dispatcher = dc.CreateShaderFromSpirv(
-			SysReadFile( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv" ) );
+			ReadFileBinary( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv" ) );
 		indirectDispatchPass = dc.CreateComputePipeline( *dispatcher );
 
 		unique_shader_ptr clusterCull = dc.CreateShaderFromSpirv(
-			SysReadFile( "bin/SpirV/compute_IssueMeshletDrawsCsMain.spirv" ) );
+			ReadFileBinary( "bin/SpirV/compute_IssueMeshletDrawsCsMain.spirv" ) );
 		clusterCullPipe = dc.CreateComputePipeline( *clusterCull );
 
 		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
@@ -854,11 +859,11 @@ struct tone_mapping_pass
 	void Init( vk_context& dc )
 	{
 		unique_shader_ptr avgLum = dc.CreateShaderFromSpirv( 
-			SysReadFile( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
+			ReadFileBinary( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
 		compAvgLumPipe = dc.CreateComputePipeline( *avgLum );
 
 		unique_shader_ptr toneMapper = dc.CreateShaderFromSpirv( 
-			SysReadFile( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
+			ReadFileBinary( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
 		compTonemapPipe = dc.CreateComputePipeline( *toneMapper );
 
 		VkBufferUsageFlags usageFlags = 
@@ -978,7 +983,7 @@ struct depth_pyramid_pass
 	void Init( vk_context& vkCtx )
 	{
 		unique_shader_ptr downsampler = vkCtx.CreateShaderFromSpirv( 
-			SysReadFile( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
+			ReadFileBinary( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
 		pipeline = vkCtx.CreateComputePipeline( *downsampler );
 
 		u16 squareDim	= 512;
@@ -1151,8 +1156,8 @@ struct vbuffer_pass
 		colSrv = dc.AllocDescriptorIdx( { colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
 		{
-			unique_shader_ptr vtx = dc.CreateShaderFromSpirv( SysReadFile( "bin/SpirV/vertex_VBufferVsMain.spirv" ) );
-			unique_shader_ptr frag = dc.CreateShaderFromSpirv( SysReadFile( "bin/SpirV/pixel_VBufferPsMain.spirv" ) );
+			unique_shader_ptr vtx = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_VBufferVsMain.spirv" ) );
+			unique_shader_ptr frag = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_VBufferPsMain.spirv" ) );
 
 			vk_gfx_pso_config vbuffState = {
 				.polyMode			= VK_POLYGON_MODE_FILL,
@@ -1172,7 +1177,7 @@ struct vbuffer_pass
 		}
 		{
 			unique_shader_ptr comp = dc.CreateShaderFromSpirv(
-				SysReadFile( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv" ) );
+				ReadFileBinary( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv" ) );
 			compDbgHashTriToScPipeline = dc.CreateComputePipeline( *comp );
 		}
 	}
@@ -1415,8 +1420,7 @@ struct renderer_context final : renderer_interface
 {
 	using mesh_hndl32 = slot_buffer<ht_mesh_component>::hndl32;
 
-	alignas( 8 ) vk_renderer_config         config = {
-		.renderWidth = SCREEN_WIDTH, .renderHeight = SCREEN_HEIGHT };
+	alignas( 8 ) vk_renderer_config         config = {};
 
 	vk_rsc_state_tracker					rscStateTracker;
 
@@ -1526,6 +1530,8 @@ std::unique_ptr<renderer_interface> MakeRenderer()
 
 void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 {
+	config = { .renderWidth = SCREEN_WIDTH, .renderHeight = SCREEN_HEIGHT };
+
 	pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, config ) );
 
 	globalData = pVkCtx->CreateBuffer( {

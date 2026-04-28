@@ -34,6 +34,24 @@ i64 SysAtomicWaitOnAddr( ht_atomic64& signal, void* compareAddr, u32 millisecs )
 	WaitOnAddress( &signal, compareAddr, sizeof( signal ), millisecs );
 	return InterlockedAddAcquire64( &signal, 0 );
 }
+
+sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( NULL, 0, LONG_MAX, NULL ) }
+{
+	WIN_CHECK( NULL != ( HANDLE ) hndl );
+}
+
+u32 SysSemaphoreRelease( sys_semaphore sema, u32 releaseVal )
+{
+	u32 prevCount = 0;
+	WIN_CHECK( ReleaseSemaphore( ( HANDLE ) sema.hndl, releaseVal, ( LPLONG ) &prevCount ) );
+	return prevCount;
+}
+void SysSemaphoreWait( sys_semaphore sema, u32 millisecs )
+{
+	// TODO: might wanna do more stuff based on retval
+	WIN_CHECK( WAIT_FAILED != WaitForSingleObject( ( HANDLE ) sema.hndl, millisecs ) );
+}
+
 // ===============================================================================================================
 
 // ===============================================================================================================

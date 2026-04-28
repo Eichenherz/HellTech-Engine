@@ -3,8 +3,6 @@
 
 #include "ht_core_types.h"
 #include <span>
-#include <string_view>
-#include <memory>
 
 // TODO: add more stuff as needed
 enum file_permissions_bits : u64
@@ -51,8 +49,6 @@ struct mmap_file
 };
 
 using PfnDestroyMmapFile = void(*)( mmap_file* );
-
-using unique_mmap_file = std::unique_ptr<mmap_file, PfnDestroyMmapFile>;
 
 mmap_file SysCreateMmapFile(
 	const char*				path,

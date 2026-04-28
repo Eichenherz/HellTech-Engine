@@ -44,5 +44,17 @@ void SysAtomicSignalSingleThread( ht_atomic64& signal, sys_thread_signal val );
 // TODO: rethink
 i64 SysAtomicWaitOnAddr( ht_atomic64& signal, void* undesiredVal, u32 millisecs );
 
+struct sys_semaphore
+{
+    const u64 hndl;
+
+    sys_semaphore();
+};
+
+static_assert( sizeof( sys_semaphore ) <= sizeof( u64 ) );
+
+u32 SysSemaphoreRelease( sys_semaphore sema, u32 releaseVal );
+void SysSemaphoreWait( sys_semaphore sema, u32 millisecs );
+
 #endif // !__SYS_SYNC_H__
 

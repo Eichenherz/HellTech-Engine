@@ -5,7 +5,9 @@
 
 #include "ht_core_types.h"
 #include "System/sys_sync.h"
+
 #include <array>
+#include <mutex>
 
 template<typename T, u64 N>
 struct fixed_storage_policy
