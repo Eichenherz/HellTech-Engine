@@ -22,26 +22,6 @@
 
 constexpr u64 DEFAULT_SAMPLER_IDX = 0;
 
-inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs parent, packed_trs child )
-{
-	using namespace DirectX;
-
-	XMVECTOR parentT = XMLoadFloat3( &parent.t );
-	XMVECTOR parentR = XMLoadFloat4( &parent.r );
-	XMVECTOR parentS = XMLoadFloat3( &parent.s );
-
-	XMVECTOR childT = XMLoadFloat3( &child.t );
-	XMVECTOR childR = XMLoadFloat4( &child.r );
-	XMVECTOR childS = XMLoadFloat3( &child.s );
-
-	float3 outS = DX_XMStoreFloat3( XMVectorMultiply( parentS, childS ) );
-	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( parentR, childR ) );
-	XMVECTOR transfT = XMVector3Rotate( XMVectorMultiply( childT, parentS ), parentR );
-	float3 outT = DX_XMStoreFloat3( XMVectorAdd( parentT, transfT ) );
-
-	return { .t = outT, .r = outR, .s = outS };
-}
-
 
 struct gltf_raw_attr_stream
 {
@@ -123,38 +103,37 @@ concept TinyGltfTextureInfoConcept = requires( T a ) {
 
 struct gltf_texture
 {
-	i32 imageIdx = -1;
-	i32 samplerIdx = -1;
+	i32 imageIdx	= -1;
+	i32 samplerIdx	= -1;
 };
 
 // NOTE: gltf matrices are col maj, right-handed
 inline DirectX::XMMATRIX GetMatrix( std::span<const double> mIn )
 {
 	using namespace DirectX;
-	XMMATRIX m = XMMatrixSet(
-		( float ) mIn[ 0 ],	 ( float ) mIn[ 1 ],  ( float ) mIn[ 2 ],  ( float ) mIn[ 3 ],
-		( float ) mIn[ 4 ],	 ( float ) mIn[ 5 ],  ( float ) mIn[ 6 ],  ( float ) mIn[ 7 ],
-		( float ) mIn[ 8 ],	 ( float ) mIn[ 9 ],  ( float ) mIn[ 10 ], ( float ) mIn[ 11 ],
-		( float ) mIn[ 12 ], ( float ) mIn[ 13 ], ( float ) mIn[ 14 ], ( float ) mIn[ 15 ]
-	);
-
-	return XMMatrixTranspose( m );
+	XMMATRIX m = {};
+	m.r[ 0 ] = XMVectorSet( ( float ) mIn[ 0 ], ( float ) mIn[ 4 ], ( float ) mIn[ 8 ], ( float ) mIn[ 12 ] );
+	m.r[ 1 ] = XMVectorSet( ( float ) mIn[ 1 ], ( float ) mIn[ 5 ], ( float ) mIn[ 9 ], ( float ) mIn[ 13 ] );
+	m.r[ 2 ] = XMVectorSet( ( float ) mIn[ 2 ], ( float ) mIn[ 6 ], ( float ) mIn[ 10 ], ( float ) mIn[ 14 ] );
+	m.r[ 3 ] = XMVectorSet( ( float ) mIn[ 3 ], ( float ) mIn[ 7 ], ( float ) mIn[ 11 ], ( float ) mIn[ 15 ] );
+	return m;
 }
+
 inline packed_trs GetTrsFromNode( const tinygltf::Node& node )
 {
 	using namespace DirectX;
 
-	XMVECTOR xmT = XMVectorSet( 0, 0, 0, 0 );
-	XMVECTOR xmR = XMVectorSet( 0, 0, 0, 1 );
-	XMVECTOR xmS = XMVectorSet( 1, 1, 1, 0 );
+	XMVECTOR xmT = XMVectorSet( 0.0f, 0.0f, 0.0f, 0.0f );
+	XMVECTOR xmR = XMVectorSet( 0.0f, 0.0f, 0.0f, 1.0f );
+	XMVECTOR xmS = XMVectorSet( 1.0f, 1.0f, 1.0f, 0.0f );
 	if( std::size( node.matrix ) == 16 )
 	{
 		XMMATRIX m = GetMatrix( node.matrix );
 		if( !XMMatrixDecompose( &xmS, &xmR, &xmT, m ) )
 		{
-			xmT = XMVectorSet( 0, 0, 0, 0 );
-			xmR = XMVectorSet( 0, 0, 0, 1 );
-			xmS = XMVectorSet( 1, 1, 1, 0 );
+			xmT = XMVectorSet( 0.0f, 0.0f, 0.0f, 0.0f );
+			xmR = XMVectorSet( 0.0f, 0.0f, 0.0f, 1.0f );
+			xmS = XMVectorSet( 1.0f, 1.0f, 1.0f, 0.0f );
 		}
 
 	}
@@ -317,52 +296,41 @@ struct gltf_loader
 		return normalized;
 	}
 
+	struct __gltf_node
+	{
+		packed_trs	parentTRS;
+		i32			nodeIdx = -1;
+	};
+	// NOTE: gltf hierarchy is a forest not a graph
 	std::vector<raw_node> ProcessNodes() const
 	{
 		const std::vector<tinygltf::Node>& nodes = model.nodes;
 
-		struct queued_node
-		{
-			packed_trs	parentTRS;
-			u32			nodeIdx;
-		};
-		std::vector<queued_node> nodeQueue;
-		// NOTE: we need this bc our tree is flattened
-		std::vector<bool> visited( std::size( nodes ), false );
+		std::vector<__gltf_node> nodeStack;
 
 		std::vector<raw_node> flatNodes;
 		flatNodes.reserve( std::size( nodes ) );
 
-		for( u32 nodeIdx = 0; nodeIdx < std::size( nodes ); ++nodeIdx )
+		for( i32 rootNodeIdx : model.scenes[ 0 ].nodes )
 		{
-			if( visited[ nodeIdx ] ) continue;
+			nodeStack.push_back( { .parentTRS = IDENTITY_TRS, .nodeIdx = rootNodeIdx } );
+		}
 
-			const tinygltf::Node& n = nodes[ nodeIdx ];
+		while( std::size( nodeStack ) > 0 )
+		{
+			__gltf_node curr = nodeStack.back();
+			nodeStack.pop_back();
 
-			constexpr packed_trs identityTrs ={
-				.t = {},
-				.r={ 0.0f, 0.0f, 0.0f, 1.0f },
-				.s={ 1.0f, 1.0f, 1.0f }
-			};
+			const tinygltf::Node& currentNode = nodes[ curr.nodeIdx ];
 
-			nodeQueue.push_back( { identityTrs, nodeIdx } );
-			while( std::size( nodeQueue ) > 0 )
+			packed_trs currentTrs = GetTrsFromNode( currentNode );
+
+			packed_trs trs = XMComposePackedTRS( curr.parentTRS, currentTrs );
+			flatNodes.push_back( { trs, currentNode.mesh } );
+
+			for( i32 childNodeIdx : currentNode.children )
 			{
-				queued_node curr = nodeQueue.back();
-				nodeQueue.pop_back();
-
-				const tinygltf::Node& currentNode = nodes[ curr.nodeIdx ];
-
-				packed_trs currentTrs = GetTrsFromNode( currentNode );
-
-				packed_trs parentTrs = XMComposePackedTRS( curr.parentTRS, currentTrs );
-				flatNodes.push_back( { parentTrs, ( u32 ) currentNode.mesh } );
-				visited[ curr.nodeIdx ] = true;
-
-				for( u32 childNodeIdx : currentNode.children )
-				{
-					nodeQueue.push_back( { parentTrs, childNodeIdx } );
-				}
+				nodeStack.push_back( { .parentTRS = trs, .nodeIdx = childNodeIdx } );
 			}
 		}
 
@@ -383,6 +351,9 @@ struct gltf_loader
 		{
 			for( const tinygltf::Primitive& primMesh : m.primitives )
 			{
+				// NOTE: we only handle triangle geom for now
+				HT_ASSERT( TINYGLTF_MODE_TRIANGLES == primMesh.mode );
+
 				std::vector<u32> normalizedIndexBuffer;
 				if( -1 != primMesh.indices )
 				{

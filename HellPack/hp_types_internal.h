@@ -98,7 +98,7 @@ struct packed_trs;
 struct raw_node
 {
 	packed_trs	toWorld;
-	u32			meshIdx;
+	i32			meshIdx;
 };
 
 #endif // !__HP_TYPES_INTERNAL_H__

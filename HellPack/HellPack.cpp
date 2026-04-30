@@ -528,20 +528,21 @@ i32 main( i32 argc, char** argv  )
 	{
 		if( !IsIndexValid( n.meshIdx ) ) continue;
 
-		const raw_mesh& mesh = rawMeshes[ n.meshIdx ];
+		const raw_mesh& mesh = rawMeshes[ ( u32 ) n.meshIdx ];
 
 		vfs_path assetPath = { "{}{}.mesh", HELLPACK_MESH_DIR, std::data( mesh.name ) };
 
-		if( meshAssetMap.contains( assetPath ) ) continue;
+		if( !meshAssetMap.contains( assetPath ) )
+		{
+			// NOTE: it moves stuff
+			raw_mesh validatedRawMesh = ValidateAndNormalizeRawMesh( mesh );
+			mesh_asset meshAsset = HpkMakeMeshAssetFromMeshlets( validatedRawMesh );
 
-		// NOTE: it moves stuff
-		raw_mesh validatedRawMesh = ValidateAndNormalizeRawMesh( mesh );
-		mesh_asset meshAsset = HpkMakeMeshAssetFromMeshlets( validatedRawMesh );
-		
-		meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
+			meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
+		}
 
 		worldNodes.push_back( {
-			.toWorld		= n.toWorld,
+			.toWorld		= { .t = n.toWorld.t, .pad0 = 0, .r = n.toWorld.r, .s = n.toWorld.s, .pad1 = 0 },
 			.meshHash		= std::hash<vfs_path>{}( assetPath ),
 			.materialIdx	= ( u16 ) mesh.materialIdx // NOTE: these should match 1:1 with ours
 		} );
