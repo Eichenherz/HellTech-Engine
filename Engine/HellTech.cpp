@@ -189,10 +189,12 @@ struct helltech final : helltech_interface
 	gpu_data							gpuData			= {};
 
 	im_gui_ctx							imGuiCtx		= {};
-	std::vector<imgui_window>			imguiWnds;
+	// TODO: no vector
+	std::vector<imgui_window>			imguiWnds		= {};
 
 	ht_engine_stats						engineStats		= {};
-
+	renderer_dbg_draw					rndDbgFlags		= {};
+	// TODO: no vector
 	std::vector<instance_desc>			drawables		= {};
 	// TODO: don't use unique ptr
 	std::unique_ptr<renderer_interface> pRenderer		= {};
@@ -275,18 +277,18 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 		.flags	= ImGuiWindowFlags_NoScrollbar
 	} );
 
-		// {
-		//	.widgets = {
-		//		imgui_widget {
-		//			.name	= "Load HPK",
-		//			.Action = ImGuiLoadFileAction,
-		//			.type	= imgui_widget_type::BUTTON
-		//	    }
-		//	},
-		//	.name	= "##bnt_load_hpk",
-		//	.flags	= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
-		//	ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse
-		//} );
+	imguiWnds.push_back( {
+		.widgets = {
+			imgui_widget {
+				.name = " VBuffer",
+				.pData = &rndDbgFlags.vBuff,
+				.Action = nullptr,
+				.type = imgui_widget_type::CHECKBOX
+			}
+		},
+		.name	= "Renderer Dbg Modes",
+		.flags	= ImGuiWindowFlags_NoScrollbar
+	} );
 
 	// TODO: vfs
 	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
@@ -415,20 +417,19 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		}
 	}
 
-	// here we assemble the drawables instances
+	// here we must the drawables instances
+
+	engineStats = { .gpuMs = 0.0f, .cpuFrameMs = ( float )( elapsedTime * 1000.0 ) };
+
+	ImGuiRenderUI( imguiWnds );
 
 	frame_data frameData = {
 		.views 			= views,
 		.instances 		= drawables,
 		.frustTransf	= DX_XMStoreFloat4x4( frustMat ),
 		.elapsedSeconds = ( float ) elapsedTime,
-		.freezeMainView = inputState.keyStates[ HT_SC_F ],
-		.dbgDraw		= inputState.keyStates[ HT_SC_O ]
+		.dbgDrawFlags	= rndDbgFlags
 	};
-
-	engineStats = { .gpuMs = 0.0f, .cpuFrameMs = ( float )( elapsedTime * 1000.0 ) };
-
-	ImGuiRenderUI( imguiWnds );
 
 	pRenderer->HostFrames( frameData, gpuData );
 }

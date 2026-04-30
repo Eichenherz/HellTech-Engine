@@ -52,14 +52,21 @@ struct instance_desc
 	u16			materialIdx;
 };
 
+struct renderer_dbg_draw
+{
+	bool vBuff			= false;
+	bool freezeMainView = false;
+	bool dbgDraw		= false;
+
+};
+
 struct frame_data
 {
 	std::span<const view_data>		views;
 	std::span<const instance_desc>	instances;
 	float4x4						frustTransf;
 	float							elapsedSeconds;
-	bool							freezeMainView;
-	bool							dbgDraw;
+	renderer_dbg_draw				dbgDrawFlags;
 };
 
 #endif // !__ENGINE_TYPES_H__

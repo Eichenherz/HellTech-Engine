@@ -112,6 +112,11 @@ inline void ImGuiHandleWidget( const imgui_widget& widget )
 
 			break;
 		}
+		case CHECKBOX:
+		{
+			ImGui::Checkbox( std::data( widget.name ), ( bool* ) widget.pData );
+			break;
+		}
 		default: break;
 	}
 }

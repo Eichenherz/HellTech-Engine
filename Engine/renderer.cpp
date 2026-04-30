@@ -570,6 +570,7 @@ struct debug_draw_passes
 constexpr u64 MAX_TRIANGLES_IN_SCENE	= 10'000'000;
 constexpr u64 MAX_VERTICES_IN_SCENE		= 5'000'000;
 constexpr u64 MAX_MESHLETS_IN_SCENE		= 100'000;
+constexpr u64 MAX_INSTANCES_IN_SCENE	= 10'000;
 
 using index_t = u8;
 
@@ -1220,7 +1221,7 @@ struct vbuffer_pass
 			VK_ATTACHMENT_STORE_OP_STORE, { .depthStencil = REV_Z_DEPTH_BUFFER_CLEAR_VAL } );
 
 		vk_rendering_info renderingInfo = {
-			.viewport = VkGetViewport( colorTarget.width, colorTarget.height ),
+			.viewport = VkCorrectedGetViewport( colorTarget.width, colorTarget.height ),
 			.scissor = VkGetScissor( colorTarget.width, colorTarget.height ),
 			.colorAttachments = attInfos,
 			.pDepthAttachment = &depthWrite
@@ -1741,7 +1742,8 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		vrtFrames.push_back( vFrame );
 	}
 
-	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, UINT64_MAX );
+	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline,
+		framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
 
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
@@ -1771,8 +1773,8 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		imguiPass.CreateUploadFontAtlasSync( *pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
 
-		// NOTE: this is hardcoded for now
-		cullingPass.InitSceneDependentData( *pVkCtx, 10'000 );
+		// TODO: add UploadDataSync function in the renderer
+		cullingPass.InitSceneDependentData( *pVkCtx, MAX_INSTANCES_IN_SCENE );
 
 		//dbgCtx.UploadDebugGeometry();
 
@@ -1818,12 +1820,14 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		//
 		//hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
-		if( frameData.freezeMainView )
+		[[unlikely]]
+		if( frameData.dbgDrawFlags.freezeMainView )
 		{
 
 		}
 
-		if( frameData.dbgDraw )
+		[[unlikely]]
+		if( frameData.dbgDrawFlags.dbgDraw )
 		{
 
 		}
@@ -1835,7 +1839,8 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
 
-		if( true )
+		[[unlikely]]
+		if( !frameData.dbgDrawFlags.vBuff )
 		{
 			lambertian_clay_params pushBlock = {
 				.texResolution	= { ( float ) scImg.img.width, ( float ) scImg.img.height },
@@ -1855,7 +1860,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			//tonemapPass.TonemappingGammaPass( thisFrameCmdBuffer, rscStateTracker, scImg.img, vBuffPass.colSrv,
 			//	scImg.writeDescIdx, colorTargetSize );
 		}
-		else // DBG draw vbuffer
+		else
 		{
 			vBuffPass.DebugDrawToSwapchain( thisFrameCmdBuffer, rscStateTracker, scImg );
 		}
