@@ -1159,9 +1159,11 @@ struct vbuffer_pass
 			unique_shader_ptr vtx = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_VBufferVsMain.spirv" ) );
 			unique_shader_ptr frag = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_VBufferPsMain.spirv" ) );
 
+			// TODO: in order to render properly these must
+			// be tied to the world space and the asset tri winding ( which has TO BE in that space )
 			vk_gfx_pso_config vbuffState = {
 				.polyMode			= VK_POLYGON_MODE_FILL,
-				.cullFlags			= VK_CULL_MODE_FRONT_BIT, // BC of vulkan's y < 0 convention,
+				.cullFlags			= VK_CULL_MODE_BACK_BIT,
 				.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
 				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
 				.depthWrite			= true,

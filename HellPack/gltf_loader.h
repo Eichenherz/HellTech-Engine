@@ -107,16 +107,42 @@ struct gltf_texture
 	i32 samplerIdx	= -1;
 };
 
-// NOTE: gltf matrices are col maj, right-handed
+// GLTF stores matrices column-major: mIn[col*4 + row]. DirectXMath uses row-major row-vector
+// convention, so M_dx = M_gltf^T — each GLTF column becomes a DirectXMath row.
+// The old code read GLTF rows into DX rows (same values, wrong layout), which put translation
+// in the last column of each row instead of row 3, so XMMatrixDecompose extracted T = {0,0,0}.
 inline DirectX::XMMATRIX GetMatrix( std::span<const double> mIn )
 {
 	using namespace DirectX;
 	XMMATRIX m = {};
-	m.r[ 0 ] = XMVectorSet( ( float ) mIn[ 0 ], ( float ) mIn[ 4 ], ( float ) mIn[ 8 ], ( float ) mIn[ 12 ] );
-	m.r[ 1 ] = XMVectorSet( ( float ) mIn[ 1 ], ( float ) mIn[ 5 ], ( float ) mIn[ 9 ], ( float ) mIn[ 13 ] );
-	m.r[ 2 ] = XMVectorSet( ( float ) mIn[ 2 ], ( float ) mIn[ 6 ], ( float ) mIn[ 10 ], ( float ) mIn[ 14 ] );
-	m.r[ 3 ] = XMVectorSet( ( float ) mIn[ 3 ], ( float ) mIn[ 7 ], ( float ) mIn[ 11 ], ( float ) mIn[ 15 ] );
+	m.r[ 0 ] = XMVectorSet( ( float ) mIn[ 0 ],  ( float ) mIn[ 1 ],  ( float ) mIn[ 2 ],  ( float ) mIn[ 3 ]  );
+	m.r[ 1 ] = XMVectorSet( ( float ) mIn[ 4 ],  ( float ) mIn[ 5 ],  ( float ) mIn[ 6 ],  ( float ) mIn[ 7 ]  );
+	m.r[ 2 ] = XMVectorSet( ( float ) mIn[ 8 ],  ( float ) mIn[ 9 ],  ( float ) mIn[ 10 ], ( float ) mIn[ 11 ] );
+	m.r[ 3 ] = XMVectorSet( ( float ) mIn[ 12 ], ( float ) mIn[ 13 ], ( float ) mIn[ 14 ], ( float ) mIn[ 15 ] );
 	return m;
+}
+
+// GLTF quaternions follow the standard convention q*v*q^{-1} (i.e. XMVector3InverseRotate),
+// NOT DirectXMath's XMVector3Rotate which computes conj(q)*v*q — the opposite rotation.
+// Using the wrong one mirrors child translations across rotated parent frames.
+inline packed_trs XM_CALLCONV GltfComposePackedTRS( packed_trs parent, packed_trs child )
+{
+	using namespace DirectX;
+
+	XMVECTOR parentT = DX_XMLoadFloat3( parent.t );
+	XMVECTOR parentR = DX_XMLoadFloat4( parent.r );
+	XMVECTOR parentS = DX_XMLoadFloat3( parent.s );
+
+	XMVECTOR childT = DX_XMLoadFloat3( child.t );
+	XMVECTOR childR = DX_XMLoadFloat4( child.r );
+	XMVECTOR childS = DX_XMLoadFloat3( child.s );
+
+	float3 outS = DX_XMStoreFloat3( XMVectorMultiply( parentS, childS ) );
+	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( childR, parentR ) );
+	XMVECTOR transfT = XMVector3InverseRotate( XMVectorMultiply( childT, parentS ), parentR );
+	float3 outT = DX_XMStoreFloat3( XMVectorAdd( parentT, transfT ) );
+
+	return { .t = outT, .r = outR, .s = outS };
 }
 
 inline packed_trs GetTrsFromNode( const tinygltf::Node& node )
@@ -325,7 +351,7 @@ struct gltf_loader
 
 			packed_trs currentTrs = GetTrsFromNode( currentNode );
 
-			packed_trs trs = XMComposePackedTRS( curr.parentTRS, currentTrs );
+			packed_trs trs = GltfComposePackedTRS( curr.parentTRS, currentTrs );
 			flatNodes.push_back( { trs, currentNode.mesh } );
 
 			for( i32 childNodeIdx : currentNode.children )

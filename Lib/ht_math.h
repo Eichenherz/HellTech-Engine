@@ -361,24 +361,5 @@ constexpr packed_trs IDENTITY_TRS = {
 	.s = { 1.0f, 1.0f, 1.0f }
 };
 
-inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs parent, packed_trs child )
-{
-	using namespace DirectX;
-
-	XMVECTOR parentT = DX_XMLoadFloat3( parent.t );
-	XMVECTOR parentR = DX_XMLoadFloat4( parent.r );
-	XMVECTOR parentS = DX_XMLoadFloat3( parent.s );
-
-	XMVECTOR childT = DX_XMLoadFloat3( child.t );
-	XMVECTOR childR = DX_XMLoadFloat4( child.r );
-	XMVECTOR childS = DX_XMLoadFloat3( child.s );
-
-	float3 outS = DX_XMStoreFloat3( XMVectorMultiply( parentS, childS ) );
-	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( childR, parentR ) );
-	XMVECTOR transfT = XMVector3Rotate( XMVectorMultiply( childT, parentS ), parentR );
-	float3 outT = DX_XMStoreFloat3( XMVectorAdd( parentT, transfT ) );
-
-	return { .t = outT, .r = outR, .s = outS };
-}
 
 #endif // !__HT_MATH_H__

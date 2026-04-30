@@ -48,11 +48,11 @@ struct virtual_camera
 	float4x4			prevViewProj	= {};
 	float3				worldPos		= { 0.0f, 0.0f, 0.0f };
 
-	PFN_XMLookAtCoord	LookAt = nullptr;
+	PFN_XMLookAtCoord	LookAt			= nullptr;
 
 	// NOTE: pitch must be in [-pi/2,pi/2]
-	float				pitch = 0.0f;
-	float				yaw = 0.0f;
+	float				pitch			= 0.0f;
+	float				yaw				= 0.0f;
 
 	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot )
 	{
@@ -194,7 +194,7 @@ struct helltech final : helltech_interface
 	ht_engine_stats						engineStats		= {};
 
 	std::vector<instance_desc>			drawables		= {};
-	// TODO: not a unique ptr
+	// TODO: don't use unique ptr
 	std::unique_ptr<renderer_interface> pRenderer		= {};
 
 	job_system_ctx*						pJobSys			= nullptr;
@@ -289,8 +289,8 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 		//} );
 
 	// TODO: vfs
-	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	//constexpr char	assetFile[] = "D:/3d models/cyberbaron.hpk";
+	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	constexpr char	assetFile[] = "D:/3d models/cyberbaron/cyberbaron.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
 	mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );

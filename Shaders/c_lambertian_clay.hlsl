@@ -34,7 +34,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     float4x4 toWorld4x4 = TrsToFloat4x4( toWorld.t, toWorld.r, toWorld.s );
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
-    float4x4 mvp = mul( toWorld4x4, cam.mainViewProj ) );
+    float4x4 mvp = mul( toWorld4x4, cam.mainViewProj );
 
     float3 p0 = float3( v0.px, v0.py, v0.pz );
     float3 p1 = float3( v1.px, v1.py, v1.pz );
@@ -53,7 +53,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     float3 ndcBary = ComputeNDCBarycentrics( pixelNdc, ndc0.xy, ndc1.xy, ndc2.xy );
 
-    // Perspective-correct — need per-vertex W
+    // NOTE: Perspective-correct — need per-vertex W
     float3 invW = float3( 1.0f / clip0.w, 1.0f / clip1.w, 1.0f / clip2.w );
     float3 baryW = ndcBary * invW;
     float3 perspBary  = baryW / ( baryW.x + baryW.y + baryW.z );
@@ -63,10 +63,10 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     float3 n2 = DecodeOctaNormal( float2( v2.octNX, v2.octNY ) );
 
     float3 nInterp = perspBary.x * n0 + perspBary.y * n1 + perspBary.z * n2;
-    float3 N = normalize( QuatRot( toWorld.r, nInterp ) );
+    float3 N = normalize( QuatRot( toWorld.r, nInterp / toWorld.s ) );
 
     float3 pInterp = perspBary.x * p0 + perspBary.y * p1 + perspBary.z * p2;
-    float3 worldPos = QuatRot( toWorld.r, pInterp ) + toWorld.t;
+    float3 worldPos = QuatRot( toWorld.r, pInterp * toWorld.s ) + toWorld.t;
 
     float3 L   = normalize( float3( 0.5f, 1.0f, 0.3f ) );
     float3 V   = normalize( cam.worldPos - worldPos );   // view dir
