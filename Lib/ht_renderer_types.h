@@ -199,12 +199,12 @@ struct visible_instance
 
 struct visible_meshlet
 {
-	packed_trs	toWorld;
-	//u32 		instId;
+	u32 		globalInstId;
+	u32 		globalMltId;
 	u32 		absVtxOffset;
-	u32 		absTriOffset;
+	u32 		absIdxOffset;
 	u16			vtxCount;
-	u16			triCount;
+	u16			idxCount;
 };
 
 struct culling_params
@@ -228,7 +228,6 @@ struct draw_expansion_params
 	u32 visMltBufferIdx;
 	u32 visMltCounterIdxIdx;
 	u32 counterIdx;
-	u32 instDescIdx;
 };
 
 struct meshlet_issue_draws_params
@@ -251,6 +250,7 @@ struct vbuffer_params
 {
 	u32 drawBuffIdx;
 	u32 visMltBuffIdx;
+	u32 instBuffIdx;
 	u32 camIdx;
 };
 
@@ -265,7 +265,8 @@ struct lambertian_clay_params
 	float2	texResolution; // NOTE: asserted in the renderer that they're eq size
 	u32		vbuffIdx;
 	u32		dstIdx;
-	u32		visMltBuffIdx;
+	u32		instBuffIdx;
+	u32		meshDescIdx;
 	u32		camIdx;
 };
 

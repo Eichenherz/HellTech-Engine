@@ -11,26 +11,32 @@ lambertian_clay_params pushBlock;
 [shader("compute")]
 void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
-    u32x2 vbuffPixel = gTexture2D_u32x2[ pushBlock.vbuffIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
-    if( !VBufferIsValidPixel( vbuffPixel ) )
+    u32x2 rawPixel = gTexture2D_u32x2[ pushBlock.vbuffIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
+    if( !VBufferIsValidPixel( rawPixel ) )
     {
         gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( 0.0f, 0.0f, 0.0f, 1.0f );
         return;
     }
 
-    u32 triIdx = vbuffPixel.x;
-    u32 mltIdx = vbuffPixel.y;
+    vbuffer_pixel vBuffPixel = VBufferUnpackPixel( rawPixel );
 
-    visible_meshlet mlt = BufferLoad<visible_meshlet>( pushBlock.visMltBuffIdx, mltIdx );
+    device_addr<gpu_meshlet> pGpuMeshlets = { gGlobData.mltAddr };
+    gpu_meshlet mlt = pGpuMeshlets[ vBuffPixel.mltId ];
+    gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instBuffIdx, vBuffPixel.instId );
+    // NOTE: this is fucking stupid but we'll see later
+    gpu_mesh mesh = BufferLoad<gpu_mesh>( pushBlock.meshDescIdx, inst.meshIdx );
 
-    u32x3 tri = FetchTriangleFromMegaBuff( triIdx * 3 + mlt.absTriOffset ) + mlt.absVtxOffset;
+    u32 triIdx = vBuffPixel.triId * 3 + mlt.triOffset + mesh.triOffset;
+    u32 vtxOffset = mlt.vtxOffset + mesh.vtxOffset;
+
+    u32x3 tri = FetchTriangleFromMegaBuff( triIdx ) + vtxOffset;
 
     device_addr<packed_vtx> vtxBuff = { gGlobData.vtxAddr };
     packed_vtx v0 = vtxBuff[ tri.x ];
     packed_vtx v1 = vtxBuff[ tri.y ];
     packed_vtx v2 = vtxBuff[ tri.z ];
 
-    packed_trs toWorld = mlt.toWorld;
+    packed_trs toWorld = inst.toWorld;
     float4x4 toWorld4x4 = TrsToFloat4x4( toWorld.t, toWorld.r, toWorld.s );
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );

@@ -30,9 +30,9 @@ void IssueMeshletDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 
     u32 drawSlot = waveDrawBase + WavePrefixCountBits( true );
 
 	u32 workItemIdx = mltOffset + globalDispatchID.x;
-	visible_meshlet currentMeshlet = BufferLoad<visible_meshlet>( pushBlock.srcBufferIdx, workItemIdx );
-	draw_indexed_command draw = { globalDispatchID.x, currentMeshlet.triCount * 3, 1,
-		currentMeshlet.absTriOffset, currentMeshlet.absVtxOffset, 0 };
+	visible_meshlet currVisCluster = BufferLoad<visible_meshlet>( pushBlock.srcBufferIdx, workItemIdx );
+	draw_indexed_command draw = { globalDispatchID.x, currVisCluster.idxCount, 1,
+		currVisCluster.absIdxOffset, currVisCluster.absVtxOffset, 0 };
 
 	BufferStore<draw_indexed_command>( pushBlock.drawCmdsBuffIdx, draw, drawSlot );
 }

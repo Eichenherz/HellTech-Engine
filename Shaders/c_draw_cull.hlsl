@@ -19,11 +19,11 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		return;
 	}
 
-	bool instanceIsOccluded = false;
+	bool instanceIsVisible = false;
 	if( bool( pushBlock.isLatePass ) )
 	{
-		instanceIsOccluded = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
-		if( !instanceIsOccluded ) return;
+		instanceIsVisible = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
+		if( instanceIsVisible ) return;
 	}
 
 	gpu_instance currentInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, instId );
@@ -36,7 +36,6 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		
 	view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
 
-	bool testOcclusion = !bool( pushBlock.isLatePass ) ? true : instanceIsOccluded;
 	bool visible = false;
 	//if( !bool( pushBlock.isLatePass ) )
 	//{

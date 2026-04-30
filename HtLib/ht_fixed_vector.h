@@ -41,10 +41,10 @@ struct fixed_vector
     u64                     size()        const { return elemCount; }
     constexpr u64           capacity()    const { return N; }
 
-    void                    push_back( const T& v ) { HT_ASSERT( elemCount < N ); elems[ elemCount ] = v; elemCount++; }
+    reference               push_back( const T& v );
 
     template<typename... Args>
-    T&                      emplace_back( Args&&... args );
+    reference               emplace_back( Args&&... args );
 
     void                    pop_back()              { HT_ASSERT( elemCount > 0 ); --elemCount; }
     void                    clear()                 { elemCount = 0; }
@@ -100,12 +100,21 @@ fixed_vector<T, N>::fixed_vector( Iter first, Iter last )
 }
 
 template<TRIVIAL_T T, u64 N>
-template<typename... Args>
-T& fixed_vector<T, N>::emplace_back( Args&&... args )
+fixed_vector<T, N>::reference fixed_vector<T, N>::push_back( const T& v )
 {
     HT_ASSERT( elemCount < N );
     u64 oldCount = elemCount++;
-    return elems[ oldCount ] = T{ std::forward<Args>( args )... };
+    return elems[ oldCount ] = v;
+
+}
+
+template<TRIVIAL_T T, u64 N>
+template<typename... Args>
+fixed_vector<T, N>::reference fixed_vector<T, N>::emplace_back( Args&&... args )
+{
+    HT_ASSERT( elemCount < N );
+    u64 oldCount = elemCount++;
+    return elems[ oldCount ] = T{ FWD( args )... };
 }
 
 template<TRIVIAL_T T, u64 N>

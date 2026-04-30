@@ -9,7 +9,8 @@ vbuffer_dbg_draw_params pushBlock;
 // NOTE: src and dst assumed to be the same dimensions, asserted on the host
 float3 ColorHash( u32x2 v )
 {
-	u32 seed = v.x ^ ( v.y * 2654435761u );
+	// NOTE: ^ CONST so nothing gets to be zero basically
+	u32 seed = v.x ^ ( v.y * 2654435761u ) ^ 0x9E3779B9u;
 	seed ^= seed >> 16;
 	seed *= 0x45d9f3bu;
 	seed ^= seed >> 16;

@@ -809,8 +809,7 @@ struct culling_pass
 				.srcBufferIdx			= compactedInstIdx.slot,
 				.visMltBufferIdx		= visibleClustersIdx.slot,
 				.visMltCounterIdxIdx	= visibleClustersCountIdx.slot,
-				.counterIdx				= compactedClustersCounterIdx.slot,
-				.instDescIdx			= instBuffIdx.slot
+				.counterIdx				= compactedClustersCounterIdx.slot
 			};
 
 			cmdBuff.CmdBindPipelineAndBindlessDesc( instExpansionPass, VK_PIPELINE_BIND_POINT_COMPUTE );
@@ -1192,8 +1191,10 @@ struct vbuffer_pass
 		VkIndexType           	indexType,
 		const vk_buffer&		drawCmds,
 		const vk_buffer&		drawCount,
+		const vk_buffer&		visClustersBuff,
 		desc_hndl32				drawBuffIdx,
-		desc_hndl32				visMltBuffIdx,
+		desc_hndl32				visClustersBuffIdx,
+		desc_hndl32				instBuffIdx,
 		desc_hndl32				camIdx,
 		bool					latePass
 	) {
@@ -1205,8 +1206,10 @@ struct vbuffer_pass
 		rscTracker.UseImage( colorTarget,
 			{ VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT },
 			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+
 		rscTracker.UseBuffer( drawCmds, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
 		rscTracker.UseBuffer( drawCount, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
+		rscTracker.UseBuffer( visClustersBuff, { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT } );
 		rscTracker.FlushBarriers( cmdBuff );
 
 		// NOTE: since we do this incrementally we want the 2nd pass to just load
@@ -1233,7 +1236,8 @@ struct vbuffer_pass
 
 		vbuffer_params pushBlock = {
 			.drawBuffIdx	= drawBuffIdx.slot,
-			.visMltBuffIdx	= visMltBuffIdx.slot,
+			.visMltBuffIdx	= visClustersBuffIdx.slot,
+			.instBuffIdx	= instBuffIdx.slot,
 			.camIdx			= camIdx.slot
 		};
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
@@ -1805,20 +1809,22 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, false );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
-			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
-			cullingPass.visibleClustersIdx, thisVFrame.viewDataIdx, false );
+			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.visibleClusters,
+			cullingPass.drawCmdsIdx, cullingPass.visibleClustersIdx, thisVFrame.instDesc,
+			thisVFrame.viewDataIdx, false );
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
-		//cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
-		//	thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx,
-		//	hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
-		//
-		//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
-		//	VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
-		//	cullingPass.visibleClustersIdx, thisVFrame.viewDataIdx, true );
-		//
-		//hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
+		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
+			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx,
+			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
+
+		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
+			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.visibleClusters,
+			cullingPass.drawCmdsIdx, cullingPass.visibleClustersIdx, thisVFrame.instDesc,
+			thisVFrame.viewDataIdx, true );
+
+		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
 		[[unlikely]]
 		if( frameData.dbgDrawFlags.freezeMainView )
@@ -1846,7 +1852,8 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 				.texResolution	= { ( float ) scImg.img.width, ( float ) scImg.img.height },
 				.vbuffIdx		= vBuffPass.colSrv.slot,
 				.dstIdx			= scImg.writeDescIdx.slot,
-				.visMltBuffIdx	= cullingPass.visibleClustersIdx.slot,
+				.instBuffIdx	= thisVFrame.instDesc.slot,
+				.meshDescIdx 	= thisVFrame.gpuMeshTableDesc.slot,
 				.camIdx			= thisVFrame.viewDataIdx.slot
 			};
 			dbgPass.DrawAsLamberitanClay(

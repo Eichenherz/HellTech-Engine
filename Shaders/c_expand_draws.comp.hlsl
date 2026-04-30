@@ -29,18 +29,21 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
 
     u32 globalOffset = waveBase + laneOffset;
 
-    gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, thisVisInstance.instId );
+    device_addr<gpu_meshlet> ptr = { gGlobData.mltAddr };
+
     for( u32 mlti = 0; mlti < meshletCount; ++mlti )
     {
-        device_addr<gpu_meshlet> ptr = { gGlobData.mltAddr };
-        gpu_meshlet currentMeshlet = ptr[ mlti + thisVisInstance.meshletOffset ];
+        u32 globalMltId = mlti + thisVisInstance.meshletOffset;
+
+        gpu_meshlet currentMeshlet = ptr[ globalMltId ];
 
         visible_meshlet visMeshlet = {
-            inst.toWorld,
+            thisVisInstance.instId,
+            globalMltId,
             currentMeshlet.vtxOffset + thisVisInstance.vtxOffset,
             currentMeshlet.triOffset + thisVisInstance.triOffset,
             currentMeshlet.vtxCount,
-            currentMeshlet.triCount
+            currentMeshlet.triCount * 3 // NOTE: * 3 bc it's an idx count
         };
 
         u32 slotIdx = globalOffset + mlti;
