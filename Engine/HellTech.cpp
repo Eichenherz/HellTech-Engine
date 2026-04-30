@@ -19,6 +19,17 @@
 
 #include <ankerl/unordered_dense.h>
 
+// WORLD BASIS
+// NOTE: gltf world coord frame: RH, +X right( -X left ), +Y up, -Z forward
+constexpr float3 WORLD_FWD	= { 0.0f,  0.0f, -1.0f };
+constexpr float3 WORLD_LEFT = { -1.0f, 0.0f,  0.0f };
+constexpr float3 WORLD_UP	= { 0.0f,  1.0f,  0.0f };
+
+constexpr bool IS_RH = CrossProd( WORLD_FWD, WORLD_LEFT ) == WORLD_UP;
+static_assert( IS_RH, "Current convention is RH !!! But basis doesn't match" );
+
+constexpr float YAW_SIGN   = FSignOf( DotProd( CrossProd( WORLD_UP,    WORLD_FWD ), -WORLD_LEFT ) );
+constexpr float PITCH_SIGN = FSignOf( DotProd( CrossProd( -WORLD_LEFT, WORLD_FWD ), -WORLD_UP ) );
 
 // Virtual camera
 using PFN_XMLookAtCoord = DirectX::XMMATRIX ( XM_CALLCONV * ) (
@@ -29,12 +40,13 @@ using PFN_XMLookAtCoord = DirectX::XMMATRIX ( XM_CALLCONV * ) (
 
 struct virtual_camera
 {
-	float4x4			proj = {};
-	float4x4			prevView = {};
-	float4x4			prevViewProj = {};
-	float3 				fwdBasis = {};
-	float3 				upBasis = {};
-	float3				worldPos = { 0.0f, 0.0f, 0.0f };
+	static constexpr float3 CAM_FWD = { 0.0f, 0.0f, 1.0f };
+	static constexpr float3 CAM_UP = { 0.0f, 1.0f, 0.0f };
+
+	float4x4			proj			= {};
+	float4x4			prevView		= {};
+	float4x4			prevViewProj	= {};
+	float3				worldPos		= { 0.0f, 0.0f, 0.0f };
 
 	PFN_XMLookAtCoord	LookAt = nullptr;
 
@@ -60,19 +72,18 @@ struct virtual_camera
 
 		XMVECTOR xmWorldPos = XMLoadFloat3( &worldPos );
 
-		XMVECTOR camLookAt = XMVector3Transform( XMLoadFloat3( &fwdBasis ),
+		XMVECTOR camLookAt = XMVector3Transform( DX_XMLoadFloat3( WORLD_FWD ),
 			XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
 		XMMATRIX view = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ),
-			XMLoadFloat3( &upBasis ) );
+			DX_XMLoadFloat3( WORLD_UP ) );
 
 		XMMATRIX xmProj = XMLoadFloat4x4A( &proj );
 
-		// TODO: don't transpose as soon as we fix the HLSL mem read !
 		return {
-			.proj			= proj,
-			.mainView		= DX_XMStoreFloat4x4( XMMatrixTranspose( view ) ),
+			.proj			= DX_XMStoreFloat4x4( xmProj ),
+			.mainView		= DX_XMStoreFloat4x4( view ),
 			//.prevView		= DX_XMStoreFloat4x4(),
-			.mainViewProj	= DX_XMStoreFloat4x4( XMMatrixTranspose( XMMatrixMultiply( view, xmProj ) ) ),
+			.mainViewProj	= DX_XMStoreFloat4x4( XMMatrixMultiply( view, xmProj ) ),
 			.prevViewProj	= prevViewProj,
 			.worldPos		= worldPos,
 			// NOTE: this must not be negative for LH coords
@@ -84,9 +95,7 @@ struct virtual_camera
 inline virtual_camera MakeVirtualCameraWithProjLH( float radsYFov, float aspectRatioWH, float zNear )
 {
 	return {
-		.proj		= ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, false ),
-		.fwdBasis	= { 0.0f, 0.0f, 1.0f },
-		.upBasis	= { 0.0f, 1.0f, 0.0f },
+		.proj		= PerspRevZInfFarFromFovAndAspectRatioLH( radsYFov, aspectRatioWH, zNear ),
 		.LookAt		= DirectX::XMMatrixLookAtLH
 	};
 }
@@ -94,9 +103,7 @@ inline virtual_camera MakeVirtualCameraWithProjLH( float radsYFov, float aspectR
 inline virtual_camera MakeVirtualCameraWithProjRH( float radsYFov, float aspectRatioWH, float zNear )
 {
 	return {
-		.proj		= ProjWithRevZInfFarFromFovAndAspectRatio( radsYFov, aspectRatioWH, zNear, true ),
-		.fwdBasis	= { 0.0f, 0.0f, -1.0f },
-		.upBasis	= { 0.0f, 1.0f, 0.0f },
+		.proj		= PerspRevZInfFarFromFovAndAspectRatioRH( radsYFov, aspectRatioWH, zNear ),
 		.LookAt		= DirectX::XMMatrixLookAtRH
 	};
 }
@@ -119,12 +126,12 @@ inline move_cam_action GetMoveCamAction(
 	using namespace DirectX;
 
 	XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
-	if( inputState.keyStates[ HT_SC_W ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, 1, 0 ) );
-	if( inputState.keyStates[ HT_SC_A ] ) camMove = XMVectorAdd( camMove, XMVectorSet( -1, 0, 0, 0 ) );
-	if( inputState.keyStates[ HT_SC_S ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 0, -1, 0 ) );
-	if( inputState.keyStates[ HT_SC_D ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 1, 0, 0, 0 ) );
-	if( inputState.keyStates[ HT_SC_SPACE ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, 1, 0, 0 ) );
-	if( inputState.keyStates[ HT_SC_C ] ) camMove = XMVectorAdd( camMove, XMVectorSet( 0, -1, 0, 0 ) );
+	if( inputState.keyStates[ HT_SC_W ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_FWD ) );
+	if( inputState.keyStates[ HT_SC_A ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_LEFT ) );
+	if( inputState.keyStates[ HT_SC_S ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_FWD ) );
+	if( inputState.keyStates[ HT_SC_D ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_LEFT ) );
+	if( inputState.keyStates[ HT_SC_SPACE ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_UP ) );
+	if( inputState.keyStates[ HT_SC_C ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_UP ) );
 
 	if( !XMVector3Equal( camMove, XMVectorZero() ) )
 	{
@@ -132,8 +139,8 @@ inline move_cam_action GetMoveCamAction(
 	}
 
 	float2 yawPitch = {
-		( float ) inputState.mouseDx * mouseSensitivity,
-		( float ) inputState.mouseDy * mouseSensitivity
+		YAW_SIGN * ( float ) inputState.mouseDx * mouseSensitivity,
+		PITCH_SIGN * ( float ) inputState.mouseDy * mouseSensitivity
 	};
 	return { .camMove = camMove, .dRot = yawPitch };
 }
@@ -227,8 +234,17 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 
 	float aspecRatioWH = float( width ) / float( height );
 
-	mainActiveCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
-	debugCam = MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
+	if constexpr( IS_RH )
+	{
+		mainActiveCam	= MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
+		debugCam		= MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
+	}
+	else // IS_LH
+	{
+		mainActiveCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
+		debugCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
+	}
+
 
 	{
 		view_data mainViewData = mainActiveCam.GetViewData();

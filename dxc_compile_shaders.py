@@ -85,10 +85,12 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
         "-fspv-use-vulkan-memory-model",
         #"-fvk-use-dx-layout",
         "-fvk-use-scalar-layout",
-        "-HV", "2021",
+        "-HV", "202x",
         "-enable-16bit-types",
         "-fspv-extension=SPV_KHR_16bit_storage",
         "-fspv-extension=SPV_KHR_physical_storage_buffer",
+        "-fspv-use-legacy-buffer-matrix-order", # force row_maj on matrices when reading from ByteAddrBuffers
+        "-Zpr",
         "-E", entry,
         "-T", target,
         str(shader_path),

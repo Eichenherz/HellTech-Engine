@@ -38,6 +38,29 @@ inline float4 fmaxf( float4 a, float4 b )
 	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ), fmaxf( a.w,b.w ) };
 }
 
+inline constexpr float3 CrossProd( float3 a, float3 b )
+{
+	return  { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y  *b.x };
+}
+
+constexpr float DotProd( float2 a, float2 b )
+{
+	return a.x * b.x + a.y * b.y;
+}
+constexpr float DotProd( float3 a, float3 b )
+{
+	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+constexpr float DotProd( float4 a, float4 b )
+{
+	return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+constexpr float FSignOf( float x )
+{
+	return x < 0.0f ? -1.0f : 1.0f;
+}
+
 // AABB
 
 template<typename Vec>
@@ -293,25 +316,19 @@ inline DirectX::XMMATRIX XM_CALLCONV FrustumMatrixFromViewProj( DirectX::XMMATRI
 	using namespace DirectX;
 
 	// NOTE: inv( A * B ) = inv B * inv A
-	XMMATRIX invFrustMat = viewXProj; //XMMatrixMultiply( view, proj );
+	XMMATRIX invFrustMat = viewXProj;
 	XMVECTOR det = XMMatrixDeterminant( invFrustMat );
 	HT_ASSERT( XMVectorGetX( det ) != 0 );
 	XMMATRIX frustMat = XMMatrixInverse( &det, invFrustMat );
 	return frustMat;
 }
 
-inline float4x4 ProjWithRevZInfFarFromFovAndAspectRatio(
-	float	fovYRads,
-	float	aspectRatioWH,
-	float	inZNear,
-	bool	isRightHandedCoord
-) {
+inline float4x4 PerspRevZInfFarFromFovAndAspectRatioLH( float fovYRads, float aspectRatioWH, float zNear )
+{
 	auto[ sinFov, cosFov ] = DX_XMScalarSinCos( fovYRads * 0.5f );
 
 	float h = cosFov / sinFov;
 	float w = h / aspectRatioWH;
-
-	float zNear = isRightHandedCoord ? -inZNear : inZNear;
 
 	DirectX::XMMATRIX proj = {};
 	proj.r[ 0 ] = DirectX::XMVectorSet( w, 0, 0, 0 );
@@ -320,6 +337,48 @@ inline float4x4 ProjWithRevZInfFarFromFovAndAspectRatio(
 	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, zNear, 0 );
 
 	return DX_XMStoreFloat4x4( proj );
+}
+
+inline float4x4 PerspRevZInfFarFromFovAndAspectRatioRH( float fovYRads, float aspectRatioWH, float zNear )
+{
+	auto[ sinFov, cosFov ] = DX_XMScalarSinCos( fovYRads * 0.5f );
+
+	float h = cosFov / sinFov;
+	float w = h / aspectRatioWH;
+
+	DirectX::XMMATRIX proj = {};
+	proj.r[ 0 ] = DirectX::XMVectorSet( w, 0, 0, 0 );
+	proj.r[ 1 ] = DirectX::XMVectorSet( 0, h, 0, 0 );
+	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, -1 );
+	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, zNear, 0 );
+
+	return DX_XMStoreFloat4x4( proj );
+}
+
+constexpr packed_trs IDENTITY_TRS = {
+	.t = { 0.0f, 0.0f, 0.0f },
+	.r = { 0.0f, 0.0f, 0.0f, 1.0f },
+	.s = { 1.0f, 1.0f, 1.0f }
+};
+
+inline packed_trs XM_CALLCONV XMComposePackedTRS( packed_trs parent, packed_trs child )
+{
+	using namespace DirectX;
+
+	XMVECTOR parentT = DX_XMLoadFloat3( parent.t );
+	XMVECTOR parentR = DX_XMLoadFloat4( parent.r );
+	XMVECTOR parentS = DX_XMLoadFloat3( parent.s );
+
+	XMVECTOR childT = DX_XMLoadFloat3( child.t );
+	XMVECTOR childR = DX_XMLoadFloat4( child.r );
+	XMVECTOR childS = DX_XMLoadFloat3( child.s );
+
+	float3 outS = DX_XMStoreFloat3( XMVectorMultiply( parentS, childS ) );
+	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( childR, parentR ) );
+	XMVECTOR transfT = XMVector3Rotate( XMVectorMultiply( childT, parentS ), parentR );
+	float3 outT = DX_XMStoreFloat3( XMVectorAdd( parentT, transfT ) );
+
+	return { .t = outT, .r = outR, .s = outS };
 }
 
 #endif // !__HT_MATH_H__

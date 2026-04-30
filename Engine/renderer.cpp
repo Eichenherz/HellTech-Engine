@@ -1506,7 +1506,7 @@ struct renderer_context final : renderer_interface
 			} );
 		}
 
-		return std::size( gpuInstList );
+		return ( u32 ) std::size( gpuInstList );
 	}
 
 	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;

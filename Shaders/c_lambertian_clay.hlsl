@@ -34,7 +34,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     float4x4 toWorld4x4 = TrsToFloat4x4( toWorld.t, toWorld.r, toWorld.s );
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
-    float4x4 mvp = mul( toWorld4x4, mul( cam.mainView, cam.proj ) );
+    float4x4 mvp = mul( toWorld4x4, cam.mainViewProj ) );
 
     float3 p0 = float3( v0.px, v0.py, v0.pz );
     float3 p1 = float3( v1.px, v1.py, v1.pz );

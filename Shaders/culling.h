@@ -1,8 +1,6 @@
 #ifndef __CULLING_H__
 #define __CULLING_H__
 
-#ifndef __cplusplus
-
 
 struct frustum_culling_result
 {
@@ -10,6 +8,7 @@ struct frustum_culling_result
 	bool intersectsZNear;
 };
 
+// NOTE: Gribb-Hartmann method
 frustum_culling_result FrustumCulling( float3 aabbMin, float3 aabbMax, float4x4 mvp )
 {
 	float4x4 transpMvp = transpose( mvp );
@@ -21,7 +20,7 @@ frustum_culling_result FrustumCulling( float3 aabbMin, float3 aabbMax, float4x4 
 	float3 ZERO = float3( 0.0f, 0.0f, 0.0f );
 
 	bool visible = true;
-	visible = visible && 
+	visible = visible &&
 		( dot( lerp( aabbMax, aabbMin, float3( transpMvp[ 3 ].xyz < ZERO ) ), transpMvp[ 3 ].xyz ) > -transpMvp[ 3 ].w );
 	visible = visible && ( dot( lerp( aabbMax, aabbMin, float3( xPlanePos.xyz < ZERO ) ), xPlanePos.xyz ) > -xPlanePos.w );
 	visible = visible && ( dot( lerp( aabbMax, aabbMin, float3( yPlanePos.xyz < ZERO ) ), yPlanePos.xyz ) > -yPlanePos.w );
@@ -92,8 +91,5 @@ bool ScreenSpaceAabbVsHiZ( in screenspace_aabb ssAabb, in Texture2D<float4> hizT
 	
 	return ( sampledDepth <= ssAabb.maxZ );
 }
-
-
-#endif
 
 #endif // !__CULLING_H__

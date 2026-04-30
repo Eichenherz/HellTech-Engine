@@ -10,6 +10,8 @@
 
 #define ALIGNAS( x ) alignas( x )
 
+#define STATIC_ASSERT( expr, str ) static_assert( expr, str )
+
 #else
 
 static const float invPi = 0.31830988618f;
@@ -31,6 +33,8 @@ typedef uint3		u32x3;
 typedef uint2		u32x2;
 
 #define ALIGNAS( x )
+
+#define STATIC_ASSERT( expr, str )
 
 #endif
 
@@ -55,6 +59,8 @@ struct packed_trs
 	float3	s;
 	float	pad1;
 };
+
+STATIC_ASSERT( 48 == sizeof( packed_trs ), "Size mismatch!");
 
 struct packed_vtx
 {

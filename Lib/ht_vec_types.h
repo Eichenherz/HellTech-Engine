@@ -54,6 +54,22 @@ constexpr bool operator!=( const float4& a, const float4& b )
 	return !( a == b );
 }
 
+constexpr float2 operator-( float2 v )
+{
+	return { -v.x, -v.y };
+}
+
+constexpr float3 operator-( float3 v )
+{
+	return { -v.x, -v.y, -v.z };
+}
+
+constexpr float4 operator-( float4 v )
+{
+	return { -v.x, -v.y, -v.z, -v.w };
+}
+
+
 __forceinline float3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
 {
 	DirectX::XMFLOAT3 out;
@@ -75,5 +91,14 @@ __forceinline float4x4 XM_CALLCONV DX_XMStoreFloat4x4( DirectX::XMMATRIX m )
 	return out;
 }
 
+__forceinline DirectX::XMVECTOR XM_CALLCONV DX_XMLoadFloat3( float3 v )
+{
+	return DirectX::XMLoadFloat3( &v );
+}
+
+__forceinline DirectX::XMVECTOR XM_CALLCONV DX_XMLoadFloat4( float4 v )
+{
+	return DirectX::XMLoadFloat4( &v );
+}
 
 #endif // !__HT_VEC_TYPES_H__

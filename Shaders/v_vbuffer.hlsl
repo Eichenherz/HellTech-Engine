@@ -19,7 +19,7 @@ vbuffer_vs_out VBufferVsMain(
     float4x4 toWorld = TrsToFloat4x4( mlt.toWorld.t, mlt.toWorld.r, mlt.toWorld.s );
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
-    float4x4 mvp = mul( toWorld, mul( cam.mainView, cam.proj ) );
+    float4x4 mvp = mul( toWorld, cam.mainViewProj );
 
     device_addr<packed_vtx> ptr = { gGlobData.vtxAddr };
     packed_vtx vtx = ptr[ vtxID ];
