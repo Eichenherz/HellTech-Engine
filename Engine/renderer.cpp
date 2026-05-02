@@ -1503,7 +1503,7 @@ struct renderer_context final : renderer_interface
 				continue;
 			}
 			gpuInstList.push_back( {
-				.toWorld = sceneNode.transform,
+				.toWorld = TrsToFloat4x3RowMaj( sceneNode.transform ),
 				.meshIdx = hMesh.slotIdx
 				//.mtrlIdx =
 			} );

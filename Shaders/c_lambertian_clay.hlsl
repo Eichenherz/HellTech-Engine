@@ -36,11 +36,15 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     packed_vtx v1 = vtxBuff[ tri.y ];
     packed_vtx v2 = vtxBuff[ tri.z ];
 
-    packed_trs toWorld = inst.toWorld;
-    float4x4 toWorld4x4 = TrsToFloat4x4( toWorld.t, toWorld.r, toWorld.s );
+	float4x4 toWorld = float4x4(
+        float4( inst.toWorld[ 0 ], 0.0f ),
+        float4( inst.toWorld[ 1 ], 0.0f ),
+        float4( inst.toWorld[ 2 ], 0.0f ),
+        float4( inst.toWorld[ 3 ], 1.0f )
+	);
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
-    float4x4 mvp = mul( toWorld4x4, cam.mainViewProj );
+    float4x4 mvp = mul( toWorld, cam.mainViewProj );
 
     float3 p0 = float3( v0.px, v0.py, v0.pz );
     float3 p1 = float3( v1.px, v1.py, v1.pz );
@@ -69,10 +73,10 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     float3 n2 = DecodeOctaNormal( float2( v2.octNX, v2.octNY ) );
 
     float3 nInterp = perspBary.x * n0 + perspBary.y * n1 + perspBary.z * n2;
-    float3 N = normalize( QuatRot( toWorld.r, nInterp / toWorld.s ) );
+    float3 N = normalize( mul( float4( nInterp, 0.0f ), toWorld ) ).xyz;
 
     float3 pInterp = perspBary.x * p0 + perspBary.y * p1 + perspBary.z * p2;
-    float3 worldPos = QuatRot( toWorld.r, pInterp * toWorld.s ) + toWorld.t;
+    float3 worldPos = mul( float4( pInterp, 1.0f ), toWorld ).xyz;
 
     float3 L   = normalize( float3( 0.5f, 1.0f, 0.3f ) );
     float3 V   = normalize( cam.worldPos - worldPos );   // view dir

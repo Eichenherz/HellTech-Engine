@@ -361,5 +361,22 @@ constexpr packed_trs IDENTITY_TRS = {
 	.s = { 1.0f, 1.0f, 1.0f }
 };
 
+inline float4x3 TrsToFloat4x3RowMaj( float3 t, float4 q, float3 s )
+{
+	using namespace DirectX;
+
+	XMMATRIX m = XMMatrixRotationQuaternion( DX_XMLoadFloat4( q ) );
+	m.r[ 0 ] = XMVectorScale( m.r[ 0 ], s.x );
+	m.r[ 1 ] = XMVectorScale( m.r[ 1 ], s.y );
+	m.r[ 2 ] = XMVectorScale( m.r[ 2 ], s.z );
+	m.r[ 3 ] = XMVectorSet( t.x, t.y, t.z, 1.0f );
+
+	return DX_XMStoreFloat4x3( m );
+}
+
+inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs )
+{
+	return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s );
+}
 
 #endif // !__HT_MATH_H__

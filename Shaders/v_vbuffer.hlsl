@@ -18,7 +18,12 @@ vbuffer_vs_out VBufferVsMain(
     visible_meshlet mlt = BufferLoad<visible_meshlet>( pushBlock.visMltBuffIdx, draw.visMltIdx );
 
     gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instBuffIdx, mlt.globalInstId );
-    float4x4 toWorld = TrsToFloat4x4( inst.toWorld.t, inst.toWorld.r, inst.toWorld.s );
+    float4x4 toWorld = float4x4(
+        float4( inst.toWorld[ 0 ], 0.0f ),
+        float4( inst.toWorld[ 1 ], 0.0f ),
+        float4( inst.toWorld[ 2 ], 0.0f ),
+        float4( inst.toWorld[ 3 ], 1.0f )
+	);
 
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
     float4x4 mvp = mul( toWorld, cam.mainViewProj );

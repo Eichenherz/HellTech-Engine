@@ -27,10 +27,15 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	}
 
 	gpu_instance currentInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, instId );
-	float4x4 toWorld = TrsToFloat4x4( currentInst.toWorld.t, currentInst.toWorld.r, currentInst.toWorld.s );
-
 	gpu_mesh currentMesh = BufferLoad<gpu_mesh>( pushBlock.meshDescIdx, currentInst.meshIdx );
-		
+
+	float4x4 toWorld = float4x4(
+        float4( currentInst.toWorld[ 0 ], 0.0f ),
+        float4( currentInst.toWorld[ 1 ], 0.0f ),
+        float4( currentInst.toWorld[ 2 ], 0.0f ),
+        float4( currentInst.toWorld[ 3 ], 1.0f )
+	);
+
 	float3 aabbMin = currentMesh.minAabb;
 	float3 aabbMax = currentMesh.maxAabb;
 		
