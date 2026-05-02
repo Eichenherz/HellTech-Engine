@@ -80,10 +80,10 @@ struct virtual_camera
 		XMMATRIX xmProj = XMLoadFloat4x4A( &proj );
 
 		return {
-			.proj			= DX_XMStoreFloat4x4( xmProj ),
-			.mainView		= DX_XMStoreFloat4x4( view ),
+			.proj			= DX_XMStoreFloat4x4A( xmProj ),
+			.mainView		= DX_XMStoreFloat4x4A( view ),
 			//.prevView		= DX_XMStoreFloat4x4(),
-			.mainViewProj	= DX_XMStoreFloat4x4( XMMatrixMultiply( view, xmProj ) ),
+			.mainViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( view, xmProj ) ),
 			.prevViewProj	= prevViewProj,
 			.worldPos		= worldPos,
 			// NOTE: this must not be negative for LH coords
@@ -119,8 +119,8 @@ struct move_cam_action
 
 inline move_cam_action GetMoveCamAction(
 	const input_state&	inputState,
-	float				moveSpeed,
 	float				elapsedTime,
+	float				moveSpeed,
 	float				mouseSensitivity
 ) {
 	using namespace DirectX;
@@ -133,9 +133,15 @@ inline move_cam_action GetMoveCamAction(
 	if( inputState.keyStates[ HT_SC_SPACE ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_UP ) );
 	if( inputState.keyStates[ HT_SC_C ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_UP ) );
 
+	float mvSpeed = moveSpeed;
+	if( inputState.keyStates[ HT_SC_LCTRL ] )
+	{
+		mvSpeed *= 0.4f;
+	}
+
 	if( !XMVector3Equal( camMove, XMVectorZero() ) )
 	{
-		camMove = XMVectorScale( XMVector3Normalize( camMove ), moveSpeed * elapsedTime );
+		camMove = XMVectorScale( XMVector3Normalize( camMove ), mvSpeed * elapsedTime );
 	}
 
 	float2 yawPitch = {
@@ -381,19 +387,20 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		vfsMounted = true;
 	}
 
-	auto[ camMove, dRot ] = GetMoveCamAction( inputState, elapsedTime, moveSpeed, mouseSensitivity );
+	auto[ camMove, dRot ] = GetMoveCamAction( inputState, elapsedTime,
+		moveSpeed, mouseSensitivity );
 
 	mainActiveCam.Move( camMove, dRot );
 	debugCam.Move( camMove, dRot );
 
-	imGuiCtx.UpdateTimeAndInputState( elapsedTime, inputState );
+	imGuiCtx.UpdateTimeAndInputState( ( float ) elapsedTime, inputState );
 
 	std::pmr::vector<view_data> views{ &virtualStack };
 
 	view_data mainViewData = mainActiveCam.GetViewData();
 
-	[[likely]]
-	if( !inputState.keyStates[ HT_SC_F ] )
+	//[[likely]]
+	//if( !inputState.keyStates[ HT_SC_F ] )
 	{
 		views.push_back( mainViewData );
 		mainActiveCam.prevViewProj = mainViewData.mainViewProj;
@@ -426,7 +433,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	frame_data frameData = {
 		.views 			= views,
 		.instances 		= drawables,
-		.frustTransf	= DX_XMStoreFloat4x4( frustMat ),
+		.frustTransf	= DX_XMStoreFloat4x4A( frustMat ),
 		.elapsedSeconds = ( float ) elapsedTime,
 		.dbgDrawFlags	= rndDbgFlags
 	};

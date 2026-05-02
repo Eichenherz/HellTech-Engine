@@ -20,14 +20,15 @@ struct sys_semaphore;
 constexpr u32 SCREEN_WIDTH = 1024;
 constexpr u32 SCREEN_HEIGHT = 640;
 
+#include <bitset>
+
 struct input_state
 {
-    float 	mouseX;
-    float 	mouseY;
-    i32 	mouseDx;
-    i32 	mouseDy;
-    bool	keyStates[ 512 ];
-    bool 	mouseButtons[ 5 ];
+    std::bitset<512>    keyStates;
+    std::bitset<5>      mouseButtons;
+    i32 	            mouseDx;
+    i32 	            mouseDy;
+    float2 	            mousePos;
 };
 
 using PFN_Job = void ( * )( void*, virtual_arena* );

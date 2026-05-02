@@ -25,6 +25,7 @@ using float3 = DirectX::XMFLOAT3;
 using float4 = DirectX::XMFLOAT4;
 
 using float3x3 = DirectX::XMFLOAT3X3;
+using float4x3 = DirectX::XMFLOAT4X3;
 using float4x4 = DirectX::XMFLOAT4X4A;
 
 constexpr bool operator==( const float2& a, const float2& b )
@@ -84,7 +85,7 @@ __forceinline float4 XM_CALLCONV DX_XMStoreFloat4( DirectX::XMVECTOR v )
 	return out;
 }
 
-__forceinline float4x4 XM_CALLCONV DX_XMStoreFloat4x4( DirectX::XMMATRIX m )
+__forceinline float4x4 XM_CALLCONV DX_XMStoreFloat4x4A( DirectX::XMMATRIX m )
 {
 	DirectX::XMFLOAT4X4A out;
 	DirectX::XMStoreFloat4x4A( &out, m );

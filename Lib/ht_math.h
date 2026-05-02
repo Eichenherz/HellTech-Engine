@@ -336,7 +336,7 @@ inline float4x4 PerspRevZInfFarFromFovAndAspectRatioLH( float fovYRads, float as
 	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, 1 );
 	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, zNear, 0 );
 
-	return DX_XMStoreFloat4x4( proj );
+	return DX_XMStoreFloat4x4A( proj );
 }
 
 inline float4x4 PerspRevZInfFarFromFovAndAspectRatioRH( float fovYRads, float aspectRatioWH, float zNear )
@@ -352,7 +352,7 @@ inline float4x4 PerspRevZInfFarFromFovAndAspectRatioRH( float fovYRads, float as
 	proj.r[ 2 ] = DirectX::XMVectorSet( 0, 0, 0, -1 );
 	proj.r[ 3 ] = DirectX::XMVectorSet( 0, 0, zNear, 0 );
 
-	return DX_XMStoreFloat4x4( proj );
+	return DX_XMStoreFloat4x4A( proj );
 }
 
 constexpr packed_trs IDENTITY_TRS = {

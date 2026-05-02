@@ -578,14 +578,16 @@ struct culling_pass
 {
 	vk_buffer		instOccludedCache;
 	vk_buffer		clusterOccludedCache;
-	vk_buffer		compactedInst;
+
+	vk_buffer		visibleInstances;
+	vk_buffer		visibleInstCounter;
 	vk_buffer		visibleClusters;
 	vk_buffer		visibleClustersCount;
+
+	vk_buffer		dispatchIndirect;
+
 	vk_buffer		drawCmds;
 	vk_buffer		drawCount;
-	vk_buffer		compactedInstCounter;
-	vk_buffer		compactedClustersCounter;
-	vk_buffer		dispatchIndirect;
 
 	VkPipeline		instCullPass;
 	VkPipeline		instExpansionPass;
@@ -594,14 +596,16 @@ struct culling_pass
 
 	desc_hndl32		instOccludedCacheIdx;
 	desc_hndl32		clusterOccludedCacheIdx;
-	desc_hndl32		compactedInstIdx;
+
+	desc_hndl32		visibleInstIdx;
+	desc_hndl32		visibleInstCounterIdx;
 	desc_hndl32		visibleClustersIdx;
 	desc_hndl32		visibleClustersCountIdx;
+
+	desc_hndl32		dispatchIndirectIdx;
+
 	desc_hndl32		drawCmdsIdx;
 	desc_hndl32		drawCountIdx;
-	desc_hndl32		compactedInstCounterIdx;
-	desc_hndl32		compactedClustersCounterIdx;
-	desc_hndl32		dispatchIndirectIdx;
 
 
 	void Init( vk_context& dc )
@@ -630,23 +634,14 @@ struct culling_pass
 		} );
 		drawCountIdx = dc.AllocDescriptorIdx( drawCount );
 
-		compactedInstCounter = dc.CreateBuffer( {
-			.name			= "Buff_AtomicWgCounter",
+		visibleInstCounter = dc.CreateBuffer( {
+			.name			= "Buff_VisibleInstCounter",
 			.usageFlags		= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
 			| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 			.sizeInBytes	= 1 * sizeof( u32 ),
 			.usage			= buffer_usage::GPU_ONLY
 		} ); 
-		compactedInstCounterIdx = dc.AllocDescriptorIdx( compactedInstCounter );
-
-		compactedClustersCounter = dc.CreateBuffer( {
-			.name = "Buff_AtomicWgCounter",
-			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-			| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY
-		} );
-		compactedClustersCounterIdx = dc.AllocDescriptorIdx( compactedClustersCounter );
+		visibleInstCounterIdx = dc.AllocDescriptorIdx( visibleInstCounter );
 
 		dispatchIndirect = dc.CreateBuffer( {
 			.name = "Buff_DispatchIndirect",
@@ -660,7 +655,7 @@ struct culling_pass
 		constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 		// NOTE: these are hard capped
 		clusterOccludedCache = dc.CreateBuffer( {
-			.name			= "Buff_ClusterVisibilityCache",
+			.name			= "Buff_ClusterOccludedCache",
 			.usageFlags		= usg | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( u32 ),
 			.usage			= buffer_usage::GPU_ONLY } );
@@ -693,18 +688,18 @@ struct culling_pass
 	{
 		constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 		instOccludedCache = dc.CreateBuffer( {
-			.name			= "Buff_InstanceVisibilityCache",
+			.name			= "Buff_InstanceOccludedCache",
 			.usageFlags		= usg | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes	= instancesUpperBound * sizeof( u32 ),
 			.usage			= buffer_usage::GPU_ONLY } );
 		instOccludedCacheIdx = dc.AllocDescriptorIdx( instOccludedCache );
 
-		compactedInst = dc.CreateBuffer( {
-			.name			= "Buff_CompactedInstArgs",
+		visibleInstances = dc.CreateBuffer( {
+			.name			= "Buff_VisibleInstArgs",
 			.usageFlags		= usg,
 			.sizeInBytes	= instancesUpperBound * sizeof( visible_instance ),
 			.usage			= buffer_usage::GPU_ONLY } );
-		compactedInstIdx = dc.AllocDescriptorIdx( compactedInst );
+		visibleInstIdx = dc.AllocDescriptorIdx( visibleInstances );
 	}
 
 	void Execute(
@@ -724,31 +719,34 @@ struct culling_pass
 		if( !latePass )
 		{
 			rscTracker.UseBuffer( instOccludedCache, COMPUTE_READWRITE );
-			rscTracker.UseBuffer( visibleClustersCount, TRANSFER_WRITE );
+			rscTracker.UseBuffer( clusterOccludedCache, COMPUTE_READWRITE );
 		}
 		rscTracker.UseBuffer( drawCount, TRANSFER_WRITE );
-		rscTracker.UseBuffer( compactedInstCounter, TRANSFER_WRITE );
-		rscTracker.UseBuffer( compactedClustersCounter, TRANSFER_WRITE );
+		rscTracker.UseBuffer( visibleInstCounter, TRANSFER_WRITE );
+		rscTracker.UseBuffer( visibleClustersCount, TRANSFER_WRITE );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
 		cmdBuff.CmdFillVkBuffer( drawCount, 0u );
-		cmdBuff.CmdFillVkBuffer( compactedInstCounter, 0u );
-		cmdBuff.CmdFillVkBuffer( compactedClustersCounter, 0u );
+		cmdBuff.CmdFillVkBuffer( visibleInstCounter, 0u );
+		cmdBuff.CmdFillVkBuffer( visibleClustersCount, 0u );
+
 		if( !latePass )
 		{
 			cmdBuff.CmdFillVkBuffer( instOccludedCache, 0u );
-			cmdBuff.CmdFillVkBuffer( visibleClustersCount, 0u );
-
-			rscTracker.UseBuffer( visibleClustersCount, COMPUTE_WRITE );
+			cmdBuff.CmdFillVkBuffer( clusterOccludedCache, 0u );
 		}
 
 		rscTracker.UseBuffer( drawCmds, COMPUTE_WRITE );
 		rscTracker.UseBuffer( drawCount, COMPUTE_READWRITE );
+
 		rscTracker.UseBuffer( dispatchIndirect, COMPUTE_WRITE );
-		rscTracker.UseBuffer( compactedInstCounter, COMPUTE_WRITE );
-		rscTracker.UseBuffer( compactedClustersCounter, COMPUTE_WRITE );
-		rscTracker.UseBuffer( compactedInst, COMPUTE_WRITE );
+
+		rscTracker.UseBuffer( visibleInstCounter, COMPUTE_WRITE );
+		rscTracker.UseBuffer( visibleInstances, COMPUTE_WRITE );
+
+		rscTracker.UseBuffer( visibleClusters, COMPUTE_WRITE );
+		rscTracker.UseBuffer( visibleClustersCount, COMPUTE_WRITE );
 
 		rscTracker.UseImage( hiZTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 
@@ -782,8 +780,8 @@ struct culling_pass
 				.camIdx					= camDesc.slot,
 				.hizTexIdx				= hizDesc.slot,
 				.hizSamplerIdx			= samplerDesc.slot,
-				.visibleItemsCountIdx	= compactedInstCounterIdx.slot,
-				.visibleItemsIdx		= compactedInstIdx.slot,
+				.visibleItemsCountIdx	= visibleInstCounterIdx.slot,
+				.visibleItemsIdx		= visibleInstIdx.slot,
 				.isLatePass				= latePass
 			};
 
@@ -796,7 +794,7 @@ struct culling_pass
 			indirect_dispatcher_params pushBlock = {
 				.cullShaderWorkGrX	= 32,
 				.dispatchCmdBuffIdx = dispatchIndirectIdx.slot,
-				.counterBufferIdx	= compactedInstCounterIdx.slot
+				.counterBufferIdx	= visibleInstCounterIdx.slot
 			};
 			cmdBuff.CmdBindPipelineAndBindlessDesc( indirectDispatchPass, VK_PIPELINE_BIND_POINT_COMPUTE );
 			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
@@ -805,11 +803,10 @@ struct culling_pass
 		cmdBuff.CmdPipelineMemoryBarriers( computeToIndirectComputeExecDependency );
 		{
 			draw_expansion_params pushBlock = {
-				.workCounterIdxConst	= compactedInstCounterIdx.slot,
-				.srcBufferIdx			= compactedInstIdx.slot,
+				.workCounterIdxConst	= visibleInstCounterIdx.slot,
+				.srcBufferIdx			= visibleInstIdx.slot,
 				.visMltBufferIdx		= visibleClustersIdx.slot,
-				.visMltCounterIdxIdx	= visibleClustersCountIdx.slot,
-				.counterIdx				= compactedClustersCounterIdx.slot
+				.visMltCounterIdxIdx	= visibleClustersCountIdx.slot
 			};
 
 			cmdBuff.CmdBindPipelineAndBindlessDesc( instExpansionPass, VK_PIPELINE_BIND_POINT_COMPUTE );
@@ -821,7 +818,7 @@ struct culling_pass
 			indirect_dispatcher_params pushBlock = {
 				.cullShaderWorkGrX	= 32,
 				.dispatchCmdBuffIdx = dispatchIndirectIdx.slot,
-				.counterBufferIdx	= compactedClustersCounterIdx.slot
+				.counterBufferIdx	= visibleClustersCountIdx.slot
 			};
 			cmdBuff.CmdBindPipelineAndBindlessDesc( indirectDispatchPass, VK_PIPELINE_BIND_POINT_COMPUTE );
 			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
@@ -831,7 +828,6 @@ struct culling_pass
 		{
 			meshlet_issue_draws_params pushBlock = {
 				.visMltCountIdx		= visibleClustersCountIdx.slot,
-				.workCountIdx		= compactedClustersCounterIdx.slot,
 				.srcBufferIdx		= visibleClustersIdx.slot,
 				.drawCmdCounterIdx	= drawCountIdx.slot,
 				.drawCmdsBuffIdx	= drawCmdsIdx.slot

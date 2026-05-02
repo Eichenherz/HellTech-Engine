@@ -114,8 +114,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		if( pUserData )
 		{
 			input_state& inputState = *( input_state* ) pUserData;
-			inputState.mouseX = ( float ) GET_X_LPARAM( lParam );
-			inputState.mouseY = ( float ) GET_Y_LPARAM( lParam );
+			inputState.mousePos = { ( float ) GET_X_LPARAM( lParam ), ( float ) GET_Y_LPARAM( lParam ) };
 		}
 		break;
 	}
@@ -145,7 +144,8 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		LONG_PTR pUserData = GetWindowLongPtr( hwnd, GWLP_USERDATA );
 		if( !pUserData ) return 0;
 
-		Win32ProcessRawInput( ri, *( input_state* ) pUserData );
+		input_state& inputState = *( input_state* ) pUserData;
+		Win32ProcessRawInput( ri, inputState );
 
 		return 0;
 	}

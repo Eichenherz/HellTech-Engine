@@ -23,7 +23,6 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
     if( WaveIsFirstLane() )
     {
         waveBase = BufferAtomicAdd( pushBlock.visMltCounterIdxIdx, waveTotal );
-        BufferAtomicAdd( pushBlock.counterIdx, waveTotal );
     }
     waveBase = WaveReadLaneFirst( waveBase );
 

@@ -31,7 +31,7 @@ struct im_gui_ctx
 	inline void UpdateTimeAndInputState( float elapsedSecs, const input_state& inputState )
 	{
 		io->DeltaTime = elapsedSecs;
-		io->MousePos = { inputState.mouseX, inputState.mouseY };
+		io->MousePos = { inputState.mousePos.x, inputState.mousePos.y };
 		io->MouseDown[ 0 ] = inputState.mouseButtons[ 0 ];
 		io->MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
 		io->MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];

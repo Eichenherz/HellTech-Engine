@@ -89,7 +89,7 @@ struct vertex
 // TODO: compress data more ?
 struct gpu_instance
 {
-	packed_trs	toWorld;
+	float4x3	toWorld;
 	u32			meshIdx;
 	u32			mtrlIdx;
 };
@@ -227,13 +227,11 @@ struct draw_expansion_params
 	u32 srcBufferIdx;
 	u32 visMltBufferIdx;
 	u32 visMltCounterIdxIdx;
-	u32 counterIdx;
 };
 
 struct meshlet_issue_draws_params
 {
 	u32 visMltCountIdx;
-	u32 workCountIdx;
 	u32 srcBufferIdx;
 	u32 drawCmdCounterIdx;
 	u32 drawCmdsBuffIdx;
