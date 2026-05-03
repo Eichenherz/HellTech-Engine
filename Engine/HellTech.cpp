@@ -289,6 +289,12 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 			//	.type	= imgui_widget_type::CHECKBOX
 			//},
 			imgui_widget {
+				.name	= " Draw Inst AABBs",
+				.pData	= &rndDbgFlags.dbgDraw,
+				.Action = nullptr,
+				.type	= imgui_widget_type::CHECKBOX
+			},
+			imgui_widget {
 				.name	= "Press F to freeze MainView",
 				.pData	= nullptr,
 				.Action = nullptr,

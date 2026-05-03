@@ -13,6 +13,13 @@
 
 #include <span>
 
+template<typename T>
+concept DRAW_INDEXED_CMD_T = requires( T t )
+{
+	{ offsetof( T, cmd ) } -> std::convertible_to<std::size_t>;
+	requires std::same_as<decltype( t.cmd ), VkDrawIndexedIndirectCommand>;
+};
+
 struct vk_scoped_label
 {
 	VkCommandBuffer cmdBuff;
@@ -142,16 +149,18 @@ struct vk_command_buffer
 		vkCmdDrawIndexed( hndl, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance );
 	}
 
+	template<DRAW_INDEXED_CMD_T T>
 	void CmdDrawIndexedIndirectCount( 
 		const vk_buffer& 	idxBuffer,
 		VkIndexType      	idxType,
 		const vk_buffer& 	drawCmds,
-		const vk_buffer& 	drawCount,
-		u32              	maxDrawCount
+		const vk_buffer& 	drawCount
 	) {
+		const u32 maxDrawCount = u32( drawCmds.sizeInBytes / sizeof( T ) );
+
 		vkCmdBindIndexBuffer2( hndl, idxBuffer.hndl, 0, idxBuffer.sizeInBytes, idxType );
-		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, offsetof( draw_indexed_command, cmd ),
-			drawCount.hndl, 0, maxDrawCount, sizeof( draw_indexed_command ) );
+		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, offsetof( T, cmd ),
+			drawCount.hndl, 0, maxDrawCount, sizeof( T ) );
 	}
 
 	void CmdPipelineBarriers(

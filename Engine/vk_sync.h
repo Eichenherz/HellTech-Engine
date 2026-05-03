@@ -73,6 +73,7 @@ constexpr vk_access_stage_masks COMPUTE_READ = { VK_ACCESS_2_SHADER_READ_BIT, VK
 constexpr vk_access_stage_masks COMPUTE_WRITE = { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
 constexpr vk_access_stage_masks COMPUTE_READWRITE = { HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
 constexpr vk_access_stage_masks TRANSFER_WRITE = { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT };
+constexpr vk_access_stage_masks DRAW_INDIRECT_READ = { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT };
 
 inline vk_access_stage_masks VkGetAccessAndStageFromReadStagesBits( u64 mask )
 {

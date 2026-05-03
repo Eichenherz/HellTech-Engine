@@ -223,12 +223,15 @@ struct culling_params
 	u32 instDescIdx;
 	u32 meshDescIdx;
 	u32 viewBuffIdx;
-	u32 camIdx;
+	u32 camIdx; // NOTE: for debug purposes
 	u32 hizTexIdx;
 	u32 hizSamplerIdx;
 	u32 visibleItemsCountIdx;
 	u32 visibleItemsIdx;
 	u32	isLatePass;
+
+	u32 dbgInstCountIdx;
+	u32 dbgInstBuffIdx;
 };
 
 struct draw_expansion_params
@@ -284,6 +287,17 @@ struct dbg_box_params
 	u64 instBuffAddr;
 	u64 vtxBuffAddr;
 	u32 camIdx;
+};
+
+struct record_dbg_draw_params
+{
+	u64 gpuInstCountAddr;
+	u64 dbgDrawCmdsAddr;
+	u64 dbgDrawCountAddr;
+	// TODO: use a dbg obj table or smth
+	u32 indexCount;
+	u32 firstIndex;
+	u32 vertexOffset;
 };
 
 struct global_data

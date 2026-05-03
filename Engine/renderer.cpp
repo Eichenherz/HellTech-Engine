@@ -403,6 +403,7 @@ struct debug_draw_passes
 	vk_buffer	vtxBuff;
 	vk_buffer	idxBuff;
 	vk_buffer	gpuInstBuff;
+	vk_buffer	gpuInstCountBuff;
 	vk_buffer	cpuInstBuff;
 
 	vk_buffer	drawCmdsBuff;
@@ -410,8 +411,13 @@ struct debug_draw_passes
 
 	VkPipeline	drawAsLines;
 	VkPipeline	drawAsTriangles;
+	// NOTE: it's easier to separate the recording of instances and the submission of draws
+	VkPipeline	compRecordDbgDraw;
 
 	VkPipeline	compLambertianClay;
+
+	desc_hndl32	gpuInstBuffIdx;
+	desc_hndl32	gpuInstCountBuffIdx;
 
 	void Init( vk_context& dc, vk_renderer_config& rndCfg )
 	{
@@ -452,10 +458,13 @@ struct debug_draw_passes
 				1, rndCfg.desiredDepthFormat, triDrawPipelineState );
 		}
 
-		unique_shader_ptr comp = dc.CreateShaderFromSpirv(
+		unique_shader_ptr lambert = dc.CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_LambertianClayCsMain.spirv" ) );
-		compLambertianClay = dc.CreateComputePipeline( *comp );
+		compLambertianClay = dc.CreateComputePipeline( *lambert );
 
+		unique_shader_ptr recordDbgDraw = dc.CreateShaderFromSpirv(
+			ReadFileBinary( "bin/SpirV/compute_RecordDbgDrawCsMain.spirv" ) );
+		compRecordDbgDraw = dc.CreateComputePipeline( *recordDbgDraw );
 
 		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 		drawCountBuff = dc.CreateBuffer( {
@@ -478,6 +487,15 @@ struct debug_draw_passes
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
 			.usage			= buffer_usage::GPU_ONLY
 		} );
+		gpuInstBuffIdx = dc.AllocDescriptorIdx( gpuInstBuff );
+
+		gpuInstCountBuff = dc.CreateBuffer( {
+			.name			= "Buff_DbgGpuInstCount",
+			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.sizeInBytes	= 1 * sizeof( u32 ),
+			.usage			= buffer_usage::GPU_ONLY
+		} );
+		gpuInstCountBuffIdx = dc.AllocDescriptorIdx( gpuInstCountBuff );
 
 		cpuInstBuff = dc.CreateBuffer( {
 			.name			= "Buff_DbgCpuInst",
@@ -508,6 +526,80 @@ struct debug_draw_passes
 
 		std::memcpy( vtxBuff.hostVisible, std::data( unitCube ), BYTE_COUNT( unitCube ) );
 		std::memcpy( idxBuff.hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
+	}
+
+	inline void ResetDrawCounters( vk_command_buffer& cmdBuff, vk_rsc_state_tracker& rscTracker )
+	{
+		rscTracker.UseBuffer( drawCountBuff, TRANSFER_WRITE );
+		rscTracker.UseBuffer( gpuInstCountBuff, TRANSFER_WRITE );
+
+		rscTracker.FlushBarriers( cmdBuff );
+
+		cmdBuff.CmdFillVkBuffer( drawCountBuff, 0u );
+		cmdBuff.CmdFillVkBuffer( gpuInstCountBuff, 0u );
+	}
+
+	void DrawWireframesGPU(
+		vk_command_buffer&      		cmdBuff,
+		vk_rsc_state_tracker&			rscTracker,
+		const vk_image&  				colorTarget,
+		desc_hndl32						camIdx
+	) {
+		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_DrawWireframesGPU", {} );
+
+		rscTracker.UseBuffer( drawCountBuff, COMPUTE_WRITE );
+		rscTracker.UseBuffer( drawCmdsBuff, COMPUTE_WRITE );
+		rscTracker.UseBuffer( gpuInstCountBuff, COMPUTE_READ );
+		rscTracker.FlushBarriers( cmdBuff );
+
+		{
+			cmdBuff.CmdBindPipelineAndBindlessDesc( compRecordDbgDraw, VK_PIPELINE_BIND_POINT_COMPUTE );
+			record_dbg_draw_params pushBlock = {
+				.gpuInstCountAddr	= gpuInstCountBuff.devicePointer,
+				.dbgDrawCmdsAddr	= drawCmdsBuff.devicePointer,
+				.dbgDrawCountAddr	= drawCountBuff.devicePointer,
+				.indexCount			= ( u32 ) std::size( lineVtxBuff ),
+				.firstIndex			= 0,
+				.vertexOffset		= 0
+			};
+			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
+			cmdBuff.CmdDispatch( { 1, 1, 1 } );
+		}
+
+		rscTracker.UseBuffer( drawCmdsBuff, DRAW_INDIRECT_READ );
+		rscTracker.UseBuffer( drawCountBuff, DRAW_INDIRECT_READ );
+		rscTracker.UseBuffer( gpuInstBuff, { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT } );
+		rscTracker.UseImage( colorTarget,
+			{ HT_COLOR_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT },
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+
+		rscTracker.FlushBarriers( cmdBuff );
+
+		{
+			VkRenderingAttachmentInfo attInfos[] = {
+				VkMakeAttachmentInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} )
+			};
+
+			vk_rendering_info renderingInfo = {
+				.viewport = VkCorrectedGetViewport( colorTarget.width, colorTarget.height ),
+				.scissor = VkGetScissor( colorTarget.width, colorTarget.height ),
+				.colorAttachments = attInfos,
+				.pDepthAttachment = nullptr
+			};
+
+			vk_scoped_renderpass dynamicRendering = cmdBuff.CmdIssueScopedRenderPass( renderingInfo );
+
+			cmdBuff.CmdBindPipelineAndBindlessDesc( drawAsLines, VK_PIPELINE_BIND_POINT_GRAPHICS );
+
+			dbg_box_params pushBlock = {
+				.instBuffAddr	= gpuInstBuff.devicePointer, // NOTE: it's GPU !!!!
+				.vtxBuffAddr	= vtxBuff.devicePointer,
+				.camIdx			= camIdx.slot
+			};
+			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
+			cmdBuff.CmdDrawIndexedIndirectCount<draw_instanced_indexed_indirect>(
+				idxBuff, VK_INDEX_TYPE_UINT16, drawCmdsBuff, drawCountBuff );
+		}
 	}
 
 	// TODO: don't hardcode
@@ -541,7 +633,7 @@ struct debug_draw_passes
 		cmdBuff.CmdBindPipelineAndBindlessDesc( drawAsLines, VK_PIPELINE_BIND_POINT_GRAPHICS );
 
 		dbg_box_params pushBlock = {
-			.instBuffAddr	= cpuInstBuff.devicePointer,
+			.instBuffAddr	= cpuInstBuff.devicePointer, // NOTE: it's CPU !!!!
 			.vtxBuffAddr	= vtxBuff.devicePointer,
 			.camIdx			= camIdx.slot
 		};
@@ -559,7 +651,7 @@ struct debug_draw_passes
 	) {
 		HT_ASSERT( ( vbuff.width == dstImg.width ) && ( vbuff.height == dstImg.height ) );
 
-		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "DBG_LambertianClayPass", {} );
+		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_LambertianClayPass", {} );
 
 		rscTracker.UseImage( dstImg, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
 			VK_IMAGE_LAYOUT_GENERAL );
@@ -582,6 +674,22 @@ struct debug_draw_passes
 
 
 using index_t = u8;
+
+struct culling_pass_args
+{
+	const vk_buffer&		dbgGpuInstBuff;
+	const vk_buffer&		dbgGpuInstCountBuff;
+	const vk_image&			hiZTarget;
+	u32						instCount;
+	desc_hndl32				instBuffIdx;
+	desc_hndl32				meshTableIdx;
+	desc_hndl32				viewBuffIdx;
+	u32						camIdx;
+	desc_hndl32				hizDesc;
+	desc_hndl32				samplerDesc;
+	desc_hndl32				dbgGpuInstBuffIdx;
+	desc_hndl32				dbgGpuInstCountBuffIdx;
+};
 
 struct culling_pass
 {
@@ -712,17 +820,10 @@ struct culling_pass
 	}
 
 	void Execute(
-		vk_command_buffer&		cmdBuff,
-		vk_rsc_state_tracker&	rscTracker,
-		const vk_image&			hiZTarget,
-		u32						instCount,
-		desc_hndl32				instBuffIdx,
-		desc_hndl32				meshTableIdx,
-		desc_hndl32				viewBuffIdx,
-		u32						camIdx,
-		desc_hndl32				hizDesc,
-		desc_hndl32				samplerDesc,
-		bool					latePass
+		vk_command_buffer&			cmdBuff,
+		vk_rsc_state_tracker&		rscTracker,
+		const culling_pass_args&	args,
+		bool						latePass
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Cull Pass",{} );
 
@@ -758,7 +859,10 @@ struct culling_pass
 		rscTracker.UseBuffer( visibleClusters, COMPUTE_WRITE );
 		rscTracker.UseBuffer( visibleClustersCount, COMPUTE_WRITE );
 
-		rscTracker.UseImage( hiZTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
+		rscTracker.UseBuffer( args.dbgGpuInstBuff, COMPUTE_WRITE );
+		rscTracker.UseBuffer( args.dbgGpuInstCountBuff, COMPUTE_WRITE );
+
+		rscTracker.UseImage( args.hiZTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
@@ -783,22 +887,25 @@ struct culling_pass
 
 		{
 			culling_params pushBlock = {
-				.instCount				= instCount,
+				.instCount				= args.instCount,
 				.visInstCacheIdx		= instOccludedCacheIdx.slot,
-				.instDescIdx			= instBuffIdx.slot,
-				.meshDescIdx			= meshTableIdx.slot,
-				.viewBuffIdx			= viewBuffIdx.slot,
-				.camIdx					= camIdx,
-				.hizTexIdx				= hizDesc.slot,
-				.hizSamplerIdx			= samplerDesc.slot,
+				.instDescIdx			= args.instBuffIdx.slot,
+				.meshDescIdx			= args.meshTableIdx.slot,
+				.viewBuffIdx			= args.viewBuffIdx.slot,
+				.camIdx					= args.camIdx,
+				.hizTexIdx				= args.hizDesc.slot,
+				.hizSamplerIdx			= args.samplerDesc.slot,
 				.visibleItemsCountIdx	= visibleInstCounterIdx.slot,
 				.visibleItemsIdx		= visibleInstIdx.slot,
-				.isLatePass				= latePass
+				.isLatePass				= latePass,
+
+				.dbgInstCountIdx		= args.dbgGpuInstCountBuffIdx.slot,
+				.dbgInstBuffIdx			= args.dbgGpuInstBuffIdx.slot
 			};
 
 			cmdBuff.CmdBindPipelineAndBindlessDesc( instCullPass, VK_PIPELINE_BIND_POINT_COMPUTE );
 			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-			cmdBuff.CmdDispatch( { GroupCount( instCount, 32 ), 1, 1 } );
+			cmdBuff.CmdDispatch( { GroupCount( args.instCount, 32 ), 1, 1 } );
 		}
 		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
 		{
@@ -1248,9 +1355,7 @@ struct vbuffer_pass
 			.camIdx			= camIdx.slot
 		};
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-
-		u32 maxDraws = u32( drawCmds.sizeInBytes / sizeof( draw_indexed_command ) );
-		cmdBuff.CmdDrawIndexedIndirectCount( indexBuff, indexType, drawCmds, drawCount, maxDraws );
+		cmdBuff.CmdDrawIndexedIndirectCount<draw_indexed_command>( indexBuff, indexType, drawCmds, drawCount );
 	}
 
 	void DebugDrawHashedVBuffer(
@@ -1814,9 +1919,23 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 	// TODO: don't hardcode here
 	const u32 camIdx = !frameData.dbgDrawFlags.freezeMainView ? 0 : 1;
 	{
-		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
-			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx, camIdx,
-			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, false );
+		dbgPass.ResetDrawCounters( thisFrameCmdBuffer, rscStateTracker );
+
+		const culling_pass_args cullPassArgs = {
+			.dbgGpuInstBuff			= dbgPass.gpuInstBuff,
+			.dbgGpuInstCountBuff	= dbgPass.gpuInstCountBuff,
+			.hiZTarget				= hizbPass.hiZTarget,
+			.instCount				= instCount,
+			.instBuffIdx			= thisVFrame.instDesc,
+			.meshTableIdx			= thisVFrame.gpuMeshTableDesc,
+			.viewBuffIdx			= thisVFrame.viewDataIdx,
+			.camIdx					= camIdx,
+			.hizDesc				= hizbPass.hizSrv,
+			.samplerDesc			= hizbPass.quadMinSamplerIdx,
+			.dbgGpuInstBuffIdx		= dbgPass.gpuInstBuffIdx,
+			.dbgGpuInstCountBuffIdx = dbgPass.gpuInstCountBuffIdx
+		};
+		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, cullPassArgs, false );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
 			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.visibleClusters,
@@ -1825,9 +1944,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
-		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
-			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx, camIdx,
-			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
+		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, cullPassArgs, true );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
 			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.visibleClusters,
@@ -1835,12 +1952,6 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			thisVFrame.viewDataIdx, true );
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
-
-		[[unlikely]]
-		if( frameData.dbgDrawFlags.dbgDraw )
-		{
-
-		}
 
 		// NOTE: we need an exec dependency between AcquireNextSwapchainImageBlocking and the compute write
 		constexpr VkPipelineStageFlags2 execDep =
@@ -1874,6 +1985,12 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		else
 		{
 			vBuffPass.DebugDrawHashedVBuffer( thisFrameCmdBuffer, rscStateTracker, scImg.img, scImg.writeDescIdx );
+		}
+
+		[[unlikely]]
+		if( frameData.dbgDrawFlags.dbgDraw )
+		{
+			dbgPass.DrawWireframesGPU( thisFrameCmdBuffer, rscStateTracker, scImg.img, thisVFrame.viewDataIdx );
 		}
 
 		[[unlikely]]

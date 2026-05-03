@@ -41,6 +41,22 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	// NOTE: we use camIdx here bc we'll have a debug camera
 	view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
 
+	// TODO: ifdef dbg ?
+ 	u32 waveDbgOffset = WaveActiveCountBits( true );
+    u32 waveDbgBase = 0;
+    if( WaveIsFirstLane() )
+    {
+        waveDbgBase = BufferAtomicAdd( pushBlock.dbgInstCountIdx, waveDbgOffset );
+    }
+    waveDbgBase = WaveReadLaneFirst( waveDbgBase );
+
+    u32 dbgSlot = waveDbgBase + WavePrefixCountBits( true );
+
+	dbg_aabb_instance aabbInst = { toWorld, float4( 1.0f, 0.0f, 0.0f, 0.0f ), aabbMin, aabbMax };
+	BufferStore<dbg_aabb_instance>( pushBlock.dbgInstBuffIdx, aabbInst, dbgSlot );
+    //
+
+
 	bool visible = false;
 	//if( !bool( pushBlock.isLatePass ) )
 	//{

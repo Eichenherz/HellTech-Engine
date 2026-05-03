@@ -96,6 +96,12 @@ struct device_addr
 	}
 };
 
+template<typename T>
+void DeviceAddrStore( u64 addr, u64 idx, T value )
+{
+	vk::RawBufferStore<T>( addr + idx * sizeof( T ), value );
+}
+
 u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
 {
 	device_addr<u32> triBuff = { gGlobData.triAddr };
