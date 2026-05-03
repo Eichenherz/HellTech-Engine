@@ -24,7 +24,7 @@ struct vk_renderer_config
 	vk_swapchain_config		scConfig = {};
 
 	VkFormat				desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	VkFormat				desiredColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+	VkFormat				desiredColorFormat = VK_FORMAT_B8G8R8A8_UNORM; // NOTE: for now use same as SC //VK_FORMAT_R16G16B16A16_SFLOAT;
 	VkFormat				desiredHiZFormat = VK_FORMAT_R32_SFLOAT;
 	u16             		renderWidth;
 	u16             		renderHeight;

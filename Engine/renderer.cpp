@@ -41,29 +41,21 @@ namespace DXPacked = DirectX::PackedVector;
 
 
 //====================CONSTS====================//
-static constexpr u64 MAX_FIF = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
+constexpr u64 MAX_FIF					= vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
+constexpr u64 MAX_TRIANGLES_IN_SCENE	= 10'000'000;
+constexpr u64 MAX_VERTICES_IN_SCENE		= 5'000'000;
+constexpr u64 MAX_MESHLETS_IN_SCENE		= 100'000;
+constexpr u64 MAX_INSTANCES_IN_SCENE	= 10'000;
 //==============================================//
 // TODO: cvars
-//====================CVARS====================//
-
-//==============================================//
-// TODO: compile time switches
-//==============CONSTEXPR_SWITCH==============//
+//====================CVARS=====================//
 
 //==============================================//
 
-
-// TODO: remove ?
-static const DXPacked::XMCOLOR white		= { 255u, 255u, 255u, 1 };
-static const DXPacked::XMCOLOR black		= { 0u, 0u, 0u, 1 };
-static const DXPacked::XMCOLOR gray			= { 0x80u, 0x80u, 0x80u, 1 };
-static const DXPacked::XMCOLOR lightGray	= { 0xD3u, 0xD3u, 0xD3u, 1 };
-static const DXPacked::XMCOLOR red			= { 255u, 0u, 0u, 1 };
-static const DXPacked::XMCOLOR green		= { 0u, 255u, 0u, 1 };
-static const DXPacked::XMCOLOR blue			= { 0u, 0u, 255u, 1 };
-static const DXPacked::XMCOLOR yellow		= { 255u, 255u, 0u, 1 };
-static const DXPacked::XMCOLOR cyan			= { 0u, 255u, 255u, 1 };
-static const DXPacked::XMCOLOR magenta		= { 255u, 0u, 255u, 1 };
+//==============CONSTEXPR_SWITCH================//
+constexpr VkCullModeFlags	HT_CULL_MODE	= IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
+constexpr VkFrontFace		HT_FRONT_FACE	= IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+//==============================================//
 
 #include "ht_renderer_types.h"
 
@@ -399,12 +391,22 @@ constexpr const char* ToString( debug_draw_type t )
 	return "UNKNOWN";
 }
 
-// TODO: use instancing for drawing ?
 struct debug_draw_passes
 {
-	vk_buffer	linesBuff;
-	vk_buffer	trisBuff;
-	vk_buffer	drawCount;
+	// TODO: where to place these ?
+	static constexpr box_vertices			unitCube	= GenerateDbgBoxFromBounds( BOX_MIN, BOX_MAX );
+	static constexpr box_wireframe_indices	lineVtxBuff = GenerateBoxWireframeIndices();
+	//constexpr box_triangle_indices trisVtxBuff = BoxVerticesAsTriangles( unitCube );
+
+	ht_stretchybuff<dbg_aabb_instance> cpuInstView = {};
+
+	vk_buffer	vtxBuff;
+	vk_buffer	idxBuff;
+	vk_buffer	gpuInstBuff;
+	vk_buffer	cpuInstBuff;
+
+	vk_buffer	drawCmdsBuff;
+	vk_buffer	drawCountBuff;
 
 	VkPipeline	drawAsLines;
 	VkPipeline	drawAsTriangles;
@@ -413,127 +415,139 @@ struct debug_draw_passes
 
 	void Init( vk_context& dc, vk_renderer_config& rndCfg )
 	{
+		unique_shader_ptr vtx = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_DbgBoxVsMain.spirv" ) );
+		unique_shader_ptr frag = dc.CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_ColPassPsMain.spirv" ) );
+
+		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+		vk_gfx_shader_stage gfxStages[] = { *vtx, *frag };
+
+		{
+			vk_gfx_pso_config lineDrawPipelineState = {
+				.polyMode			= VK_POLYGON_MODE_LINE,
+				.cullFlags			= HT_CULL_MODE,
+				.frontFace			= HT_FRONT_FACE,
+				.primTopology		= VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+				.depthWrite			= VK_FALSE,
+				.depthTestEnable	= VK_FALSE,
+				.blendCol			= VK_FALSE,
+			};
+
+			drawAsLines = dc.CreateGfxPipeline( gfxStages, dynamicStates, &rndCfg.desiredColorFormat,
+				1, VK_FORMAT_UNDEFINED, lineDrawPipelineState );
+		}
+
 		if constexpr( false )
 		{
-			unique_shader_ptr vtx = dc.CreateShaderFromSpirv( ReadFileBinary( "Shaders/v_cpu_dbg_draw.vert.spv" ) );
-			unique_shader_ptr frag = dc.CreateShaderFromSpirv( ReadFileBinary( "Shaders/f_pass_col.frag.spv" ) );
+			vk_gfx_pso_config triDrawPipelineState = {
+				.polyMode			= VK_POLYGON_MODE_FILL,
+				.cullFlags			= VK_CULL_MODE_NONE,
+				.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
+				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+				.depthWrite			= VK_TRUE,
+				.depthTestEnable	= VK_TRUE,
+				.blendCol			= VK_TRUE
+			};
 
-			static_assert( worldLeftHanded );
-
-			{
-				vk_gfx_pso_config lineDrawPipelineState = {
-					.polyMode			= VK_POLYGON_MODE_LINE,
-					.cullFlags			= VK_CULL_MODE_NONE,
-					.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
-					.primTopology		= VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
-					.depthWrite			= VK_FALSE,
-					.depthTestEnable	= VK_FALSE,
-					.blendCol			= VK_FALSE,
-				};
-				VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-
-				vk_gfx_shader_stage shaders[] = { *vtx, *frag };
-				drawAsLines = dc.CreateGfxPipeline(
-					shaders, dynamicStates, &rndCfg.desiredColorFormat, 1, VK_FORMAT_UNDEFINED, lineDrawPipelineState );
-			}
-
-			{
-				vk_gfx_pso_config triDrawPipelineState = {
-					.polyMode			= VK_POLYGON_MODE_FILL,
-					.cullFlags			= VK_CULL_MODE_NONE,
-					.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
-					.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-					.depthWrite			= VK_TRUE,
-					.depthTestEnable	= VK_TRUE,
-					.blendCol			= VK_TRUE
-				};
-
-				vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
-				VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-
-				drawAsTriangles = dc.CreateGfxPipeline(
-					shaderStages, dynamicStates, &rndCfg.desiredColorFormat, 1, rndCfg.desiredDepthFormat, triDrawPipelineState );
-			}
-
-			constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
-				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-			drawCount = dc.CreateBuffer( {
-				.name			= "Buff_DbgDrawCount",
-				.usageFlags		= usgFlags,
-				.sizeInBytes	= 1 * sizeof( u32 ),
-				.usage			= buffer_usage::GPU_ONLY } );
+			drawAsTriangles = dc.CreateGfxPipeline( gfxStages, dynamicStates, &rndCfg.desiredColorFormat,
+				1, rndCfg.desiredDepthFormat, triDrawPipelineState );
 		}
 
 		unique_shader_ptr comp = dc.CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_LambertianClayCsMain.spirv" ) );
 		compLambertianClay = dc.CreateComputePipeline( *comp );
+
+
+		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+		drawCountBuff = dc.CreateBuffer( {
+			.name			= "Buff_DbgDrawCount",
+			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.sizeInBytes	= 1 * sizeof( u32 ),
+			.usage			= buffer_usage::GPU_ONLY
+		} );
+
+		drawCmdsBuff = dc.CreateBuffer( {
+			.name			= "Buff_DbgDrawCount",
+			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( draw_instanced_indexed_indirect ),
+			.usage			= buffer_usage::GPU_ONLY
+		} );
+
+		gpuInstBuff = dc.CreateBuffer( {
+			.name			= "Buff_DbgGpuInst",
+			.usageFlags		= usgFlags,
+			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
+			.usage			= buffer_usage::GPU_ONLY
+		} );
+
+		cpuInstBuff = dc.CreateBuffer( {
+			.name			= "Buff_DbgCpuInst",
+			.usageFlags		= usgFlags,
+			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
+			.usage			= buffer_usage::HOST_VISIBLE
+		} );
+		cpuInstView = HtNewStretchyBuffFromMem<dbg_aabb_instance>( cpuInstBuff.hostVisible, cpuInstBuff.sizeInBytes );
 	}
 
-	void InitData( vk_context& dc, u32 dbgLinesSizeInBytes, u32 dbgTrianglesSizeInBytes )
+	void InitAndUploadDebugGeometry( vk_context& dc )
 	{
-		linesBuff = dc.CreateBuffer( { 
-			.name			= "Buff_DbgLines",
-			.usageFlags		= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			.sizeInBytes	= dbgLinesSizeInBytes,
+		// NOTE: host vis to simplify uploads
+		// NOTE: arbitrary sizes chosen
+		vtxBuff = dc.CreateBuffer( {
+			.name			= "Buff_DbgDrawCount",
+			.usageFlags		=  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			.sizeInBytes	= 500 * sizeof( dbg_vertex ),
 			.usage			= buffer_usage::HOST_VISIBLE
 		} );
 
-		trisBuff = dc.CreateBuffer( { 
-			.name			= "Buff_DbgTris",
-			.usageFlags		= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			.sizeInBytes	= dbgTrianglesSizeInBytes,
+		idxBuff = dc.CreateBuffer( {
+			.name			= "Buff_DbgDrawCount",
+			.usageFlags		= VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			.sizeInBytes	= 2000 * sizeof( dbg_index_t ),
 			.usage			= buffer_usage::HOST_VISIBLE
 		} );
+
+		std::memcpy( vtxBuff.hostVisible, std::data( unitCube ), BYTE_COUNT( unitCube ) );
+		std::memcpy( idxBuff.hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
 	}
 
-	// NOTE: must be aligned properly to work
-	void UploadDebugGeometry()
-	{
-		auto unitCube = GenerateBoxWithBounds( BOX_MIN, BOX_MAX );
-		auto lineVtxBuff = BoxVerticesAsLines( unitCube );
-		auto trisVtxBuff = BoxVerticesAsTriangles( unitCube );
-
-		HT_ASSERT( linesBuff.sizeInBytes >= BYTE_COUNT( lineVtxBuff ) );
-		HT_ASSERT( trisBuff.sizeInBytes >= BYTE_COUNT( trisVtxBuff ) );
-		std::memcpy( linesBuff.hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
-		std::memcpy( trisBuff.hostVisible, std::data( trisVtxBuff ), BYTE_COUNT( trisVtxBuff ) );
-	}
-
-	// TODO: multi draw with params
-	void DrawCPU( 
-		vk_command_buffer&        	cmdBuff,
-		const vk_rendering_info&  	renderingInfo,
-		debug_draw_type           	ddType,
-		u64                       	viewAddr,
-		u32                       	viewIdx,
-		const float4x4&				transf,
-		u32							color
+	// TODO: don't hardcode
+	void DrawWireframeCPU(
+		vk_command_buffer&      		cmdBuff,
+		vk_rsc_state_tracker&			rscTracker,
+		const vk_image&  				colorTarget,
+		desc_hndl32						camIdx
 	) {
-		std::array<char, 64> fixedStr = {};
-		std::format_to_n( 
-			&fixedStr[ 0 ], std::size( fixedStr ) - 1 /* for \0 */, "debug_context.DrawCPU: {}", ToString( ddType ) );
+		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_DrawWireframeCPU", {} );
 
-		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( &fixedStr[ 0 ], {} );
-		auto dynamicRendering = cmdBuff.CmdIssueScopedRenderPass( renderingInfo );
+		rscTracker.UseImage( colorTarget,
+			{ HT_COLOR_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT },
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
-		VkPipeline vkPipeline = ( ddType == debug_draw_type::TRIANGLE ) ? drawAsTriangles : drawAsLines;
+		rscTracker.FlushBarriers( cmdBuff );
 
-		cmdBuff.CmdBindPipelineAndBindlessDesc( vkPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS );
+		VkRenderingAttachmentInfo attInfos[] = {
+			VkMakeAttachmentInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} )
+		};
 
-		u64 vtxAddr = ( ddType == debug_draw_type::TRIANGLE ) ? trisBuff.devicePointer : linesBuff.devicePointer;
-		u32 vertexCount = ( ddType == debug_draw_type::TRIANGLE ) ? std::size( boxTrisIndices ) : std::size( boxLineIndices );
-	#pragma pack(push, 1)
-		struct debug_cpu_push
-		{
-			float4x4	transf;
-			u64 		vtxAddr;
-			u64 		viewAddr;
-			u32 		viewIdx;
-			u32 		color;
-		} pc = { transf, vtxAddr, viewAddr, viewIdx, color };
-	#pragma pack(pop)
-		cmdBuff.CmdPushConstants( &pc, sizeof( pc ) );
-		vkCmdDraw( cmdBuff.hndl, vertexCount, 1, 0, 0 );
+		vk_rendering_info renderingInfo = {
+			.viewport = VkCorrectedGetViewport( colorTarget.width, colorTarget.height ),
+			.scissor = VkGetScissor( colorTarget.width, colorTarget.height ),
+			.colorAttachments = attInfos,
+			.pDepthAttachment = nullptr
+		};
+
+		vk_scoped_renderpass dynamicRendering = cmdBuff.CmdIssueScopedRenderPass( renderingInfo );
+
+		cmdBuff.CmdBindPipelineAndBindlessDesc( drawAsLines, VK_PIPELINE_BIND_POINT_GRAPHICS );
+
+		dbg_box_params pushBlock = {
+			.instBuffAddr	= cpuInstBuff.devicePointer,
+			.vtxBuffAddr	= vtxBuff.devicePointer,
+			.camIdx			= camIdx.slot
+		};
+		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
+		cmdBuff.CmdDrawIndexed( idxBuff, VK_INDEX_TYPE_UINT16, ( u32 ) std::size( lineVtxBuff ),
+			1, 0, 0, 0  );
 	}
 
 	void DrawAsLamberitanClay(
@@ -566,11 +580,6 @@ struct debug_draw_passes
 	}
 };
 
-
-constexpr u64 MAX_TRIANGLES_IN_SCENE	= 10'000'000;
-constexpr u64 MAX_VERTICES_IN_SCENE		= 5'000'000;
-constexpr u64 MAX_MESHLETS_IN_SCENE		= 100'000;
-constexpr u64 MAX_INSTANCES_IN_SCENE	= 10'000;
 
 using index_t = u8;
 
@@ -709,7 +718,8 @@ struct culling_pass
 		u32						instCount,
 		desc_hndl32				instBuffIdx,
 		desc_hndl32				meshTableIdx,
-		desc_hndl32				camDesc,
+		desc_hndl32				viewBuffIdx,
+		u32						camIdx,
 		desc_hndl32				hizDesc,
 		desc_hndl32				samplerDesc,
 		bool					latePass
@@ -777,7 +787,8 @@ struct culling_pass
 				.visInstCacheIdx		= instOccludedCacheIdx.slot,
 				.instDescIdx			= instBuffIdx.slot,
 				.meshDescIdx			= meshTableIdx.slot,
-				.camIdx					= camDesc.slot,
+				.viewBuffIdx			= viewBuffIdx.slot,
+				.camIdx					= camIdx,
 				.hizTexIdx				= hizDesc.slot,
 				.hizSamplerIdx			= samplerDesc.slot,
 				.visibleItemsCountIdx	= visibleInstCounterIdx.slot,
@@ -806,7 +817,7 @@ struct culling_pass
 				.workCounterIdxConst	= visibleInstCounterIdx.slot,
 				.srcBufferIdx			= visibleInstIdx.slot,
 				.visMltBufferIdx		= visibleClustersIdx.slot,
-				.visMltCounterIdxIdx	= visibleClustersCountIdx.slot
+				.visMltCounterIdx		= visibleClustersCountIdx.slot
 			};
 
 			cmdBuff.CmdBindPipelineAndBindlessDesc( instExpansionPass, VK_PIPELINE_BIND_POINT_COMPUTE );
@@ -1159,8 +1170,8 @@ struct vbuffer_pass
 			// be tied to the world space and the asset tri winding ( which has TO BE in that space )
 			vk_gfx_pso_config vbuffState = {
 				.polyMode			= VK_POLYGON_MODE_FILL,
-				.cullFlags			= VK_CULL_MODE_BACK_BIT,
-				.frontFace			= VK_FRONT_FACE_COUNTER_CLOCKWISE,
+				.cullFlags			= HT_CULL_MODE,
+				.frontFace			= HT_FRONT_FACE,
 				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
 				.depthWrite			= true,
 				.depthTestEnable	= true,
@@ -1242,16 +1253,17 @@ struct vbuffer_pass
 		cmdBuff.CmdDrawIndexedIndirectCount( indexBuff, indexType, drawCmds, drawCount, maxDraws );
 	}
 
-	void DebugDrawToSwapchain(
+	void DebugDrawHashedVBuffer(
 		vk_command_buffer&			cmdBuff,
 		vk_rsc_state_tracker&		rscTracker,
-		const vk_swapchain_image&	scImg
+		const vk_image&				dstImg,
+		desc_hndl32					dstImgIdx
 	) {
-		HT_ASSERT( ( colorTarget.width == scImg.img.width ) && ( colorTarget.height == scImg.img.height ) );
+		HT_ASSERT( ( colorTarget.width == dstImg.width ) && ( colorTarget.height == dstImg.height ) );
 
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "VBuffer Dbg Tri hash Pass", {} );
 
-		rscTracker.UseImage( scImg.img, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
+		rscTracker.UseImage( dstImg, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
 			VK_IMAGE_LAYOUT_GENERAL );
 		rscTracker.UseImage( colorTarget,
 			{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
@@ -1260,7 +1272,7 @@ struct vbuffer_pass
 
 		cmdBuff.CmdBindPipelineAndBindlessDesc( compDbgHashTriToScPipeline, VK_PIPELINE_BIND_POINT_COMPUTE );
 
-		vbuffer_dbg_draw_params pushBlock = { .srcIdx = colSrv.slot, .dstIdx = scImg.writeDescIdx.slot };
+		vbuffer_dbg_draw_params pushBlock = { .srcIdx = colSrv.slot, .dstIdx = dstImgIdx.slot };
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
 
 		group_size groupSize = { 16, 16, 1 };
@@ -1473,7 +1485,7 @@ struct renderer_context final : renderer_interface
 
 	u32 /* numValidInstances */ UpdateSceneData( const virtual_frame& thisVFrame, const frame_data& frameData )
 	{
-		HT_ASSERT( BYTE_COUNT( frameData.views ) == thisVFrame.viewData.sizeInBytes );
+		HT_ASSERT( BYTE_COUNT( frameData.views ) <= thisVFrame.viewData.sizeInBytes );
 		std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
 		ht_stretchybuff<gpu_mesh> gpuMeshTable = HtNewStretchyBuffFromMem<gpu_mesh>(
@@ -1752,6 +1764,9 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 	u32 instCount = UpdateSceneData( thisVFrame, frameData );
 
+	HT_ASSERT( instCount <= MAX_INSTANCES_IN_SCENE );
+	// TODO: same for meshlets and the rest ????
+
 	vk_cmd_pool_buff currentCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 	vk_command_buffer thisFrameCmdBuffer = { currentCB.buff, pVkCtx->globalPipelineLayout, pVkCtx->descSet };
 
@@ -1776,7 +1791,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		// TODO: add UploadDataSync function in the renderer
 		cullingPass.InitSceneDependentData( *pVkCtx, MAX_INSTANCES_IN_SCENE );
 
-		//dbgCtx.UploadDebugGeometry();
+		dbgPass.InitAndUploadDebugGeometry( *pVkCtx );
 
 		rscStateTracker.UseBuffer( tonemapPass.averageLuminanceBuffer, TRANSFER_WRITE );
 
@@ -1796,12 +1811,11 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 	u32 scImgIdx = pVkCtx->AcquireNextSwapchainImageBlocking( thisVFrame.canGetImgSema );
 	const vk_swapchain_image& scImg = pVkCtx->scImgs[ scImgIdx ];
 
-	//VkResetGpuTimer( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
-
+	// TODO: don't hardcode here
+	const u32 camIdx = !frameData.dbgDrawFlags.freezeMainView ? 0 : 1;
 	{
-		//vk_time_section timePipeline = { thisVFrame.cmdBuff, thisVFrame.gpuTimer.queryPool, 0 };
 		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
-			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx,
+			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx, camIdx,
 			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, false );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
@@ -1812,7 +1826,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
 		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, hizbPass.hiZTarget, instCount,
-			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx,
+			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx, camIdx,
 			hizbPass.hizSrv, hizbPass.quadMinSamplerIdx, true );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
@@ -1821,12 +1835,6 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			thisVFrame.viewDataIdx, true );
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
-
-		[[unlikely]]
-		if( frameData.dbgDrawFlags.freezeMainView )
-		{
-
-		}
 
 		[[unlikely]]
 		if( frameData.dbgDrawFlags.dbgDraw )
@@ -1842,7 +1850,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
 
 		[[unlikely]]
-		if( !frameData.dbgDrawFlags.vBuff )
+		if( !frameData.dbgDrawFlags.vBuffPixelHash )
 		{
 			lambertian_clay_params pushBlock = {
 				.texResolution	= { ( float ) scImg.img.width, ( float ) scImg.img.height },
@@ -1865,7 +1873,20 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		}
 		else
 		{
-			vBuffPass.DebugDrawToSwapchain( thisFrameCmdBuffer, rscStateTracker, scImg );
+			vBuffPass.DebugDrawHashedVBuffer( thisFrameCmdBuffer, rscStateTracker, scImg.img, scImg.writeDescIdx );
+		}
+
+		[[unlikely]]
+		if( frameData.dbgDrawFlags.freezeMainView )
+		{
+			dbgPass.cpuInstView.resize( 0 );
+			dbgPass.cpuInstView.push_back( {
+				.toWorld	= frameData.frustTransf,
+				.color		= DXPackedXMColorToFloat4( HT_CYAN ),
+				.minAabb	= BOX_MIN,
+				.maxAabb	= BOX_MAX
+			} );
+			dbgPass.DrawWireframeCPU( thisFrameCmdBuffer, rscStateTracker, scImg.img, thisVFrame.viewDataIdx );
 		}
 
 		rscStateTracker.UseImage( scImg.img,
@@ -1882,7 +1903,6 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		rscStateTracker.StopTrackingResource( ( u64 ) scImg.img.hndl );
 	}
 
-	//gpuData.timeMs = VkCmdReadGpuTimeInMs( thisVFrame.cmdBuff, thisVFrame.gpuTimer );
 	thisFrameCmdBuffer.CmdEndCmdBuffer();
 
 	VkSemaphoreSubmitInfo waitScImgAcquire[] = { {

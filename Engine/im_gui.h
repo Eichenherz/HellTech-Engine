@@ -38,7 +38,7 @@ struct im_gui_ctx
 	}
 };
 
-using imgui_widget_name = fixed_string<24>;
+using imgui_widget_name = fixed_string<32>;
 
 using imgui_window_name = fixed_string<32>;
 

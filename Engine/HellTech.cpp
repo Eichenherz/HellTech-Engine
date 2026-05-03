@@ -19,15 +19,6 @@
 
 #include <ankerl/unordered_dense.h>
 
-// WORLD BASIS
-// NOTE: gltf world coord frame: RH, +X right( -X left ), +Y up, -Z forward
-constexpr float3 WORLD_FWD	= { 0.0f,  0.0f, -1.0f };
-constexpr float3 WORLD_LEFT = { -1.0f, 0.0f,  0.0f };
-constexpr float3 WORLD_UP	= { 0.0f,  1.0f,  0.0f };
-
-constexpr bool IS_RH = CrossProd( WORLD_FWD, WORLD_LEFT ) == WORLD_UP;
-static_assert( IS_RH, "Current convention is RH !!! But basis doesn't match" );
-
 constexpr float YAW_SIGN   = FSignOf( DotProd( CrossProd( WORLD_UP,    WORLD_FWD ), -WORLD_LEFT ) );
 constexpr float PITCH_SIGN = FSignOf( DotProd( CrossProd( -WORLD_LEFT, WORLD_FWD ), -WORLD_UP ) );
 
@@ -242,7 +233,7 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 
 	float aspecRatioWH = float( width ) / float( height );
 
-	if constexpr( IS_RH )
+	if constexpr( IS_WORLD_RH )
 	{
 		mainActiveCam	= MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
 		debugCam		= MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
@@ -286,18 +277,31 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 	imguiWnds.push_back( {
 		.widgets = {
 			imgui_widget {
-				.name	= " VBuffer",
-				.pData	= &rndDbgFlags.vBuff,
+				.name	= " VBuffer PixelHash",
+				.pData	= &rndDbgFlags.vBuffPixelHash,
 				.Action = nullptr,
 				.type	= imgui_widget_type::CHECKBOX
-			}
+			},
+			//imgui_widget {
+			//	.name	= " VBuffer MltId",
+			//	.pData	= &rndDbgFlags.vBuffMeshletId,
+			//	.Action = nullptr,
+			//	.type	= imgui_widget_type::CHECKBOX
+			//},
+			imgui_widget {
+				.name	= "Press F to freeze MainView",
+				.pData	= nullptr,
+				.Action = nullptr,
+				.type	= imgui_widget_type::TEXT
+			},
 		},
 		.name	= "Renderer Dbg Modes",
 		.flags	= ImGuiWindowFlags_NoScrollbar
 	} );
 
 	// TODO: vfs
-	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
+	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_no_flicker_group_question_mark.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/cyberbaron/cyberbaron.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
 	mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
@@ -389,26 +393,26 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	auto[ camMove, dRot ] = GetMoveCamAction( inputState, elapsedTime,
 		moveSpeed, mouseSensitivity );
+	rndDbgFlags.freezeMainView = inputState.keyStates[ HT_SC_F ];
 
 	mainActiveCam.Move( camMove, dRot );
-	debugCam.Move( camMove, dRot );
-
-	imGuiCtx.UpdateTimeAndInputState( ( float ) elapsedTime, inputState );
+	[[likely]]
+	if( !rndDbgFlags.freezeMainView )
+	{
+		debugCam.Move( camMove, dRot );
+	}
 
 	std::pmr::vector<view_data> views{ &virtualStack };
 
 	view_data mainViewData = mainActiveCam.GetViewData();
+	views.push_back( mainViewData );
+	mainActiveCam.prevViewProj = mainViewData.mainViewProj;
 
-	//[[likely]]
-	//if( !inputState.keyStates[ HT_SC_F ] )
-	{
-		views.push_back( mainViewData );
-		mainActiveCam.prevViewProj = mainViewData.mainViewProj;
-	}
+	view_data dbgViewData = debugCam.GetViewData();
+	views.push_back( dbgViewData );
+	debugCam.prevViewProj = dbgViewData.mainViewProj;
 
-	views.push_back( debugCam.GetViewData() );
-
-	XMMATRIX frustMat = FrustumMatrixFromViewProj( XMLoadFloat4x4A( &mainViewData.mainViewProj ) );
+	imGuiCtx.UpdateTimeAndInputState( ( float ) elapsedTime, inputState );
 
 	// NOTE: this is a temp thing and will work bc we have JUST 1 upload
 	if( std::size( jobCache ) )
@@ -433,7 +437,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	frame_data frameData = {
 		.views 			= views,
 		.instances 		= drawables,
-		.frustTransf	= DX_XMStoreFloat4x4A( frustMat ),
+		.frustTransf	= DX_XMStoreFloat4x4A( FrustumMatrixFromViewProj( XMLoadFloat4x4A( &dbgViewData.mainViewProj ) ) ),
 		.elapsedSeconds = ( float ) elapsedTime,
 		.dbgDrawFlags	= rndDbgFlags
 	};

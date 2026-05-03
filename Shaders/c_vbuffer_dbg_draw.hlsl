@@ -6,18 +6,34 @@
 [[vk::push_constant]]
 vbuffer_dbg_draw_params pushBlock;
 
-// NOTE: src and dst assumed to be the same dimensions, asserted on the host
-float3 ColorHash( u32x2 v )
+float3 ColorPixelHash( in vbuffer_pixel v )
 {
 	// NOTE: ^ CONST so nothing gets to be zero basically
-	u32 seed = v.x ^ ( v.y * 2654435761u ) ^ 0x9E3779B9u;
-	seed ^= seed >> 16;
-	seed *= 0x45d9f3bu;
-	seed ^= seed >> 16;
+	// NOTE: use unpacked so garbage upper bits in rawPixel can't leak in
+    u32 seed = v.mltId 	* 2654435761u
+             ^ v.triId  * 40503u
+             ^ v.instId * 73856093u
+             ^ 0x9E3779B9u;
+
+    seed ^= seed >> 16;
+    seed *= 0x45d9f3bu;
+    seed ^= seed >> 16;
+
+    return float3(
+        ( ( seed       ) & 0xFFu ) / 255.0f,
+        ( ( seed >>  8 ) & 0xFFu ) / 255.0f,
+        ( ( seed >> 16 ) & 0xFFu ) / 255.0f
+    );
+}
+
+// NOTE: need to reconstruct manually
+float3 ColorId( u32 id )
+{
+	u32 offsettedId = id;// + 1; // NOTE: + 1 to avoid black
 	return float3(
-		( ( seed       ) & 0xFFu ) / 255.0f,
-		( ( seed >>  8 ) & 0xFFu ) / 255.0f,
-		( ( seed >> 16 ) & 0xFFu ) / 255.0f
+		( ( offsettedId       ) & 0xFFu ) / 255.0f,
+		( ( offsettedId >>  8 ) & 0xFFu ) / 255.0f,
+		( ( offsettedId >> 16 ) & 0xFFu ) / 255.0f
 	);
 }
 
@@ -25,12 +41,14 @@ float3 ColorHash( u32x2 v )
 [shader("compute")]
 void VBufferDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
-	u32x2 vbuffPixel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
+	u32x2 rawPixel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
 
 	float3 col = float3( 0.0f, 0.0f, 0.0f );
-	if( VBufferIsValidPixel( vbuffPixel ) )
+	if( VBufferIsValidPixel( rawPixel ) )
 	{
-		col = ColorHash( vbuffPixel );
+		vbuffer_pixel vBuffPixel = VBufferUnpackPixel( rawPixel );
+		col = ColorPixelHash( vBuffPixel );
+		//col = ColorId( vBuffPixel.instId );
 	}
 
 	gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( col, 1.0f );

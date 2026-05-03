@@ -83,26 +83,23 @@ raw_mesh ValidateAndNormalizeRawMesh( const raw_mesh& inRawMesh )
 {
 	HT_ASSERT( std::size( inRawMesh.indices ) != 0 );
 	HT_ASSERT( ( std::size( inRawMesh.indices ) % 3 ) == 0 );
-	auto it = std::ranges::max_element( inRawMesh.indices );
-	HT_ASSERT( *it <= u16( -1 ) );
 	HT_ASSERT( inRawMesh.materialIdx <= i32( u16( -1 ) ) );
 
-	raw_mesh outRawMesh = {
+	std::vector<float4> tans = std::move( inRawMesh.tans );
+	if( std::size( tans ) == 0 )
+	{
+		tans = ComputeMikkTSpaceTangentsInplace( inRawMesh );
+	}
+
+	return {
 		.name = std::move( inRawMesh.name ),
 		.pos = std::move( inRawMesh.pos ),
 		.normals = std::move( inRawMesh.normals ),
-		.tans = std::move( inRawMesh.tans ),
+		.tans = MOV( tans ),
 		.uvs = std::move( inRawMesh.uvs ),
 		.indices = std::move( inRawMesh.indices ),
 		.materialIdx = inRawMesh.materialIdx
 	};
-
-	if( !std::size( outRawMesh.tans ) )
-	{
-		outRawMesh.tans = ComputeMikkTSpaceTangentsInplace( inRawMesh );
-	}
-
-	return outRawMesh;
 }
 
 struct meshlet_config

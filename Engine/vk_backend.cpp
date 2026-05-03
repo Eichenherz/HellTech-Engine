@@ -899,13 +899,14 @@ VkPipeline vk_context::CreateGfxPipeline(
 		.lineWidth					= 1.0f
 	};
 
+	// TODO: make it explicitly reverse Z
 	VkPipelineDepthStencilStateCreateInfo depthStencilState = { 
 		.sType					= VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable		= psoConfig.depthTestEnable,
 		.depthWriteEnable		= psoConfig.depthWrite,
 		.depthCompareOp			= VK_COMPARE_OP_GREATER,
 		.depthBoundsTestEnable	= VK_TRUE,
-		.minDepthBounds			= 0,
+		.minDepthBounds			= 0.0f,
 		.maxDepthBounds			= 1.0f
 	};
 

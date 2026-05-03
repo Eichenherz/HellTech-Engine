@@ -223,6 +223,20 @@ inline VkImageMemoryBarrier2 VkMakeImageBarrier(
 	};
 }
 
+constexpr VkMemoryBarrier2 FULL_SYNC_MEM_BARRIER = {
+		.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+		.pNext         = nullptr,
+
+		// 1. Source: Wait for EVERY previous command to finish
+		.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		// Flush EVERY possible write (Compute, Color, Depth, Transfer, etc.)
+		.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
+
+		// 2. Destination: Block EVERY future command until sync is done
+		.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		// Make memory visible for EVERY possible future operation
+		.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT
+};
 
 using vk_rsc_hndl64 = u64;
 struct vk_rsc_state_tracker

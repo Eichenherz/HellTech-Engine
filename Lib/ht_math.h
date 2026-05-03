@@ -6,11 +6,33 @@
 #include <span>
 #include <math.h>
 
-#include <DirectXPackedVector.h>
+constexpr float HT_ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
 
+
+#include <DirectXPackedVector.h>
 namespace DXPacked = DirectX::PackedVector;
 
-constexpr float HT_ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
+inline const DXPacked::XMCOLOR HT_WHITE		= { 255u, 255u, 255u, 1 };
+inline const DXPacked::XMCOLOR HT_BLACK		= { 0u, 0u, 0u, 1 };
+inline const DXPacked::XMCOLOR HT_GRAY		= { 0x80u, 0x80u, 0x80u, 1 };
+inline const DXPacked::XMCOLOR HT_LIGHTGRAY	= { 0xD3u, 0xD3u, 0xD3u, 1 };
+inline const DXPacked::XMCOLOR HT_RED		= { 255u, 0u, 0u, 1 };
+inline const DXPacked::XMCOLOR HT_GREEN		= { 0u, 255u, 0u, 1 };
+inline const DXPacked::XMCOLOR HT_BLUE		= { 0u, 0u, 255u, 1 };
+inline const DXPacked::XMCOLOR HT_YELLOW	= { 255u, 255u, 0u, 1 };
+inline const DXPacked::XMCOLOR HT_CYAN		= { 0u, 255u, 255u, 1 };
+inline const DXPacked::XMCOLOR HT_MAGENTA	= { 255u, 0u, 255u, 1 };
+
+inline float4 DXPackedXMColorToFloat4( DXPacked::XMCOLOR col )
+{
+	constexpr float RANGE = 1.0f / 255.0f;
+	return {
+		col.r * RANGE,
+		col.g * RANGE,
+		col.b * RANGE,
+		col.a * RANGE,
+	};
+}
 
 inline float2 fminf( float2 a, float2 b )
 {
@@ -190,21 +212,6 @@ __forceinline aabb_t<float3> TransformAABB(
 	const float3&			s 
 ) {
 	return TransformAABB( aabb.min, aabb.max, t, r, s );
-}
-
-constexpr std::array<float3, 8u> GenerateBoxWithBounds( float3 boxMin, float3 boxMax )
-{
-	std::array<float3, 8u> boxCorners = {};
-	boxCorners[ 0 ] = { boxMax.x, boxMax.y, boxMax.z };
-	boxCorners[ 1 ] = { boxMax.x, boxMin.y, boxMax.z };
-	boxCorners[ 2 ] = { boxMax.x, boxMax.y, boxMin.z };
-	boxCorners[ 3 ] = { boxMax.x, boxMin.y, boxMin.z };
-	boxCorners[ 4 ] = { boxMin.x, boxMax.y, boxMax.z };
-	boxCorners[ 5 ] = { boxMin.x, boxMin.y, boxMax.z };
-	boxCorners[ 6 ] = { boxMin.x, boxMax.y, boxMin.z };
-	boxCorners[ 7 ] = { boxMin.x, boxMin.y, boxMin.z };
-
-	return boxCorners;
 }
 
 inline void XM_CALLCONV

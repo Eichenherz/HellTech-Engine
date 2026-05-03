@@ -9,6 +9,20 @@
 #include "ht_renderer_types.h"
 #include "ht_fixed_string.h"
 
+#include "ht_math.h"
+
+// CONVENTIONS -----------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// WORLD BASIS
+// NOTE: gltf world coord frame: RH, +X right( -X left ), +Y up, -Z forward
+constexpr float3 WORLD_FWD	= { 0.0f,  0.0f, -1.0f };
+constexpr float3 WORLD_LEFT = { -1.0f, 0.0f,  0.0f };
+constexpr float3 WORLD_UP	= { 0.0f,  1.0f,  0.0f };
+
+constexpr bool IS_WORLD_RH = CrossProd( WORLD_FWD, WORLD_LEFT ) == WORLD_UP;
+static_assert( IS_WORLD_RH, "Current convention is RH !!! But basis doesn't match" );
+// -----------------------------------------------------------------------------
+
 struct gpu_data
 {
 	float timeMs;
@@ -54,7 +68,8 @@ struct instance_desc
 
 struct renderer_dbg_draw
 {
-	bool vBuff			= false;
+	bool vBuffPixelHash	= false;
+	bool vBuffMeshletId	= false;
 	bool freezeMainView = false;
 	bool dbgDraw		= false;
 

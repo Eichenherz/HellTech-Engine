@@ -129,14 +129,27 @@ struct vk_command_buffer
 		vkCmdDispatch( hndl, numWorkgroups.x, numWorkgroups.y, numWorkgroups.z );
 	}
 
-	void CmdDrawIndexedIndirectCount( 
-		const vk_buffer& idxBuffer, 
-		VkIndexType      idxType,
-		const vk_buffer& drawCmds, 
-		const vk_buffer& drawCount,
-		u32              maxDrawCount
+	void CmdDrawIndexed(
+		const vk_buffer&	idxBuffer,
+		VkIndexType			idxType,
+		u32         		indexCount,
+		u32         		instanceCount,
+		u32         		firstIndex,
+		i32         		vertexOffset,
+		u32         		firstInstance
 	) {
-		vkCmdBindIndexBuffer( hndl, idxBuffer.hndl, 0, idxType );
+		vkCmdBindIndexBuffer2( hndl, idxBuffer.hndl, 0, idxBuffer.sizeInBytes, idxType );
+		vkCmdDrawIndexed( hndl, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance );
+	}
+
+	void CmdDrawIndexedIndirectCount( 
+		const vk_buffer& 	idxBuffer,
+		VkIndexType      	idxType,
+		const vk_buffer& 	drawCmds,
+		const vk_buffer& 	drawCount,
+		u32              	maxDrawCount
+	) {
+		vkCmdBindIndexBuffer2( hndl, idxBuffer.hndl, 0, idxBuffer.sizeInBytes, idxType );
 		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, offsetof( draw_indexed_command, cmd ),
 			drawCount.hndl, 0, maxDrawCount, sizeof( draw_indexed_command ) );
 	}

@@ -86,13 +86,14 @@ struct vertex
 	u32 snorm8octTanFrame;
 };
 
-// TODO: compress data more ?
 struct gpu_instance
 {
 	float4x3	toWorld;
 	u32			meshIdx;
 	u32			mtrlIdx;
 };
+
+STATIC_ASSERT( 56 == sizeof( gpu_instance ), "Size mismatch!");
 
 // NOTE: weird alignments bc this will be read by the GPU !
 struct gpu_mesh
@@ -128,6 +129,7 @@ struct dispatch_command
 #endif
 };
 
+// TODO: rename
 struct draw_indexed_command
 {
 	u32		visMltIdx;
@@ -142,15 +144,15 @@ struct draw_indexed_command
 #endif
 };
 
-struct draw_indirect
+struct draw_instanced_indexed_indirect
 {
-	u64 drawIdx;
 #if defined( __cplusplus ) && defined( __VK )
-	VkDrawIndirectCommand cmd;
+	VkDrawIndexedIndirectCommand cmd;
 #else
-	u32    vertexCount;
+	u32    indexCount;
 	u32    instanceCount;
-	u32    firstVertex;
+	u32    firstIndex;
+	u32    vertexOffset;
 	u32    firstInstance;
 #endif
 };
@@ -171,8 +173,15 @@ struct avg_luminance_info
 
 struct dbg_vertex
 {
-	float4 pos;
-	float4 col;
+	float3 pos;
+};
+
+struct dbg_aabb_instance
+{
+	float4x4	toWorld; // NOTE: 4x4 so we can cram in the frustum transfrom too
+	float4		color;
+	float3		minAabb;
+	float3		maxAabb;
 };
 
 struct imgui_vertex
@@ -213,6 +222,7 @@ struct culling_params
 	u32 visInstCacheIdx;
 	u32 instDescIdx;
 	u32 meshDescIdx;
+	u32 viewBuffIdx;
 	u32 camIdx;
 	u32 hizTexIdx;
 	u32 hizSamplerIdx;
@@ -226,7 +236,7 @@ struct draw_expansion_params
 	u32 workCounterIdxConst;
 	u32 srcBufferIdx;
 	u32 visMltBufferIdx;
-	u32 visMltCounterIdxIdx;
+	u32 visMltCounterIdx;
 };
 
 struct meshlet_issue_draws_params
@@ -252,6 +262,7 @@ struct vbuffer_params
 	u32 camIdx;
 };
 
+// NOTE: src and dst assumed to be the same dimensions, asserted on the host
 struct vbuffer_dbg_draw_params
 {
 	u32 srcIdx;
@@ -266,6 +277,13 @@ struct lambertian_clay_params
 	u32		instBuffIdx;
 	u32		meshDescIdx;
 	u32		camIdx;
+};
+
+struct dbg_box_params
+{
+	u64 instBuffAddr;
+	u64 vtxBuffAddr;
+	u32 camIdx;
 };
 
 struct global_data

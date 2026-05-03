@@ -38,8 +38,8 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 
 	float3 aabbMin = currentMesh.minAabb;
 	float3 aabbMax = currentMesh.maxAabb;
-		
-	view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
+	// NOTE: we use camIdx here bc we'll have a debug camera
+	view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
 
 	bool visible = false;
 	//if( !bool( pushBlock.isLatePass ) )
