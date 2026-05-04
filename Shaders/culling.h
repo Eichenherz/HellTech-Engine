@@ -17,7 +17,7 @@ frustum_culling_result FrustumCulling( float3 aabbMin, float3 aabbMax, float4x4 
 	float4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
 	float4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 
-	float3 ZERO = float3( 0.0f, 0.0f, 0.0f );
+	static const float3 ZERO = float3( 0.0f, 0.0f, 0.0f );
 
 	bool visible = true;
 	visible = visible &&
@@ -36,9 +36,10 @@ frustum_culling_result FrustumCulling( float3 aabbMin, float3 aabbMax, float4x4 
 
 struct screenspace_aabb
 {
-	float2 minXY;
-	float2 maxXY;
-	float maxZ;
+	float2
+	minXY;
+	float2	maxXY;
+	float	maxZ;
 };
 
 screenspace_aabb ProjectAabbToScreenSpace( float3 aabbMin, float3 aabbMax, float4x4 mvp )
@@ -54,12 +55,12 @@ screenspace_aabb ProjectAabbToScreenSpace( float3 aabbMin, float3 aabbMax, float
 		aabbMin + float3( aabbSize.x, 0.0f, aabbSize.z ),
 		aabbMin + aabbSize };
 
-	float2 minXY = float2( 1.0f, 1.0f );
-	float2 maxXY = float2( 0.0f, 0.0f );
-	float maxZ = 0.0f;
+	float2	minXY = float2( 1.0f, 1.0f );
+	float2	maxXY = float2( 0.0f, 0.0f );
+	float	maxZ  = 0.0f;
 
 	[unroll]
-	for( uint i = 0; i < 8; ++i )
+	for( u32 i = 0; i < 8; ++i )
 	{
 		float4 clipPos = mul( float4( aabbCorners[ i ], 1.0f ), mvp );
 		clipPos.xyz = clipPos.xyz / clipPos.w;
@@ -68,7 +69,7 @@ screenspace_aabb ProjectAabbToScreenSpace( float3 aabbMin, float3 aabbMax, float
 
 		minXY = min( clipPos.xy, minXY );
 		maxXY = max( clipPos.xy, maxXY );
-		maxZ = max( maxZ, clipPos.z );
+		maxZ  = max( maxZ, clipPos.z );
 	}
 
 	screenspace_aabb res = { minXY, maxXY, maxZ };
@@ -77,7 +78,7 @@ screenspace_aabb ProjectAabbToScreenSpace( float3 aabbMin, float3 aabbMax, float
 
 bool ScreenSpaceAabbVsHiZ( in screenspace_aabb ssAabb, in Texture2D<float4> hizTex, in SamplerState quadMin )
 {
-	uint3 widthHeightMipCount;
+	u32x3 widthHeightMipCount;
 	hizTex.GetDimensions( 0, widthHeightMipCount.x, widthHeightMipCount.y, widthHeightMipCount.z );
 	
 	float2 size = abs( ssAabb.maxXY - ssAabb.minXY ) * float2( widthHeightMipCount.xy );

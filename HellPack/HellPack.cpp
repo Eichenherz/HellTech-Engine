@@ -79,27 +79,22 @@ inline std::vector<Idx> BuildVertexRemapFromPermutedIndices( const std::vector<I
 	return remap;
 }
 
-raw_mesh ValidateAndNormalizeRawMesh( const raw_mesh& inRawMesh )
+void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 {
-	HT_ASSERT( std::size( inRawMesh.indices ) != 0 );
-	HT_ASSERT( ( std::size( inRawMesh.indices ) % 3 ) == 0 );
-	HT_ASSERT( inRawMesh.materialIdx <= i32( u16( -1 ) ) );
+	HT_ASSERT( std::size( rawMesh.pos ) > 0 );
+	HT_ASSERT( std::size( rawMesh.indices ) != 0 );
+	HT_ASSERT( ( std::size( rawMesh.indices ) % 3 ) == 0 );
+	HT_ASSERT( rawMesh.materialIdx <= i32( u16( -1 ) ) );
 
-	std::vector<float4> tans = std::move( inRawMesh.tans );
-	if( std::size( tans ) == 0 )
+	if( std::size( rawMesh.tans ) == 0 )
 	{
-		tans = ComputeMikkTSpaceTangentsInplace( inRawMesh );
+		rawMesh.tans = ComputeMikkTSpaceTangentsInplace( rawMesh );
 	}
 
-	return {
-		.name = std::move( inRawMesh.name ),
-		.pos = std::move( inRawMesh.pos ),
-		.normals = std::move( inRawMesh.normals ),
-		.tans = MOV( tans ),
-		.uvs = std::move( inRawMesh.uvs ),
-		.indices = std::move( inRawMesh.indices ),
-		.materialIdx = inRawMesh.materialIdx
-	};
+	HT_ASSERT( ( std::size( rawMesh.pos ) == std::size( rawMesh.normals ) )
+		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.tans ) )
+		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.uvs ) )
+	);
 }
 
 struct meshlet_config
@@ -487,56 +482,57 @@ i32 main( i32 argc, char** argv  )
 
 	HT_ASSERT( fs::exists( gltfFilePath ) );
 
-	gltf_loader gltf = { gltfFilePath };
+	gltf_loader gltf = { gltfFilePath.c_str() };
 
 	// TODO: ensure we keep the same indexing as tinygltf provides !!!!
 	std::vector<raw_node>			rawNodes		= gltf.ProcessNodes();
 	std::vector<raw_mesh>			rawMeshes		= gltf.ProcessMeshes();
 	std::vector<sampler_config>		samplers		= gltf.ProcessSamplers();
-	std::vector<raw_material_info>	rawMaterials	= gltf.ProcessMaterials();
+	//std::vector<raw_material_info>	rawMaterials	= gltf.ProcessMaterials();
 	std::vector<raw_image_view>		imageViews		= gltf.ProcessImages();
 
-	auto[ materialTable, texCmpJobs ] = PrepareBcnCompressionBatch( rawMaterials, imageViews );
+	//auto[ materialTable, texCmpJobs ] = PrepareBcnCompressionBatch( rawMaterials, imageViews );
 
 	std::vector<std::thread> tasks;
 	std::atomic<u32> taskCounter = { 0 };
 
-	auto WorkerLoop = [ & ]()
-	{
-		for( ;; )
-		{
-			u32 currentJobIdx = taskCounter.fetch_add( 1 );
-			if( currentJobIdx >= std::size( texCmpJobs ) ) return;
-
-			texCmpJobs[ currentJobIdx ].Execute();
-		}
-	};
+	//auto WorkerLoop = [ & ]()
+	//{
+	//	for( ;; )
+	//	{
+	//		u32 currentJobIdx = taskCounter.fetch_add( 1 );
+	//		if( currentJobIdx >= std::size( texCmpJobs ) ) return;
+//
+	//		texCmpJobs[ currentJobIdx ].Execute();
+	//	}
+	//};
 
 	std::cout << "Processing materials async\n";
 
-	for( u64 ti = 0; ti < std::thread::hardware_concurrency(); ++ti ) tasks.emplace_back( WorkerLoop );
+	//for( u64 ti = 0; ti < std::thread::hardware_concurrency(); ++ti ) tasks.emplace_back( WorkerLoop );
 
 	std::vector<world_node> worldNodes;
 
 	ankerl::unordered_dense::map<vfs_path, mesh_asset> meshAssetMap;
 
 	std::cout << "Processing meshes\n";
+	for( raw_mesh& mesh : rawMeshes )
+	{
+		vfs_path assetPath = { "{}{}.mesh", HELLPACK_MESH_DIR, std::data( mesh.name ) };
+		HT_ASSERT( !meshAssetMap.contains( assetPath ) );
+
+		ValidateAndNormalizeRawMesh( mesh );
+		mesh_asset meshAsset = HpkMakeMeshAssetFromMeshlets( mesh );
+		meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
+	}
+
 	for( const raw_node& n : rawNodes )
 	{
 		if( !IsIndexValid( n.meshIdx ) ) continue;
 
-		const raw_mesh& mesh = rawMeshes[ ( u32 ) n.meshIdx ];
+		raw_mesh& mesh = rawMeshes[ ( u32 ) n.meshIdx ];
 
 		vfs_path assetPath = { "{}{}.mesh", HELLPACK_MESH_DIR, std::data( mesh.name ) };
-
-		if( !meshAssetMap.contains( assetPath ) )
-		{
-			// NOTE: it moves stuff
-			raw_mesh validatedRawMesh = ValidateAndNormalizeRawMesh( mesh );
-			mesh_asset meshAsset = HpkMakeMeshAssetFromMeshlets( validatedRawMesh );
-
-			meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
-		}
 
 		worldNodes.push_back( {
 			.toWorld		= { .t = n.toWorld.t, .pad0 = 0, .r = n.toWorld.r, .s = n.toWorld.s, .pad1 = 0 },
@@ -553,7 +549,7 @@ i32 main( i32 argc, char** argv  )
 		HT_ASSERT( fs::exists( hpkFilePath ) );
 
 		{
-			hellpack_serializble_buffer buffs[] = { worldNodes, materialTable };
+			hellpack_serializble_buffer buffs[] = { worldNodes };//, materialTable };
 			std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::LEVEL );
 			zipArchive.WriteBytesToFile( { "world.lvl" }, bytes );
 		}
@@ -566,15 +562,15 @@ i32 main( i32 argc, char** argv  )
 				zipArchive.WriteBytesToFile( filePath, bytes );
 			}
 		}
-		WaitThreadPoolDone( tasks );
-
-		std::cout << "Processing materials done ! Dumping to file.\n";
-		for( const compression_job& cmp : texCmpJobs )
-		{
-			HT_ASSERT( std::size( cmp.tex ) );
-			vfs_path texPath = { "{}{}", HELLPACK_TEX_DIR, std::data( cmp.filename ) };
-			zipArchive.WriteBytesToFile( texPath, cmp.tex );
-		}
+		//WaitThreadPoolDone( tasks );
+//
+		//std::cout << "Processing materials done ! Dumping to file.\n";
+		//for( const compression_job& cmp : texCmpJobs )
+		//{
+		//	HT_ASSERT( std::size( cmp.tex ) );
+		//	vfs_path texPath = { "{}{}", HELLPACK_TEX_DIR, std::data( cmp.filename ) };
+		//	zipArchive.WriteBytesToFile( texPath, cmp.tex );
+		//}
 	}
 
 	/*

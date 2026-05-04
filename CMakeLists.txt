@@ -121,7 +121,7 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/bc7enc_rdo
     ${THIRD_PARTY}/MikkTSpace
     ${THIRD_PARTY}/meshoptimizer/src
-    ${THIRD_PARTY}/tinygltf
+    ${THIRD_PARTY}/cgltf
     ${THIRD_PARTY}/minunit
     ${THIRD_PARTY}/OffsetAllocator
 )

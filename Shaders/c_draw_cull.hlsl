@@ -56,18 +56,17 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	BufferStore<dbg_aabb_instance>( pushBlock.dbgInstBuffIdx, aabbInst, dbgSlot );
     //
 
-
 	bool visible = false;
-	//if( !bool( pushBlock.isLatePass ) )
-	//{
-	//	// NOTE: 1st pass runs frustum culling with current instTransform and current cam
-	//
-	//	float4x4 mvp = mul( toWorld, mul( cam.mainView, cam.proj ) );
-	//	frustum_culling_result frustumCullRes = FrustumCulling( aabbMin, aabbMax, mvp );
+	if( !bool( pushBlock.isLatePass ) )
+	{
+		// NOTE: 1st pass runs frustum culling with current instTransform and current cam
+
+		float4x4 mvp = mul( toWorld, cam.mainViewProj );
+		frustum_culling_result frustumCullRes = FrustumCulling( aabbMin, aabbMax, mvp );
 	//	testOcclusion = testOcclusion && !frustumCullRes.intersectsZNear;
-	//	// NOTE: we might be visible but if we intersect the znear we skip occlusion
-	//	visible = frustumCullRes.visible;
-	//}
+		// NOTE: we might be visible but if we intersect the znear we skip occlusion
+		visible = frustumCullRes.visible;
+	}
 	
 	//if( visible && testOcclusion )
 	//{
@@ -81,10 +80,10 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	//
 	//	visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
 	//}
-	visible = true;
+
 	if( !bool( pushBlock.isLatePass ) )
 	{
-		BufferStore<u32>( pushBlock.visInstCacheIdx, visible ? 1 : 0, globalDispatchID.x );
+		BufferStore<u32>( pushBlock.visInstCacheIdx, true, globalDispatchID.x );//visible ? 1 : 0, globalDispatchID.x );
 	}
 
 	u32 lanesVisible = WaveActiveCountBits( visible );

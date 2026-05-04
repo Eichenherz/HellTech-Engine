@@ -93,11 +93,11 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 	if constexpr( std::is_same_v<HPK_T, hellpack_level> )
 	{
 		HT_ASSERT( hellpack_entry_t::LEVEL == h.type );
-		HT_ASSERT( 2 == h.entriesCount );
+		//HT_ASSERT( 2 == h.entriesCount );
 
 		return hellpack_level{
 			.nodes		= MakeTypedView<world_node>( base + entryTable[ 0 ].offsetInBytes, entryTable[ 0 ].sizeInBytes ),
-			.materials	= MakeTypedView<material_desc>( base + entryTable[ 1 ].offsetInBytes, entryTable[ 1 ].sizeInBytes )
+			//.materials	= MakeTypedView<material_desc>( base + entryTable[ 1 ].offsetInBytes, entryTable[ 1 ].sizeInBytes )
 		};
 	}
 	else if constexpr( std::is_same_v<HPK_T, hellpack_mesh_asset> )

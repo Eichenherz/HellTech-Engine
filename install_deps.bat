@@ -9,7 +9,7 @@ call :clone "3rdParty/unordered_dense"          "https://github.com/martinus/uno
 call :clone "3rdParty/dds"                      "https://github.com/turanszkij/dds.git"
 call :clone "3rdParty/imgui"                    "https://github.com/ocornut/imgui.git"
 call :clone "3rdParty/VulkanMemoryAllocator"    "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
-call :clone "3rdParty/tinygltf"                 "https://github.com/syoyo/tinygltf.git"
+call :clone "3rdParty/cgltf"                    "https://github.com/jkuhlmann/cgltf.git"
 call :clone "3rdParty/meshoptimizer"            "https://github.com/zeux/meshoptimizer.git"
 call :clone "3rdParty/MikkTSpace"               "https://github.com/mmikk/MikkTSpace.git"
 call :clone "3rdParty/bc7enc_rdo"               "https://github.com/Eichenherz/bc7enc_rdo.git"

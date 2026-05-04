@@ -240,14 +240,8 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 	}
 	else // IS_LH
 	{
-		mainActiveCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
-		debugCam = MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
-	}
-
-
-	{
-		view_data mainViewData = mainActiveCam.GetViewData();
-		mainActiveCam.prevViewProj = mainViewData.mainViewProj;
+		mainActiveCam	= MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
+		debugCam		= MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
 	}
 
 	pRenderer = MakeRenderer();
@@ -307,7 +301,8 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 
 	// TODO: vfs
 	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_no_flicker_group_question_mark.hpk";
+	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_no_flicker_group_question_mark.hpk";
+	constexpr char assetFile[] = "D:/3d models/bistro.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/cyberbaron/cyberbaron.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
 	mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
@@ -405,7 +400,9 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	[[likely]]
 	if( !rndDbgFlags.freezeMainView )
 	{
-		debugCam.Move( camMove, dRot );
+		debugCam.worldPos	= mainActiveCam.worldPos;
+		debugCam.pitch		= mainActiveCam.pitch;
+		debugCam.yaw		= mainActiveCam.yaw;
 	}
 
 	std::pmr::vector<view_data> views{ &virtualStack };

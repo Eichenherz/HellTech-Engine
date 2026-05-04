@@ -1,11 +1,9 @@
 #ifndef __GLTF_LOADER_H__
 #define __GLTF_LOADER_H__
 
-#define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define TINYGLTF_NOEXCEPTION
-#include <tiny_gltf.h>
+#define CGLTF_IMPLEMENTATION
+#include <cgltf.h>
 
 #include <iostream>
 #include <span>
@@ -22,24 +20,56 @@
 
 constexpr u64 DEFAULT_SAMPLER_IDX = 0;
 
+#define HT_CGLTF_SPAN( ptr ) std::span{ ( ptr ), ( ptr ## _count ) }
 
-struct gltf_raw_attr_stream
+
+// NOTE: can't be replaced by a span, this handles interleaved data as well
+template<TRIVIAL_T T>
+struct gltf_typed_attr_stream
 {
-	const u8*	data;
-	u64			elemCount;
-	u64			componentCount;
-	u64			componentByteSize;
-	u64			strideBytes;
+	const u8*	data				= nullptr;
+	u64			elemCount			= 0;
+	u64			componentCount		= 0;
+	u64			componentByteSize	= 0;
+	u64			strideBytes			= 0;
+
+	gltf_typed_attr_stream() = default;
+
+	gltf_typed_attr_stream( const cgltf_accessor& accessor )
+	{
+		HT_ASSERT( !accessor.is_sparse );
+
+		const cgltf_buffer_view* view = accessor.buffer_view;
+		HT_ASSERT( view );
+		HT_ASSERT( view->buffer );
+
+		const cgltf_buffer* buff = view->buffer;
+
+		const u64 numComponents = cgltf_num_components( accessor.type );
+		const u64 componentSizeInBytes = cgltf_component_size( accessor.component_type );
+		const u64 elemSize = numComponents * componentSizeInBytes;
+
+		// NOTE: gltf byteStride==0 means tightly packed ( effective stride == elemSize )
+		const u64 strideInBytes = ( view->stride == 0 ) ? elemSize : view->stride;
+
+		// NOTE: If a stride is provided, it must be >= element size
+		HT_ASSERT( strideInBytes >= elemSize );
+
+		const u64 baseOffset = view->offset + accessor.offset;
+		HT_ASSERT( baseOffset < buff->size );
+
+		this->data				= ( ( const u8* ) buff->data ) + baseOffset;
+		this->elemCount			= accessor.count;
+		this->componentCount	= numComponents;
+		this->componentByteSize	= componentSizeInBytes;
+		this->strideBytes		= strideInBytes;
+	}
 
 	constexpr u64 size() const noexcept
 	{
 		return elemCount;
 	}
-};
 
-template<typename T>
-struct gltf_typed_attr_stream : gltf_raw_attr_stream
-{
 	struct iterator
 	{
 		// NOTE: don't change these names !
@@ -95,34 +125,53 @@ struct gltf_typed_attr_stream : gltf_raw_attr_stream
 	}
 };
 
-template<typename T>
-concept TinyGltfTextureInfoConcept = requires( T a ) {
-	{ a.index } -> std::convertible_to<i32>;
-	{ a.texCoord } -> std::convertible_to<i32>;
-};
-
-struct gltf_texture
+inline std::vector<u32> GetNormalizedIndexBufferFromStream( const cgltf_accessor* idxAccessor )
 {
-	i32 imageIdx	= -1;
-	i32 samplerIdx	= -1;
-};
+	if( !idxAccessor ) return {};
+
+	HT_ASSERT( cgltf_type_scalar == idxAccessor->type );
+
+	auto CasterLambda = [] ( auto v ) { return ( u32 ) v; };
+
+	switch( idxAccessor->component_type )
+	{
+		case cgltf_component_type_r_8u:
+		{
+			gltf_typed_attr_stream<u8> typedIdxStream = { *idxAccessor };
+			return { std::from_range, typedIdxStream | std::views::transform( CasterLambda ) };
+		}
+		case cgltf_component_type_r_16u:
+		{
+			gltf_typed_attr_stream<u16> typedIdxStream = { *idxAccessor };
+			return { std::from_range, typedIdxStream | std::views::transform( CasterLambda ) };
+		}
+		case cgltf_component_type_r_32u:
+		{
+			gltf_typed_attr_stream<u32> typedIdxStream = { *idxAccessor };
+			return { std::from_range, typedIdxStream | std::views::transform( CasterLambda ) };
+		}
+		default: HT_ASSERT( 0 && "Wrong stream type" );
+	}
+
+	return {};
+}
 
 // GLTF stores matrices column-major: mIn[col*4 + row]. DirectXMath uses row-major row-vector
 // convention, so M_dx = M_gltf^T — each GLTF column becomes a DirectXMath row.
 // The old code read GLTF rows into DX rows (same values, wrong layout), which put translation
 // in the last column of each row instead of row 3, so XMMatrixDecompose extracted T = {0,0,0}.
-inline DirectX::XMMATRIX GetMatrix( std::span<const double> mIn )
+inline DirectX::XMMATRIX GetMatrix( std::span<const cgltf_float> mIn )
 {
 	using namespace DirectX;
 	XMMATRIX m = {};
-	m.r[ 0 ] = XMVectorSet( ( float ) mIn[ 0 ],  ( float ) mIn[ 1 ],  ( float ) mIn[ 2 ],  ( float ) mIn[ 3 ]  );
-	m.r[ 1 ] = XMVectorSet( ( float ) mIn[ 4 ],  ( float ) mIn[ 5 ],  ( float ) mIn[ 6 ],  ( float ) mIn[ 7 ]  );
-	m.r[ 2 ] = XMVectorSet( ( float ) mIn[ 8 ],  ( float ) mIn[ 9 ],  ( float ) mIn[ 10 ], ( float ) mIn[ 11 ] );
-	m.r[ 3 ] = XMVectorSet( ( float ) mIn[ 12 ], ( float ) mIn[ 13 ], ( float ) mIn[ 14 ], ( float ) mIn[ 15 ] );
+	m.r[ 0 ] = XMVectorSet( mIn[ 0 ],  mIn[ 1 ],  mIn[ 2 ],  mIn[ 3 ]  );
+	m.r[ 1 ] = XMVectorSet( mIn[ 4 ],  mIn[ 5 ],  mIn[ 6 ],  mIn[ 7 ]  );
+	m.r[ 2 ] = XMVectorSet( mIn[ 8 ],  mIn[ 9 ],  mIn[ 10 ], mIn[ 11 ] );
+	m.r[ 3 ] = XMVectorSet( mIn[ 12 ], mIn[ 13 ], mIn[ 14 ], mIn[ 15 ] );
 	return m;
 }
 
-// GLTF quaternions follow the standard convention q*v*q^{-1} (i.e. XMVector3InverseRotate),
+// NOTE: GLTF quaternions follow the standard convention q*v*q^{-1} (i.e. XMVector3InverseRotate),
 // NOT DirectXMath's XMVector3Rotate which computes conj(q)*v*q — the opposite rotation.
 // Using the wrong one mirrors child translations across rotated parent frames.
 inline packed_trs XM_CALLCONV GltfComposePackedTRS( packed_trs parent, packed_trs child )
@@ -145,14 +194,14 @@ inline packed_trs XM_CALLCONV GltfComposePackedTRS( packed_trs parent, packed_tr
 	return { .t = outT, .r = outR, .s = outS };
 }
 
-inline packed_trs GetTrsFromNode( const tinygltf::Node& node )
+inline packed_trs GetTrsFromNode( const cgltf_node& node )
 {
 	using namespace DirectX;
 
 	XMVECTOR xmT = XMVectorSet( 0.0f, 0.0f, 0.0f, 0.0f );
 	XMVECTOR xmR = XMVectorSet( 0.0f, 0.0f, 0.0f, 1.0f );
 	XMVECTOR xmS = XMVectorSet( 1.0f, 1.0f, 1.0f, 0.0f );
-	if( std::size( node.matrix ) == 16 )
+	if( node.has_matrix )
 	{
 		XMMATRIX m = GetMatrix( node.matrix );
 		if( !XMMatrixDecompose( &xmS, &xmR, &xmT, m ) )
@@ -161,165 +210,87 @@ inline packed_trs GetTrsFromNode( const tinygltf::Node& node )
 			xmR = XMVectorSet( 0.0f, 0.0f, 0.0f, 1.0f );
 			xmS = XMVectorSet( 1.0f, 1.0f, 1.0f, 0.0f );
 		}
-
 	}
 	else
 	{
-		if( std::size( node.translation ) == 3 )
+		if( node.has_translation )
 		{
-			xmT = XMVectorSet(
-				( float ) node.translation[ 0 ],
-				( float ) node.translation[ 1 ],
-				( float ) node.translation[ 2 ],
-				0.0f
-			);
+			xmT = XMVectorSet( node.translation[ 0 ], node.translation[ 1 ], node.translation[ 2 ], 0.0f );
 		}
-		if( std::size( node.rotation ) == 4 )
+		if( node.has_rotation )
 		{
 			xmR = XMVectorSet(
-				( float ) node.rotation[ 0 ],
-				( float ) node.rotation[ 1 ],
-				( float ) node.rotation[ 2 ],
-				( float ) node.rotation[ 3 ]
+				node.rotation[ 0 ],
+				node.rotation[ 1 ],
+				node.rotation[ 2 ],
+				node.rotation[ 3 ]
 			);
 		}
-		if( std::size( node.scale ) == 3 )
+		if( node.has_scale )
 		{
-			xmS = XMVectorSet(
-				( float ) node.scale[ 0 ],
-				( float ) node.scale[ 1 ],
-				( float ) node.scale[ 2 ],
-				0.0f
-			);
+			xmS = XMVectorSet( node.scale[ 0 ], node.scale[ 1 ], node.scale[ 2 ], 0.0f );
 		}
 	}
 
-	return { 
-		.t = DX_XMStoreFloat3( xmT ), 
-		.r = DX_XMStoreFloat4( xmR ), 
-		.s = DX_XMStoreFloat3( xmS ) 
-	};
+	return {  .t = DX_XMStoreFloat3( xmT ),  .r = DX_XMStoreFloat4( xmR ),  .s = DX_XMStoreFloat3( xmS ) };
 }
 
-inline alpha_mode GltfAlphaModeToEnum( std::string_view gltfAlphaMode )
+inline alpha_mode CgltfAlphaModeToEnum( cgltf_alpha_mode gltfAlphaMode )
 {
-	if( gltfAlphaMode == "MASK" )  return ALPHA_MODE_MASK;
-	if( gltfAlphaMode == "BLEND" ) return ALPHA_MODE_BLEND;
+	if( cgltf_alpha_mode_mask == gltfAlphaMode )  return ALPHA_MODE_MASK;
+	if( cgltf_alpha_mode_blend == gltfAlphaMode ) return ALPHA_MODE_BLEND;
 	return ALPHA_MODE_OPAQUE;
 }
-inline sampler_filter_mode_flags GltfFilterToFlags( i32 gltfFilter )
+inline sampler_filter_mode_flags CgltfFilterToFlags( cgltf_filter_type gltfFilter )
 {
 	switch( gltfFilter )
 	{
-	case TINYGLTF_TEXTURE_FILTER_NEAREST:                return FILTER_NEAREST;
-	case TINYGLTF_TEXTURE_FILTER_LINEAR:                 return FILTER_LINEAR;
-	case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST: return FILTER_NEAREST_MIPMAP_NEAREST;
-	case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:  return FILTER_LINEAR_MIPMAP_NEAREST;
-	case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:  return FILTER_NEAREST_MIPMAP_LINEAR;
-	case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:   return FILTER_LINEAR_MIPMAP_LINEAR;
-	default:                                             return FILTER_LINEAR;
+	case cgltf_filter_type_nearest:                	return FILTER_NEAREST;
+	case cgltf_filter_type_linear:                 	return FILTER_LINEAR;
+	case cgltf_filter_type_nearest_mipmap_nearest: 	return FILTER_NEAREST_MIPMAP_NEAREST;
+	case cgltf_filter_type_linear_mipmap_nearest:  	return FILTER_LINEAR_MIPMAP_NEAREST;
+	case cgltf_filter_type_nearest_mipmap_linear:  	return FILTER_NEAREST_MIPMAP_LINEAR;
+	case cgltf_filter_type_linear_mipmap_linear:   	return FILTER_LINEAR_MIPMAP_LINEAR;
+	default:										break;
 	}
+	return FILTER_LINEAR;
 }
-inline sampler_wrap_mode_flags GltfWrapToFlags( i32 gltfWrap )
+inline sampler_wrap_mode_flags CgltfWrapToFlags( cgltf_wrap_mode gltfWrap )
 {
 	switch( gltfWrap )
 	{
-	case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:   return WRAP_CLAMP_TO_EDGE;
-	case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT: return WRAP_MIRRORED_REPEAT;
-	case TINYGLTF_TEXTURE_WRAP_REPEAT:          return WRAP_REPEAT;
-	default:                                    return WRAP_CLAMP_TO_EDGE;
+	case cgltf_wrap_mode_clamp_to_edge:   return WRAP_CLAMP_TO_EDGE;
+	case cgltf_wrap_mode_mirrored_repeat: return WRAP_MIRRORED_REPEAT;
+	case cgltf_wrap_mode_repeat:          return WRAP_REPEAT;
+	default:                              break;
 	}
+
+	return WRAP_CLAMP_TO_EDGE;
 }
-inline image_metadata GetGltfTextureMetadata( const tinygltf::Image& img )
+
+template<TRIVIAL_T T>
+inline std::vector<T> CgltfGetAttributeStream( const cgltf_primitive& prim, cgltf_attribute_type type, i32	attrIdx )
 {
-	image_metadata out = {
-		.width	= ( u16 ) img.width,
-		.height = ( u16 ) img.height,
-	};
+	const cgltf_accessor* pAccessor = cgltf_find_accessor( &prim, type, attrIdx );
+	if( !pAccessor ) return {};
 
-	switch( img.component )
-	{
-	case 1: out.component	= image_channels_t::R; break;
-	case 2: out.component	= image_channels_t::RG; break;
-	case 3: out.component	= image_channels_t::RGB; break;
-	case 4: out.component	= image_channels_t::RGBA; break;
-	default: out.component	= image_channels_t::UNKNOWN;
-	}
-
-	switch( img.bits )
-	{
-	case 8:  out.bits = image_bit_depth_t::B8; break;
-	case 16: out.bits = image_bit_depth_t::B16; break;
-	case 32: out.bits = image_bit_depth_t::B32; break;
-	default: out.bits = image_bit_depth_t::UNKNOWN;
-	}
-
-	switch( img.pixel_type )
-	{
-	case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:		out.pixelType = image_pixel_type::UBYTE; break;
-	case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:	out.pixelType = image_pixel_type::USHORT; break;
-	case TINYGLTF_COMPONENT_TYPE_FLOAT:				out.pixelType = image_pixel_type::FLOAT32; break;
-	default:										out.pixelType = image_pixel_type::UNKNOWN;
-	}
-
-	return out;
+	const gltf_typed_attr_stream<T> stream = { *pAccessor };
+	return { std::from_range, stream };
 }
 
 struct gltf_loader
 {
-	tinygltf::Model model;
+	// NOTE: we don't care to free OS will do this for us !!!!!
+	cgltf_data* data = NULL;
 
-	gltf_loader( std::string_view filePath )
+	gltf_loader( const char* filePath )
 	{
-		std::string err, warn;
-		if( tinygltf::TinyGLTF loader; !loader.LoadASCIIFromFile(
-			&model, &err, &warn, std::string{ filePath }, tinygltf::SectionCheck::REQUIRE_ALL ) )
-		{
-			std::cout<< std::format("TinyGLTF LoadASCIIFromFile error: {}\nwarn: {}\n", err, warn );
-			if( !loader.LoadBinaryFromFile(
-				&model, &err, &warn, std::string{ filePath }, tinygltf::SectionCheck::REQUIRE_ALL ) )
-			{
-				std::cout<< std::format("TinyGLTF LoadBinaryFromFile error: {}\n warn: {}\n", err, warn );
-				abort();
-			}
-		}
-
-		HT_ASSERT( 1 == std::size( model.scenes ) );
+		cgltf_options options = {};
+		HT_ASSERT( cgltf_result_success == cgltf_parse_file( &options, filePath, &data ) );
+		HT_ASSERT( cgltf_result_success == cgltf_validate( data ) );
+		HT_ASSERT( cgltf_result_success == cgltf_load_buffers( &options, data, filePath ) );
+		HT_ASSERT( 1 == data->scenes_count );
 		std::cout << "Successfully loaded the file.\n";
-	}
-
-	std::vector<u32> GetIndexBufferFromStream( const tinygltf::Accessor& idxAccessor ) const
-	{
-		HT_ASSERT( TINYGLTF_TYPE_SCALAR == idxAccessor.type );
-
-		gltf_raw_attr_stream rawIdxStream = GetRawAttributeStream( idxAccessor );
-
-		std::vector<u32> normalized( std::size( rawIdxStream ) );
-
-		auto CasterLambda = [] ( auto v ) { return ( u32 ) v; }; 
-
-		switch( idxAccessor.componentType )
-		{
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-		{
-			gltf_typed_attr_stream<u8> typedIdxStream = { rawIdxStream };
-			std::ranges::copy( typedIdxStream | std::views::transform( CasterLambda ), std::begin( normalized ) );
-			break;
-		}
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-		{
-			gltf_typed_attr_stream<u16> typedIdxStream = { rawIdxStream };
-			std::ranges::copy( typedIdxStream | std::views::transform( CasterLambda ), std::begin( normalized ) );
-			break;
-		}
-		case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-		{
-			gltf_typed_attr_stream<u32> typedIdxStream = { rawIdxStream };
-			std::ranges::copy( typedIdxStream, std::begin( normalized ) );
-			break;
-		}
-		}
-		return normalized;
 	}
 
 	struct __gltf_node
@@ -330,94 +301,109 @@ struct gltf_loader
 	// NOTE: gltf hierarchy is a forest not a graph
 	std::vector<raw_node> ProcessNodes() const
 	{
-		const std::vector<tinygltf::Node>& nodes = model.nodes;
-
 		std::vector<__gltf_node> nodeStack;
 
 		std::vector<raw_node> flatNodes;
-		flatNodes.reserve( std::size( nodes ) );
+		flatNodes.reserve( data->nodes_count );
 
-		for( i32 rootNodeIdx : model.scenes[ 0 ].nodes )
+		const cgltf_scene& scene = data->scenes[ 0 ];
+
+		for( const cgltf_node* const& rootNode : HT_CGLTF_SPAN( scene.nodes ) )
 		{
-			nodeStack.push_back( { .parentTRS = IDENTITY_TRS, .nodeIdx = rootNodeIdx } );
+			nodeStack.push_back( {
+				.parentTRS	= IDENTITY_TRS,
+				.nodeIdx	= ( i32 ) cgltf_node_index( data, rootNode )
+			} );
 		}
 
-		while( std::size( nodeStack ) > 0 )
+		while( std::size( nodeStack ) )
 		{
 			__gltf_node curr = nodeStack.back();
 			nodeStack.pop_back();
 
-			const tinygltf::Node& currentNode = nodes[ curr.nodeIdx ];
+			const cgltf_node& currentNode = data->nodes[ curr.nodeIdx ];
 
 			packed_trs currentTrs = GetTrsFromNode( currentNode );
+			packed_trs trs        = GltfComposePackedTRS( curr.parentTRS, currentTrs );
 
-			packed_trs trs = GltfComposePackedTRS( curr.parentTRS, currentTrs );
-			flatNodes.push_back( { trs, currentNode.mesh } );
+			i32 meshIdx = currentNode.mesh
+				? ( i32 ) cgltf_mesh_index( data, currentNode.mesh )
+				: -1;
+			flatNodes.push_back( { trs, meshIdx } );
 
-			for( i32 childNodeIdx : currentNode.children )
+			for( const cgltf_node* const& childNode : HT_CGLTF_SPAN( currentNode.children ) )
 			{
-				nodeStack.push_back( { .parentTRS = trs, .nodeIdx = childNodeIdx } );
+				nodeStack.push_back( {
+					.parentTRS	= trs,
+					.nodeIdx	= ( i32 ) cgltf_node_index( data, childNode )
+				} );
 			}
 		}
 
-		return flatNodes;
+		// NOTE: expand to primitives like ProcessMeshes
+		std::vector<i32> meshFirstPrimIdx( data->meshes_count );
+		i32 acc = 0;
+		for( u64 mi = 0; mi < data->meshes_count; ++mi )
+		{
+			meshFirstPrimIdx[ mi ] = acc;
+			acc += ( i32 ) data->meshes[ mi ].primitives_count;
+		}
+
+		std::vector<raw_node> flatNodesExpanded;
+		flatNodesExpanded.reserve( std::size( flatNodes ) );
+		for( const raw_node& n : flatNodes )
+		{
+			if( -1 == n.meshIdx )
+			{
+				flatNodesExpanded.push_back( n );
+				continue;
+			}
+
+			i32 primStart = meshFirstPrimIdx[ n.meshIdx ];
+			i32 primCount = ( i32 ) data->meshes[ n.meshIdx ].primitives_count;
+			for( i32 pi = 0; pi < primCount; ++pi )
+				flatNodesExpanded.push_back( { n.toWorld, primStart + pi } );
+		}
+
+		return flatNodesExpanded;
 	}
 
 	std::vector<raw_mesh> ProcessMeshes() const
 	{
 		u64 meshPrimitiveCount = 0;
-		for( const tinygltf::Mesh& m : model.meshes )
+		for( const cgltf_mesh& m : HT_CGLTF_SPAN( data->meshes ) )
 		{
-			meshPrimitiveCount += std::size( m.primitives );
+			meshPrimitiveCount += m.primitives_count;
 		}
 
 		std::vector<raw_mesh> meshesOut;
 		meshesOut.reserve( meshPrimitiveCount );
-		for( const tinygltf::Mesh& m : model.meshes )
+		for( const cgltf_mesh& m : HT_CGLTF_SPAN( data->meshes ) )
 		{
-			for( const tinygltf::Primitive& primMesh : m.primitives )
+			const char* meshName = m.name ? m.name : "NamelessMesh";
+			u64 meshIdx = cgltf_mesh_index( data, &m );
+
+			for( u64 pi = 0; pi < m.primitives_count; ++pi )
 			{
+				const cgltf_primitive& primitive = m.primitives[ pi ];
+
 				// NOTE: we only handle triangle geom for now
-				HT_ASSERT( TINYGLTF_MODE_TRIANGLES == primMesh.mode );
+				HT_ASSERT( cgltf_primitive_type_triangles == primitive.type );
 
-				std::vector<u32> normalizedIndexBuffer;
-				if( -1 != primMesh.indices )
-				{
-					normalizedIndexBuffer = GetIndexBufferFromStream( model.accessors[ primMesh.indices ] );
-				}
-				
-				// NOTE: gltf mandates this stream be present
-				const gltf_typed_attr_stream<float3> posStream = {
-					GetRawAttributeStream( *GetAccessorByName( "POSITION", primMesh ) ) };
 
+				std::string name = std::format("{}_{}_Primitive_{}", meshName, meshIdx, pi );
 				// NOTE: gltf guarantees that all present attr streams have the same element count
-				const u64 attrStreamCount = std::size( posStream );
-
 				raw_mesh mesh = {
-					.name			= m.name.c_str(),
-					.pos			= { std::cbegin( posStream ), std::cend( posStream ) },
-					.indices		= std::move( normalizedIndexBuffer ),
-					.materialIdx	= std::bit_cast<u32>( primMesh.material )
+					.name			= MOV( name ),
+					// NOTE: gltf mandates this stream be present
+					.pos			= CgltfGetAttributeStream<float3>( primitive, cgltf_attribute_type_position, 0 ),
+					.normals 		= CgltfGetAttributeStream<float3>( primitive, cgltf_attribute_type_normal, 0 ),
+					.tans			= CgltfGetAttributeStream<float4>( primitive, cgltf_attribute_type_tangent, 0 ),
+					.uvs			= CgltfGetAttributeStream<float2>( primitive, cgltf_attribute_type_texcoord, 0 ),
+					.indices		= GetNormalizedIndexBufferFromStream( primitive.indices ),
+					.materialIdx	= ( u32 ) cgltf_material_index( data, primitive.material )
 				};
 
-				if( const tinygltf::Accessor* pAccessor = GetAccessorByName( "NORMAL", primMesh ); pAccessor )
-				{
-					const gltf_typed_attr_stream<float3> stream = { GetRawAttributeStream( *pAccessor ) };
-					HT_ASSERT( std::size( stream ) == attrStreamCount );
-					mesh.normals = { std::cbegin( stream ), std::cend( stream ) };
-				}
-				if( const tinygltf::Accessor* pAccessor = GetAccessorByName( "TANGENT", primMesh ); pAccessor )
-				{
-					const gltf_typed_attr_stream<float4> stream = { GetRawAttributeStream( *pAccessor ) };
-					HT_ASSERT( std::size( stream ) == attrStreamCount );
-					mesh.tans = { std::cbegin( stream ), std::cend( stream ) };
-				}
-				if( const tinygltf::Accessor* pAccessor = GetAccessorByName( "TEXCOORD_0", primMesh ); pAccessor )
-				{
-					const gltf_typed_attr_stream<float2> stream = { GetRawAttributeStream( *pAccessor ) };
-					HT_ASSERT( std::size( stream ) == attrStreamCount );
-					mesh.uvs = { std::cbegin( stream ), std::cend( stream ) };
-				}
 				meshesOut.emplace_back( mesh );
 			}
 		}
@@ -431,14 +417,14 @@ struct gltf_loader
 		std::vector<sampler_config> samplersOut;
 		samplersOut.push_back( DEFAULT_SAMPLER );
 
-		samplersOut.reserve( std::size( model.samplers ) );
-		for( const tinygltf::Sampler& sampler : model.samplers )
+		samplersOut.reserve( data->samplers_count );
+		for( const cgltf_sampler& sampler : HT_CGLTF_SPAN( data->samplers ) )
 		{
 			samplersOut.push_back( {
-				.filterModeS	= GltfFilterToFlags( sampler.minFilter ),
-				.filterModeT	= GltfFilterToFlags( sampler.magFilter ),
-				.wrapModeS		= GltfWrapToFlags( sampler.wrapS ),
-				.wrapModeT		= GltfWrapToFlags( sampler.wrapT )
+				.filterModeS	= CgltfFilterToFlags( sampler.min_filter ),
+				.filterModeT	= CgltfFilterToFlags( sampler.mag_filter ),
+				.wrapModeS		= CgltfWrapToFlags( sampler.wrap_s ),
+				.wrapModeT		= CgltfWrapToFlags( sampler.wrap_t )
 			} );
 		}
 
@@ -448,56 +434,58 @@ struct gltf_loader
 	std::vector<raw_material_info> ProcessMaterials() const
 	{
 		std::vector<raw_material_info> materialsOut;
-		materialsOut.reserve( std::size( model.materials ) );
+		materialsOut.reserve( data->materials_count );
 
-		for( u64 mi = 0; mi < std::size( model.materials ); ++mi )
+		ankerl::unordered_dense::set<i32> samplers;
+		for( u64 mi = 0; mi < data->materials_count; ++mi )
 		{
-			const tinygltf::Material& material = model.materials[ mi ];
-			const tinygltf::PbrMetallicRoughness& pbrInfo = material.pbrMetallicRoughness;
+			samplers.clear();
 
-			std::string materialName = ( std::size( material.name ) ) ? material.name.c_str() : std::format( "mtrl_{}", mi );
+			const cgltf_material& material = data->materials[ mi ];
+			HT_ASSERT( material.has_pbr_metallic_roughness );
+			// TODO: more materials ????
+			const cgltf_pbr_metallic_roughness& pbrInfo = material.pbr_metallic_roughness;
+
+			std::string materialName = ( material.name ) ? material.name : std::format( "mtrl_{}", mi );
 
 			raw_material_info metadata = {
-				.name				= std::move( materialName ),
+				.name				= MOV( materialName ),
 				.baseColFactor		= {
-					( float ) pbrInfo.baseColorFactor[ 0 ],
-					( float ) pbrInfo.baseColorFactor[ 1 ],
-					( float ) pbrInfo.baseColorFactor[ 2 ],
-					( float ) pbrInfo.baseColorFactor[ 3 ]
+					pbrInfo.base_color_factor[ 0 ],
+					pbrInfo.base_color_factor[ 1 ],
+					pbrInfo.base_color_factor[ 2 ],
+					pbrInfo.base_color_factor[ 3 ]
 			    },
-				.metallicFactor		= ( float ) pbrInfo.metallicFactor,
-				.roughnessFactor	= ( float ) pbrInfo.roughnessFactor,
-				.alphaCutoff		= ( float ) material.alphaCutoff,
+				.metallicFactor		= pbrInfo.metallic_factor,
+				.roughnessFactor	= pbrInfo.roughness_factor,
+				.alphaCutoff		= material.alpha_cutoff,
 				.emissiveFactor		= {
-					( float ) material.emissiveFactor[ 0 ],
-					( float ) material.emissiveFactor[ 1 ],
-					( float ) material.emissiveFactor[ 2 ]
+					material.emissive_factor[ 0 ],
+					material.emissive_factor[ 1 ],
+					material.emissive_factor[ 2 ]
 			    },
-				.alphaMode			= GltfAlphaModeToEnum( material.alphaMode )
+				.alphaMode			= CgltfAlphaModeToEnum( material.alpha_mode )
 			};
 
-			ankerl::unordered_dense::set<i32> samplers;
-			{
-				const gltf_texture pbrBaseCol = ProcessTexture( pbrInfo.baseColorTexture );
-				metadata.baseColorIdx = pbrBaseCol.imageIdx;
-				samplers.insert( pbrBaseCol.samplerIdx );
+			const gltf_texture pbrBaseCol = ProcessTexture( pbrInfo.base_color_texture );
+			metadata.baseColorIdx = pbrBaseCol.imageIdx;
+			samplers.insert( pbrBaseCol.samplerIdx );
 
-				const gltf_texture normalTex = ProcessTexture( material.normalTexture );
-				metadata.normalIdx = normalTex.imageIdx;
-				samplers.insert( normalTex.samplerIdx );
+			const gltf_texture normalTex = ProcessTexture( material.normal_texture );
+			metadata.normalIdx = normalTex.imageIdx;
+			samplers.insert( normalTex.samplerIdx );
 
-				const gltf_texture metallicRoughness = ProcessTexture( pbrInfo.metallicRoughnessTexture );
-				metadata.metallicRoughnessIdx = metallicRoughness.imageIdx;
-				samplers.insert( metallicRoughness.samplerIdx );
+			const gltf_texture metallicRoughness = ProcessTexture( pbrInfo.metallic_roughness_texture );
+			metadata.metallicRoughnessIdx = metallicRoughness.imageIdx;
+			samplers.insert( metallicRoughness.samplerIdx );
 
-				const gltf_texture occlusionTex = ProcessTexture( material.occlusionTexture );
-				metadata.occlusionIdx = occlusionTex.imageIdx;
-				samplers.insert( occlusionTex.samplerIdx );
+			const gltf_texture occlusionTex = ProcessTexture( material.occlusion_texture );
+			metadata.occlusionIdx = occlusionTex.imageIdx;
+			samplers.insert( occlusionTex.samplerIdx );
 
-				const gltf_texture emissiveTex = ProcessTexture( material.emissiveTexture );
-				metadata.emissiveIdx = emissiveTex.imageIdx;
-				samplers.insert( emissiveTex.samplerIdx );
-			}
+			const gltf_texture emissiveTex = ProcessTexture( material.emissive_texture );
+			metadata.emissiveIdx = emissiveTex.imageIdx;
+			samplers.insert( emissiveTex.samplerIdx );
 
 			// NOTE: will enforce all textures in a material to use the same sampler, 
 			// if there's none, we'll use the default one
@@ -516,63 +504,38 @@ struct gltf_loader
 	std::vector<raw_image_view> ProcessImages() const
 	{
 		std::vector<raw_image_view> imgOut;
-		imgOut.reserve( std::size( model.images ) );
-		for( const tinygltf::Image& img : model.images )
-		{
-			HT_ASSERT( std::size( img.image ) );
-			imgOut.push_back( {
-				.data		= { std::cbegin( img.image ), std::cend( img.image ) },
-				.metadata	= GetGltfTextureMetadata( img )
-			} );
-		}
+		//imgOut.reserve( data->images_count );
+		//for( const cgltf_image& img : HT_CGLTF_SPAN( data->images ) )
+		//{
+		//	HT_ASSERT( img.buffer_view );
+		//	HT_ASSERT( img.buffer_view->data );
+//
+		//	const u8* pRawData = ( const u8* ) img.buffer_view->data + img.buffer_view->offset;
+//
+		//	imgOut.push_back( {
+		//		.data		= { pRawData, img.buffer_view->size },
+		//		.metadata	= GetGltfTextureMetadata( img )
+		//	} );
+		//}
 
 		return imgOut;
 	}
 
-	template<TinyGltfTextureInfoConcept TexInfo>
-	gltf_texture ProcessTexture( const TexInfo& texInfo ) const
+	struct gltf_texture
 	{
-		if( INVALID_IDX == texInfo.index ) return {};
-
+		i32 imageIdx	= -1;
+		i32 samplerIdx	= -1;
+	};
+	inline gltf_texture ProcessTexture( const cgltf_texture_view& texView ) const
+	{
 		// NOTE: bc we use TEXCOORD_0
-		HT_ASSERT( 0 == texInfo.texCoord );
-		const tinygltf::Texture& tex = model.textures[ texInfo.index ];
-		return { .imageIdx = tex.source, .samplerIdx = tex.sampler };
-	}
+		HT_ASSERT( 0 == texView.texcoord );
+		if( nullptr == texView.texture ) return {};
 
-	const tinygltf::Accessor* GetAccessorByName( std::string_view name, const tinygltf::Primitive& primMesh ) const
-	{
-		const auto it = primMesh.attributes.find( std::string{ name } );
-		if( std::cend( primMesh.attributes ) == it ) return nullptr;
-		return &( model.accessors[ it->second ] );
-	}
-
-	// NOTE: according to the spec https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes
-	// we could just fix these attribute's size
-	gltf_raw_attr_stream GetRawAttributeStream( const tinygltf::Accessor& accessor ) const
-	{
-		const i32 viewIdx = accessor.bufferView;
-		HT_ASSERT( INVALID_IDX != viewIdx );
-		const tinygltf::BufferView& view = model.bufferViews[ viewIdx ];
-
-		HT_ASSERT( INVALID_IDX != view.buffer );
-		const tinygltf::Buffer& buff = model.buffers[ view.buffer ];
-
-		const u64 numComponents = tinygltf::GetNumComponentsInType( accessor.type );
-		const u64 componentSizeInBytes = tinygltf::GetComponentSizeInBytes( accessor.componentType );
-		const u64 elemSize = numComponents * componentSizeInBytes;
-
-		// NOTE: gltf byteStride==0 means tightly packed ( effective stride == elemSize )
-		const u64 strideInBytes = ( view.byteStride == 0 ) ? elemSize : ( u64 ) view.byteStride;
-
-		// NOTE: If a stride is provided, it must be >= element size
-		HT_ASSERT( strideInBytes >= elemSize );
-
-		const u64 baseOffset = ( u64 ) view.byteOffset + ( u64 ) accessor.byteOffset;
-		HT_ASSERT( baseOffset < ( u64 ) std::size( buff.data ) );
-
-		return { ( const u8* ) ( std::data( buff.data ) + baseOffset ), accessor.count, 
-			numComponents, componentSizeInBytes, strideInBytes };
+		return {
+			.imageIdx	= ( i32 ) cgltf_image_index( data, texView.texture->image ),
+			.samplerIdx = ( i32 ) cgltf_sampler_index( data, texView.texture->sampler )
+		};
 	}
 };
 

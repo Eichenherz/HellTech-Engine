@@ -1488,7 +1488,7 @@ inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes
 	} );
 	desc_hndl32 viewDataIdx = vkCtx.AllocDescriptorIdx( viewData );
 
-	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 512 * sizeof( gpu_mesh );
+	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 1024 * sizeof( gpu_mesh );
 	fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
 
 	vk_buffer gpuMeshTable = vkCtx.CreateBuffer( {
