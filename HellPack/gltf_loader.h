@@ -4,10 +4,12 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
+#include <execution>
 
 #include <iostream>
 #include <span>
 #include <ranges>
+#include <numeric>
 
 #include <ankerl/unordered_dense.h>
 
@@ -156,10 +158,8 @@ inline std::vector<u32> GetNormalizedIndexBufferFromStream( const cgltf_accessor
 	return {};
 }
 
-// GLTF stores matrices column-major: mIn[col*4 + row]. DirectXMath uses row-major row-vector
-// convention, so M_dx = M_gltf^T — each GLTF column becomes a DirectXMath row.
-// The old code read GLTF rows into DX rows (same values, wrong layout), which put translation
-// in the last column of each row instead of row 3, so XMMatrixDecompose extracted T = {0,0,0}.
+// NOTE: GLTF stores matrices column-major: mIn[col*4 + row]. DirectXMath uses row-major convention,
+// so M_dx = M_gltf^T — each GLTF column becomes a DirectXMath row.
 inline DirectX::XMMATRIX GetMatrix( std::span<const cgltf_float> mIn )
 {
 	using namespace DirectX;
@@ -171,9 +171,6 @@ inline DirectX::XMMATRIX GetMatrix( std::span<const cgltf_float> mIn )
 	return m;
 }
 
-// NOTE: GLTF quaternions follow the standard convention q*v*q^{-1} (i.e. XMVector3InverseRotate),
-// NOT DirectXMath's XMVector3Rotate which computes conj(q)*v*q — the opposite rotation.
-// Using the wrong one mirrors child translations across rotated parent frames.
 inline packed_trs XM_CALLCONV GltfComposePackedTRS( packed_trs parent, packed_trs child )
 {
 	using namespace DirectX;
@@ -188,7 +185,7 @@ inline packed_trs XM_CALLCONV GltfComposePackedTRS( packed_trs parent, packed_tr
 
 	float3 outS = DX_XMStoreFloat3( XMVectorMultiply( parentS, childS ) );
 	float4 outR = DX_XMStoreFloat4( XMQuaternionMultiply( childR, parentR ) );
-	XMVECTOR transfT = XMVector3InverseRotate( XMVectorMultiply( childT, parentS ), parentR );
+	XMVECTOR transfT = XMVector3Rotate( XMVectorMultiply( childT, parentS ), parentR );
 	float3 outT = DX_XMStoreFloat3( XMVectorAdd( parentT, transfT ) );
 
 	return { .t = outT, .r = outR, .s = outS };
@@ -206,6 +203,7 @@ inline packed_trs GetTrsFromNode( const cgltf_node& node )
 		XMMATRIX m = GetMatrix( node.matrix );
 		if( !XMMatrixDecompose( &xmS, &xmR, &xmT, m ) )
 		{
+			std::cout << "WARNING: XMMatrixDecompose failed.\n";
 			xmT = XMVectorSet( 0.0f, 0.0f, 0.0f, 0.0f );
 			xmR = XMVectorSet( 0.0f, 0.0f, 0.0f, 1.0f );
 			xmS = XMVectorSet( 1.0f, 1.0f, 1.0f, 0.0f );
@@ -280,8 +278,11 @@ inline std::vector<T> CgltfGetAttributeStream( const cgltf_primitive& prim, cglt
 
 struct gltf_loader
 {
+	std::vector<u64> meshPrimitiveOffsets = {};
 	// NOTE: we don't care to free OS will do this for us !!!!!
 	cgltf_data* data = NULL;
+
+	u64 primitivesTotalCount = 0;
 
 	gltf_loader( const char* filePath )
 	{
@@ -291,6 +292,18 @@ struct gltf_loader
 		HT_ASSERT( cgltf_result_success == cgltf_load_buffers( &options, data, filePath ) );
 		HT_ASSERT( 1 == data->scenes_count );
 		std::cout << "Successfully loaded the file.\n";
+
+		// NOTE: bc we expand the gltf meshes and prims into raw_mesh which are 1:1 with gltf_prims we need the offsets
+		// to keep the node hierarchy working
+		std::vector<u64> meshPrimOffsets = { std::from_range,
+			HT_CGLTF_SPAN( data->meshes ) | std::views::transform( &cgltf_mesh::primitives_count ) };
+
+		u64 lastMeshPrimCount = meshPrimOffsets[ std::size( meshPrimOffsets ) - 1 ];
+		std::exclusive_scan( std::begin( meshPrimOffsets ), std::end( meshPrimOffsets ),
+			std::begin( meshPrimOffsets ), u64( 0 ) );
+
+		meshPrimitiveOffsets = MOV( meshPrimOffsets );
+		primitivesTotalCount = meshPrimitiveOffsets[ std::size( meshPrimitiveOffsets ) - 1 ] + lastMeshPrimCount;
 	}
 
 	struct __gltf_node
@@ -299,7 +312,7 @@ struct gltf_loader
 		i32			nodeIdx = -1;
 	};
 	// NOTE: gltf hierarchy is a forest not a graph
-	std::vector<raw_node> ProcessNodes() const
+	std::vector<raw_node> ProcessDrawableNodes() const
 	{
 		std::vector<__gltf_node> nodeStack;
 
@@ -307,9 +320,9 @@ struct gltf_loader
 		flatNodes.reserve( data->nodes_count );
 
 		const cgltf_scene& scene = data->scenes[ 0 ];
-
-		for( const cgltf_node* const& rootNode : HT_CGLTF_SPAN( scene.nodes ) )
+		for( u64 rni = 0; rni < scene.nodes_count; ++rni )
 		{
+			const cgltf_node* rootNode = scene.nodes[ rni ];
 			nodeStack.push_back( {
 				.parentTRS	= IDENTITY_TRS,
 				.nodeIdx	= ( i32 ) cgltf_node_index( data, rootNode )
@@ -331,8 +344,9 @@ struct gltf_loader
 				: -1;
 			flatNodes.push_back( { trs, meshIdx } );
 
-			for( const cgltf_node* const& childNode : HT_CGLTF_SPAN( currentNode.children ) )
+			for( u64 cni = 0; cni < currentNode.children_count; ++cni )
 			{
+				const cgltf_node* childNode = currentNode.children[ cni ];
 				nodeStack.push_back( {
 					.parentTRS	= trs,
 					.nodeIdx	= ( i32 ) cgltf_node_index( data, childNode )
@@ -341,28 +355,22 @@ struct gltf_loader
 		}
 
 		// NOTE: expand to primitives like ProcessMeshes
-		std::vector<i32> meshFirstPrimIdx( data->meshes_count );
-		i32 acc = 0;
-		for( u64 mi = 0; mi < data->meshes_count; ++mi )
-		{
-			meshFirstPrimIdx[ mi ] = acc;
-			acc += ( i32 ) data->meshes[ mi ].primitives_count;
-		}
-
 		std::vector<raw_node> flatNodesExpanded;
-		flatNodesExpanded.reserve( std::size( flatNodes ) );
+		flatNodesExpanded.reserve( std::size( flatNodes ) ); // NOTE: this is just a best guess
 		for( const raw_node& n : flatNodes )
 		{
 			if( -1 == n.meshIdx )
 			{
-				flatNodesExpanded.push_back( n );
 				continue;
 			}
 
-			i32 primStart = meshFirstPrimIdx[ n.meshIdx ];
-			i32 primCount = ( i32 ) data->meshes[ n.meshIdx ].primitives_count;
-			for( i32 pi = 0; pi < primCount; ++pi )
-				flatNodesExpanded.push_back( { n.toWorld, primStart + pi } );
+			u64 meshPrimOffset = meshPrimitiveOffsets[ n.meshIdx ];
+			const cgltf_mesh& m = data->meshes[ n.meshIdx ];
+			for( u32 pi = 0; pi < m.primitives_count; ++pi )
+			{
+				HT_ASSERT( 1 == m.primitives_count );
+				flatNodesExpanded.push_back( { .toWorld = n.toWorld, .meshIdx = i32( meshPrimOffset + pi ) } );
+			}
 		}
 
 		return flatNodesExpanded;
@@ -370,30 +378,26 @@ struct gltf_loader
 
 	std::vector<raw_mesh> ProcessMeshes() const
 	{
-		u64 meshPrimitiveCount = 0;
-		for( const cgltf_mesh& m : HT_CGLTF_SPAN( data->meshes ) )
-		{
-			meshPrimitiveCount += m.primitives_count;
-		}
+		std::vector<raw_mesh> meshesOut( primitivesTotalCount );
 
-		std::vector<raw_mesh> meshesOut;
-		meshesOut.reserve( meshPrimitiveCount );
-		for( const cgltf_mesh& m : HT_CGLTF_SPAN( data->meshes ) )
+		for( u64 mi = 0; mi < data->meshes_count; ++mi )
 		{
-			const char* meshName = m.name ? m.name : "NamelessMesh";
-			u64 meshIdx = cgltf_mesh_index( data, &m );
+			const cgltf_mesh& m = data->meshes[ mi ];
+
+			u64 meshPrimOffset = meshPrimitiveOffsets[ mi ];
+			const char* meshName = m.name ? m.name : "Mesh";
 
 			for( u64 pi = 0; pi < m.primitives_count; ++pi )
 			{
+				HT_ASSERT( 1 == m.primitives_count );
 				const cgltf_primitive& primitive = m.primitives[ pi ];
 
 				// NOTE: we only handle triangle geom for now
 				HT_ASSERT( cgltf_primitive_type_triangles == primitive.type );
 
-
-				std::string name = std::format("{}_{}_Primitive_{}", meshName, meshIdx, pi );
+				std::string name = std::format("{}_{}_Primitive_{}", meshName, mi, pi );
 				// NOTE: gltf guarantees that all present attr streams have the same element count
-				raw_mesh mesh = {
+				meshesOut[ meshPrimOffset + pi ] = {
 					.name			= MOV( name ),
 					// NOTE: gltf mandates this stream be present
 					.pos			= CgltfGetAttributeStream<float3>( primitive, cgltf_attribute_type_position, 0 ),
@@ -403,8 +407,6 @@ struct gltf_loader
 					.indices		= GetNormalizedIndexBufferFromStream( primitive.indices ),
 					.materialIdx	= ( u32 ) cgltf_material_index( data, primitive.material )
 				};
-
-				meshesOut.emplace_back( mesh );
 			}
 		}
 

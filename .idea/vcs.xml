@@ -7,12 +7,12 @@
     <mapping directory="$PROJECT_DIR$/3rdParty/OffsetAllocator" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/VulkanMemoryAllocator" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/bc7enc_rdo" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rdParty/cgltf" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/dds" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/flux" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/imgui" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/meshoptimizer" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/minunit" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/3rdParty/tinygltf" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/unordered_dense" vcs="Git" />
   </component>
 </project>

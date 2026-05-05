@@ -37,8 +37,10 @@ namespace fs = std::filesystem;
 #include <ht_macros.h>
 
 template<typename TriIdx, typename PrimIdx>
-inline std::vector<TriIdx> PermuteTrianglesByPrimitiveRemap( const std::vector<TriIdx>& oldIdx, const std::vector<PrimIdx>& primitiveIndices )
-{
+inline std::vector<TriIdx> PermuteTrianglesByPrimitiveRemap(
+	const std::vector<TriIdx>&	oldIdx,
+	const std::vector<PrimIdx>& primitiveIndices
+) {
 	u64 triangleCount = std::size( primitiveIndices );
 	HP_ASSERT( ( triangleCount * 3 ) == std::size( oldIdx ) );
 
@@ -131,38 +133,41 @@ void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 		idxCount, vtxCount, attrStreams, std::size( attrStreams ) );
 
 	HT_ASSERT( newVtxCount <= vtxCount );
-	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( remap ) );
+	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount,
+		std::data( remap ) );
 
-	meshopt_remapVertexBuffer( std::data( rawMesh.pos ), std::data( rawMesh.pos ), vtxCount,
-							   sizeof( rawMesh.pos[ 0 ] ), std::data( remap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.pos ), std::data( rawMesh.pos ),
+		vtxCount, sizeof( rawMesh.pos[ 0 ] ), std::data( remap ) );
 	rawMesh.pos.resize( newVtxCount );
-	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ), vtxCount,
-							   sizeof( rawMesh.normals[ 0 ] ), std::data( remap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ),
+		vtxCount,sizeof( rawMesh.normals[ 0 ] ), std::data( remap ) );
 	rawMesh.normals.resize( newVtxCount );
-	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ), vtxCount,
-							   sizeof( rawMesh.tans[ 0 ] ), std::data( remap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ),
+		vtxCount, sizeof( rawMesh.tans[ 0 ] ), std::data( remap ) );
 	rawMesh.tans.resize( newVtxCount );
-	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ), std::data( rawMesh.uvs ), vtxCount,
-							   sizeof( rawMesh.uvs[ 0 ] ), std::data( remap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ), std::data( rawMesh.uvs ),
+		vtxCount, sizeof( rawMesh.uvs[ 0 ] ), std::data( remap ) );
 	rawMesh.uvs.resize( newVtxCount );
 
-	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ), idxCount, newVtxCount );
+	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ),
+		idxCount, newVtxCount );
 
 	std::vector<u32> fetchRemap( newVtxCount );
 	meshopt_optimizeVertexFetchRemap( std::data( fetchRemap ), std::data( indices ),
 		idxCount, newVtxCount );
 
-	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount, std::data( fetchRemap ) );
+	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount,
+		std::data( fetchRemap ) );
 
 
-	meshopt_remapVertexBuffer( std::data( rawMesh.pos ),std::data( rawMesh.pos ), newVtxCount,
-		sizeof( rawMesh.pos[ 0 ] ), std::data( fetchRemap ) );
-	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ), newVtxCount,
-		sizeof( rawMesh.normals[ 0 ] ), std::data( fetchRemap ) );
-	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ), newVtxCount,
-		sizeof( rawMesh.tans[ 0 ] ), std::data( fetchRemap ) );
-	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ),std::data( rawMesh.uvs ), newVtxCount,
-		sizeof( rawMesh.uvs[ 0 ] ), std::data( fetchRemap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.pos ),std::data( rawMesh.pos ),
+		newVtxCount, sizeof( rawMesh.pos[ 0 ] ), std::data( fetchRemap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ),
+		newVtxCount, sizeof( rawMesh.normals[ 0 ] ), std::data( fetchRemap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ),
+		newVtxCount, sizeof( rawMesh.tans[ 0 ] ), std::data( fetchRemap ) );
+	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ),std::data( rawMesh.uvs ),
+		newVtxCount, sizeof( rawMesh.uvs[ 0 ] ), std::data( fetchRemap ) );
 }
 
 struct __meshopt_meshlets
@@ -204,8 +209,8 @@ __meshopt_meshlets MeshoptMakeClusters(
 
 __meshopt_meshlets MeshoptMakeClusters( 
 	std::span<const float3> pos, 
-	std::span<const u32> indices, 
-	rt_cluster_config cfg 
+	std::span<const u32>	indices,
+	rt_cluster_config		cfg
 ) { 
 	const u64 indexCount = std::size( indices );
 
@@ -215,9 +220,9 @@ __meshopt_meshlets MeshoptMakeClusters(
 	std::vector<u32> mletVtx( indexCount );
 	std::vector<u8> mletTris( indexCount );
 
-	u64 meshletCount = meshopt_buildMeshletsSpatial(
-		&meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ], std::size( indices ), &pos[ 0 ].x, 
-		std::size( pos ), sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles, cfg.fillWeight );
+	u64 meshletCount = meshopt_buildMeshletsSpatial( &meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ],
+		std::size( indices ), &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ),
+		cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles, cfg.fillWeight );
 
 	const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
 
@@ -227,8 +232,8 @@ __meshopt_meshlets MeshoptMakeClusters(
 
 	for( const meshopt_Meshlet& m : meshlets )
 	{
-		meshopt_optimizeMeshlet( &mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ],
-			m.triangle_count, m.vertex_count );
+		meshopt_optimizeMeshlet( &mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ], m.triangle_count,
+			m.vertex_count );
 	}
 
 	return {
@@ -276,14 +281,15 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 	{
 		HT_ASSERT( ( m.vertex_count <= u32( mltCfg.maxVertices ) ) && ( m.triangle_count <= u32( mltCfg.maxTriangles ) ) );
 
-		std::vector<float3> mltPosStream = GetMeshletLocalAttrStream( pos, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
+		std::vector<float3> mltPosStream = GetMeshletLocalAttrStream( pos, meshoptMeshlets.vertices, m.vertex_offset,
+			m.vertex_count );
 
-		std::vector<float3> mltNormStream = GetMeshletLocalAttrStream(
-			norm, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
-		std::vector<float4> mltTanStream = GetMeshletLocalAttrStream(
-			tan, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
-		std::vector<float2> mltUvStream = GetMeshletLocalAttrStream(
-			uvs, meshoptMeshlets.vertices, m.vertex_offset, m.vertex_count );
+		std::vector<float3> mltNormStream = GetMeshletLocalAttrStream( norm, meshoptMeshlets.vertices, m.vertex_offset,
+			m.vertex_count );
+		std::vector<float4> mltTanStream = GetMeshletLocalAttrStream( tan, meshoptMeshlets.vertices, m.vertex_offset,
+			m.vertex_count );
+		std::vector<float2> mltUvStream = GetMeshletLocalAttrStream( uvs, meshoptMeshlets.vertices, m.vertex_offset,
+			m.vertex_count );
 
 		const aabb_t<float3> aabb = ComputeAabb( mltPosStream );
 
@@ -324,12 +330,14 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 		std::span<const u8> mltTriIndices = { std::data( meshoptMeshlets.triIndices ) + m.triangle_offset,
 			m.triangle_count * 3 };
 
-		std::ranges::copy( packedVtx, std::back_inserter( vertices ) );
-		std::ranges::copy( mltTriIndices, std::back_inserter( triIndices ) );
+		vertices.append_range( packedVtx );
+		triIndices.append_range( mltTriIndices );
 	}
 
-	auto aabbView = meshlets | std::views::transform( 
-		[] ( const gpu_meshlet& m ) { return aabb_t<float3>{ .min = m.minAabb, .max = m.maxAabb }; } );
+	auto aabbView = meshlets | std::views::transform( [] ( const gpu_meshlet& m )
+	{
+		return aabb_t<float3>{ .min = m.minAabb, .max = m.maxAabb };
+	} );
 
 	aabb_t<float3> aabb = MergeAabbs( aabbView );
 
@@ -484,8 +492,8 @@ i32 main( i32 argc, char** argv  )
 
 	gltf_loader gltf = { gltfFilePath.c_str() };
 
-	// TODO: ensure we keep the same indexing as tinygltf provides !!!!
-	std::vector<raw_node>			rawNodes		= gltf.ProcessNodes();
+	// TODO: ensure we keep the same indexing as cgltf provides !!!!
+	std::vector<raw_node>			rawNodes		= gltf.ProcessDrawableNodes();
 	std::vector<raw_mesh>			rawMeshes		= gltf.ProcessMeshes();
 	std::vector<sampler_config>		samplers		= gltf.ProcessSamplers();
 	//std::vector<raw_material_info>	rawMaterials	= gltf.ProcessMaterials();
@@ -556,8 +564,8 @@ i32 main( i32 argc, char** argv  )
 		{
 			for( auto& [ filePath, meshAsset ] : meshAssetMap )
 			{
-				hellpack_serializble_buffer buffs[] = { 
-					meshAsset.vertices, meshAsset.triIndices, meshAsset.meshlets, meshAsset.aabb };
+				hellpack_serializble_buffer buffs[] = { meshAsset.vertices, meshAsset.triIndices,
+					meshAsset.meshlets, meshAsset.aabb };
 				std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::MESH );
 				zipArchive.WriteBytesToFile( filePath, bytes );
 			}
