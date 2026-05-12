@@ -13,6 +13,8 @@
 #include <span>
 #include <array>
 
+#include <SPIRV-Reflect/spirv_reflect.h>
+
 #define VMA_IMPLEMENTATION
 
 //#define VMA_DEBUG_LOG( str ) do { std::fputs( std::format( "[VMA] {}\n", str ).c_str(), stdout ); } while ( 0 )
@@ -23,10 +25,11 @@
 #include <vk_mem_alloc.h>
 
 #include "ht_core_types.h"
+#include "ht_vec_types.h"
 #include "ht_error.h"
 #include "vk_error.h"
 #include "vk_context.h"
-#include "vk_pso.h"
+#include "vk_types.h"
 #include "vk_resources.h"
 
 constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
@@ -840,9 +843,13 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 {
 	HT_ASSERT( 0 != std::size( spvByteCode ) );
-	spv_reflect::ShaderModule reflInfo = SpvMakeReflectedShaderModule( spvByteCode );
-	const char* pEntryPointName = reflInfo.GetEntryPointName();
-	VkShaderStageFlagBits shaderStage = ( VkShaderStageFlagBits ) reflInfo.GetShaderStage();
+
+	SpvReflectShaderModule spvReflInfo;
+	VK_CHECK( ( VkResult ) spvReflectCreateShaderModule( std::size( spvByteCode ),
+		std::data( spvByteCode ), &spvReflInfo ) );
+	HT_ASSERT( ( 1 == spvReflInfo.entry_point_count ) && spvReflInfo.entry_points );
+
+	const SpvReflectEntryPoint& entryPt = spvReflInfo.entry_points[ 0 ];
 
 	VkShaderModuleCreateInfo shaderModuleInfo = { 
 		.sType		= VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -860,7 +867,13 @@ unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByte
 		delete p;
 	};
 
-	return { new vk_shader{ pEntryPointName, sm, shaderStage }, std::move( deleter ) };
+
+	return { new vk_shader{
+		.entryPoint = entryPt.name,
+		.module		= sm,
+		.stage		= ( VkShaderStageFlagBits ) entryPt.shader_stage,
+		.groupSize	= { entryPt.local_size.x, entryPt.local_size.y, entryPt.local_size.z }
+	}, std::move( deleter ) };
 }
 
 VkPipeline vk_context::CreateGfxPipeline( 
@@ -966,8 +979,10 @@ VkPipeline vk_context::CreateGfxPipeline(
 	return vkGfxPipeline;
 }
 
-VkPipeline vk_context::CreateComputePipeline( const vk_shader& shader )
+vk_compute_pipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 {
+	HT_ASSERT( u32x3{} != shader.groupSize );
+
 	VkPipelineShaderStageRequiredSubgroupSizeCreateInfo subgroupSizeInfo = {
 		.sType					= VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
 		.requiredSubgroupSize	= waveSize
@@ -993,7 +1008,7 @@ VkPipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 	fixed_string<256> pipelineName = { "Pipeline_Comp_{}", shader.entryPoint };
 	VkDbgNameObj( pipeline, device, ( const char* ) pipelineName );
 
-	return pipeline;
+	return { .hndl = pipeline, .groupSize = shader.groupSize };
 }
 
 VkSemaphore vk_context::CreateBinarySemaphore()

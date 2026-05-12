@@ -48,9 +48,9 @@ void VBufferDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 	if( VBufferIsValidPixel( rawPixel ) )
 	{
 		vbuffer_pixel vBuffPixel = VBufferUnpackPixel( rawPixel );
-		//col = float4( ColorPixelHash( vBuffPixel ), 1.0f);
+		col = float4( ColorPixelHash( vBuffPixel ), 1.0f );
 		//col = ColorId( vBuffPixel.mltId );
-		col = ColorId( vBuffPixel.triId );
+		//col = ColorId( vBuffPixel.triId );
 		//col = ColorId( vBuffPixel.instId );
 	}
 

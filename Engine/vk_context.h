@@ -16,7 +16,6 @@
 #include "vk_error.h"
 #include "vk_types.h"
 #include "vk_resources.h"
-#include "vk_pso.h"
 #include "vk_utils.h"
 
 #include <array>
@@ -248,7 +247,7 @@ struct vk_context
 		const vk_gfx_pso_config&				psoConfig,
 		VkPipelineLayout						vkPipelineLayout = VK_NULL_HANDLE );
 
-	VkPipeline CreateComputePipeline( const vk_shader& shader );
+	vk_compute_pipeline CreateComputePipeline( const vk_shader& shader );
 
 	inline VkSampler CreateSampler( const VkSamplerCreateInfo& samplerCreateInfo )
 	{

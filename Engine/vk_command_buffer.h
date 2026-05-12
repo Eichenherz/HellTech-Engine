@@ -13,6 +13,20 @@
 
 #include <span>
 
+inline u32 GroupCount( u32 invocationCount, u32 workGroupSize )
+{
+	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
+}
+
+inline u32x3 GroupCount( u32x3 invocationCount, u32x3 workGroupSize )
+{
+	return {
+		GroupCount( invocationCount.x, workGroupSize.x ),
+		GroupCount( invocationCount.y, workGroupSize.y ),
+		GroupCount( invocationCount.z, workGroupSize.z ),
+	};
+}
+
 template<typename T>
 concept DRAW_INDEXED_CMD_T = requires( T t )
 {
@@ -120,6 +134,8 @@ struct vk_command_buffer
 
 	void CmdPushConstants( const void* pData, u32 size )
 	{
+		HT_ASSERT( pData && size );
+
 		VkPushConstantsInfo pushConstInfo = {
 			.sType		= VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
 			.layout		= bindlessPipelineLayout,
@@ -134,6 +150,22 @@ struct vk_command_buffer
 	void CmdDispatch( u32x3 numWorkgroups )
 	{
 		vkCmdDispatch( hndl, numWorkgroups.x, numWorkgroups.y, numWorkgroups.z );
+	}
+
+	template<typename T>
+	void DispatchCompute( const vk_compute_pipeline& compPipe, const T& pushConst, u32x3 numWorkgroups )
+	{
+		CmdBindPipelineAndBindlessDesc( compPipe.hndl, VK_PIPELINE_BIND_POINT_COMPUTE );
+		CmdPushConstants( &pushConst, sizeof( T ) );
+		CmdDispatch(GroupCount( numWorkgroups,  compPipe.groupSize ) );
+	}
+
+	template<typename T>
+	void DispatchComputeIndirect( const vk_compute_pipeline& compPipe, const T& pushConst, const vk_buffer& dispatchIndirect )
+	{
+		CmdBindPipelineAndBindlessDesc( compPipe.hndl, VK_PIPELINE_BIND_POINT_COMPUTE );
+		CmdPushConstants( &pushConst, sizeof( T ) );
+		vkCmdDispatchIndirect( hndl, dispatchIndirect.hndl, 0 );
 	}
 
 	void CmdDrawIndexed(

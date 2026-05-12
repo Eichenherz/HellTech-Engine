@@ -13,11 +13,9 @@ vbuffer_vs_out VBufferVsMain(
     [[vk::builtin("DrawIndex")]]
     in u32 drawId   : DRAW_ID
 ) {
-    draw_indexed_command draw = BufferLoad<draw_indexed_command>( pushBlock.drawBuffIdx, drawId );
+    draw_meshlet_command draw = BufferLoad<draw_meshlet_command>( pushBlock.drawBuffIdx, drawId );
 
-    visible_meshlet mlt = BufferLoad<visible_meshlet>( pushBlock.visMltBuffIdx, draw.visMltIdx );
-
-    gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instBuffIdx, mlt.globalInstId );
+    gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instBuffIdx, draw.globalInstId );
     float4x4 toWorld = float4x4(
         float4( inst.toWorld[ 0 ], 0.0f ),
         float4( inst.toWorld[ 1 ], 0.0f ),
@@ -32,6 +30,6 @@ vbuffer_vs_out VBufferVsMain(
     packed_vtx vtx = ptr[ vtxID ];
     float4 pos = mul( float4( vtx.px, vtx.py, vtx.pz, 1.0f ), mvp );
 
-    vbuffer_vs_out vsOut = { pos, mlt.globalMltId, mlt.globalInstId };
+    vbuffer_vs_out vsOut = { pos, draw.globalMltId, draw.globalInstId };
     return vsOut;
 }

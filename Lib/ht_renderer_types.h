@@ -129,10 +129,10 @@ struct dispatch_command
 #endif
 };
 
-// TODO: rename
-struct draw_indexed_command
+struct draw_meshlet_command
 {
-	u32		visMltIdx;
+	u32 	globalInstId;
+	u32 	globalMltId;
 #if defined( __cplusplus ) && defined( __VK )
 	VkDrawIndexedIndirectCommand cmd;
 #else
@@ -206,16 +206,6 @@ struct visible_instance
 	u32 		triOffset;
 };
 
-struct visible_meshlet
-{
-	u32 		globalInstId;
-	u32 		globalMltId;
-	u32 		absVtxOffset;
-	u32 		absIdxOffset;
-	u16			vtxCount;
-	u16			idxCount;
-};
-
 struct culling_params
 {
 	u32 instCount;
@@ -238,16 +228,8 @@ struct draw_expansion_params
 {
 	u32 workCounterIdxConst;
 	u32 srcBufferIdx;
-	u32 visMltBufferIdx;
-	u32 visMltCounterIdx;
-};
-
-struct meshlet_issue_draws_params
-{
-	u32 visMltCountIdx;
-	u32 srcBufferIdx;
-	u32 drawCmdCounterIdx;
-	u32 drawCmdsBuffIdx;
+	u32 drawMltCmdsIdx;
+	u32 drawMltCounterIdx;
 };
 
 struct indirect_dispatcher_params
@@ -260,7 +242,6 @@ struct indirect_dispatcher_params
 struct vbuffer_params
 {
 	u32 drawBuffIdx;
-	u32 visMltBuffIdx;
 	u32 instBuffIdx;
 	u32 camIdx;
 };

@@ -9,9 +9,9 @@
 culling_params pushBlock;
 
 
-[numthreads(32, 1, 1)]
+[numthreads(64, 1, 1)]
 [shader("compute")]
-void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlatIdx : SV_GroupIndex )
+void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
 	u32 instId = globalDispatchID.x;
 	if( instId >= pushBlock.instCount )
@@ -80,7 +80,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	//
 	//	visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
 	//}
-	visible = true;
+
 	if( !bool( pushBlock.isLatePass ) )
 	{
 		BufferStore<u32>( pushBlock.visInstCacheIdx, true, globalDispatchID.x );//visible ? 1 : 0, globalDispatchID.x );

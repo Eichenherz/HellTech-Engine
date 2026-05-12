@@ -18,7 +18,6 @@
 #include "vk_error.h"
 #include "vk_resources.h"
 #include "vk_sync.h"
-#include "vk_pso.h"
 
 #include "vk_context.h"
 
@@ -71,11 +70,6 @@ enum render_target_op : u32
 	STORE		= VK_ATTACHMENT_STORE_OP_STORE
 };
 
-
-inline u32 GroupCount( u32 invocationCount, u32 workGroupSize )
-{
-	return ( invocationCount + workGroupSize - 1 ) / workGroupSize;
-}
 
 struct imgui_pass
 {
@@ -397,9 +391,9 @@ struct debug_draw_passes
 	VkPipeline	drawAsLines 		= {};
 	VkPipeline	drawAsTriangles		= {};
 	// NOTE: it's easier to separate the recording of instances and the submission of draws
-	VkPipeline	compRecordDbgDraw	= {};
+	vk_compute_pipeline	compRecordDbgDraw	= {};
 
-	VkPipeline	compLambertianClay	= {};
+	vk_compute_pipeline	compLambertianClay	= {};
 
 	desc_hndl32	gpuInstBuffIdx		= {};
 	desc_hndl32	gpuInstCountBuffIdx = {};
@@ -538,7 +532,6 @@ struct debug_draw_passes
 		rscTracker.FlushBarriers( cmdBuff );
 
 		{
-			cmdBuff.CmdBindPipelineAndBindlessDesc( compRecordDbgDraw, VK_PIPELINE_BIND_POINT_COMPUTE );
 			record_dbg_draw_params pushBlock = {
 				.gpuInstCountAddr	= gpuInstCountBuff.devicePointer,
 				.dbgDrawCmdsAddr	= drawCmdsBuff.devicePointer,
@@ -547,8 +540,7 @@ struct debug_draw_passes
 				.firstIndex			= 0,
 				.vertexOffset		= 0
 			};
-			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-			cmdBuff.CmdDispatch( { 1, 1, 1 } );
+			cmdBuff.DispatchCompute( compRecordDbgDraw, pushBlock, { 1, 1, 1 } );
 		}
 
 		rscTracker.UseBuffer( drawCmdsBuff, DRAW_INDIRECT_READ );
@@ -642,16 +634,7 @@ struct debug_draw_passes
 			VK_IMAGE_LAYOUT_GENERAL );
 		rscTracker.FlushBarriers( cmdBuff );
 
-		cmdBuff.CmdBindPipelineAndBindlessDesc( compLambertianClay, VK_PIPELINE_BIND_POINT_COMPUTE );
-
-		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-
-		group_size groupSize = { 16, 16, 1 };
-		u32x3 numWorkGrs = {
-			GroupCount( dstImg.width, groupSize.x ),
-			GroupCount( dstImg.height, groupSize.y ), 1
-		};
-		cmdBuff.CmdDispatch( numWorkGrs );
+		cmdBuff.DispatchCompute( compLambertianClay, pushBlock, { dstImg.width, dstImg.height, 1 } );
 	}
 };
 
@@ -689,10 +672,10 @@ struct culling_pass
 	vk_buffer			drawCmds;
 	vk_buffer			drawCount;
 
-	VkPipeline			instCullPass;
-	VkPipeline			instExpansionPass;
-	VkPipeline			indirectDispatchPass;
-	VkPipeline      	clusterCullPipe;
+	vk_compute_pipeline			instCullPass;
+	vk_compute_pipeline			instExpansionPass;
+	vk_compute_pipeline			indirectDispatchPass;
+	vk_compute_pipeline      	clusterCullPipe;
 
 	desc_hndl32			instOccludedCacheIdx;
 	desc_hndl32			clusterOccludedCacheIdx;
@@ -719,10 +702,6 @@ struct culling_pass
 		unique_shader_ptr dispatcher = dc.CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv" ) );
 		indirectDispatchPass = dc.CreateComputePipeline( *dispatcher );
-
-		unique_shader_ptr clusterCull = dc.CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_IssueMeshletDrawsCsMain.spirv" ) );
-		clusterCullPipe = dc.CreateComputePipeline( *clusterCull );
 
 		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
 			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -761,25 +740,25 @@ struct culling_pass
 			.usage			= buffer_usage::GPU_ONLY } );
 		clusterOccludedCacheIdx = dc.AllocDescriptorIdx( clusterOccludedCache );
 
-		visibleClusters = dc.CreateBuffer( {
-			.name			= "Buff_VisibleClusters",
-			.usageFlags		= usg,
-			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( visible_meshlet ),
-			.usage			= buffer_usage::GPU_ONLY } );
-		visibleClustersIdx = dc.AllocDescriptorIdx( visibleClusters );
-
-		visibleClustersCount = dc.CreateBuffer( {
-			.name			= "Buff_VisibleClustersCount",
-			.usageFlags		= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-			| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY } );
-		visibleClustersCountIdx = dc.AllocDescriptorIdx( visibleClustersCount );
+		//visibleClusters = dc.CreateBuffer( {
+		//	.name			= "Buff_VisibleClusters",
+		//	.usageFlags		= usg,
+		//	.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( visible_meshlet ),
+		//	.usage			= buffer_usage::GPU_ONLY } );
+		//visibleClustersIdx = dc.AllocDescriptorIdx( visibleClusters );
+//
+		//visibleClustersCount = dc.CreateBuffer( {
+		//	.name			= "Buff_VisibleClustersCount",
+		//	.usageFlags		= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+		//	| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		//	.sizeInBytes	= 1 * sizeof( u32 ),
+		//	.usage			= buffer_usage::GPU_ONLY } );
+		//visibleClustersCountIdx = dc.AllocDescriptorIdx( visibleClustersCount );
 
 		drawCmds = dc.CreateBuffer( {
 			.name			= "Buff_DrawCmds",
 			.usageFlags		= usg | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT ,
-			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_indexed_command ),
+			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_command ),
 			.usage			= buffer_usage::GPU_ONLY } );
 		drawCmdsIdx = dc.AllocDescriptorIdx( drawCmds );
 	}
@@ -817,13 +796,13 @@ struct culling_pass
 		}
 		rscTracker.UseBuffer( drawCount, TRANSFER_WRITE );
 		rscTracker.UseBuffer( visibleInstCounter, TRANSFER_WRITE );
-		rscTracker.UseBuffer( visibleClustersCount, TRANSFER_WRITE );
+		//rscTracker.UseBuffer( visibleClustersCount, TRANSFER_WRITE );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
 		cmdBuff.CmdFillVkBuffer( drawCount, 0u );
 		cmdBuff.CmdFillVkBuffer( visibleInstCounter, 0u );
-		cmdBuff.CmdFillVkBuffer( visibleClustersCount, 0u );
+		//cmdBuff.CmdFillVkBuffer( visibleClustersCount, 0u );
 
 		if( !latePass )
 		{
@@ -839,8 +818,8 @@ struct culling_pass
 		rscTracker.UseBuffer( visibleInstCounter, COMPUTE_WRITE );
 		rscTracker.UseBuffer( visibleInstances, COMPUTE_WRITE );
 
-		rscTracker.UseBuffer( visibleClusters, COMPUTE_WRITE );
-		rscTracker.UseBuffer( visibleClustersCount, COMPUTE_WRITE );
+		//rscTracker.UseBuffer( visibleClusters, COMPUTE_WRITE );
+		//rscTracker.UseBuffer( visibleClustersCount, COMPUTE_WRITE );
 
 		rscTracker.UseBuffer( args.dbgGpuInstBuff, COMPUTE_WRITE );
 		rscTracker.UseBuffer( args.dbgGpuInstCountBuff, COMPUTE_WRITE );
@@ -885,57 +864,27 @@ struct culling_pass
 				.dbgInstCountIdx		= args.dbgGpuInstCountBuffIdx.slot,
 				.dbgInstBuffIdx			= args.dbgGpuInstBuffIdx.slot
 			};
-
-			cmdBuff.CmdBindPipelineAndBindlessDesc( instCullPass, VK_PIPELINE_BIND_POINT_COMPUTE );
-			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-			cmdBuff.CmdDispatch( { GroupCount( args.instCount, 32 ), 1, 1 } );
+			cmdBuff.DispatchCompute( instCullPass, pushBlock, { args.instCount, 1, 1 } );
 		}
 		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
 		{
 			indirect_dispatcher_params pushBlock = {
-				.cullShaderWorkGrX	= 32,
+				.cullShaderWorkGrX	= instExpansionPass.groupSize.x,
 				.dispatchCmdBuffIdx = dispatchIndirectIdx.slot,
 				.counterBufferIdx	= visibleInstCounterIdx.slot
 			};
-			cmdBuff.CmdBindPipelineAndBindlessDesc( indirectDispatchPass, VK_PIPELINE_BIND_POINT_COMPUTE );
-			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-			cmdBuff.CmdDispatch( { 1, 1, 1 } );
+			cmdBuff.DispatchCompute( indirectDispatchPass, pushBlock, { 1, 1, 1 } );
 		}
 		cmdBuff.CmdPipelineMemoryBarriers( computeToIndirectComputeExecDependency );
 		{
 			draw_expansion_params pushBlock = {
 				.workCounterIdxConst	= visibleInstCounterIdx.slot,
 				.srcBufferIdx			= visibleInstIdx.slot,
-				.visMltBufferIdx		= visibleClustersIdx.slot,
-				.visMltCounterIdx		= visibleClustersCountIdx.slot
+				.drawMltCmdsIdx			= drawCmdsIdx.slot,
+				.drawMltCounterIdx		= drawCountIdx.slot
 			};
 
-			cmdBuff.CmdBindPipelineAndBindlessDesc( instExpansionPass, VK_PIPELINE_BIND_POINT_COMPUTE );
-			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-			vkCmdDispatchIndirect( cmdBuff.hndl, dispatchIndirect.hndl, 0 );
-		}
-		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
-		{
-			indirect_dispatcher_params pushBlock = {
-				.cullShaderWorkGrX	= 32,
-				.dispatchCmdBuffIdx = dispatchIndirectIdx.slot,
-				.counterBufferIdx	= visibleClustersCountIdx.slot
-			};
-			cmdBuff.CmdBindPipelineAndBindlessDesc( indirectDispatchPass, VK_PIPELINE_BIND_POINT_COMPUTE );
-			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-			cmdBuff.CmdDispatch( { 1, 1, 1 } );
-		}
-		cmdBuff.CmdPipelineMemoryBarriers( computeToIndirectComputeExecDependency );
-		{
-			meshlet_issue_draws_params pushBlock = {
-				.visMltCountIdx		= visibleClustersCountIdx.slot,
-				.srcBufferIdx		= visibleClustersIdx.slot,
-				.drawCmdCounterIdx	= drawCountIdx.slot,
-				.drawCmdsBuffIdx	= drawCmdsIdx.slot
-			};
-			cmdBuff.CmdBindPipelineAndBindlessDesc( clusterCullPipe, VK_PIPELINE_BIND_POINT_COMPUTE );
-			cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-			vkCmdDispatchIndirect( cmdBuff.hndl, dispatchIndirect.hndl, 0 );
+			cmdBuff.DispatchComputeIndirect( instExpansionPass, pushBlock, dispatchIndirect );
 		}
 	}
 };
@@ -946,8 +895,8 @@ struct tone_mapping_pass
 	vk_buffer					luminanceHistogramBuffer;
 	vk_buffer					atomicWgCounterBuff;
 
-	VkPipeline					compAvgLumPipe;
-	VkPipeline					compTonemapPipe;
+	vk_compute_pipeline			compAvgLumPipe;
+	vk_compute_pipeline			compTonemapPipe;
 
 	desc_hndl32					avgLumIdx;
 	desc_hndl32					atomicWgCounterIdx;
@@ -1004,9 +953,6 @@ struct tone_mapping_pass
 		rscTracker.UseImage( colTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 		rscTracker.FlushBarriers( cmdBuff );
 
-
-		cmdBuff.CmdBindPipelineAndBindlessDesc( compAvgLumPipe, VK_PIPELINE_BIND_POINT_COMPUTE );
-
 		// NOTE: inspired by http://www.alextardif.com/HistogramLuminance.html
 		avg_luminance_info avgLumInfo = {
 			.minLogLum = -10.0f,
@@ -1014,11 +960,6 @@ struct tone_mapping_pass
 			.dt = dt
 		};
 
-		group_size groupSize = { 16, 16, 1 };
-		u32x3 numWorkGrs = {
-			GroupCount( colTarget.width, groupSize.x ),
-			GroupCount( colTarget.height, groupSize.y ), 1
-		};
 		struct push_const
 		{
 			avg_luminance_info  avgLumInfo;
@@ -1027,8 +968,8 @@ struct tone_mapping_pass
 			u32					atomicWorkGrCounterIdx;
 			u32					avgLumIdx;
 		} pushConst = { avgLumInfo, hdrColSrcDesc.slot, lumHistoIdx.slot, atomicWgCounterIdx.slot, avgLumIdx.slot };
-		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
-		cmdBuff.CmdDispatch( numWorkGrs );
+
+		cmdBuff.DispatchCompute( compAvgLumPipe, pushConst, { colTarget.width, colTarget.height, 1 } );
 	}
 
 	void TonemappingGammaPass(
@@ -1049,24 +990,20 @@ struct tone_mapping_pass
 			VK_IMAGE_LAYOUT_GENERAL );
 		rscTracker.FlushBarriers( cmdBuff );
 
-		cmdBuff.CmdBindPipelineAndBindlessDesc( compTonemapPipe, VK_PIPELINE_BIND_POINT_COMPUTE );
-
-		group_size groupSize = { 16, 16, 1 };
-		u32x3 numWorkGrs = { GroupCount( hdrTrgSize.x, groupSize.x ), GroupCount( hdrTrgSize.y, groupSize.y ), 1 };
 		struct push_const
 		{
 			u32 hdrColIdx;
 			u32 sdrColIdx;
 			u32 avgLumIdx;
 		} pushConst = { hdrColDesc.slot, sdrColDesc.slot, avgLumIdx.slot };
-		cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
-		cmdBuff.CmdDispatch( numWorkGrs );
+
+		cmdBuff.DispatchCompute( compTonemapPipe, pushConst, { hdrTrgSize.x, hdrTrgSize.y, 1 } );
 	}
 };
 
 struct depth_pyramid_pass
 {
-	VkPipeline		pipeline;
+	vk_compute_pipeline		pipeline;
 	vk_image		hiZTarget;
 	VkImageView		hiZMipViews[ MAX_MIP_LEVELS ];
 
@@ -1152,8 +1089,6 @@ struct depth_pyramid_pass
 		rscTracker.UseImage( depthTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 		rscTracker.UseImage( hiZTarget, COMPUTE_WRITE, VK_IMAGE_LAYOUT_GENERAL );
 
-		cmdBuff.CmdBindPipelineAndBindlessDesc( pipeline, VK_PIPELINE_BIND_POINT_COMPUTE );
-
 		rscTracker.FlushBarriers( cmdBuff );
 
 		// NOTE: exec barrier only need stages bc they don't access resources
@@ -1191,12 +1126,9 @@ struct depth_pyramid_pass
 					: reduce(r), samplerIdx(s), srcImgIdx(src), mipLevel(mip), dstImgIdx(dst) {}
 			};
 			push_const pushConst{ float2{ (float) levelWidth, (float) levelHeight}, quadMinSamplerIdx.slot, srcImg, mipLevel, dstImg };
-			cmdBuff.CmdPushConstants( &pushConst, sizeof( pushConst ) );
 
-			group_size grSz = { 32,32,1 };
-			u32 dispatchX = GroupCount( levelWidth, grSz.x );
-			u32 dispatchY = GroupCount( levelHeight, grSz.y );
-			vkCmdDispatch( cmdBuff.hndl, dispatchX, dispatchY, 1 );
+
+			cmdBuff.DispatchCompute( pipeline, pushConst, { levelWidth, levelHeight, 1 } );
 
 			cmdBuff.CmdPipelineMemoryBarriers( executionBarrier );
 		}
@@ -1219,7 +1151,7 @@ struct vbuffer_pass
 	vk_image					depthTarget;
 
 	VkPipeline					gfxVBuffPipeline;
-	VkPipeline					compDbgHashTriToScPipeline;
+	vk_compute_pipeline			compDbgHashTriToScPipeline;
 
 	desc_hndl32					colSrv;
 	desc_hndl32					depthSrv;
@@ -1288,9 +1220,7 @@ struct vbuffer_pass
 		VkIndexType           	indexType,
 		const vk_buffer&		drawCmds,
 		const vk_buffer&		drawCount,
-		const vk_buffer&		visClustersBuff,
 		desc_hndl32				drawBuffIdx,
-		desc_hndl32				visClustersBuffIdx,
 		desc_hndl32				instBuffIdx,
 		desc_hndl32				camIdx,
 		bool					latePass
@@ -1306,7 +1236,6 @@ struct vbuffer_pass
 
 		rscTracker.UseBuffer( drawCmds, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
 		rscTracker.UseBuffer( drawCount, { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT } );
-		rscTracker.UseBuffer( visClustersBuff, { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT } );
 		rscTracker.FlushBarriers( cmdBuff );
 
 		// NOTE: since we do this incrementally we want the 2nd pass to just load
@@ -1333,12 +1262,11 @@ struct vbuffer_pass
 
 		vbuffer_params pushBlock = {
 			.drawBuffIdx	= drawBuffIdx.slot,
-			.visMltBuffIdx	= visClustersBuffIdx.slot,
 			.instBuffIdx	= instBuffIdx.slot,
 			.camIdx			= camIdx.slot
 		};
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-		cmdBuff.CmdDrawIndexedIndirectCount<draw_indexed_command>( indexBuff, indexType, drawCmds, drawCount );
+		cmdBuff.CmdDrawIndexedIndirectCount<draw_meshlet_command>( indexBuff, indexType, drawCmds, drawCount );
 	}
 
 	void DebugDrawHashedVBuffer(
@@ -1358,20 +1286,11 @@ struct vbuffer_pass
 			VK_IMAGE_LAYOUT_GENERAL );
 		rscTracker.FlushBarriers( cmdBuff );
 
-		cmdBuff.CmdBindPipelineAndBindlessDesc( compDbgHashTriToScPipeline, VK_PIPELINE_BIND_POINT_COMPUTE );
-
 		vbuffer_dbg_draw_params pushBlock = { .srcIdx = colSrv.slot, .dstIdx = dstImgIdx.slot };
-		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-
-		group_size groupSize = { 16, 16, 1 };
-		u32x3 numWorkGrs = {
-			GroupCount( colorTarget.width, groupSize.x ),
-			GroupCount( colorTarget.height, groupSize.y ), 1
-		};
-		cmdBuff.CmdDispatch( numWorkGrs );
+		cmdBuff.DispatchCompute( compDbgHashTriToScPipeline, pushBlock,
+			{ colorTarget.width, colorTarget.height, 1 } );
 	}
 };
-
 
 #include "ht_gfx_types.h"
 #include "hell_pack.h"
@@ -1911,18 +1830,16 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, cullPassArgs, false );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
-			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.visibleClusters,
-			cullingPass.drawCmdsIdx, cullingPass.visibleClustersIdx, thisVFrame.instDesc,
-			thisVFrame.viewDataIdx, false );
+			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
+			thisVFrame.instDesc, thisVFrame.viewDataIdx, false );
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
 		cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, cullPassArgs, true );
 
 		vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, megaGpuTriBuff,
-			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.visibleClusters,
-			cullingPass.drawCmdsIdx, cullingPass.visibleClustersIdx, thisVFrame.instDesc,
-			thisVFrame.viewDataIdx, true );
+			VK_INDEX_TYPE_UINT8, cullingPass.drawCmds, cullingPass.drawCount, cullingPass.drawCmdsIdx,
+			thisVFrame.instDesc, thisVFrame.viewDataIdx, true );
 
 		hizbPass.Execute( thisFrameCmdBuffer, rscStateTracker, vBuffPass.depthTarget, vBuffPass.depthSrv );
 
