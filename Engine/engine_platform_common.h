@@ -16,7 +16,7 @@
 
 struct virtual_arena;
 struct sys_semaphore;
-
+// TODO: must patch shaders to take any resolution
 constexpr u32 SCREEN_WIDTH = 1024;
 constexpr u32 SCREEN_HEIGHT = 640;
 

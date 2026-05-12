@@ -27,13 +27,14 @@ float3 ColorPixelHash( in vbuffer_pixel v )
 }
 
 // NOTE: need to reconstruct manually
-float3 ColorId( u32 id )
+float4 ColorId( u32 id )
 {
 	u32 offsettedId = id;// + 1; // NOTE: + 1 to avoid black
-	return float3(
+	return float4(
 		( ( offsettedId       ) & 0xFFu ) / 255.0f,
 		( ( offsettedId >>  8 ) & 0xFFu ) / 255.0f,
-		( ( offsettedId >> 16 ) & 0xFFu ) / 255.0f
+		( ( offsettedId >> 16 ) & 0xFFu ) / 255.0f,
+		( ( offsettedId >> 24 ) & 0xFFu ) / 255.0f
 	);
 }
 
@@ -43,13 +44,15 @@ void VBufferDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
 	u32x2 rawPixel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
 
-	float3 col = float3( 0.0f, 0.0f, 0.0f );
+	float4 col = float4( 0.0f, 0.0f, 0.0f, 1.0f );
 	if( VBufferIsValidPixel( rawPixel ) )
 	{
 		vbuffer_pixel vBuffPixel = VBufferUnpackPixel( rawPixel );
-		col = ColorPixelHash( vBuffPixel );
+		//col = float4( ColorPixelHash( vBuffPixel ), 1.0f);
+		//col = ColorId( vBuffPixel.mltId );
+		col = ColorId( vBuffPixel.triId );
 		//col = ColorId( vBuffPixel.instId );
 	}
 
-	gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = float4( col, 1.0f );
+	gRWTexture2D_float4[ pushBlock.dstIdx ][ globalDispatchID.xy ] = col;
 }

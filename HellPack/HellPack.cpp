@@ -33,8 +33,38 @@ namespace fs = std::filesystem;
 #include "gltf_loader.h"
 
 #include "hp_types_internal.h"
+#include "ht_vec_types.h"
 
 #include <ht_macros.h>
+
+template<typename R>
+concept CONTIGUOUS_RANGE_T = std::ranges::contiguous_range<R>;
+
+template<typename R, typename T>
+concept CONTIGUOUS_TYPED_RANGE_T = CONTIGUOUS_RANGE_T<R> && std::same_as<std::ranges::range_value_t<R>, T>;
+
+template<TRIVIAL_T T, CONTIGUOUS_TYPED_RANGE_T<T> R, typename Set, typename KeyFn = std::identity>
+inline bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
+{
+	for( const T& elem : range )
+	{
+		if( !seenElems.insert( std::invoke( keyFn, elem ) ).second ) return true;
+	}
+	return false;
+}
+
+constexpr u32x3 CanonicallySortTriangleIndices( u32x3 t )
+{
+	if( t.x > t.y ) std::swap( t.x, t.y );
+	if( t.y > t.z ) std::swap( t.y, t.z );
+	if( t.x > t.y ) std::swap( t.x, t.y );
+	return t;
+}
+
+bool LexicalLessThan( float3 a, float3 b )
+{
+	return a.x != b.x ? a.x < b.x : a.y != b.y ? a.y < b.y : a.z < b.z;
+}
 
 template<typename TriIdx, typename PrimIdx>
 inline std::vector<TriIdx> PermuteTrianglesByPrimitiveRemap(
@@ -81,12 +111,51 @@ inline std::vector<Idx> BuildVertexRemapFromPermutedIndices( const std::vector<I
 	return remap;
 }
 
+// TODO: dedup geometry
+//void DeduplicateTriangles( raw_mesh& rawMesh )
+//{
+//	auto canonicalize = [&]( u32x3 tri ) -> triangle_pos {
+//		triangle_pos p = { rawMesh.pos[ tri.x ], rawMesh.pos[ tri.y ], rawMesh.pos[ tri.z ] };
+//
+//		if( LexicalLessThan( p.v1, p.v0 ) && LexicalLessThan( p.v1, p.v2 ) )
+//		{
+//			return { p.v1, p.v2, p.v0 };
+//		}
+//		if( LexicalLessThan( p.v2, p.v0 ) && LexicalLessThan( p.v2, p.v1 ) )
+//		{
+//			return { p.v2, p.v0, p.v1 };
+//		}
+//		return p;
+//	};
+//
+//	ankerl::unordered_dense::set<triangle_pos, ankerl_hash_as_bytes<triangle_pos>> seen;
+//	seen.reserve( std::size( rawMesh.indices ) / 3 );
+//
+//	std::vector<u32> out;
+//	out.reserve( std::size( rawMesh.indices ) );
+//
+//	for( u64 i = 0; i + 2 < std::size( rawMesh.indices ); i += 3 )
+//	{
+//		u32x3 tri = { rawMesh.indices[ i ], rawMesh.indices[ i + 1 ], rawMesh.indices[ i + 2 ] };
+//		if( seen.insert( canonicalize( tri ) ).second )
+//		{
+//			out.push_back( tri.x );
+//			out.push_back( tri.y );
+//			out.push_back( tri.z );
+//		}
+//	}
+//
+//	rawMesh.indices = std::move( out );
+//}
+
 void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 {
 	HT_ASSERT( std::size( rawMesh.pos ) > 0 );
 	HT_ASSERT( std::size( rawMesh.indices ) != 0 );
-	HT_ASSERT( ( std::size( rawMesh.indices ) % 3 ) == 0 );
 	HT_ASSERT( rawMesh.materialIdx <= i32( u16( -1 ) ) );
+	HT_ASSERT( ( std::size( rawMesh.indices ) % 3 ) == 0 );
+
+	//DeduplicateTriangles( rawMesh );
 
 	if( std::size( rawMesh.tans ) == 0 )
 	{
@@ -114,14 +183,33 @@ struct rt_cluster_config
 	u16		maxTriangles	= 64;
 };
 
+template<CONTIGUOUS_RANGE_T R>
+inline meshopt_Stream MeshoptMakeStream( const R& range )
+{
+	HT_ASSERT( 0 != std::size( range ) );
+	return {
+		.data	= std::data( range ),
+		.size	= sizeof( range[ 0 ] ),
+		.stride = sizeof( range[ 0 ] )
+	};
+}
+
+template<CONTIGUOUS_RANGE_T R>
+inline void MeshoptRemapAttributeBufferInplace( R& attrRange, u64 attrElemCount, std::span<const u32> remap )
+{
+	HT_ASSERT( 0 != std::size( attrRange ) );
+	meshopt_remapVertexBuffer( std::data( attrRange ),std::data( attrRange ),
+		attrElemCount, sizeof( attrRange[ 0 ] ), std::data( remap ) );
+}
+
 // TODO: no inplace remap !
-void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
+void MeshoptReindexAndOptimizeMesh( raw_mesh& rawMesh )
 {
 	meshopt_Stream attrStreams[] = {
-		{ .data = std::data( rawMesh.pos ), .size = sizeof( rawMesh.pos[ 0 ] ), .stride = sizeof( rawMesh.pos[ 0 ] ) },
-		{ .data = std::data( rawMesh.normals ), .size = sizeof( rawMesh.normals[ 0 ] ), .stride = sizeof( rawMesh.normals[ 0 ] ) },
-		{ .data = std::data( rawMesh.tans ), .size = sizeof( rawMesh.tans[ 0 ] ), .stride = sizeof( rawMesh.tans[ 0 ] ) },
-		{ .data = std::data( rawMesh.uvs ), .size = sizeof( rawMesh.uvs[ 0 ] ), .stride = sizeof( rawMesh.uvs[ 0 ] ) },
+		MeshoptMakeStream( rawMesh.pos ),
+		MeshoptMakeStream( rawMesh.normals ),
+		MeshoptMakeStream( rawMesh.tans ),
+		MeshoptMakeStream( rawMesh.uvs )
 	};
 	std::vector<u32>& indices = rawMesh.indices;
 
@@ -136,18 +224,10 @@ void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount,
 		std::data( remap ) );
 
-	meshopt_remapVertexBuffer( std::data( rawMesh.pos ), std::data( rawMesh.pos ),
-		vtxCount, sizeof( rawMesh.pos[ 0 ] ), std::data( remap ) );
-	rawMesh.pos.resize( newVtxCount );
-	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ),
-		vtxCount,sizeof( rawMesh.normals[ 0 ] ), std::data( remap ) );
-	rawMesh.normals.resize( newVtxCount );
-	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ),
-		vtxCount, sizeof( rawMesh.tans[ 0 ] ), std::data( remap ) );
-	rawMesh.tans.resize( newVtxCount );
-	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ), std::data( rawMesh.uvs ),
-		vtxCount, sizeof( rawMesh.uvs[ 0 ] ), std::data( remap ) );
-	rawMesh.uvs.resize( newVtxCount );
+	MeshoptRemapAttributeBufferInplace( rawMesh.pos, vtxCount, remap );
+	MeshoptRemapAttributeBufferInplace( rawMesh.normals, vtxCount, remap );
+	MeshoptRemapAttributeBufferInplace( rawMesh.tans, vtxCount, remap );
+	MeshoptRemapAttributeBufferInplace( rawMesh.uvs, vtxCount, remap );
 
 	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ),
 		idxCount, newVtxCount );
@@ -159,15 +239,28 @@ void ReindexAndOptimizeMesh( raw_mesh& rawMesh )
 	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount,
 		std::data( fetchRemap ) );
 
+	MeshoptRemapAttributeBufferInplace( rawMesh.pos, newVtxCount, fetchRemap );
+	MeshoptRemapAttributeBufferInplace( rawMesh.normals, newVtxCount, fetchRemap );
+	MeshoptRemapAttributeBufferInplace( rawMesh.tans, newVtxCount, fetchRemap );
+	MeshoptRemapAttributeBufferInplace( rawMesh.uvs, newVtxCount, fetchRemap );
 
-	meshopt_remapVertexBuffer( std::data( rawMesh.pos ),std::data( rawMesh.pos ),
-		newVtxCount, sizeof( rawMesh.pos[ 0 ] ), std::data( fetchRemap ) );
-	meshopt_remapVertexBuffer( std::data( rawMesh.normals ), std::data( rawMesh.normals ),
-		newVtxCount, sizeof( rawMesh.normals[ 0 ] ), std::data( fetchRemap ) );
-	meshopt_remapVertexBuffer( std::data( rawMesh.tans ), std::data( rawMesh.tans ),
-		newVtxCount, sizeof( rawMesh.tans[ 0 ] ), std::data( fetchRemap ) );
-	meshopt_remapVertexBuffer( std::data( rawMesh.uvs ),std::data( rawMesh.uvs ),
-		newVtxCount, sizeof( rawMesh.uvs[ 0 ] ), std::data( fetchRemap ) );
+	// NOTE: sanity checks
+	std::span<const u32x3> triRange = { ( const u32x3* ) std::data( rawMesh.indices ),
+		std::size( rawMesh.indices ) / 3 };
+
+	//ankerl::unordered_dense::set<u32x3, ankerl_hash_as_bytes<u32x3>, u32x3_eq> triSet;
+	//HT_ASSERT( !RangeHasDuplicates<u32x3>( triRange, triSet, CanonicallySortTriangleIndices ) );
+
+	//ankerl::unordered_dense::set<triangle_pos, ankerl_hash_as_bytes<triangle_pos>> posTriSet;
+	//HT_ASSERT( !RangeHasDuplicates<u32x3>( triRange, posTriSet, [&]( u32x3 tri ) {
+	//	triangle_pos p = { rawMesh.pos[ tri.x ], rawMesh.pos[ tri.y ], rawMesh.pos[ tri.z ] };
+//
+	//	if( LexicalLessThan( p.v1, p.v0 ) ) std::swap( p.v0, p.v1 );
+	//	if( LexicalLessThan( p.v2, p.v1 ) ) std::swap( p.v1, p.v2 );
+	//	if( LexicalLessThan( p.v1, p.v0 ) ) std::swap( p.v0, p.v1 );
+//
+	//	return p;
+	//} ) );
 }
 
 struct __meshopt_meshlets
@@ -243,7 +336,7 @@ __meshopt_meshlets MeshoptMakeClusters(
 	};
 }
 
-template<typename T> 
+template<TRIVIAL_T T>
 inline std::vector<T> GetMeshletLocalAttrStream(
 	std::span<const T>		meshAttrStream,
 	std::span<const u32>	mltVtx,
@@ -340,6 +433,11 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 	} );
 
 	aabb_t<float3> aabb = MergeAabbs( aabbView );
+
+#ifdef _DEBUG
+	ankerl::unordered_dense::set<gpu_meshlet, ankerl_hash_as_bytes<gpu_meshlet>, gpu_meshlet_eq> mltSet;
+	HT_ASSERT( !RangeHasDuplicates<gpu_meshlet>( meshlets, mltSet ) );
+#endif
 
 	return {
 		.vertices	= MOV( vertices ),
@@ -530,6 +628,7 @@ i32 main( i32 argc, char** argv  )
 		HT_ASSERT( !meshAssetMap.contains( assetPath ) );
 
 		ValidateAndNormalizeRawMesh( mesh );
+		MeshoptReindexAndOptimizeMesh( mesh );
 		mesh_asset meshAsset = HpkMakeMeshAssetFromMeshlets( mesh );
 		meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
 	}

@@ -21,15 +21,13 @@ struct vk_renderer_config
 	static constexpr u64	MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
 	static constexpr u64	MAX_DESCRIPTOR_COUNT_PER_TYPE = u16( -1 );
 
-	vk_swapchain_config		scConfig = {};
+	vk_swapchain_config		scConfig			= {};
 
-	VkFormat				desiredDepthFormat = VK_FORMAT_D32_SFLOAT;
-	VkFormat				desiredColorFormat = VK_FORMAT_B8G8R8A8_UNORM; // NOTE: for now use same as SC //VK_FORMAT_R16G16B16A16_SFLOAT;
-	VkFormat				desiredHiZFormat = VK_FORMAT_R32_SFLOAT;
+	VkFormat				desiredDepthFormat	= VK_FORMAT_D32_SFLOAT;
+	VkFormat				desiredColorFormat	= VK_FORMAT_B8G8R8A8_UNORM; // NOTE: for now use same as SC //VK_FORMAT_R16G16B16A16_SFLOAT;
+	VkFormat				desiredHiZFormat	= VK_FORMAT_R32_SFLOAT;
 	u16             		renderWidth;
 	u16             		renderHeight;
-	u8              		framesInFlightCount = 2;
-	u8              		swapchainImageCount = 3;
 };
 
 enum vk_desc_binding_t : u32

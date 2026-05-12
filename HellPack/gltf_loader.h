@@ -355,7 +355,8 @@ struct gltf_loader
 		}
 
 		// NOTE: expand to primitives like ProcessMeshes
-		std::vector<raw_node> flatNodesExpanded;
+		// NOTE: use set to dedup nodes
+		ankerl::unordered_dense::set<raw_node, ankerl_hash_as_bytes<raw_node>, raw_node_eq> flatNodesExpanded;
 		flatNodesExpanded.reserve( std::size( flatNodes ) ); // NOTE: this is just a best guess
 		for( const raw_node& n : flatNodes )
 		{
@@ -369,11 +370,11 @@ struct gltf_loader
 			for( u32 pi = 0; pi < m.primitives_count; ++pi )
 			{
 				HT_ASSERT( 1 == m.primitives_count );
-				flatNodesExpanded.push_back( { .toWorld = n.toWorld, .meshIdx = i32( meshPrimOffset + pi ) } );
+				flatNodesExpanded.emplace( raw_node{ .toWorld = n.toWorld, .meshIdx = i32( meshPrimOffset + pi ) } );
 			}
 		}
 
-		return flatNodesExpanded;
+		return { std::from_range, flatNodesExpanded };
 	}
 
 	std::vector<raw_mesh> ProcessMeshes() const
@@ -407,6 +408,8 @@ struct gltf_loader
 					.indices		= GetNormalizedIndexBufferFromStream( primitive.indices ),
 					.materialIdx	= ( u32 ) cgltf_material_index( data, primitive.material )
 				};
+
+				//HT_ASSERT( !data->materials[ cgltf_material_index( data, primitive.material ) ].double_sided );
 			}
 		}
 

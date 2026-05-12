@@ -159,8 +159,8 @@ struct vk_command_buffer
 		const u32 maxDrawCount = u32( drawCmds.sizeInBytes / sizeof( T ) );
 
 		vkCmdBindIndexBuffer2( hndl, idxBuffer.hndl, 0, idxBuffer.sizeInBytes, idxType );
-		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, offsetof( T, cmd ),
-			drawCount.hndl, 0, maxDrawCount, sizeof( T ) );
+		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, offsetof( T, cmd ), drawCount.hndl,
+			0, maxDrawCount, sizeof( T ) );
 	}
 
 	void CmdPipelineBarriers(

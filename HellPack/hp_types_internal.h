@@ -3,6 +3,7 @@
 
 #include "ht_core_types.h"
 
+#include <ankerl/unordered_dense.h>
 #include <vector>
 #include <string>
 
@@ -100,5 +101,58 @@ struct raw_node
 	packed_trs	toWorld;
 	i32			meshIdx;
 };
+
+template<TRIVIAL_T T>
+struct ankerl_hash_as_bytes
+{
+	// NOTE: tells Ankerl to not mix the hash
+	using is_avalanching = void;
+
+	u64 operator()( const T& n ) const
+	{
+		return ankerl::unordered_dense::hash<std::string_view>{}( std::string_view{ ( const char* ) &n, sizeof( n ) } );
+	}
+};
+
+struct raw_node_eq
+{
+	bool operator()( const raw_node& a, const raw_node& b ) const
+	{
+		const packed_trs& at = a.toWorld;
+		const packed_trs& bt = b.toWorld;
+		return ( a.meshIdx == b.meshIdx )
+			&& ( at.t.x == bt.t.x ) && ( at.t.y == bt.t.y ) && ( at.t.z == bt.t.z )
+			&& ( at.r.x == bt.r.x ) && ( at.r.y == bt.r.y ) && ( at.r.z == bt.r.z ) && ( at.r.w == bt.r.w )
+			&& ( at.s.x == bt.s.x ) && ( at.s.y == bt.s.y ) && ( at.s.z == bt.s.z );
+	}
+};
+
+struct gpu_meshlet_eq
+{
+	bool operator()( const gpu_meshlet& a, const gpu_meshlet& b ) const
+	{
+		return ( a.minAabb == b.minAabb ) && ( a.maxAabb == b.maxAabb )
+			&& ( a.vtxOffset == b.vtxOffset ) && ( a.triOffset == b.triOffset )
+			&& ( a.vtxCount == b.vtxCount ) && ( a.triCount == b.triCount );
+	}
+};
+
+// NOTE: stupid C++
+struct u32x3_eq
+{
+	bool operator()( const u32x3& a, const u32x3& b ) const { return a == b; }
+};
+
+struct triangle_pos
+{
+	float3 v0;
+	float3 v1;
+	float3 v2;
+};
+
+constexpr bool operator==( const triangle_pos& a, const triangle_pos& b )
+{
+	return ( a.v0 == b.v0 ) && ( a.v1 == b.v1 ) &&  ( a.v2 == b.v2 );
+}
 
 #endif // !__HP_TYPES_INTERNAL_H__

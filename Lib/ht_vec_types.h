@@ -28,6 +28,24 @@ using float3x3 	= DirectX::XMFLOAT3X3;
 using float4x3 	= DirectX::XMFLOAT4X3;
 using float4x4 	= DirectX::XMFLOAT4X4A;
 
+constexpr bool operator==( const u32x2& a, const u32x2& b )
+{
+	return a.x == b.x && a.y == b.y;
+}
+constexpr bool operator!=( const u32x2& a, const u32x2& b )
+{
+	return !( a == b );
+}
+
+constexpr bool operator==( const u32x3& a, const u32x3& b )
+{
+	return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+constexpr bool operator!=( const u32x3& a, const u32x3& b )
+{
+	return !( a == b );
+}
+
 constexpr bool operator==( const float2& a, const float2& b )
 {
 	return a.x == b.x && a.y == b.y;

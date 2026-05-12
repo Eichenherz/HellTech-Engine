@@ -41,11 +41,13 @@ namespace DXPacked = DirectX::PackedVector;
 
 
 //====================CONSTS====================//
-constexpr u64 MAX_FIF					= vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
-constexpr u64 MAX_TRIANGLES_IN_SCENE	= 10'000'000;
-constexpr u64 MAX_VERTICES_IN_SCENE		= 5'000'000;
-constexpr u64 MAX_MESHLETS_IN_SCENE		= 100'000;
-constexpr u64 MAX_INSTANCES_IN_SCENE	= 10'000;
+constexpr u64 				MAX_FIF					= vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
+constexpr u64 				MAX_TRIANGLES_IN_SCENE	= 10'000'000;
+constexpr u64 				MAX_VERTICES_IN_SCENE	= 5'000'000;
+constexpr u64 				MAX_MESHLETS_IN_SCENE	= 100'000;
+constexpr u64 				MAX_INSTANCES_IN_SCENE	= 10'000;
+constexpr VkCullModeFlags	HT_CULL_MODE			= IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
+constexpr VkFrontFace		HT_FRONT_FACE			= IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
 //==============================================//
 // TODO: cvars
 //====================CVARS=====================//
@@ -53,8 +55,7 @@ constexpr u64 MAX_INSTANCES_IN_SCENE	= 10'000;
 //==============================================//
 
 //==============CONSTEXPR_SWITCH================//
-constexpr VkCullModeFlags	HT_CULL_MODE	= IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
-constexpr VkFrontFace		HT_FRONT_FACE	= IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+
 //==============================================//
 
 #include "ht_renderer_types.h"
@@ -374,22 +375,6 @@ imgui_pass MakeImguiPass( vk_context& dc, VkFormat colDstFormat )
 	};
 }
 
-enum class debug_draw_type : u8
-{
-	LINE,
-	TRIANGLE,
-};
-
-constexpr const char* ToString( debug_draw_type t )
-{
-	switch( t )
-	{
-	case debug_draw_type::LINE:     return "LINE";
-	case debug_draw_type::TRIANGLE: return "TRIANGLE";
-		default: break;
-	}
-	return "UNKNOWN";
-}
 
 struct debug_draw_passes
 {
@@ -398,26 +383,26 @@ struct debug_draw_passes
 	static constexpr box_wireframe_indices	lineVtxBuff = GenerateBoxWireframeIndices();
 	//constexpr box_triangle_indices trisVtxBuff = BoxVerticesAsTriangles( unitCube );
 
-	ht_stretchybuff<dbg_aabb_instance> cpuInstView = {};
+	ht_stretchybuff<dbg_aabb_instance>		cpuInstView = {};
 
-	vk_buffer	vtxBuff;
-	vk_buffer	idxBuff;
-	vk_buffer	gpuInstBuff;
-	vk_buffer	gpuInstCountBuff;
-	vk_buffer	cpuInstBuff;
+	vk_buffer	vtxBuff 			= {};
+	vk_buffer	idxBuff 			= {};
+	vk_buffer	gpuInstBuff			= {};
+	vk_buffer	gpuInstCountBuff	= {};
+	vk_buffer	cpuInstBuff			= {};
 
-	vk_buffer	drawCmdsBuff;
-	vk_buffer	drawCountBuff;
+	vk_buffer	drawCmdsBuff		= {};
+	vk_buffer	drawCountBuff 		= {};
 
-	VkPipeline	drawAsLines;
-	VkPipeline	drawAsTriangles;
+	VkPipeline	drawAsLines 		= {};
+	VkPipeline	drawAsTriangles		= {};
 	// NOTE: it's easier to separate the recording of instances and the submission of draws
-	VkPipeline	compRecordDbgDraw;
+	VkPipeline	compRecordDbgDraw	= {};
 
-	VkPipeline	compLambertianClay;
+	VkPipeline	compLambertianClay	= {};
 
-	desc_hndl32	gpuInstBuffIdx;
-	desc_hndl32	gpuInstCountBuffIdx;
+	desc_hndl32	gpuInstBuffIdx		= {};
+	desc_hndl32	gpuInstCountBuffIdx = {};
 
 	void Init( vk_context& dc, vk_renderer_config& rndCfg )
 	{
@@ -511,14 +496,14 @@ struct debug_draw_passes
 		// NOTE: host vis to simplify uploads
 		// NOTE: arbitrary sizes chosen
 		vtxBuff = dc.CreateBuffer( {
-			.name			= "Buff_DbgDrawCount",
+			.name			= "Buff_DbgVtx",
 			.usageFlags		=  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 			.sizeInBytes	= 500 * sizeof( dbg_vertex ),
 			.usage			= buffer_usage::HOST_VISIBLE
 		} );
 
 		idxBuff = dc.CreateBuffer( {
-			.name			= "Buff_DbgDrawCount",
+			.name			= "Buff_DbgIdx",
 			.usageFlags		= VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 			.sizeInBytes	= 2000 * sizeof( dbg_index_t ),
 			.usage			= buffer_usage::HOST_VISIBLE
@@ -611,21 +596,19 @@ struct debug_draw_passes
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_DrawWireframeCPU", {} );
 
-		rscTracker.UseImage( colorTarget,
-			{ HT_COLOR_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT },
-			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		rscTracker.UseImage( colorTarget, COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
-		VkRenderingAttachmentInfo attInfos[] = {
-			VkMakeAttachmentInfo( colorTarget.view, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} )
+		VkRenderingAttachmentInfo attInfos[] = { VkMakeAttachmentInfo( colorTarget.view,
+			VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, {} )
 		};
 
 		vk_rendering_info renderingInfo = {
-			.viewport = VkCorrectedGetViewport( colorTarget.width, colorTarget.height ),
-			.scissor = VkGetScissor( colorTarget.width, colorTarget.height ),
-			.colorAttachments = attInfos,
-			.pDepthAttachment = nullptr
+			.viewport			= VkCorrectedGetViewport( colorTarget.width, colorTarget.height ),
+			.scissor			= VkGetScissor( colorTarget.width, colorTarget.height ),
+			.colorAttachments	= attInfos,
+			.pDepthAttachment	= nullptr
 		};
 
 		vk_scoped_renderpass dynamicRendering = cmdBuff.CmdIssueScopedRenderPass( renderingInfo );
@@ -677,52 +660,52 @@ using index_t = u8;
 
 struct culling_pass_args
 {
-	const vk_buffer&		dbgGpuInstBuff;
-	const vk_buffer&		dbgGpuInstCountBuff;
-	const vk_image&			hiZTarget;
-	u32						instCount;
-	desc_hndl32				instBuffIdx;
-	desc_hndl32				meshTableIdx;
-	desc_hndl32				viewBuffIdx;
-	u32						camIdx;
-	desc_hndl32				hizDesc;
-	desc_hndl32				samplerDesc;
-	desc_hndl32				dbgGpuInstBuffIdx;
-	desc_hndl32				dbgGpuInstCountBuffIdx;
+	const vk_buffer&	dbgGpuInstBuff;
+	const vk_buffer&	dbgGpuInstCountBuff;
+	const vk_image&		hiZTarget;
+	u32					instCount;
+	desc_hndl32			instBuffIdx;
+	desc_hndl32			meshTableIdx;
+	desc_hndl32			viewBuffIdx;
+	u32					camIdx;
+	desc_hndl32			hizDesc;
+	desc_hndl32			samplerDesc;
+	desc_hndl32			dbgGpuInstBuffIdx;
+	desc_hndl32			dbgGpuInstCountBuffIdx;
 };
 
 struct culling_pass
 {
-	vk_buffer		instOccludedCache;
-	vk_buffer		clusterOccludedCache;
+	vk_buffer			instOccludedCache;
+	vk_buffer			clusterOccludedCache;
 
-	vk_buffer		visibleInstances;
-	vk_buffer		visibleInstCounter;
-	vk_buffer		visibleClusters;
-	vk_buffer		visibleClustersCount;
+	vk_buffer			visibleInstances;
+	vk_buffer			visibleInstCounter;
+	vk_buffer			visibleClusters;
+	vk_buffer			visibleClustersCount;
 
-	vk_buffer		dispatchIndirect;
+	vk_buffer			dispatchIndirect;
 
-	vk_buffer		drawCmds;
-	vk_buffer		drawCount;
+	vk_buffer			drawCmds;
+	vk_buffer			drawCount;
 
-	VkPipeline		instCullPass;
-	VkPipeline		instExpansionPass;
-	VkPipeline		indirectDispatchPass;
-	VkPipeline      clusterCullPipe;
+	VkPipeline			instCullPass;
+	VkPipeline			instExpansionPass;
+	VkPipeline			indirectDispatchPass;
+	VkPipeline      	clusterCullPipe;
 
-	desc_hndl32		instOccludedCacheIdx;
-	desc_hndl32		clusterOccludedCacheIdx;
+	desc_hndl32			instOccludedCacheIdx;
+	desc_hndl32			clusterOccludedCacheIdx;
 
-	desc_hndl32		visibleInstIdx;
-	desc_hndl32		visibleInstCounterIdx;
-	desc_hndl32		visibleClustersIdx;
-	desc_hndl32		visibleClustersCountIdx;
+	desc_hndl32			visibleInstIdx;
+	desc_hndl32			visibleInstCounterIdx;
+	desc_hndl32			visibleClustersIdx;
+	desc_hndl32			visibleClustersCountIdx;
 
-	desc_hndl32		dispatchIndirectIdx;
+	desc_hndl32			dispatchIndirectIdx;
 
-	desc_hndl32		drawCmdsIdx;
-	desc_hndl32		drawCountIdx;
+	desc_hndl32			drawCmdsIdx;
+	desc_hndl32			drawCountIdx;
 
 
 	void Init( vk_context& dc )
@@ -1566,7 +1549,7 @@ struct renderer_context final : renderer_interface
 
 	desc_hndl32								globalDataIdx;
 
-	const u32								framesInFlight = 2;
+	const u32								framesInFlight = MAX_FIF;
 
 
 	virtual void InitBackend( u64 hInst, u64 hWnd ) override;
@@ -1600,12 +1583,7 @@ struct renderer_context final : renderer_interface
 
 		for( const ht_mesh_component& component : rendererComponents.items )
 		{
-			gpu_mesh gpuMesh = {};
-			if( !slot_vector<ht_mesh_component>::IsDeadSlot( component ) )
-			{
-				gpuMesh = component.desc;
-			}
-			gpuMeshTable.push_back( gpuMesh );
+			gpuMeshTable.push_back( component.desc );
 		}
 
 		ht_stretchybuff<gpu_instance> gpuInstList = HtNewStretchyBuffFromMem<gpu_instance>(
@@ -1615,14 +1593,9 @@ struct renderer_context final : renderer_interface
 		for( const instance_desc& sceneNode : frameData.instances )
 		{
 			mesh_hndl32 hMesh = std::bit_cast<mesh_hndl32>( sceneNode.meshIdx );
-			if( IsStructZero( rendererComponents[ hMesh ] ) )
-			{
-				continue;
-			}
 			gpuInstList.push_back( {
 				.toWorld = TrsToFloat4x3RowMaj( sceneNode.transform ),
 				.meshIdx = hMesh.slotIdx
-				//.mtrlIdx =
 			} );
 		}
 

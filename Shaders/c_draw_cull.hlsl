@@ -42,7 +42,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
 
 	// TODO: ifdef dbg ?
- 	u32 waveDbgOffset = WaveActiveCountBits( true );
+	u32 waveDbgOffset = WaveActiveCountBits( true );
     u32 waveDbgBase = 0;
     if( WaveIsFirstLane() )
     {
@@ -67,7 +67,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 		// NOTE: we might be visible but if we intersect the znear we skip occlusion
 		visible = frustumCullRes.visible;
 	}
-	
+
 	//if( visible && testOcclusion )
 	//{
 	//	// NOTE: 1st pass uses prev instTransform prevCam and prev HZB
@@ -80,7 +80,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupFlat
 	//
 	//	visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
 	//}
-
+	visible = true;
 	if( !bool( pushBlock.isLatePass ) )
 	{
 		BufferStore<u32>( pushBlock.visInstCacheIdx, true, globalDispatchID.x );//visible ? 1 : 0, globalDispatchID.x );
