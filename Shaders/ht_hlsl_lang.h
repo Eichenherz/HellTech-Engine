@@ -18,6 +18,8 @@ namespace spv
 	static const u32 NumWorkGroups							= 24; // gl_NumWorkGroups
 	static const u32 SubgroupId								= 40; // gl_SubgroupID
 	static const u32 NumSubgroups							= 38; // gl_NumSubgroups
+	// KHR ext
+	static const u32 ComputeDerivativeGroupLinearKHR		= 5350;
 }
 
 

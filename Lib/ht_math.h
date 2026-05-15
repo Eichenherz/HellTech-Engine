@@ -295,11 +295,10 @@ inline u64 FloorPowOf2( u64 size )
 	constexpr u64 ONE_LEFT_MOST = u64( 1ULL << ( sizeof( u64 ) * 8 - 1 ) );
 	return ( size ) ? ONE_LEFT_MOST >> __lzcnt64( size ) : 0;
 }
-inline u32 GetImgMipCount( u32 width, u32 height, u32 mipLevels )
+inline u32 GetImgMipCount( u32 width, u32 height )
 {
-	HT_ASSERT( width && height );
-	// NOTE: floor( log2 () ) == bit_width -1
-	return std::min( ( u32 ) std::bit_width( std::max( width, height ) ) - 1, mipLevels );
+	// NOTE: 1 + floor( log2 () ) == bit_width
+	return ( u32 ) std::bit_width( std::max( width, height ) );
 }
 
 struct sincos

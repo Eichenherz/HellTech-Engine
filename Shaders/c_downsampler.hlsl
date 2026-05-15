@@ -292,7 +292,8 @@ MIP 3 DST 8x8 (dst wgID*8)         |    MIP 4 DST 4x4 (dst wgID*4)         |    
     stores 1 texel per WG at wgID
     (every WG writes here -> last WG reads this back for mip 7+)
 */
-
+[[vk::ext_capability( spv::ComputeDerivativeGroupLinearKHR )]]
+[[vk::ext_extension( "SPV_KHR_compute_shader_derivatives" )]]
 [shader( "compute" )]
 [numthreads( 256, 1, 1 )]
 void DownsamplerCsMain( u32 localLinearID : SV_GroupIndex, u32x3 workgroupID : SV_GroupID )

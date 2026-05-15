@@ -295,6 +295,18 @@ struct downsampler_params
 	u32		atomicWgCounterIdx;
 };
 
+struct multi_pass_downsampler_params
+{
+	u32x2	srcSize;
+	u32x2	dstSize;
+	u32     reductionSamplerIdx;
+	u32		pointSamplerIdx;
+	u32     inImgIdx;
+	u32     inImgLod;
+	u32     outImgIdx;
+	u32     isMip0FromNonPot;
+};
+
 struct global_data
 {
 	u64 mltAddr;

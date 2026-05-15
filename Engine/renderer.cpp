@@ -1005,22 +1005,23 @@ struct depth_pyramid_pass
 	VkImageView				hiZMipViews[ MAX_MIP_LEVELS ];
 
 	VkSampler       		quadMinSampler;
+	VkSampler       		pointSampler;
 
 	desc_hndl32     		hizSrv;
 
 	desc_hndl32				hizMipUavs[ MAX_MIP_LEVELS ];
 	desc_hndl32				quadMinSamplerIdx;
 
-	void Init( vk_context& vkCtx )
+	desc_hndl32				pointSamplerIdx;
+
+	void Init( vk_context& vkCtx, u16 srcWidth, u16 srcHeight )
 	{
 		unique_shader_ptr downsampler = vkCtx.CreateShaderFromSpirv( 
 			ReadFileBinary( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
 		pipeline = vkCtx.CreateComputePipeline( *downsampler );
 
-		u16 squareDim	= 512;
-		u8 hiZMipCount	= GetImgMipCount( squareDim, squareDim, MAX_MIP_LEVELS );
-
-		HT_ASSERT( MAX_MIP_LEVELS >= hiZMipCount );
+		u16 hzbWidth = ( u16 ) FloorPowOf2( srcWidth );
+		u16 hzbHeight = ( u16 ) FloorPowOf2( srcHeight );
 
 		constexpr VkImageUsageFlags hiZUsg =
 			VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -1028,26 +1029,26 @@ struct depth_pyramid_pass
 			VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
 			VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-		image_info hiZInfo = {
-			.name		= "Img_HiZ",
+		image_info hzbInfo = {
+			.name		= "Img_HZB",
 			.format		= VK_FORMAT_R32_SFLOAT,
 			.type		= VK_IMAGE_TYPE_2D,
 			.usgFlags	= hiZUsg,
-			.width		= squareDim,
-			.height		= squareDim,
+			.width		= hzbWidth,
+			.height		= hzbHeight,
 			.layerCount = 1,
-			.mipCount	= hiZMipCount
+			.mipCount	= ( u8 ) std::min( GetImgMipCount( hzbWidth, hzbHeight ), MAX_MIP_LEVELS )
 		};
 
-		hiZTarget = vkCtx.CreateImage( hiZInfo );
+		hiZTarget = vkCtx.CreateImage( hzbInfo );
 
 		hizSrv = vkCtx.AllocDescriptorIdx( { hiZTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		for( u32 i = 0; i < hiZTarget.mipCount; ++i )
+		for( u32 mi = 0; mi < hiZTarget.mipCount; ++mi )
 		{
-			hiZMipViews[ i ] = VkMakeImgView( vkCtx.device, hiZTarget.hndl, hiZInfo.format, i, 1,
-				VK_IMAGE_VIEW_TYPE_2D, 0, hiZInfo.layerCount );
-			hizMipUavs[ i ] = vkCtx.AllocDescriptorIdx( { hiZMipViews[ i ], VK_IMAGE_LAYOUT_GENERAL } );
+			hiZMipViews[ mi ] = VkMakeImgView( vkCtx.device, hiZTarget.hndl, hzbInfo.format, mi, 1,
+				VK_IMAGE_VIEW_TYPE_2D, 0, hzbInfo.layerCount );
+			hizMipUavs[ mi ] = vkCtx.AllocDescriptorIdx( { hiZMipViews[ mi ], VK_IMAGE_LAYOUT_GENERAL } );
 		}
 
 		VkSamplerReductionModeCreateInfo reduxInfo = { 
@@ -1055,7 +1056,7 @@ struct depth_pyramid_pass
 			.reductionMode	= VK_SAMPLER_REDUCTION_MODE_MIN,
 		};
 
-		VkSamplerCreateInfo samplerCreateInfo = { 
+		VkSamplerCreateInfo reduxSamplerCreateInfo = {
 			.sType						= VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 			.pNext						= &reduxInfo,
 			.magFilter					= VK_FILTER_LINEAR,
@@ -1071,8 +1072,25 @@ struct depth_pyramid_pass
 			.unnormalizedCoordinates	= VK_FALSE,
 		};
 
-		quadMinSampler = vkCtx.CreateSampler( samplerCreateInfo );
+		quadMinSampler = vkCtx.CreateSampler( reduxSamplerCreateInfo );
 		quadMinSamplerIdx = vkCtx.AllocDescriptorIdx( { quadMinSampler } );
+
+		VkSamplerCreateInfo pointSamplerCreateInfo = {
+			.sType						= VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter					= VK_FILTER_NEAREST,
+			.minFilter					= VK_FILTER_NEAREST,
+			.mipmapMode					= VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.addressModeU				= VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV				= VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW				= VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.maxAnisotropy				= 1.0f,
+			.minLod 					= 0,
+			.maxLod						= VK_LOD_CLAMP_NONE,
+			.borderColor				= VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates	= VK_FALSE,
+		};
+		pointSampler = vkCtx.CreateSampler( pointSamplerCreateInfo );
+		pointSamplerIdx = vkCtx.AllocDescriptorIdx( { pointSampler } );
 	}
 
 	void Execute( 
@@ -1090,42 +1108,43 @@ struct depth_pyramid_pass
 
 		// NOTE: exec barrier only need stages bc they don't access resources
 		VkMemoryBarrier2 executionBarrier[] = { {
-				.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-				.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-			    .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+				.sType			= VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+				.srcStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			    .dstStageMask	= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 		} };
 
 		u32 mipLevel = 0;
 		u32 srcImg = depthIdx.slot;
-		for( u32 i = 0; i < hiZTarget.mipCount; ++i )
+		u32 srcWidth = depthTarget.width;
+		u32 srcHeight = depthTarget.height;
+		for( u32 mi = 0; mi < hiZTarget.mipCount; ++mi )
 		{
-			if( i > 0 )
+			[[unlikely]]
+			if( mi > 0 )
 			{
-				mipLevel = i - 1;
+				mipLevel = mi - 1;
 				srcImg = hizSrv.slot;
 			}
-			u32 dstImg = hizMipUavs[ i ].slot;
 
-			u32 levelWidth = std::max( 1u, u32( hiZTarget.width ) >> i );
-			u32 levelHeight = std::max( 1u, u32( hiZTarget.height ) >> i );
+			u32 levelWidth = std::max( 1u, u32( hiZTarget.width ) >> mi );
+			u32 levelHeight = std::max( 1u, u32( hiZTarget.height ) >> mi );
 
-			struct push_const
-			{
-				float2	reduce;
-				u32 	samplerIdx;
-				u32 	srcImgIdx;
-				u32 	mipLevel;
-				u32 	dstImgIdx;
-
-				push_const(float2 r, u32 s, u32 src, u32 mip, u32 dst)
-					: reduce(r), samplerIdx(s), srcImgIdx(src), mipLevel(mip), dstImgIdx(dst) {}
+			multi_pass_downsampler_params pushConst = {
+				.srcSize				= { srcWidth, srcHeight },
+				.dstSize				= { levelWidth, levelHeight },
+				.reductionSamplerIdx	= quadMinSamplerIdx.slot,
+				.pointSamplerIdx		= pointSamplerIdx.slot,
+				.inImgIdx				= srcImg,
+				.inImgLod				= mipLevel,
+				.outImgIdx				= hizMipUavs[ mi ].slot,
+				.isMip0FromNonPot		= u32( mi == 0 )
 			};
-			push_const pushConst{ float2{ (float) levelWidth, (float) levelHeight}, quadMinSamplerIdx.slot, srcImg, mipLevel, dstImg };
-
 
 			cmdBuff.DispatchCompute( pipeline, pushConst, { levelWidth, levelHeight, 1 } );
-
 			cmdBuff.CmdPipelineMemoryBarriers( executionBarrier );
+
+			srcWidth = levelWidth;
+			srcHeight = levelHeight;
 		}
 
 		rscTracker.UseImage( depthTarget, 
@@ -1538,7 +1557,6 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 	cullingPass.Init( *pVkCtx );
 	tonemapPass.Init( *pVkCtx );
-	hizbPass.Init( *pVkCtx );
 	dbgPass.Init( *pVkCtx, config );
 
 	imguiPass = MakeImguiPass( *pVkCtx, pVkCtx->scConfig.format );
@@ -1779,6 +1797,8 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		// TODO: add UploadDataSync function in the renderer
 		cullingPass.InitSceneDependentData( *pVkCtx, MAX_INSTANCES_IN_SCENE );
+
+		hizbPass.Init( *pVkCtx, vBuffPass.depthTarget.width, vBuffPass.depthTarget.height );
 
 		dbgPass.InitAndUploadDebugGeometry( *pVkCtx );
 

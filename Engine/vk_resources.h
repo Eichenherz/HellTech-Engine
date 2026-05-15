@@ -15,7 +15,7 @@
 
 #include <vk_mem_alloc.h>
 
-constexpr u64 MAX_MIP_LEVELS = 12;
+constexpr u32 MAX_MIP_LEVELS = 12;
 
 enum class buffer_usage : u8
 {
