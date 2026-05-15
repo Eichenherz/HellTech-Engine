@@ -45,6 +45,10 @@ DXC = os.environ.get("DXC")
 if not DXC:
     raise RuntimeError("DXC environment variable not set")
 
+VULKAN_SDK = os.environ.get("VULKAN_SDK")
+if not VULKAN_SDK:
+    raise RuntimeError("VULKAN_SDK environment variable not set")
+
 print("Using DXC executable:", DXC)
 subprocess.run([DXC, "--version"], capture_output=False, text=True)
 
@@ -81,6 +85,7 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
         DXC,
         "-spirv",
         "-I", str(Path(__file__).parent / "Lib"),
+        "-I", str(Path(VULKAN_SDK) / "Include" ),
         f"-fspv-target-env={args.vk}",
         "-fspv-use-vulkan-memory-model",
         #"-fvk-use-dx-layout",

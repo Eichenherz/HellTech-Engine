@@ -379,24 +379,23 @@ struct debug_draw_passes
 
 	ht_stretchybuff<dbg_aabb_instance>		cpuInstView = {};
 
-	vk_buffer	vtxBuff 			= {};
-	vk_buffer	idxBuff 			= {};
-	vk_buffer	gpuInstBuff			= {};
-	vk_buffer	gpuInstCountBuff	= {};
-	vk_buffer	cpuInstBuff			= {};
+	vk_buffer			vtxBuff 			= {};
+	vk_buffer			idxBuff 			= {};
+	vk_buffer			gpuInstBuff			= {};
+	vk_buffer			gpuInstCountBuff	= {};
+	vk_buffer			cpuInstBuff			= {};
 
-	vk_buffer	drawCmdsBuff		= {};
-	vk_buffer	drawCountBuff 		= {};
+	vk_buffer			drawCmdsBuff		= {};
+	vk_buffer			drawCountBuff 		= {};
 
-	VkPipeline	drawAsLines 		= {};
-	VkPipeline	drawAsTriangles		= {};
+	VkPipeline			drawAsLines 		= {};
+	VkPipeline			drawAsTriangles		= {};
 	// NOTE: it's easier to separate the recording of instances and the submission of draws
 	vk_compute_pipeline	compRecordDbgDraw	= {};
-
 	vk_compute_pipeline	compLambertianClay	= {};
 
-	desc_hndl32	gpuInstBuffIdx		= {};
-	desc_hndl32	gpuInstCountBuffIdx = {};
+	desc_hndl32			gpuInstBuffIdx		= {};
+	desc_hndl32			gpuInstCountBuffIdx = {};
 
 	void Init( vk_context& dc, vk_renderer_config& rndCfg )
 	{
@@ -509,8 +508,8 @@ struct debug_draw_passes
 
 	inline void ResetDrawCounters( vk_command_buffer& cmdBuff, vk_rsc_state_tracker& rscTracker )
 	{
-		rscTracker.UseBuffer( drawCountBuff, TRANSFER_WRITE );
-		rscTracker.UseBuffer( gpuInstCountBuff, TRANSFER_WRITE );
+		rscTracker.UseBuffer( drawCountBuff, HT_TRANSFER_WRITE );
+		rscTracker.UseBuffer( gpuInstCountBuff, HT_TRANSFER_WRITE );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
@@ -526,9 +525,9 @@ struct debug_draw_passes
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_DrawWireframesGPU", {} );
 
-		rscTracker.UseBuffer( drawCountBuff, COMPUTE_WRITE );
-		rscTracker.UseBuffer( drawCmdsBuff, COMPUTE_WRITE );
-		rscTracker.UseBuffer( gpuInstCountBuff, COMPUTE_READ );
+		rscTracker.UseBuffer( drawCountBuff, HT_COMPUTE_WRITE );
+		rscTracker.UseBuffer( drawCmdsBuff, HT_COMPUTE_WRITE );
+		rscTracker.UseBuffer( gpuInstCountBuff, HT_COMPUTE_READ );
 		rscTracker.FlushBarriers( cmdBuff );
 
 		{
@@ -543,8 +542,8 @@ struct debug_draw_passes
 			cmdBuff.DispatchCompute( compRecordDbgDraw, pushBlock, { 1, 1, 1 } );
 		}
 
-		rscTracker.UseBuffer( drawCmdsBuff, DRAW_INDIRECT_READ );
-		rscTracker.UseBuffer( drawCountBuff, DRAW_INDIRECT_READ );
+		rscTracker.UseBuffer( drawCmdsBuff, HT_DRAW_INDIRECT_READ );
+		rscTracker.UseBuffer( drawCountBuff, HT_DRAW_INDIRECT_READ );
 		rscTracker.UseBuffer( gpuInstBuff, { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT } );
 		rscTracker.UseImage( colorTarget,
 			{ HT_COLOR_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT },
@@ -588,7 +587,7 @@ struct debug_draw_passes
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_DrawWireframeCPU", {} );
 
-		rscTracker.UseImage( colorTarget, COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		rscTracker.UseImage( colorTarget, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
@@ -628,10 +627,8 @@ struct debug_draw_passes
 
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_LambertianClayPass", {} );
 
-		rscTracker.UseImage( dstImg, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
-			VK_IMAGE_LAYOUT_GENERAL );
-		rscTracker.UseImage( vbuff,{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
-			VK_IMAGE_LAYOUT_GENERAL );
+		rscTracker.UseImage( dstImg, HT_COMPUTE_WRITE, VK_IMAGE_LAYOUT_GENERAL );
+		rscTracker.UseImage( vbuff,HT_COMPUTE_READ, VK_IMAGE_LAYOUT_GENERAL );
 		rscTracker.FlushBarriers( cmdBuff );
 
 		cmdBuff.DispatchCompute( compLambertianClay, pushBlock, { dstImg.width, dstImg.height, 1 } );
@@ -672,10 +669,10 @@ struct culling_pass
 	vk_buffer			drawCmds;
 	vk_buffer			drawCount;
 
-	vk_compute_pipeline			instCullPass;
-	vk_compute_pipeline			instExpansionPass;
-	vk_compute_pipeline			indirectDispatchPass;
-	vk_compute_pipeline      	clusterCullPipe;
+	vk_compute_pipeline	instCullPass;
+	vk_compute_pipeline	instExpansionPass;
+	vk_compute_pipeline	indirectDispatchPass;
+	vk_compute_pipeline	clusterCullPipe;
 
 	desc_hndl32			instOccludedCacheIdx;
 	desc_hndl32			clusterOccludedCacheIdx;
@@ -791,11 +788,11 @@ struct culling_pass
 
 		if( !latePass )
 		{
-			rscTracker.UseBuffer( instOccludedCache, COMPUTE_READWRITE );
-			rscTracker.UseBuffer( clusterOccludedCache, COMPUTE_READWRITE );
+			rscTracker.UseBuffer( instOccludedCache, HT_COMPUTE_READWRITE );
+			rscTracker.UseBuffer( clusterOccludedCache, HT_COMPUTE_READWRITE );
 		}
-		rscTracker.UseBuffer( drawCount, TRANSFER_WRITE );
-		rscTracker.UseBuffer( visibleInstCounter, TRANSFER_WRITE );
+		rscTracker.UseBuffer( drawCount, HT_TRANSFER_WRITE );
+		rscTracker.UseBuffer( visibleInstCounter, HT_TRANSFER_WRITE );
 		//rscTracker.UseBuffer( visibleClustersCount, TRANSFER_WRITE );
 
 		rscTracker.FlushBarriers( cmdBuff );
@@ -810,21 +807,21 @@ struct culling_pass
 			cmdBuff.CmdFillVkBuffer( clusterOccludedCache, 0u );
 		}
 
-		rscTracker.UseBuffer( drawCmds, COMPUTE_WRITE );
-		rscTracker.UseBuffer( drawCount, COMPUTE_READWRITE );
+		rscTracker.UseBuffer( drawCmds, HT_COMPUTE_WRITE );
+		rscTracker.UseBuffer( drawCount, HT_COMPUTE_READWRITE );
 
-		rscTracker.UseBuffer( dispatchIndirect, COMPUTE_WRITE );
+		rscTracker.UseBuffer( dispatchIndirect, HT_COMPUTE_WRITE );
 
-		rscTracker.UseBuffer( visibleInstCounter, COMPUTE_WRITE );
-		rscTracker.UseBuffer( visibleInstances, COMPUTE_WRITE );
+		rscTracker.UseBuffer( visibleInstCounter, HT_COMPUTE_WRITE );
+		rscTracker.UseBuffer( visibleInstances, HT_COMPUTE_WRITE );
 
 		//rscTracker.UseBuffer( visibleClusters, COMPUTE_WRITE );
 		//rscTracker.UseBuffer( visibleClustersCount, COMPUTE_WRITE );
 
-		rscTracker.UseBuffer( args.dbgGpuInstBuff, COMPUTE_WRITE );
-		rscTracker.UseBuffer( args.dbgGpuInstCountBuff, COMPUTE_WRITE );
+		rscTracker.UseBuffer( args.dbgGpuInstBuff, HT_COMPUTE_WRITE );
+		rscTracker.UseBuffer( args.dbgGpuInstCountBuff, HT_COMPUTE_WRITE );
 
-		rscTracker.UseImage( args.hiZTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
+		rscTracker.UseImage( args.hiZTarget, HT_COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
@@ -948,9 +945,9 @@ struct tone_mapping_pass
 		cmdBuff.CmdFillVkBuffer( luminanceHistogramBuffer, 0u );
 		cmdBuff.CmdFillVkBuffer( atomicWgCounterBuff, 0u );
 
-		rscTracker.UseBuffer( luminanceHistogramBuffer, COMPUTE_READWRITE );
-		rscTracker.UseBuffer( atomicWgCounterBuff, COMPUTE_READWRITE );
-		rscTracker.UseImage( colTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
+		rscTracker.UseBuffer( luminanceHistogramBuffer, HT_COMPUTE_READWRITE );
+		rscTracker.UseBuffer( atomicWgCounterBuff, HT_COMPUTE_READWRITE );
+		rscTracker.UseImage( colTarget, HT_COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
 		rscTracker.FlushBarriers( cmdBuff );
 
 		// NOTE: inspired by http://www.alextardif.com/HistogramLuminance.html
@@ -1004,15 +1001,15 @@ struct tone_mapping_pass
 struct depth_pyramid_pass
 {
 	vk_compute_pipeline		pipeline;
-	vk_image		hiZTarget;
-	VkImageView		hiZMipViews[ MAX_MIP_LEVELS ];
+	vk_image				hiZTarget;
+	VkImageView				hiZMipViews[ MAX_MIP_LEVELS ];
 
-	VkSampler       quadMinSampler;
+	VkSampler       		quadMinSampler;
 
-	desc_hndl32     hizSrv;
+	desc_hndl32     		hizSrv;
 
-	desc_hndl32		hizMipUavs[ MAX_MIP_LEVELS ];
-	desc_hndl32		quadMinSamplerIdx;
+	desc_hndl32				hizMipUavs[ MAX_MIP_LEVELS ];
+	desc_hndl32				quadMinSamplerIdx;
 
 	void Init( vk_context& vkCtx )
 	{
@@ -1086,8 +1083,8 @@ struct depth_pyramid_pass
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "HiZ Multi Pass", {} );
 
-		rscTracker.UseImage( depthTarget, COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
-		rscTracker.UseImage( hiZTarget, COMPUTE_WRITE, VK_IMAGE_LAYOUT_GENERAL );
+		rscTracker.UseImage( depthTarget, HT_COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
+		rscTracker.UseImage( hiZTarget, HT_COMPUTE_WRITE, VK_IMAGE_LAYOUT_GENERAL );
 
 		rscTracker.FlushBarriers( cmdBuff );
 
@@ -1111,8 +1108,6 @@ struct depth_pyramid_pass
 
 			u32 levelWidth = std::max( 1u, u32( hiZTarget.width ) >> i );
 			u32 levelHeight = std::max( 1u, u32( hiZTarget.height ) >> i );
-
-			float2 reduceData{ ( float ) levelWidth, ( float ) levelHeight };
 
 			struct push_const
 			{
@@ -1270,20 +1265,17 @@ struct vbuffer_pass
 	}
 
 	void DebugDrawHashedVBuffer(
-		vk_command_buffer&			cmdBuff,
-		vk_rsc_state_tracker&		rscTracker,
-		const vk_image&				dstImg,
-		desc_hndl32					dstImgIdx
+		vk_command_buffer&		cmdBuff,
+		vk_rsc_state_tracker&	rscTracker,
+		const vk_image&			dstImg,
+		desc_hndl32				dstImgIdx
 	) {
 		HT_ASSERT( ( colorTarget.width == dstImg.width ) && ( colorTarget.height == dstImg.height ) );
 
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "VBuffer Dbg Tri hash Pass", {} );
 
-		rscTracker.UseImage( dstImg, { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
-			VK_IMAGE_LAYOUT_GENERAL );
-		rscTracker.UseImage( colorTarget,
-			{ VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT },
-			VK_IMAGE_LAYOUT_GENERAL );
+		rscTracker.UseImage( dstImg, HT_COMPUTE_WRITE, VK_IMAGE_LAYOUT_GENERAL );
+		rscTracker.UseImage( colorTarget, HT_COMPUTE_READ, VK_IMAGE_LAYOUT_GENERAL );
 		rscTracker.FlushBarriers( cmdBuff );
 
 		vbuffer_dbg_draw_params pushBlock = { .srcIdx = colSrv.slot, .dstIdx = dstImgIdx.slot };
@@ -1683,8 +1675,8 @@ void renderer_context::UploadMeshes(
 
 		buffEndCpyBarriers.push_back( VkMakeBufferBarrier( dstBuff.hndl, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 			VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, 0,
-			dstOffsetInBytes, payloadSizeInBytes,
-			pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
+			dstOffsetInBytes, payloadSizeInBytes, pVkCtx->copyQueue.familyIdx,
+			pVkCtx->gfxQueue.familyIdx ) );
 	};
 
 	for( const mesh_upload_req& meshUpload : meshUploadReqs )
@@ -1790,11 +1782,11 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 		dbgPass.InitAndUploadDebugGeometry( *pVkCtx );
 
-		rscStateTracker.UseBuffer( tonemapPass.averageLuminanceBuffer, TRANSFER_WRITE );
+		rscStateTracker.UseBuffer( tonemapPass.averageLuminanceBuffer, HT_TRANSFER_WRITE );
 
 		thisFrameCmdBuffer.CmdFillVkBuffer( tonemapPass.averageLuminanceBuffer, 0u );
 
-		rscStateTracker.UseBuffer( tonemapPass.averageLuminanceBuffer, COMPUTE_READWRITE );
+		rscStateTracker.UseBuffer( tonemapPass.averageLuminanceBuffer, HT_COMPUTE_READWRITE );
 
 		rscStateTracker.UseImage( hizbPass.hiZTarget, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 
@@ -1861,8 +1853,8 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 				.meshDescIdx 	= thisVFrame.gpuMeshTableDesc.slot,
 				.camIdx			= thisVFrame.viewDataIdx.slot
 			};
-			dbgPass.DrawAsLamberitanClay(
-				thisFrameCmdBuffer, rscStateTracker, vBuffPass.colorTarget, scImg.img, pushBlock );
+			dbgPass.DrawAsLamberitanClay( thisFrameCmdBuffer, rscStateTracker, vBuffPass.colorTarget,
+				scImg.img, pushBlock );
 
 			//tonemapPass.AverageLuminancePass( thisFrameCmdBuffer, rscStateTracker, vBuffPass.colorTarget, vBuffPass.colSrv,
 			//	frameData.elapsedSeconds );
@@ -1896,9 +1888,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			dbgPass.DrawWireframeCPU( thisFrameCmdBuffer, rscStateTracker, scImg.img, thisVFrame.viewDataIdx );
 		}
 
-		rscStateTracker.UseImage( scImg.img,
-			{ HT_COLOR_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT },
-			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		rscStateTracker.UseImage( scImg.img, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 		rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
 
 		imguiPass.DrawUiPass( *pVkCtx, thisFrameCmdBuffer.hndl, scImg.img, currentFrameIdx, currentFrameInFlightIdx );

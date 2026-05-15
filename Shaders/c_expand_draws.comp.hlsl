@@ -58,7 +58,7 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
     if( 0 == groupFlatIdx )
     {
         u32 total = 0;
-        [unroll] for( u32 wi = 0; wi < WAVE_COUNT_PER_WG; ++wi )
+        [unroll] for( u32 wi = 0; wi < HT_WAVE_COUNT_PER_WG; ++wi )
         {
             total += ldsWavePrefix[ wi ];
         }
@@ -68,7 +68,7 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
 
 
         u32 exclusivePrefix = 0;
-        [unroll] for( u32 wi = 0; wi < WAVE_COUNT_PER_WG; ++wi )
+        [unroll] for( u32 wi = 0; wi < HT_WAVE_COUNT_PER_WG; ++wi )
         {
             u32 currentWaveTotal = ldsWavePrefix[ wi ];
             ldsWavePrefix[ wi ] = exclusivePrefix;

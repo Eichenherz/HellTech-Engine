@@ -2,6 +2,25 @@
 
 #include "ht_renderer_types.h"
 
+namespace spv
+{
+    static const u32 CapabilityVulkanMemoryModel            = 5345;
+    static const u32 CapabilityVulkanMemoryModelDeviceScope = 5346;
+    static const u32 OpImageRead                            = 98;
+    static const u32 OpImageWrite                           = 99;
+	static const u32 MakeTexelAvailable 					= 0x100;
+	static const u32 MakeTexelVisible   					= 0x200;
+	static const u32 NonPrivateTexel    					= 0x400;
+	// OPERATION SCOPE
+	static const u32 Device        							= 1;
+	static const u32 QueueFamily							= 5;
+	// GLSL stuff
+	static const u32 NumWorkGroups							= 24; // gl_NumWorkGroups
+	static const u32 SubgroupId								= 40; // gl_SubgroupID
+	static const u32 NumSubgroups							= 38; // gl_NumSubgroups
+}
+
+
 #ifndef __HELLTECH_HT_HLSL_LANG_H__
 #define __HELLTECH_HT_HLSL_LANG_H__
 
@@ -9,31 +28,49 @@
     static const u32x3 GROUP_SIZE = u32x3( x, y, z ); \
     [numthreads( x, y, z )]
 
-[[vk::ext_builtin_input(/* NumWorkgroups */ 24)]]
-static const u32x3 WORK_GROUP_COUNT; // gl_NumWorkGroups
+[[vk::ext_builtin_input( spv::NumWorkGroups )]]
+static const u32x3 HT_WORKGROUP_COUNT;
 
-[[vk::ext_builtin_input(/* SubgroupId */ 40)]]
-static const u32 WAVE_ID_WITHIN_WG; // gl_SubgroupID
+[[vk::ext_builtin_input( spv::SubgroupId )]]
+static const u32 HT_WAVE_ID_WITHIN_WG;
 
-[[vk::ext_builtin_input(/* NumSubgroups */ 38)]]
-static const u32 WAVE_COUNT_PER_WG; // gl_NumSubgroups
+[[vk::ext_builtin_input( spv::NumSubgroups )]]
+static const u32 HT_WAVE_COUNT_PER_WG;
+
+[[vk::ext_instruction( spv::OpImageRead )]]
+float4 ImageReadCoherent(
+	RWTexture2D<float>		imgRef,
+	i32x2					coord,
+	[[vk::ext_literal]] u32	imageOperands,
+	u32						scope );
+
+[[vk::ext_instruction( spv::OpImageWrite )]]
+void ImageWriteCoherent(
+	RWTexture2D<float>		imgRef,
+	i32x2					coord,
+	float4					texel,
+	[[vk::ext_literal]] u32	imageOperands,
+	u32						scope );
+
+static const u32 SPV_COHERENT_READ_OPERANDS		= spv::NonPrivateTexel | spv::MakeTexelVisible;
+static const u32 SPV_COHERENT_WRITE_OPERANDS	= spv::NonPrivateTexel | spv::MakeTexelAvailable;
 
 #define MAX_DESCRIPTOR_COUNT 0xFFFF
 
 // NOTE: taken from vulkanised_2023_setting_up_a_bindless_rendering_pipeline
 #define ITERATE_TEXTURE_TYPES( GENERATOR, ... ) \
-	GENERATOR( i32, ##__VA_ARGS__ ) \
-	GENERATOR( u32, ##__VA_ARGS__ ) \
-	GENERATOR( float, ##__VA_ARGS__ ) \
-	GENERATOR( i32x2, ##__VA_ARGS__ ) \
-	GENERATOR( u32x2, ##__VA_ARGS__ ) \
-	GENERATOR( float2, ##__VA_ARGS__ ) \
-	GENERATOR( i32x3, ##__VA_ARGS__ ) \
-	GENERATOR( u32x3, ##__VA_ARGS__ ) \
-	GENERATOR( float3, ##__VA_ARGS__ ) \
-	GENERATOR( i32x4, ##__VA_ARGS__ ) \
-	GENERATOR( u32x4, ##__VA_ARGS__ ) \
-	GENERATOR( float4, ##__VA_ARGS__ )
+	GENERATOR( i32, 	##__VA_ARGS__ ) 		\
+	GENERATOR( u32, 	##__VA_ARGS__ ) 		\
+	GENERATOR( float, 	##__VA_ARGS__ ) 		\
+	GENERATOR( i32x2, 	##__VA_ARGS__ ) 		\
+	GENERATOR( u32x2,	##__VA_ARGS__ ) 		\
+	GENERATOR( float2,	##__VA_ARGS__ )			\
+	GENERATOR( i32x3,	##__VA_ARGS__ ) 		\
+	GENERATOR( u32x3,	##__VA_ARGS__ ) 		\
+	GENERATOR( float3,	##__VA_ARGS__ )			\
+	GENERATOR( i32x4,	##__VA_ARGS__ ) 		\
+	GENERATOR( u32x4,	##__VA_ARGS__ ) 		\
+	GENERATOR( float4,	##__VA_ARGS__ )
 
 #define TEXTURE_TYPE_SLOT_GENERATOR( native_type, texture_type, slot ) \
 	[[vk::binding( slot )]] texture_type<native_type> g##texture_type##_##native_type[ MAX_DESCRIPTOR_COUNT ];
@@ -42,10 +79,11 @@ static const u32 WAVE_COUNT_PER_WG; // gl_NumSubgroups
    ITERATE_TEXTURE_TYPES( TEXTURE_TYPE_SLOT_GENERATOR, texture_type, slot )
 
 [[vk::binding( 0 )]] SamplerState samplers[ MAX_DESCRIPTOR_COUNT ];
-//[[vk::binding( 1 )]] ByteAddressBuffer storageBuffers[ MAX_DESCRIPTOR_COUNT ];
+
 [[vk::binding( 1 )]] RWByteAddressBuffer storageBuffers[ MAX_DESCRIPTOR_COUNT ];
+
 DEFINE_TEXTURE_TYPES_AND_FORMAT_SLOTS( RWTexture2D, 2 )
-DEFINE_TEXTURE_TYPES_AND_FORMAT_SLOTS( Texture2D, 3 )
+DEFINE_TEXTURE_TYPES_AND_FORMAT_SLOTS( Texture2D, 3 ) // NOTE: in Vk these are "sampled" images, while RW == "storage"
 
 
 template<typename T>
@@ -102,6 +140,18 @@ void DeviceAddrStore( u64 addr, u64 idx, T value )
 	vk::RawBufferStore<T>( addr + idx * sizeof( T ), value );
 }
 
+float HTLoadCoherentImageFloat( u32 imgIdx, i32x2 pix )
+{
+	return ImageReadCoherent( gRWTexture2D_float[ imgIdx ], pix, SPV_COHERENT_READ_OPERANDS,
+		spv::QueueFamily ).x;
+}
+
+void HTStoreCoherentImageFloat( u32 imgIdx, i32x2 pix, float val )
+{
+	ImageWriteCoherent( gRWTexture2D_float[ imgIdx ], pix, float4( val, 0.0f, 0.0f, 0.0f ),
+		SPV_COHERENT_WRITE_OPERANDS, spv::QueueFamily );
+}
+
 u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
 {
 	device_addr<u32> triBuff = { gGlobData.triAddr };
@@ -110,6 +160,21 @@ u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
 	u64 shift = ( globalIdxInBytes & 3 ) * 8;
 	u64 raw = ( ( hi << 32 ) | lo ) >> shift;
 	return unpack_u8u32( u32( raw & 0xFFFFFF ) ).xyz;
+}
+
+float4 HTQuadBroadcast( float v )
+{
+	float v0 = v;
+	float v1 = QuadReadAcrossX( v );
+	float v2 = QuadReadAcrossY( v );
+	float v3 = QuadReadAcrossDiagonal( v );
+
+	return float4( v0, v1, v2, v3 );
+}
+
+bool HTIsQuadLeader( u32x2 quadID )
+{
+	return all( 0 == ( quadID & 1 ) );
 }
 
 #endif //!__HELLTECH_HT_HLSL_LANG_H__

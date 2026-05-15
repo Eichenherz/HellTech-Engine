@@ -65,19 +65,19 @@ void AvgLuminanceCsMain(
 
 		if( WaveGetLaneIndex() == 0 )
 		{
-			partialSumLDS[ WAVE_ID_WITHIN_WG ] = partialLumSum;
-			tailValsCountLDS[ WAVE_ID_WITHIN_WG ] = tailValsPartialCount;
+			partialSumLDS[ HT_WAVE_ID_WITHIN_WG ] = partialLumSum;
+			tailValsCountLDS[ HT_WAVE_ID_WITHIN_WG ] = tailValsPartialCount;
 		}
 	}
 	
 	GroupMemoryBarrierWithGroupSync();
-	if( WAVE_ID_WITHIN_WG == 0 )
+	if( HT_WAVE_ID_WITHIN_WG == 0 )
 	{
 		uint waveLaneIdx = WaveGetLaneIndex();
-		uint lumSumLDS = ( waveLaneIdx < WAVE_COUNT_PER_WG ) ? partialSumLDS[ waveLaneIdx ] : 0u;
+		uint lumSumLDS = ( waveLaneIdx < HT_WAVE_COUNT_PER_WG ) ? partialSumLDS[ waveLaneIdx ] : 0u;
 		lumSumLDS = WaveActiveSum( lumSumLDS );
 
-		uint tailValsLDS = ( waveLaneIdx < WAVE_COUNT_PER_WG ) ? tailValsCountLDS[ waveLaneIdx ] : 0u;
+		uint tailValsLDS = ( waveLaneIdx < HT_WAVE_COUNT_PER_WG ) ? tailValsCountLDS[ waveLaneIdx ] : 0u;
 		tailValsLDS = WaveActiveSum( tailValsLDS );
 		if( WaveGetLaneIndex() == 0 )
 		{
@@ -96,7 +96,7 @@ void AvgLuminanceCsMain(
 
 	GroupMemoryBarrierWithGroupSync();
 	
-	if( ldsGroupCounter != ( WORK_GROUP_COUNT.x + WORK_GROUP_COUNT.y - 1 ) )
+	if( ldsGroupCounter != ( HT_WORKGROUP_COUNT.x + HT_WORKGROUP_COUNT.y - 1 ) )
 	{
 		return;
 	}
