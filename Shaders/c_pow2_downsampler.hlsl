@@ -15,7 +15,7 @@ void Pow2DownsamplerCsMain( u32x3 globalThreadDispatchID : SV_DispatchThreadID )
     Texture2D<float> srcLevelTex = gTexture2D_float[ pushBlock.inImgIdx ];
 
     float minDepth = 1.0;   // max for reverse-Z
-    if( pushBlock.isMip0FromNonPot ) // NOTE: uniform per dispatch
+    if( bool( pushBlock.isMip0FromNonPot ) )// NOTE: uniform per dispatch
     {
         // NOTE; bc it's non pot we have to reduce more
         u32x2 srcFloor = ( pos * pushBlock.srcSize ) / pushBlock.dstSize;

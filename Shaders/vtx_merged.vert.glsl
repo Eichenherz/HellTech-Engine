@@ -56,16 +56,7 @@ vec2 EncodeOctaNormal( vec3 n )
 	return ( n.z < 0.0 ) ? ( SignNonZero( octa ) - abs( octa.yx ) * SignNonZero( octa ) ) : octa;
 }
 
-vec3 DecodeTanFromAngle( vec3 n, float tanAngle )
-{
-	// NOTE: inspired by Doom Eternal
-	vec3 tanRef = ( abs( n.x ) > abs( n.z ) ) ?
-		vec3( -n.y, n.x, 0.0 ) :
-		vec3( 0.0, -n.z, n.y );
 
-	tanAngle *= PI;
-	return tanRef * cos( tanAngle ) + cross( n, tanRef ) * sin( tanAngle );
-}
 
 
 struct vs_out

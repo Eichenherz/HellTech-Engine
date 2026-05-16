@@ -3,6 +3,9 @@
 #ifndef __HELLTECH_HT_HLSL_MATH_H__
 #define __HELLTECH_HT_HLSL_MATH_H__
 
+static const float INV_PI = 0.31830988618f;
+static const float PI = 3.14159265359f;
+
 float3 ComputeNDCBarycentrics( float2 pixelCenter, float2 s0, float2 s1, float2 s2 )
 {
     float2 e1 = s1 - s0;
@@ -28,6 +31,15 @@ float3 DecodeOctaNormal( float2 octa )
     n.xy += select( n.xy < 0.0f, -t, t );
 
     return normalize( n );
+}
+
+// NOTE: inspired by Doom Eternal
+float3 DecodeTanFromAngle( float3 n, float tanAngle )
+{
+    float3 tanRef = ( abs( n.x ) > abs( n.z ) ) ? float3( -n.y, n.x, 0.0f ) : float3( 0.0f, -n.z, n.y );
+
+    tanAngle *= PI;
+    return tanRef * cos( tanAngle ) + cross( n, tanRef ) * sin( tanAngle );
 }
 
 // Hamilton product: q = a * b

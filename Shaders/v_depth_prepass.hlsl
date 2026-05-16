@@ -1,17 +1,15 @@
 #include "ht_renderer_types.h"
 #include "ht_hlsl_lang.h"
 
-#include "vbuffer.h"
-
 [[vk::push_constant]]
-vbuffer_params pushBlock;
+depth_prepass_params pushBlock;
 
-[shader("vertex")]
-vbuffer_vs_out VBufferVsMain(
+[shader( "vertex" )]
+float4 DepthPrepassVsMain(
     in u32 vtxID    : SV_VertexID,
     [[vk::builtin("DrawIndex")]]
     in u32 drawId   : DRAW_ID
-) {
+) : SV_Position {
     draw_meshlet_command draw = BufferLoad<draw_meshlet_command>( pushBlock.drawBuffIdx, drawId );
 
     gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instBuffIdx, draw.globalInstId );
@@ -27,8 +25,5 @@ vbuffer_vs_out VBufferVsMain(
 
     device_addr<packed_vtx> pVtxBuff = { gGlobData.vtxAddr };
     packed_vtx vtx = pVtxBuff[ vtxID ];
-    float4 pos = mul( float4( vtx.px, vtx.py, vtx.pz, 1.0f ), mvp );
-
-    vbuffer_vs_out vsOut = { pos, draw.globalMltId, draw.globalInstId };
-    return vsOut;
+    return mul( float4( vtx.px, vtx.py, vtx.pz, 1.0f ), mvp );
 }

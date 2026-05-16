@@ -72,7 +72,7 @@ struct renderer_dbg_draw
 	bool vBuffMeshletId	= false;
 	bool freezeMainView = false;
 	bool dbgDraw		= false;
-
+	bool drawXRayMode	= false;
 };
 
 struct frame_data

@@ -26,6 +26,8 @@ namespace spv
 #ifndef __HELLTECH_HT_HLSL_LANG_H__
 #define __HELLTECH_HT_HLSL_LANG_H__
 
+#define NOINTERP nointerpolation
+
 #define NUMTHREADS( x, y, z ) \
     static const u32x3 GROUP_SIZE = u32x3( x, y, z ); \
     [numthreads( x, y, z )]

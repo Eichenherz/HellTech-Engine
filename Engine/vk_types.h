@@ -67,22 +67,22 @@ constexpr vk_gfx_pso_config DEFAULT_PSO = {
 
 struct vk_swapchain_config
 {
-	VkFormat			format = VK_FORMAT_B8G8R8A8_UNORM;
-	VkImageUsageFlags	imgUsage =
-		VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+	VkFormat			format		= VK_FORMAT_B8G8R8A8_UNORM;
+	VkImageUsageFlags	imgUsage	= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
 	VkPresentModeKHR	presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-	u32					minNumImgs = 3;
+	u32					minNumImgs	= 3;
 };
 
 // TODO:
 struct vk_renderer_config
 {
-	static constexpr u64	MAX_FRAMES_IN_FLIGHT_ALLOWED = 2;
-	static constexpr u64	MAX_DESCRIPTOR_COUNT_PER_TYPE = u16( -1 );
+	static constexpr u64		MAX_FRAMES_IN_FLIGHT_ALLOWED	= 2;
+	static constexpr u64		MAX_DESCRIPTOR_COUNT_PER_TYPE	= u16( -1 );
+	// TODO: we only need this if we do reverse Z
+	static constexpr VkFormat	DEPTH_FORMAT					= VK_FORMAT_D32_SFLOAT;
 
 	vk_swapchain_config		scConfig			= {};
 
-	VkFormat				desiredDepthFormat	= VK_FORMAT_D32_SFLOAT;
 	VkFormat				desiredColorFormat	= VK_FORMAT_B8G8R8A8_UNORM; // NOTE: for now use same as SC //VK_FORMAT_R16G16B16A16_SFLOAT;
 	VkFormat				desiredHiZFormat	= VK_FORMAT_R32_SFLOAT;
 	u16             		renderWidth;

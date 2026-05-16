@@ -19,11 +19,10 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 		return;
 	}
 
-	bool instanceIsVisible = false;
 	if( bool( pushBlock.isLatePass ) )
 	{
-		instanceIsVisible = BufferLoad<uint>( pushBlock.visInstCacheIdx, instId );
-		if( instanceIsVisible ) return;
+		bool instIsOccluded = BufferLoad<u32>( pushBlock.occludedInstCacheIdx, instId );
+		if( !instIsOccluded ) return;
 	}
 
 	gpu_instance currentInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, instId );
@@ -41,6 +40,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 	// NOTE: we use camIdx here bc we'll have a debug camera
 	view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
 
+//#ifdef 1
 	// TODO: ifdef dbg ?
 	u32 waveDbgOffset = WaveActiveCountBits( true );
     u32 waveDbgBase = 0;
@@ -54,37 +54,42 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
 	dbg_aabb_instance aabbInst = { toWorld, float4( 1.0f, 0.0f, 0.0f, 0.0f ), aabbMin, aabbMax };
 	BufferStore<dbg_aabb_instance>( pushBlock.dbgInstBuffIdx, aabbInst, dbgSlot );
-    //
+//#endif
 
-	bool visible = false;
+    bool testOcclusion = true;
+	bool inFrustum = true;
+
 	if( !bool( pushBlock.isLatePass ) )
 	{
 		// NOTE: 1st pass runs frustum culling with current instTransform and current cam
 
 		float4x4 mvp = mul( toWorld, cam.mainViewProj );
 		frustum_culling_result frustumCullRes = FrustumCulling( aabbMin, aabbMax, mvp );
-	//	testOcclusion = testOcclusion && !frustumCullRes.intersectsZNear;
 		// NOTE: we might be visible but if we intersect the znear we skip occlusion
-		visible = frustumCullRes.visible;
+		testOcclusion = testOcclusion && !frustumCullRes.intersectsZNear;
+		inFrustum = frustumCullRes.visible;
 	}
 
-	//if( visible && testOcclusion )
-	//{
-	//	// NOTE: 1st pass uses prev instTransform prevCam and prev HZB
-	//	float4x4 view = bool( pushBlock.isLatePass ) ? cam.mainView : cam.prevView;
-	//	float4x4 mvpOcclusion = mul( toWorld, mul( view, cam.proj ) );
-	//	screenspace_aabb ssAabb = ProjectAabbToScreenSpace( aabbMin, aabbMax, mvpOcclusion );
-	//
-	//	Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
-	//	SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
-	//
-	//	visible = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
-	//}
+    bool instNotOccluded = true;
+	if( inFrustum && testOcclusion )
+	{
+		// NOTE: 1st pass uses prev instTransform prevCam and prev HZB
+		float4x4 view = bool( pushBlock.isLatePass ) ? cam.mainView : cam.prevView;
+		float4x4 mvpOcclusion = mul( toWorld, mul( view, cam.proj ) );
+		screenspace_aabb ssAabb = ProjectAabbToScreenSpace( aabbMin, aabbMax, mvpOcclusion );
+
+		Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
+		SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
+
+		instNotOccluded = ScreenSpaceAabbVsHiZ( ssAabb, hizTex, quadMin );
+	}
 
 	if( !bool( pushBlock.isLatePass ) )
 	{
-		BufferStore<u32>( pushBlock.visInstCacheIdx, true, globalDispatchID.x );//visible ? 1 : 0, globalDispatchID.x );
+		BufferStore<u32>( pushBlock.occludedInstCacheIdx, !instNotOccluded, globalDispatchID.x );
 	}
+
+    bool visible = inFrustum && instNotOccluded;
 
 	u32 lanesVisible = WaveActiveCountBits( visible );
 	u32 offsetForWave = 0;

@@ -55,15 +55,22 @@ struct vk_scoped_label
 	}
 };
 
-// TODO: handle dynamic state  
 struct vk_rendering_info
 {
-	alignas( 8 ) VkViewport							viewport;
-	alignas( 8 ) VkRect2D							scissor;
-	std::span<const VkRenderingAttachmentInfo>		colorAttachments;
-	const VkRenderingAttachmentInfo*				pDepthAttachment;
+	std::span<const VkRenderingAttachmentInfo>	colorAttachments	= {};
+	const VkRenderingAttachmentInfo*			pDepthAttachment	= nullptr;
+	VkViewport									viewport			= {};
+	VkRect2D									scissor				= {};
 };
 
+struct vk_gfx_dynamic_state
+{
+	u32 depthDynamicStateOn			: 1  = 0;
+	u32 depthTest					: 1  = 0;
+	u32 colorBlendDynamicStateOn	: 1  = 0;
+	u32 colorBlendEnabled			: 1  = 0;
+	u32 todoAddMoreAsNeeded			: 27 = 0;
+};
 
 struct vk_scoped_renderpass
 {
@@ -106,10 +113,27 @@ struct vk_command_buffer
 		return { hndl, labelName, col };
 	}
 
-	vk_scoped_renderpass CmdIssueScopedRenderPass( const vk_rendering_info& renderingInfo ) 
-	{
+	vk_scoped_renderpass CmdIssueScopedRenderPass(
+		const vk_rendering_info&	renderingInfo,
+		// NOTE: while very small, we pass it as a ptr to mean not used
+		const vk_gfx_dynamic_state* dynamicState = nullptr
+	) {
 		vkCmdSetScissor( hndl, 0, 1, &renderingInfo.scissor );
 		vkCmdSetViewport( hndl, 0, 1, &renderingInfo.viewport );
+
+		if( dynamicState )
+		{
+			//if( dynamicState->depthDynamicStateOn )
+			//{
+			//	vkCmdSetDepthTestEnable( hndl, dynamicState->depthTest );
+			//	vkCmdSetDepthWriteEnable( hndl, dynamicState->depthWrite );
+			//}
+			if( dynamicState->colorBlendDynamicStateOn )
+			{
+				VkBool32 blendEnable = dynamicState->colorBlendEnabled;
+				vkCmdSetColorBlendEnableEXT( hndl, 0, 1, &blendEnable);
+			}
+		}
 
 		VkRenderingInfo vkRenderInfo = {
 			.sType					= VK_STRUCTURE_TYPE_RENDERING_INFO,
@@ -220,6 +244,43 @@ struct vk_command_buffer
 			.pRegions		= std::data( copyRegions )
 		};
 		vkCmdCopyBuffer2( hndl, &cpyInfo );
+	}
+	// TODO: this is pretty specific
+	inline void CmdCopyImageSameProps( const vk_image& src, const vk_image& dst )
+	{
+		HT_ASSERT( ( src.width == dst.width ) && ( src.height == dst.height ) );
+
+		VkImageCopy2 region = {
+			.sType			= VK_STRUCTURE_TYPE_IMAGE_COPY_2,
+			.srcSubresource = {
+				.aspectMask     = VkSelectAspectMaskFromFormat( src.format ),
+				.mipLevel       = 0,
+				.baseArrayLayer = 0,
+				.layerCount     = 1,
+			},
+			.srcOffset      = {},
+			.dstSubresource = {
+				.aspectMask     = VkSelectAspectMaskFromFormat( dst.format ),
+				.mipLevel       = 0,
+				.baseArrayLayer = 0,
+				.layerCount     = 1,
+			},
+			.dstOffset      = {},
+			.extent         = { src.width, src.height, 1 },
+		};
+
+		HT_ASSERT( region.srcSubresource.aspectMask == region.dstSubresource.aspectMask );
+
+		VkCopyImageInfo2 cpyInfo = {
+			.sType			= VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2,
+			.srcImage		= src.hndl,
+			.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			.dstImage		= dst.hndl,
+			.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.regionCount	= 1,
+			.pRegions		= &region
+		};
+		vkCmdCopyImage2( hndl, &cpyInfo );
 	}
 
 	void CmdCopyBufferToImageMipsLayers( 

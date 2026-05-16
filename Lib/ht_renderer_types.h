@@ -14,9 +14,6 @@
 
 #else
 
-static const float invPi = 0.31830988618f;
-static const float PI = 3.14159265359f;
-
 typedef int			i32;
 
 typedef uint64_t	u64;
@@ -209,7 +206,7 @@ struct visible_instance
 struct culling_params
 {
 	u32 instCount;
-	u32 visInstCacheIdx;
+	u32 occludedInstCacheIdx;
 	u32 instDescIdx;
 	u32 meshDescIdx;
 	u32 viewBuffIdx;
@@ -240,6 +237,19 @@ struct indirect_dispatcher_params
 };
 
 struct vbuffer_params
+{
+	u32 drawBuffIdx;
+	u32 instBuffIdx;
+	u32 camIdx;
+};
+// TODO: maybe use the same struct here ?
+struct depth_prepass_params
+{
+	u32 drawBuffIdx;
+	u32 instBuffIdx;
+	u32 camIdx;
+};
+struct meshlet_pass_params
 {
 	u32 drawBuffIdx;
 	u32 instBuffIdx;

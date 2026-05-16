@@ -426,7 +426,8 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
 
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
-		VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME
+		VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME,
+		VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME
 	};
 
 	u32 numDevices = 0;
@@ -456,8 +457,10 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &presentIdFeatures };
 	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentsFeature =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT, &extDynamicStateFeatures };
+	VkPhysicalDeviceExtendedDynamicState3FeaturesEXT extDynamiState3Feature =
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT, &unusedAttachmentsFeature };
 	VkPhysicalDeviceVulkan14Features gpuFeatures14 = 
-	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &unusedAttachmentsFeature };
+	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &extDynamiState3Feature };
 	VkPhysicalDeviceVulkan13Features gpuFeatures13 = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &gpuFeatures14 };
 	VkPhysicalDeviceVulkan12Features gpuFeatures12 = 

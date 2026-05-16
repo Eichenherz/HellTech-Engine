@@ -68,8 +68,9 @@ if(MSVC)
         /arch:AVX2      # AVX2 intrinsics
         /sdl            # SDL security checks
         /permissive-    # Conformance mode
-        /diagnostics:classic
+        /diagnostics:caret
         /GR-            # No RTTI
+        /EHs-c-         # No exceptions
 
         # Compiler-level PDB only for Debug  (/Zi; Release/RelWithDebInfo rely on linker PDB)
         $<$<CONFIG:Debug>:/Zi>

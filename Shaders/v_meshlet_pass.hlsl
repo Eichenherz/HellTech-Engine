@@ -1,13 +1,14 @@
 #include "ht_renderer_types.h"
 #include "ht_hlsl_lang.h"
-
-#include "vbuffer.h"
+#include "ht_hlsl_math.h"
+#include "ht_dbg_common.h"
 
 [[vk::push_constant]]
-vbuffer_params pushBlock;
+meshlet_pass_params pushBlock;
 
-[shader("vertex")]
-vbuffer_vs_out VBufferVsMain(
+
+[shader( "vertex" )]
+meshlet_vs_out MeshletPassVsMain(
     in u32 vtxID    : SV_VertexID,
     [[vk::builtin("DrawIndex")]]
     in u32 drawId   : DRAW_ID
@@ -27,8 +28,16 @@ vbuffer_vs_out VBufferVsMain(
 
     device_addr<packed_vtx> pVtxBuff = { gGlobData.vtxAddr };
     packed_vtx vtx = pVtxBuff[ vtxID ];
+
     float4 pos = mul( float4( vtx.px, vtx.py, vtx.pz, 1.0f ), mvp );
 
-    vbuffer_vs_out vsOut = { pos, draw.globalMltId, draw.globalInstId };
+    float3 n = DecodeOctaNormal( float2( vtx.octNX, vtx.octNY ) );
+    float3 t = DecodeTanFromAngle( n, vtx.tanAngle );
+    t = normalize( mul( float4( t, 0.0f ), toWorld ).xyz );
+    n = normalize( mul( float4( n, 0.0f ), toWorld ).xyz );
+
+    float3 worldPos = mul( float4( vtx.px, vtx.py, vtx.pz, 1.0f ), toWorld ).xyz;
+
+    meshlet_vs_out vsOut = { pos, n, t, worldPos, bool( vtx.tanSign ) ? -1.0f : 1.0f };
     return vsOut;
 }
