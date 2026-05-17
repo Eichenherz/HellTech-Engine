@@ -4,9 +4,8 @@
 [[vk::push_constant]]
 indirect_dispatcher_params pushBlock;
 
-
-[numthreads(1, 1, 1)]
-[shader("compute")]
+[shader( "compute" )]
+[numthreads( 1, 1, 1 )]
 void IndirectDispatcherCsMain()
 {
     u32 workItemsCount = BufferLoad<u32>( pushBlock.counterBufferIdx, 0 );

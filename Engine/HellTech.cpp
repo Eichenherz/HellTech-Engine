@@ -379,7 +379,6 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 	jobCache.push_back( IssueUploadBatch( MOV( uploads ), MOV( entities ) ) );
 }
 
-static u64 instCount = 0;
 void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const input_state& inputState )
 {
 	using namespace DirectX;
@@ -393,12 +392,10 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		vfsMounted = true;
 	}
 
-	auto[ camMove, dRot ] = GetMoveCamAction( inputState, elapsedTime,
-		moveSpeed, mouseSensitivity );
-	rndDbgFlags.freezeMainView = inputState.keyStates[ HT_SC_F ];
+	auto[ camMove, dRot ] = GetMoveCamAction( inputState, ( float ) elapsedTime, moveSpeed, mouseSensitivity );
 
-	instCount += inputState.keyStates[ HT_SC_I ];
-	instCount -= inputState.keyStates[ HT_SC_O ];
+	rndDbgFlags.freezeMainView = inputState.keyStates[ HT_SC_F ];
+	rndDbgFlags.drawXRayMode = inputState.keyStates[ HT_SC_X ];
 
 	mainActiveCam.Move( camMove, dRot );
 	[[likely]]
@@ -436,15 +433,6 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	}
 
 	// here we must the drawables instances
-	std::vector<instance_desc> instFiltered;
-	if( std::size( drawables ) > instCount )
-	{
-		for( u64 i = 0; i < instCount; ++i )
-		{
-			instFiltered.push_back( drawables[ i ] );
-		}
-	}
-
 
 	engineStats = { .gpuMs = 0.0f, .cpuFrameMs = ( float )( elapsedTime * 1000.0 ) };
 

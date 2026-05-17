@@ -10,7 +10,7 @@ meshlet_pass_params pushBlock;
 [shader( "vertex" )]
 meshlet_vs_out MeshletPassVsMain(
     in u32 vtxID    : SV_VertexID,
-    [[vk::builtin("DrawIndex")]]
+    [[vk::builtin( "DrawIndex" )]]
     in u32 drawId   : DRAW_ID
 ) {
     draw_meshlet_command draw = BufferLoad<draw_meshlet_command>( pushBlock.drawBuffIdx, drawId );

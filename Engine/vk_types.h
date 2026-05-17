@@ -44,6 +44,7 @@ struct vk_gfx_pso_config
 	VkBlendFactor       srcAlphaBlendFactor;
 	VkBlendFactor       dstAlphaBlendFactor;
 	VkBlendOp           alphaBlendOp;
+	VkCompareOp			depthCompareOp;
 	bool				depthWrite;
 	bool				depthTestEnable;
 	bool				blendCol;
@@ -60,6 +61,7 @@ constexpr vk_gfx_pso_config DEFAULT_PSO = {
 	.srcAlphaBlendFactor	= VK_BLEND_FACTOR_ZERO,
 	.dstAlphaBlendFactor 	= VK_BLEND_FACTOR_ZERO,
 	.alphaBlendOp 			= VK_BLEND_OP_ADD,
+	.depthCompareOp			= VK_COMPARE_OP_GREATER,
 	.depthWrite 			= true,
 	.depthTestEnable		= true,
 	.blendCol				= false

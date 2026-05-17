@@ -358,7 +358,7 @@ struct vk_command_buffer
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
 
-	void CmdFillVkBuffer( const vk_buffer& vkBuffer, u32 fillValue )
+	void CmdFillBuffer( const vk_buffer& vkBuffer, u32 fillValue )
 	{
 		vkCmdFillBuffer( hndl, vkBuffer.hndl, 0, vkBuffer.sizeInBytes, fillValue );
 	}

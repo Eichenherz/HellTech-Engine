@@ -11,9 +11,7 @@ namespace spv
 	static const u32 MakeTexelAvailable 					= 0x100;
 	static const u32 MakeTexelVisible   					= 0x200;
 	static const u32 NonPrivateTexel    					= 0x400;
-	// OPERATION SCOPE
-	static const u32 Device        							= 1;
-	static const u32 QueueFamily							= 5;
+	// OPERATION SCOPE are defined in vk::
 	// GLSL stuff
 	static const u32 NumWorkGroups							= 24; // gl_NumWorkGroups
 	static const u32 SubgroupId								= 40; // gl_SubgroupID
@@ -125,6 +123,34 @@ u32 BufferAtomicAdd( u32 buffIdx, u32 newValue, u32 idx = 0, u32 offsetInBytes =
 	return oldValue;
 }
 
+u32 BufferAtomicOr( u32 buffIdx, u32 newValue, u32 idx = 0, u32 offsetInBytes = 0 )
+{
+	u32 oldValue;
+	storageBuffers[ buffIdx ].InterlockedOr( idx * sizeof( u32 ) + offsetInBytes, newValue, oldValue );
+	return oldValue;
+}
+
+template<typename T>
+T BitCount()
+{
+	return sizeof( T ) * 8;
+}
+
+bool GetBitAtIdx( u32 buffIdx, u32 idx )
+{
+	u32 bucketIdx = idx / BitCount<u32>();
+	u32 dword = BufferLoad<u32>( buffIdx, bucketIdx );
+	u32 bit = 1u << ( idx % BitCount<u32>() );
+	return bool( dword & bit );
+}
+
+u32 SetBitAtIdx( u32 buffIdx, u32 idx )
+{
+	u32 bucketIdx = idx / BitCount<u32>();
+	u32 bit = 1u << ( idx % BitCount<u32>() );
+	return BufferAtomicOr( buffIdx, bit, bucketIdx );
+}
+
 static const global_data gGlobData = BufferLoad<global_data>( GLOB_DATA_BINDING_SLOT );
 
 template<typename T>
@@ -147,13 +173,13 @@ void DeviceAddrStore( u64 addr, u64 idx, T value )
 float HTLoadCoherentImageFloat( u32 imgIdx, i32x2 pix )
 {
 	return ImageReadCoherent( gRWTexture2D_float[ imgIdx ], pix, SPV_COHERENT_READ_OPERANDS,
-		spv::QueueFamily ).x;
+		vk::QueueFamilyScope ).x;
 }
 
 void HTStoreCoherentImageFloat( u32 imgIdx, i32x2 pix, float val )
 {
 	ImageWriteCoherent( gRWTexture2D_float[ imgIdx ], pix, float4( val, 0.0f, 0.0f, 0.0f ),
-		SPV_COHERENT_WRITE_OPERANDS, spv::QueueFamily );
+		SPV_COHERENT_WRITE_OPERANDS, vk::QueueFamilyScope );
 }
 
 u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
@@ -179,6 +205,22 @@ float4 HTQuadBroadcast( float v )
 bool HTIsQuadLeader( u32x2 quadID )
 {
 	return all( 0 == ( quadID & 1 ) );
+}
+
+u32 HTWaveReserveGlobalSlot( in bool cond, in u32 counterDescIdx )
+{
+	u32 lanesTrue = WaveActiveCountBits( cond );
+	u32 offsetForWave = 0;
+	if( lanesTrue > 0 )
+	{
+		if( WaveIsFirstLane() )
+		{
+			offsetForWave = BufferAtomicAdd( counterDescIdx, lanesTrue );
+		}
+	}
+
+	u32 laneOffset = WavePrefixCountBits( cond );
+	return WaveReadLaneFirst( offsetForWave ) + laneOffset;
 }
 
 #endif //!__HELLTECH_HT_HLSL_LANG_H__

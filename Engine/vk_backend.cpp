@@ -920,7 +920,7 @@ VkPipeline vk_context::CreateGfxPipeline(
 		.sType					= VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable		= psoConfig.depthTestEnable,
 		.depthWriteEnable		= psoConfig.depthWrite,
-		.depthCompareOp			= VK_COMPARE_OP_GREATER,
+		.depthCompareOp			= psoConfig.depthCompareOp,
 		.depthBoundsTestEnable	= VK_TRUE,
 		.minDepthBounds			= 0.0f,
 		.maxDepthBounds			= 1.0f

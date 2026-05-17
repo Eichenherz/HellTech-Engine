@@ -196,11 +196,22 @@ struct luminance_histogram
 
 struct visible_instance
 {
-	u32 		instId;
-	u32 		meshletOffset;
-	u32 		meshletCount;
-	u32 		vtxOffset;
-	u32 		triOffset;
+	u32 instId;
+	u32 meshletOffset;
+	u32 meshletCount;
+	u32 vtxOffset;
+	u32 triOffset;
+};
+
+struct visible_meshlet
+{
+	float3	minAabb;
+	float3	maxAabb;
+	u32 	instId;
+	u32 	globMltId; // actual id in the meshlet buffer
+	u32 	triCount;
+	u32 	globVtxOffset;
+	u32 	globTriOffset;
 };
 
 struct culling_params
@@ -220,13 +231,13 @@ struct culling_params
 	u32 dbgInstCountIdx;
 	u32 dbgInstBuffIdx;
 };
-
+// TODO: rename
 struct draw_expansion_params
 {
 	u32 workCounterIdxConst;
 	u32 srcBufferIdx;
-	u32 drawMltCmdsIdx;
-	u32 drawMltCounterIdx;
+	u32 expandedItemsBuffIdx;
+	u32 expandedItemsCountIdx;
 };
 
 struct indirect_dispatcher_params
@@ -234,6 +245,21 @@ struct indirect_dispatcher_params
 	u32 cullShaderWorkGrX;
 	u32 dispatchCmdBuffIdx;
 	u32 counterBufferIdx;
+};
+
+struct meshlet_cull_params
+{
+	u32 mltCountIdx;
+	u32 occludedMltCacheIdx;
+	u32 instDescIdx;
+	u32 expandedMltsIdx;
+	u32 viewBuffIdx;
+	u32 camIdx; // NOTE: for debug purposes
+	u32 hizTexIdx;
+	u32 hizSamplerIdx;
+	u32 drawCountIdx;
+	u32 drawCmsIdx;
+	u32	isLatePass;
 };
 
 struct vbuffer_params

@@ -31,10 +31,10 @@ float4 MeshletClayPassPsMain( in meshlet_vs_out vsOut ) : SV_Target
     float  rim  = pow( 1.0f - saturate( dot( n, V ) ), 2.0f );
     col += rim * 0.15f;
 
-    // Broad soft spec (Blinn-Phong-ish, low exponent)
+    // Broad soft spec ( Blinn-Phong-ish, low exponent )
     float3 H    = normalize( L + V );
     float  spec = pow( saturate( dot( n, H ) ), 16.0f );
     col += spec * 0.1f;
 
-	return float4( col, 1.0f );
+	return float4( col, 0.2f );
 }

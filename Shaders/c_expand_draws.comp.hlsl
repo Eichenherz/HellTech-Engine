@@ -64,7 +64,7 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
         }
 
         ldsWgMltTotalCount = total;
-        ldsWgOffset = BufferAtomicAdd( pushBlock.drawMltCounterIdx, ldsWgMltTotalCount );
+        ldsWgOffset = BufferAtomicAdd( pushBlock.expandedItemsCountIdx, ldsWgMltTotalCount );
 
 
         u32 exclusivePrefix = 0;
@@ -92,18 +92,17 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
         u32 globalMltId = visInst.meshletOffset + localMlt;
         gpu_meshlet mlt = pMlts[ globalMltId ];
 
-        u32 mltIdxCount = mlt.triCount * 3; // NOTE: * 3 bc it's an idx count;
-        draw_meshlet_command drawMltCmd = {
+        visible_meshlet visMlt = {
+            mlt.minAabb,
+            mlt.maxAabb,
             visInst.instId,
             globalMltId,
-            mltIdxCount,
-            1,
-            mlt.triOffset + visInst.triOffset,
+            mlt.triCount,
             mlt.vtxOffset + visInst.vtxOffset,
-            0
+            mlt.triOffset + visInst.triOffset
         };
 
         u32 writeSlotIdx = ldsWgOffset + perWgMltId;
-        BufferStore<draw_meshlet_command>( pushBlock.drawMltCmdsIdx, drawMltCmd, writeSlotIdx );
+        BufferStore<visible_meshlet>( pushBlock.expandedItemsBuffIdx, visMlt, writeSlotIdx );
 	}
 }
