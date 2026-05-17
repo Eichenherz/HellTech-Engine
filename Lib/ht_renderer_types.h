@@ -250,15 +250,20 @@ struct indirect_dispatcher_params
 struct meshlet_cull_params
 {
 	u32 mltCountIdx;
-	u32 occludedMltCacheIdx;
-	u32 instDescIdx;
 	u32 expandedMltsIdx;
+
+	u32 occludedMltBuffIdx;
+	u32 occludedMltCountIdx;
+
+	u32 instDescIdx;
 	u32 viewBuffIdx;
 	u32 camIdx; // NOTE: for debug purposes
 	u32 hizTexIdx;
 	u32 hizSamplerIdx;
+
 	u32 drawCountIdx;
 	u32 drawCmsIdx;
+
 	u32	isLatePass;
 };
 

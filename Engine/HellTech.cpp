@@ -32,18 +32,18 @@ using PFN_XMLookAtCoord = DirectX::XMMATRIX ( XM_CALLCONV * ) (
 struct virtual_camera
 {
 	static constexpr float3 CAM_FWD = { 0.0f, 0.0f, 1.0f };
-	static constexpr float3 CAM_UP = { 0.0f, 1.0f, 0.0f };
+	static constexpr float3 CAM_UP	= { 0.0f, 1.0f, 0.0f };
 
-	float4x4			proj			= {};
-	float4x4			prevView		= {};
-	float4x4			prevViewProj	= {};
-	float3				worldPos		= { 0.0f, 0.0f, 0.0f };
-
-	PFN_XMLookAtCoord	LookAt			= nullptr;
+	float4x4			proj		= {};
+	float4x4			view		= {};
+	float4x4			prevView	= {};
+	float3				worldPos	= { 0.0f, 0.0f, 0.0f };
+	float3				camViewDir	= {};
+	PFN_XMLookAtCoord	LookAt		= nullptr;
 
 	// NOTE: pitch must be in [-pi/2,pi/2]
-	float				pitch			= 0.0f;
-	float				yaw				= 0.0f;
+	float				pitch		= 0.0f;
+	float				yaw			= 0.0f;
 
 	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot )
 	{
@@ -54,31 +54,35 @@ struct virtual_camera
 
 		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 );
 		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
-		worldPos = DX_XMStoreFloat3( XMVectorAdd( XMLoadFloat3( &worldPos ), xmCamMove ) );
+		XMVECTOR xmWorldPos = XMVectorAdd( XMLoadFloat3( &worldPos ), xmCamMove );
+		XMVECTOR camLookAt = XMVector3Transform( DX_XMLoadFloat3( WORLD_FWD ),
+			XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
+		XMMATRIX xmView = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ),
+			DX_XMLoadFloat3( WORLD_UP ) );
+
+		prevView = view;
+		view = DX_XMStoreFloat4x4A( xmView );
+		worldPos = DX_XMStoreFloat3( xmWorldPos );
+		camViewDir = DX_XMStoreFloat3( XMVectorNegate( camLookAt ) );
 	}
 
 	inline view_data GetViewData() const
 	{
 		using namespace DirectX;
 
-		XMVECTOR xmWorldPos = XMLoadFloat3( &worldPos );
-
-		XMVECTOR camLookAt = XMVector3Transform( DX_XMLoadFloat3( WORLD_FWD ),
-			XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX view = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ),
-			DX_XMLoadFloat3( WORLD_UP ) );
-
 		XMMATRIX xmProj = XMLoadFloat4x4A( &proj );
+		XMMATRIX xmView = XMLoadFloat4x4A( &view );
+		XMMATRIX xmPrevView = XMLoadFloat4x4A( &prevView );
 
 		return {
 			.proj			= DX_XMStoreFloat4x4A( xmProj ),
-			.mainView		= DX_XMStoreFloat4x4A( view ),
-			//.prevView		= DX_XMStoreFloat4x4(),
-			.mainViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( view, xmProj ) ),
-			.prevViewProj	= prevViewProj,
+			.mainView		= view,
+			.prevView		= prevView,
+			.mainViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( xmView, xmProj ) ),
+			.prevViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( xmPrevView, xmProj ) ),
 			.worldPos		= worldPos,
 			// NOTE: this must not be negative for LH coords
-			.camViewDir		= DX_XMStoreFloat3( XMVectorNegate( camLookAt ) )
+			.camViewDir		= camViewDir
 		};
 	}
 };
@@ -401,20 +405,16 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	[[likely]]
 	if( !rndDbgFlags.freezeMainView )
 	{
-		debugCam.worldPos	= mainActiveCam.worldPos;
-		debugCam.pitch		= mainActiveCam.pitch;
-		debugCam.yaw		= mainActiveCam.yaw;
+		debugCam = mainActiveCam;
 	}
 
 	std::pmr::vector<view_data> views{ &virtualStack };
-
-	view_data mainViewData = mainActiveCam.GetViewData();
-	views.push_back( mainViewData );
-	mainActiveCam.prevViewProj = mainViewData.mainViewProj;
+	views.push_back( mainActiveCam.GetViewData() );
 
 	view_data dbgViewData = debugCam.GetViewData();
 	views.push_back( dbgViewData );
-	debugCam.prevViewProj = dbgViewData.mainViewProj;
+
+	float4x4 frustumMat = DX_XMStoreFloat4x4A( FrustumMatrixFromViewProj( XMLoadFloat4x4A( &dbgViewData.mainViewProj ) ) );
 
 	imGuiCtx.UpdateTimeAndInputState( ( float ) elapsedTime, inputState );
 
@@ -441,7 +441,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	frame_data frameData = {
 		.views 			= views,
 		.instances 		= drawables,
-		.frustTransf	= DX_XMStoreFloat4x4A( FrustumMatrixFromViewProj( XMLoadFloat4x4A( &dbgViewData.mainViewProj ) ) ),
+		.frustTransf	= frustumMat,
 		.elapsedSeconds = ( float ) elapsedTime,
 		.dbgDrawFlags	= rndDbgFlags
 	};
