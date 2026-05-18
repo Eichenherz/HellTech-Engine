@@ -267,6 +267,15 @@ struct meshlet_cull_params
 	u32	isLatePass;
 };
 
+struct culling_init_params
+{
+	u32 visibleInstCounterIdx;
+	u32 visibleMeshletsCounterIdx;
+	u32 occludedMeshletsCounterIdx;
+	u32 drawCounterIdx;
+	u32 isLatePass;
+};
+
 struct vbuffer_params
 {
 	u32 drawBuffIdx;
