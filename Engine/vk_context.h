@@ -17,6 +17,7 @@
 #include "vk_types.h"
 #include "vk_resources.h"
 #include "vk_utils.h"
+#include "vk_command_buffer.h"
 
 #include <array>
 #include <vector>
@@ -63,14 +64,6 @@ struct vk_swapchain_image
 	desc_hndl32     writeDescIdx;
 };
 
-enum class vk_queue_t : u32
-{
-	GFX = 0,
-	COPY,
-	//COMP,
-	COUNT
-};
-
 struct vk_queue
 {
 	copyable_srwlock    lock;
@@ -85,7 +78,7 @@ struct vk_cmd_pool_buff
 	VkCommandPool		pool;
 	VkCommandBuffer		buff;
 	vk_queue_t			parentQueueFamType;
-}; 
+};
 
 struct vk_cb_deletion
 {
@@ -163,6 +156,7 @@ struct vk_desc_binding
 	}
 };
 
+
 using PFN_VkShaderDestroyer = std::function<void( vk_shader* )>;
 using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestroyer>;
 
@@ -170,7 +164,7 @@ struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
 
-	// NOTE: we only alloc PERSISTENT resouces on other timelines; 
+	// NOTE: we only alloc PERSISTENT resources on other timelines;
 	// only the main GPU timeline is to alloc and free TRANSIENTS
 	std::vector<vk_resc_deletion>			resourceDeletionQueue;
 	std::vector<vk_desc_deletion>			descriptorDeletionQueue;
@@ -237,7 +231,6 @@ struct vk_context
 	}
 
 	// TODO: depth clamp ?
-	// VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 	VkPipeline CreateGfxPipeline(
 		std::span<const vk_gfx_shader_stage>	shaderStages,
 		std::span<const VkDynamicState>			dynamicStates,
@@ -256,6 +249,14 @@ struct vk_context
 		return sampler;
 	}
 
+	vk_query_pool CreateQueryPool( u32 queryCount, VkQueryType queryType );
+
+	VkResult ReadQueryPoolResults( const vk_query_pool& queryPool )
+	{
+		 return vkGetQueryPoolResults( device, queryPool.hndl, 0, queryPool.queryCount,
+		 	queryPool.queryCount * sizeof( u64 ), queryPool.queries, sizeof( u64 ), VK_QUERY_RESULT_64_BIT );
+
+	}
 	VkSemaphore CreateBinarySemaphore();
 
 	// NOTE: passing UINT64_MAX will block forever
@@ -291,7 +292,7 @@ struct vk_context
 		VkFenceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 
 		VkFence fence;
-		vkCreateFence( device, &ci, NULL, &fence );
+		vkCreateFence( device, &ci, nullptr, &fence );
 
 		return fence;
 	}
@@ -357,12 +358,12 @@ struct vk_context
 		return imgIdx;
 	}
 
-	vk_cmd_pool_buff AllocateCmdPoolAndBuff( vk_queue_t queueType );
+	vk_command_buffer AllocateCmdPoolAndBuff( vk_queue_t queueType );
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
 	void QueueSubmit(
 		const vk_queue&                  queue,
-		const vk_cmd_pool_buff&          cb,
+		const vk_command_buffer&         cb,
 		std::span<VkSemaphoreSubmitInfo> waits   = {},
 		std::span<VkSemaphoreSubmitInfo> signals = {},
 		VkFence                          vkFence = VK_NULL_HANDLE

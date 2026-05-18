@@ -717,6 +717,7 @@ struct culling_pass_args
 	desc_hndl32			dbgGpuInstCountBuffIdx;
 };
 
+// TODO: init counters in compute and use a list of occluded instances to feed the 2nd pass
 struct culling_pass
 {
 	vk_buffer			instOccludedCache;
@@ -1563,7 +1564,6 @@ struct ht_mesh_component
 
 struct virtual_frame
 {
-	//vk_gpu_timer gpuTimer;
 	VkSemaphore                 canGetImgSema;
 	vk_buffer	                viewData;
 
@@ -1571,6 +1571,9 @@ struct virtual_frame
 	//vk_buffer					gpuMaterialSlotBuff;
 
 	vk_buffer                   gpuInstances;
+
+	vk_query_pool				timestampQueryPool;
+	vk_query_pool				pipelineStatsQueryPool;
 
 	desc_hndl32                 viewDataIdx;
 	desc_hndl32					gpuMeshTableDesc;
@@ -1581,19 +1584,17 @@ struct virtual_frame
 	u32                         fifIdx; // NOTE: for debug
 };
 
-inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
+static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
 {
 	constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 	fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
 
-	VkSemaphore canGetImgSema = vkCtx.CreateBinarySemaphore();
 	vk_buffer viewData = vkCtx.CreateBuffer( {
 		.name			= std::data( name ),
 		.usageFlags		= usg,
 		.sizeInBytes	= sizeInBytes,
 		.usage			= buffer_usage::HOST_VISIBLE
 	} );
-	desc_hndl32 viewDataIdx = vkCtx.AllocDescriptorIdx( viewData );
 
 	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 1024 * sizeof( gpu_mesh );
 	fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
@@ -1604,7 +1605,6 @@ inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes
 		.sizeInBytes	= DEFAULT_MESH_TABLE_SIZE,
 		.usage			= buffer_usage::HOST_VISIBLE
 	} );
-	desc_hndl32 gpuMeshTableDesc = vkCtx.AllocDescriptorIdx( gpuMeshTable );
 
 	constexpr u64 DEFAULT_INST_COUNT = 10'000 * sizeof( instance_desc );
 	fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
@@ -1615,17 +1615,18 @@ inline static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes
 		.sizeInBytes	= DEFAULT_INST_COUNT,
 		.usage			= buffer_usage::HOST_VISIBLE
 	} );
-	desc_hndl32 instDesc = vkCtx.AllocDescriptorIdx( gpuInstances );
 
 	return {
-		.canGetImgSema		= canGetImgSema,
-		.viewData			= viewData,
-		.gpuMeshTable		= gpuMeshTable,
-		.gpuInstances		= gpuInstances,
-		.viewDataIdx		= viewDataIdx,
-		.gpuMeshTableDesc	= gpuMeshTableDesc,
-		.instDesc			= instDesc,
-		.fifIdx				= fifIdx,
+		.canGetImgSema			= vkCtx.CreateBinarySemaphore(),
+		.viewData				= viewData,
+		.gpuMeshTable			= gpuMeshTable,
+		.gpuInstances			= gpuInstances,
+		.timestampQueryPool 	= vkCtx.CreateQueryPool( 2, VK_QUERY_TYPE_TIMESTAMP ),
+		.pipelineStatsQueryPool = vkCtx.CreateQueryPool( 128, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
+		.viewDataIdx			= vkCtx.AllocDescriptorIdx( viewData ),
+		.gpuMeshTableDesc		= vkCtx.AllocDescriptorIdx( gpuMeshTable ),
+		.instDesc				= vkCtx.AllocDescriptorIdx( gpuInstances ),
+		.fifIdx					= fifIdx,
 	};
 }
 
@@ -1738,7 +1739,7 @@ struct renderer_context final : renderer_interface
 		colorUav = pVkCtx->AllocDescriptorIdx( { colorTarget.view, VK_IMAGE_LAYOUT_GENERAL } );
 	}
 
-	virtual void HostFrames( const frame_data& frameData, gpu_data& gpuData ) override;
+	virtual void HostFrames( const frame_data& frameData, virtual_arena& scratchArena, gpu_data& gpuData ) override;
 };
 
 std::unique_ptr<renderer_interface> MakeRenderer()
@@ -1863,7 +1864,7 @@ void renderer_context::UploadMeshes(
 ) {
 	stack_adaptor<virtual_arena> vaStack = { arena };
 
-	ht_stretchybuff<u8> stagingScratch = HtNewStretchyBuffFromMem<u8>( stagingBuff.hostVisible, stagingBuff.sizeInBytes  );
+	ht_stretchybuff<u8> stagingScratch = HtNewStretchyBuffFromMem<u8>( stagingBuff.hostVisible, stagingBuff.sizeInBytes );
 
 	u64 barrierCount = std::size( meshUploadReqs ) * 3;
 	u64 copyCmdCount = std::size( meshUploadReqs );
@@ -1913,8 +1914,9 @@ void renderer_context::UploadMeshes(
 		CopyScaffoldingLambda( megaGpuTriBuff, triRegionCopies, meshUpload.triAsBytes, htMesh.triAlloc.offset );
 	}
 
-	vk_cmd_pool_buff copyCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
-	vk_command_buffer copyCmdBuff = { copyCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
+	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+
+	copyCmdBuff.CmdBeginCmdBuffer();
 
 	copyCmdBuff.CmdPipelineBufferBarriers( buffInitCpyBarriers );
 
@@ -1926,10 +1928,9 @@ void renderer_context::UploadMeshes(
 
 	copyCmdBuff.CmdEndCmdBuffer();
 
-	pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCB );
+	pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff );
 
-	vk_cmd_pool_buff gfxCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
-	vk_command_buffer gfxCmdBuff = { gfxCB.buff, VK_NULL_HANDLE, VK_NULL_HANDLE };
+	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &vaStack };
 	buffTransferOwnershipBarriers.reserve( barrierCount );
@@ -1941,8 +1942,8 @@ void renderer_context::UploadMeshes(
 			pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
 	}
 
+	gfxCmdBuff.CmdBeginCmdBuffer();
 	gfxCmdBuff.CmdPipelineBufferBarriers( buffTransferOwnershipBarriers );
-
 	gfxCmdBuff.CmdEndCmdBuffer();
 
 	VkSemaphoreSubmitInfo waitCpyDone[] = { {
@@ -1952,7 +1953,7 @@ void renderer_context::UploadMeshes(
 		.stageMask	= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCB, waitCpyDone, {}, jobFences[ ( fence_hndl32 ) hRndUpload ] );
+	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCmdBuff, waitCpyDone, {}, jobFences[ ( fence_hndl32 ) hRndUpload ] );
 }
 
 u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const frame_data& frameData )
@@ -1986,8 +1987,10 @@ u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const fr
 	return ( u32 ) std::size( gpuInstList );
 }
 
-void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuData )
+void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& scratchArena, gpu_data& gpuData )
 {
+	stack_adaptor<virtual_arena> virtualStack = { scratchArena };
+
 	const u64 currentFrameIdx			= vFrameIdx++;
 	const u64 currentFrameInFlightIdx	= currentFrameIdx % framesInFlight;
 
@@ -2007,13 +2010,20 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 
 	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
+	if( VK_SUCCESS == pVkCtx->ReadQueryPoolResults( thisVFrame.timestampQueryPool ) )
+	{
+		gpuData.timeMs = thisVFrame.timestampQueryPool.ReadTimestampQuery();
+	}
+
 	u32 instCount = UpdateSceneData( thisVFrame, frameData );
 
-	HT_ASSERT( instCount <= MAX_INSTANCES_IN_SCENE );
-	// TODO: same for meshlets and the rest ????
+	vk_command_buffer thisFrameCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 
-	vk_cmd_pool_buff currentCB = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
-	vk_command_buffer thisFrameCmdBuffer = { currentCB.buff, pVkCtx->globalPipelineLayout, pVkCtx->descSet };
+	thisFrameCmdBuff.CmdBeginCmdBuffer();
+
+	thisFrameCmdBuff.CmdResetQueryPool( thisVFrame.timestampQueryPool );
+
+	thisFrameCmdBuff.CmdWriteTimestamp( thisVFrame.timestampQueryPool, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0 );
 
 	static bool initResources = false;
 	if( !initResources )
@@ -2037,22 +2047,21 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			.triAddr = megaGpuTriBuff.devicePointer
 		};
 
-		imguiPass.CreateUploadFontAtlasSync( *pVkCtx, thisFrameCmdBuffer, currentFrameIdx );
+		imguiPass.CreateUploadFontAtlasSync( *pVkCtx, thisFrameCmdBuff, currentFrameIdx );
 
-		// TODO: add UploadDataSync function in the renderer
 		cullingPass.InitSceneDependentData( *pVkCtx, MAX_INSTANCES_IN_SCENE );
-
+		// TODO: add UploadDataSync function in the renderer
 		dbgPass.InitAndUploadDebugGeometry( *pVkCtx );
 
 		rscStateTracker.UseBuffer( tonemappingPass.averageLuminanceBuffer, HT_TRANSFER_WRITE );
 
-		thisFrameCmdBuffer.CmdFillBuffer( tonemappingPass.averageLuminanceBuffer, 0u );
+		thisFrameCmdBuff.CmdFillBuffer( tonemappingPass.averageLuminanceBuffer, 0u );
 
 		rscStateTracker.UseBuffer( tonemappingPass.averageLuminanceBuffer, HT_COMPUTE_READWRITE );
 
 		rscStateTracker.UseImage( hzbPass.hzb, {}, VK_IMAGE_LAYOUT_UNDEFINED );
 
-		rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
+		rscStateTracker.FlushBarriers( thisFrameCmdBuff );
 
 		initResources = true;
 	}
@@ -2060,7 +2069,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 	pVkCtx->FlushPendingDescriptorUpdates();
 
 
-	dbgPass.ResetDrawCounters( thisFrameCmdBuffer, rscStateTracker );
+	dbgPass.ResetDrawCounters( thisFrameCmdBuff, rscStateTracker );
 
 	const culling_pass_args cullPassArgs = {
 		.dbgGpuInstBuff			= dbgPass.gpuInstBuff,
@@ -2076,7 +2085,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		.dbgGpuInstBuffIdx		= dbgPass.gpuInstBuffIdx,
 		.dbgGpuInstCountBuffIdx = dbgPass.gpuInstCountBuffIdx
 	};
-	cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, cullPassArgs, false );
+	cullingPass.Execute( thisFrameCmdBuff, rscStateTracker, cullPassArgs, false );
 
 	const vbuffer_pass_args vbuffPassArgs = {
 		.depthTarget			= depthTarget,
@@ -2101,16 +2110,16 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		.instBuffIdx			= thisVFrame.instDesc,
 		.camIdx					= thisVFrame.viewDataIdx
 	};
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
+	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
 
-	hzbPass.Execute( thisFrameCmdBuffer, rscStateTracker, depthTarget, depthSrv );
+	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
-	cullingPass.Execute( thisFrameCmdBuffer, rscStateTracker, cullPassArgs, true );
+	cullingPass.Execute( thisFrameCmdBuff, rscStateTracker, cullPassArgs, true );
 
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
+	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
 	//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, vbuffPassArgs, true );
 
-	hzbPass.Execute( thisFrameCmdBuffer, rscStateTracker, depthTarget, depthSrv );
+	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
 	[[unlikely]]
 	if( !frameData.dbgDrawFlags.vBuffPixelHash )
@@ -2135,7 +2144,7 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 	[[unlikely]]
 	if( frameData.dbgDrawFlags.dbgDraw )
 	{
-		dbgPass.DrawWireframesGPU( thisFrameCmdBuffer, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
+		dbgPass.DrawWireframesGPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
 	}
 
 	[[unlikely]]
@@ -2148,15 +2157,15 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 			.minAabb	= BOX_MIN,
 			.maxAabb	= BOX_MAX
 		} );
-		dbgPass.DrawWireframeCPU( thisFrameCmdBuffer, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
+		dbgPass.DrawWireframeCPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
 	}
 
 	rscStateTracker.UseImage( colorTarget, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
-	rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
+	rscStateTracker.FlushBarriers( thisFrameCmdBuff );
 
-	imguiPass.DrawUiPass( *pVkCtx, thisFrameCmdBuffer.hndl, colorTarget, currentFrameIdx, currentFrameInFlightIdx );
+	imguiPass.DrawUiPass( *pVkCtx, thisFrameCmdBuff.hndl, colorTarget, currentFrameIdx, currentFrameInFlightIdx );
 
-	// NOTE: init swapchian
+	// NOTE: init swapchain
 	u32 scImgIdx = pVkCtx->AcquireNextSwapchainImageBlocking( thisVFrame.canGetImgSema );
 	const vk_swapchain_image& scImg = pVkCtx->scImgs[ scImgIdx ];
 
@@ -2164,21 +2173,23 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 	 constexpr VkPipelineStageFlags2 execDep =
 	 	VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
 	rscStateTracker.UseImage( scImg.img, { 0, execDep }, VK_IMAGE_LAYOUT_UNDEFINED );
-	rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
+	rscStateTracker.FlushBarriers( thisFrameCmdBuff );
 
 	rscStateTracker.UseImage( colorTarget, HT_TRANSFER_READ, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL  );
 	rscStateTracker.UseImage( scImg.img, HT_TRANSFER_WRITE, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL  );
-	rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
+	rscStateTracker.FlushBarriers( thisFrameCmdBuff );
 
-	thisFrameCmdBuffer.CmdCopyImageSameProps( colorTarget, scImg.img );
+	thisFrameCmdBuff.CmdCopyImageSameProps( colorTarget, scImg.img );
 
 	rscStateTracker.UseImage( scImg.img, { 0, 0 }, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR );
-	rscStateTracker.FlushBarriers( thisFrameCmdBuffer );
+	rscStateTracker.FlushBarriers( thisFrameCmdBuff );
 
 	// NOTE: remove sc image to avoid handling this logic inside the tracker
 	rscStateTracker.StopTrackingResource( ( u64 ) scImg.img.hndl );
 
-	thisFrameCmdBuffer.CmdEndCmdBuffer();
+	thisFrameCmdBuff.CmdWriteTimestamp( thisVFrame.timestampQueryPool, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 1 );
+
+	thisFrameCmdBuff.CmdEndCmdBuffer();
 
 	VkSemaphoreSubmitInfo waitScImgAcquire[] = { {
 		.sType		= VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
@@ -2194,6 +2205,6 @@ void renderer_context::HostFrames( const frame_data& frameData, gpu_data& gpuDat
 		pVkCtx->gpuFrameTimeline.GetSignalNextPoint( VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT )
 	};
 
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, currentCB, waitScImgAcquire, signalRenderFinished );
+	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, thisFrameCmdBuff, waitScImgAcquire, signalRenderFinished );
 	pVkCtx->QueuePresent( pVkCtx->gfxQueue, scImgIdx );
 }

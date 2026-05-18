@@ -289,10 +289,11 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	virtual_arena scratchArena = { 10 * MB };
 
 	job_system_ctx* jobSystemCtx = ArenaNew<job_system_ctx>( platformArena );
-	ht_stretchybuff<sys_thread_data> threadDataBuff  = HtANewStretchyBuffFromArena<sys_thread_data>(
+	ht_stretchybuff<sys_thread_data> threadDataBuff  = HtNewStretchyBuffFromArena<sys_thread_data>(
 		platformArena, NUM_CORES );
-	ht_stretchybuff<sys_thread> threads = HtANewStretchyBuffFromArena<sys_thread>( platformArena, NUM_CORES );
-	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", jobSystemCtx, threadDataBuff ) );
+	ht_stretchybuff<sys_thread> threads = HtNewStretchyBuffFromArena<sys_thread>( platformArena, NUM_CORES );
+	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", jobSystemCtx,
+		threadDataBuff ) );
 
 	helltech_interface* pHelltech = MakeHelltech( platformArena );
 

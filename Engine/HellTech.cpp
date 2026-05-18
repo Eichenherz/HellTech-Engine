@@ -434,7 +434,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	// here we must the drawables instances
 
-	engineStats = { .gpuMs = 0.0f, .cpuFrameMs = ( float )( elapsedTime * 1000.0 ) };
+	engineStats = { .gpuMs = gpuData.timeMs, .cpuFrameMs = ( float )( elapsedTime * 1000.0 ) };
 
 	ImGuiRenderUI( imguiWnds );
 
@@ -446,10 +446,10 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		.dbgDrawFlags	= rndDbgFlags
 	};
 
-	pRenderer->HostFrames( frameData, gpuData );
+	pRenderer->HostFrames( frameData, scratchArena, gpuData );
 }
 
 helltech_interface* MakeHelltech( virtual_arena& arena )
 {
-	return ( helltech_interface* ) ArenaNew<helltech>( arena );
+	return ArenaNew<helltech>( arena );
 }

@@ -100,5 +100,33 @@ enum vk_desc_binding_t : u32
 	COUNT
 };
 
+enum class vk_queue_t : u32
+{
+	GFX = 0,
+	COPY,
+	//COMP,
+	COUNT
+};
+
+struct vk_query_pool
+{
+	VkQueryPool hndl;
+	VkQueryType type;
+	mutable u64	queries[ 128 ];
+	u32         queryCount;
+	float       timestampPeriod;
+
+	// TODO: redo
+	inline float ReadTimestampQuery() const
+	{
+		HT_ASSERT( VK_QUERY_TYPE_TIMESTAMP == type );
+
+		constexpr float nsToMs = 1.0e-6f;
+		return float( queries[ 1 ] - queries[ 0 ] ) * timestampPeriod * nsToMs;
+	}
+};
+
+
+
 #endif // !__VK_TYPES_H__
 

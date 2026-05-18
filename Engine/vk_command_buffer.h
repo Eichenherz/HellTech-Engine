@@ -38,10 +38,8 @@ struct vk_scoped_label
 {
 	VkCommandBuffer cmdBuff;
 
-	inline vk_scoped_label( VkCommandBuffer _cmdBuff, const char* labelName, float4 col )
+	vk_scoped_label( VkCommandBuffer cmdBuff, const char* labelName, float4 col ) : cmdBuff{ cmdBuff }
 	{
-		this->cmdBuff = _cmdBuff;
-
 		VkDebugUtilsLabelEXT dbgLabel = {
 			.sType		= VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
 			.pLabelName = labelName,
@@ -49,7 +47,7 @@ struct vk_scoped_label
 		};
 		vkCmdBeginDebugUtilsLabelEXT( cmdBuff, &dbgLabel );
 	}
-	inline ~vk_scoped_label()
+	~vk_scoped_label()
 	{
 		vkCmdEndDebugUtilsLabelEXT( cmdBuff );
 	}
@@ -76,36 +74,67 @@ struct vk_scoped_renderpass
 {
 	VkCommandBuffer cmdBuff;
 
-	inline vk_scoped_renderpass( VkCommandBuffer _cmdBuff, const VkRenderingInfo& renderInfo ) 
+	vk_scoped_renderpass( VkCommandBuffer _cmdBuff, const VkRenderingInfo& renderInfo )
 	{
 		this->cmdBuff = _cmdBuff;
 		vkCmdBeginRendering( cmdBuff, &renderInfo );
 	}
-	inline ~vk_scoped_renderpass()
+	~vk_scoped_renderpass()
 	{
 		vkCmdEndRendering( cmdBuff );
 	}
 };
 
+struct vk_scoped_timestamp
+{
+	VkCommandBuffer 				cmdBuff;
+	VkQueryPool						queryPool;
+	VkPipelineStageFlagBits2		stageBegin;
+	VkPipelineStageFlagBits2		stageEnd;
+	u32								queryIdx;
+
+	vk_scoped_timestamp(
+		VkCommandBuffer				cmdBuff,
+		VkQueryPool					queryPool,
+		VkPipelineStageFlagBits2	stageBegin,
+		VkPipelineStageFlagBits2	stageEnd,
+		u32							queryIdx
+	) : cmdBuff{ cmdBuff },
+		queryPool{ queryPool },
+		stageBegin{ stageBegin },
+		stageEnd{ stageEnd },
+		queryIdx{ queryIdx }
+	{
+		vkCmdWriteTimestamp2( cmdBuff, stageBegin, queryPool, queryIdx );
+	}
+
+	~vk_scoped_timestamp()
+	{
+		vkCmdWriteTimestamp2( cmdBuff, stageEnd, queryPool, queryIdx + 1 );
+	}
+};
+
 struct vk_command_buffer
 {
-	VkCommandBuffer		hndl;
-	VkPipelineLayout	bindlessPipelineLayout;
-	VkDescriptorSet		bindlessDescriptorSet;
-	VkPipelineBindPoint currentBindPoint;
+	VkCommandPool		cmdPool					= VK_NULL_HANDLE;
+	VkCommandBuffer		hndl					= VK_NULL_HANDLE;
+	VkPipelineLayout	bindlessPipelineLayout 	= VK_NULL_HANDLE;
+	VkDescriptorSet		bindlessDescriptorSet 	= VK_NULL_HANDLE;
+	VkPipelineBindPoint currentBindPoint		= { VK_PIPELINE_BIND_POINT_MAX_ENUM };
+	vk_queue_t			parentQueueFamType		= vk_queue_t::COUNT;
 
-	vk_command_buffer( VkCommandBuffer cmdBuff, VkPipelineLayout pipelineLayout, VkDescriptorSet descriptorSet )
+	void CmdBeginCmdBuffer()
 	{
-		this->hndl						= cmdBuff;
-		this->bindlessPipelineLayout	= pipelineLayout;
-		this->bindlessDescriptorSet		= descriptorSet;
-		this->currentBindPoint			= VK_PIPELINE_BIND_POINT_MAX_ENUM;
-
-		VkCommandBufferBeginInfo cmdBufBegInfo = { 
+		VkCommandBufferBeginInfo cmdBufBegInfo = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 		};
-		vkBeginCommandBuffer( hndl, &cmdBufBegInfo );
+		VK_CHECK( vkBeginCommandBuffer( hndl, &cmdBufBegInfo ) );
+	}
+
+	void CmdEndCmdBuffer()
+	{
+		VK_CHECK( vkEndCommandBuffer( hndl ) );
 	}
 
 	inline vk_scoped_label CmdIssueScopedLabel( const char* labelName, float4 col = {} )
@@ -363,9 +392,14 @@ struct vk_command_buffer
 		vkCmdFillBuffer( hndl, vkBuffer.hndl, 0, vkBuffer.sizeInBytes, fillValue );
 	}
 
-	void CmdEndCmdBuffer()
+	void CmdResetQueryPool( const vk_query_pool& queryPool )
 	{
-		VK_CHECK( vkEndCommandBuffer( hndl ) );
+		vkCmdResetQueryPool( hndl, queryPool.hndl, 0, queryPool.queryCount );
+	}
+
+	void CmdWriteTimestamp( const vk_query_pool& queryPool, VkPipelineStageFlagBits2 stage, u32 queryIdx )
+	{
+		vkCmdWriteTimestamp2( hndl, stage, queryPool.hndl, queryIdx );
 	}
 };
 

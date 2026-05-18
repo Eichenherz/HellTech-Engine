@@ -55,7 +55,7 @@ struct renderer_interface
     virtual HJOBFENCE32     AllocJobFence() = 0;
     virtual bool            PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) = 0;
     virtual void		    UploadMeshes( HJOBFENCE32, std::span<const mesh_upload_req>, virtual_arena& ) = 0;
-    virtual void		    HostFrames( const frame_data&, gpu_data& ) = 0;
+    virtual void		    HostFrames( const frame_data&, virtual_arena&, gpu_data& ) = 0;
 };
 
 std::unique_ptr<renderer_interface> MakeRenderer();
