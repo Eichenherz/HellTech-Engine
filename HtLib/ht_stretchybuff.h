@@ -69,7 +69,7 @@ inline ht_stretchybuff<T> HtNewStretchyBuffFromMem( void* mem, u64 cap )
 }
 
 template<typename T, arena_t Arena>
-inline ht_stretchybuff<T> HtANewStretchyBuffFromArena( Arena& arena, u64 count )
+inline ht_stretchybuff<T> HtNewStretchyBuffFromArena( Arena& arena, u64 count )
 {
     T* mem = new ( arena.Alloc( sizeof( T ) * count, alignof( T ) ) ) T[ count ];
     return { .elems = mem, .currentCap = count };
