@@ -81,7 +81,7 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
     ldsWgThreadMltOffset[ groupFlatIdx ] = ldsWavePrefix[ groupFlatIdx / WaveGetLaneCount() ] + waveMltOffset;
     GroupMemoryBarrierWithGroupSync();
 
-	device_addr<gpu_meshlet> pMlts = { gGlobData.mltAddr };
+	device_ptr<gpu_meshlet> pMlts = { gGlobData.mltAddr };
 	// NOTE: coop write
 	for( u32 perWgMltId = groupFlatIdx; perWgMltId < ldsWgMltTotalCount; perWgMltId += WG_SIZE )
 	{

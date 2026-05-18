@@ -154,21 +154,14 @@ u32 SetBitAtIdx( u32 buffIdx, u32 idx )
 static const global_data gGlobData = BufferLoad<global_data>( GLOB_DATA_BINDING_SLOT );
 
 template<typename T>
-struct device_addr
+struct device_ptr
 {
 	u64 addr;
 
-	T operator[]( u64 idx )
-	{
-		return vk::RawBufferLoad<T>( addr + idx * sizeof( T ) );
-	}
-};
+	T operator[]( u64 idx ) { return vk::BufferPointer<T>( addr + idx * sizeof( T ) ).Get(); }
 
-template<typename T>
-void DeviceAddrStore( u64 addr, u64 idx, T value )
-{
-	vk::RawBufferStore<T>( addr + idx * sizeof( T ), value );
-}
+	void Store( u64 idx, T val ) { vk::BufferPointer<T>( addr + idx * sizeof( T ) ).Get() = val; }
+};
 
 float HTLoadCoherentImageFloat( u32 imgIdx, i32x2 pix )
 {
@@ -184,7 +177,7 @@ void HTStoreCoherentImageFloat( u32 imgIdx, i32x2 pix, float val )
 
 u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
 {
-	device_addr<u32> triBuff = { gGlobData.triAddr };
+	device_ptr<u32> triBuff = { gGlobData.triAddr };
 	u64 lo = triBuff[ globalIdxInBytes >> 2 ];
 	u64 hi = triBuff[ ( globalIdxInBytes >> 2 ) + 1 ];
 	u64 shift = ( globalIdxInBytes & 3 ) * 8;

@@ -12,7 +12,7 @@ void DbgBoxVsMain(
     out float4  colOut  : COLOR0
 )
 {
-    dbg_aabb_instance dbgInst = device_addr<dbg_aabb_instance>( pushBlock.instBuffAddr )[ instId ];
+    dbg_aabb_instance dbgInst = device_ptr<dbg_aabb_instance>( pushBlock.instBuffAddr )[ instId ];
 
     // NOTE: aabb must be in [-0.5f, 0.5f]
     float3 center = ( dbgInst.maxAabb + dbgInst.minAabb ) * 0.5f;
@@ -29,7 +29,7 @@ void DbgBoxVsMain(
 
     float4x4 mvp = mul( mul( aabbTransf, dbgInst.toWorld ), cam.mainViewProj );
 
-    dbg_vertex dbgVtx = device_addr<dbg_vertex>( pushBlock.vtxBuffAddr )[ vtxId ];
+    dbg_vertex dbgVtx = device_ptr<dbg_vertex>( pushBlock.vtxBuffAddr )[ vtxId ];
 
     float4 pos = mul( float4( dbgVtx.pos, 1.0f ), mvp );
 

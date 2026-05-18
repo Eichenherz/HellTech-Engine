@@ -20,7 +20,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     vbuffer_pixel vBuffPixel = VBufferUnpackPixel( rawPixel );
 
-    device_addr<gpu_meshlet> pGpuMeshlets = { gGlobData.mltAddr };
+    device_ptr<gpu_meshlet> pGpuMeshlets = { gGlobData.mltAddr };
     gpu_meshlet mlt = pGpuMeshlets[ vBuffPixel.mltId ];
     gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instBuffIdx, vBuffPixel.instId );
     // NOTE: this is fucking stupid but we'll see later
@@ -31,7 +31,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     u32x3 tri = FetchTriangleFromMegaBuff( triIdx ) + vtxOffset;
 
-    device_addr<packed_vtx> vtxBuff = { gGlobData.vtxAddr };
+    device_ptr<packed_vtx> vtxBuff = { gGlobData.vtxAddr };
     packed_vtx v0 = vtxBuff[ tri.x ];
     packed_vtx v1 = vtxBuff[ tri.y ];
     packed_vtx v2 = vtxBuff[ tri.z ];
@@ -66,7 +66,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     // NOTE: Perspective-correct — need per-vertex W
     float3 invW = float3( 1.0f / clip0.w, 1.0f / clip1.w, 1.0f / clip2.w );
     float3 baryW = ndcBary * invW;
-    float3 perspBary  = baryW / ( baryW.x + baryW.y + baryW.z );
+    float3 perspBary = baryW / ( baryW.x + baryW.y + baryW.z );
 
     float3 n0 = DecodeOctaNormal( float2( v0.octNX, v0.octNY ) );
     float3 n1 = DecodeOctaNormal( float2( v1.octNX, v1.octNY ) );

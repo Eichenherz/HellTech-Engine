@@ -23,7 +23,7 @@ float4 DepthPrepassVsMain(
     view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
     float4x4 mvp = mul( toWorld, cam.mainViewProj );
 
-    device_addr<packed_vtx> pVtxBuff = { gGlobData.vtxAddr };
+    device_ptr<packed_vtx> pVtxBuff = { gGlobData.vtxAddr };
     packed_vtx vtx = pVtxBuff[ vtxID ];
     return mul( float4( vtx.px, vtx.py, vtx.pz, 1.0f ), mvp );
 }
