@@ -217,7 +217,9 @@ struct visible_meshlet
 struct culling_params
 {
 	u32 instCount;
-	u32 occludedInstCacheIdx;
+	u32 occludedInstCounterIdx; // NOTE: will be used in the 2nd pass
+
+	u32 occludedInstBuffIdx;
 	u32 instDescIdx;
 	u32 meshDescIdx;
 	u32 viewBuffIdx;
@@ -227,9 +229,6 @@ struct culling_params
 	u32 visibleItemsCountIdx;
 	u32 visibleItemsIdx;
 	u32	isLatePass;
-
-	u32 dbgInstCountIdx;
-	u32 dbgInstBuffIdx;
 };
 // TODO: rename
 struct draw_expansion_params
@@ -270,9 +269,13 @@ struct meshlet_cull_params
 struct culling_init_params
 {
 	u32 visibleInstCounterIdx;
+	u32 occludedInstCounterIdx;
 	u32 visibleMeshletsCounterIdx;
 	u32 occludedMeshletsCounterIdx;
 	u32 drawCounterIdx;
+	u32 cullShaderWorkGrX;
+	u32 dispatchCmdBuffIdx;
+	u32 instCount;
 	u32 isLatePass;
 };
 

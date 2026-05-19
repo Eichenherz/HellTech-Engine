@@ -619,7 +619,7 @@ struct debug_draw_passes
 			cmdBuff.CmdBindPipelineAndBindlessDesc( drawAsLines, VK_PIPELINE_BIND_POINT_GRAPHICS );
 
 			dbg_box_params pushBlock = {
-				.instBuffAddr	= gpuInstBuff.devicePointer, // NOTE: it's GPU !!!!
+				.instBuffAddr	= gpuInstBuff.devicePointer, // NOTE: it's the GPU assembled inst buffer !!!!
 				.vtxBuffAddr	= vtxBuff.devicePointer,
 				.camIdx			= camIdx.slot
 			};
@@ -658,7 +658,7 @@ struct debug_draw_passes
 		cmdBuff.CmdBindPipelineAndBindlessDesc( drawAsLines, VK_PIPELINE_BIND_POINT_GRAPHICS );
 
 		dbg_box_params pushBlock = {
-			.instBuffAddr	= cpuInstBuff.devicePointer, // NOTE: it's CPU !!!!
+			.instBuffAddr	= cpuInstBuff.devicePointer, // NOTE: it's the CPU assembled buffer !!!!
 			.vtxBuffAddr	= vtxBuff.devicePointer,
 			.camIdx			= camIdx.slot
 		};
@@ -717,16 +717,16 @@ struct culling_pass_args
 	desc_hndl32			dbgGpuInstCountBuffIdx;
 };
 
-// TODO: init counters in compute and use a list of occluded instances to feed the 2nd pass
+// TODO: use a list of occluded instances to feed the 2nd pass
 struct culling_pass
 {
-	vk_buffer			instOccludedCache;
-
 	vk_buffer			visibleInstances;
 	vk_buffer			visibleInstCounter;
 	vk_buffer			visibleMeshlets;
 	vk_buffer			visibleMeshletsCounter;
 
+	vk_buffer			occludedInstances;
+	vk_buffer			occludedInstancesCounter;
 	vk_buffer			occludedMeshlets;
 	vk_buffer			occludedMeshletsCounter;
 
@@ -741,13 +741,13 @@ struct culling_pass
 	vk_compute_pipeline	meshletCullPass;
 	vk_compute_pipeline	cullingInitPass;
 
-	desc_hndl32			instOccludedCacheIdx;
-
 	desc_hndl32			visibleInstIdx;
 	desc_hndl32			visibleInstCounterIdx;
 	desc_hndl32			visibleMeshletsIdx;
 	desc_hndl32			visibleMeshletsCounterIdx;
 
+	desc_hndl32			occludedInstIdx;
+	desc_hndl32			occludedInstCounterIdx;
 	desc_hndl32			occludedMeshletsIdx;
 	desc_hndl32			occludedMeshletsCounterIdx;
 
@@ -805,14 +805,40 @@ struct culling_pass
 		} );
 		dispatchIndirectIdx = dc.AllocDescriptorIdx( dispatchIndirect );
 
+		visibleInstances = dc.CreateBuffer( {
+			.name			= "Buff_VisibleInstances",
+			.usageFlags		= usgStorageAndBDA,
+			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( visible_instance ),
+			.usage			= buffer_usage::GPU_ONLY
+		} );
+
+		visibleInstIdx = dc.AllocDescriptorIdx( visibleInstances );
 
 		visibleInstCounter = dc.CreateBuffer( {
 			.name			= "Buff_VisibleInstCounter",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
 			.usage			= buffer_usage::GPU_ONLY
-		} ); 
+		} );
+
 		visibleInstCounterIdx = dc.AllocDescriptorIdx( visibleInstCounter );
+
+		occludedInstances = dc.CreateBuffer( {
+			.name			= "Buff_OccludedInstances",
+			.usageFlags		= usgStorageAndBDA,
+			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( u32 ),
+			.usage			= buffer_usage::GPU_ONLY
+		} );
+
+		occludedInstIdx = dc.AllocDescriptorIdx( occludedInstances );
+
+		occludedInstancesCounter = dc.CreateBuffer( {
+			.name			= "Buff_OccludedInstCounter",
+			.usageFlags		= usgStorageAndBDA,
+			.sizeInBytes	= 1 * sizeof( u32 ),
+			.usage			= buffer_usage::GPU_ONLY
+		} );
+		occludedInstCounterIdx = dc.AllocDescriptorIdx( occludedInstancesCounter );
 
 		// NOTE: these are hard capped
 		visibleMeshlets = dc.CreateBuffer( {
@@ -844,24 +870,6 @@ struct culling_pass
 		occludedMeshletsCounterIdx = dc.AllocDescriptorIdx( occludedMeshletsCounter );
 	}
 
-	void InitSceneDependentData( vk_context& dc, u32 instancesUpperBound )
-	{
-		constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-		instOccludedCache = dc.CreateBuffer( {
-			.name			= "Buff_InstanceOccludedCache",
-			.usageFlags		= usg | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			.sizeInBytes	= ( ( instancesUpperBound + BitCount<u32>() - 1 ) / BitCount<u32>() ) * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY } );
-		instOccludedCacheIdx = dc.AllocDescriptorIdx( instOccludedCache );
-
-		visibleInstances = dc.CreateBuffer( {
-			.name			= "Buff_VisibleInstArgs",
-			.usageFlags		= usg,
-			.sizeInBytes	= instancesUpperBound * sizeof( visible_instance ),
-			.usage			= buffer_usage::GPU_ONLY } );
-		visibleInstIdx = dc.AllocDescriptorIdx( visibleInstances );
-	}
-
 	void Execute(
 		vk_command_buffer&			cmdBuff,
 		vk_rsc_state_tracker&		rscTracker,
@@ -869,34 +877,24 @@ struct culling_pass
 		bool						latePass
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Cull Pass",{} );
-		// TODO: add shader pass that clears the counters and dispatches the instance stuff
-		if( !latePass )
-		{
-			rscTracker.UseBuffer( instOccludedCache, HT_TRANSFER_WRITE );
-		}
 
-		rscTracker.FlushBarriers( cmdBuff );
+		// TODO: recheck these
+		rscTracker.UseBuffer( visibleInstCounter, HT_COMPUTE_READWRITE );
+		rscTracker.UseBuffer( visibleInstances, HT_COMPUTE_READWRITE );
 
+		rscTracker.UseBuffer( occludedInstances, HT_COMPUTE_READWRITE );
+		rscTracker.UseBuffer( occludedInstancesCounter, HT_COMPUTE_READWRITE );
 
-		if( !latePass )
-		{
-			cmdBuff.CmdFillBuffer( instOccludedCache, 0u );
-		}
+		rscTracker.UseBuffer( visibleMeshlets, HT_COMPUTE_READWRITE );
+		rscTracker.UseBuffer( visibleMeshletsCounter, HT_COMPUTE_READWRITE );
 
-		rscTracker.UseBuffer( instOccludedCache, HT_COMPUTE_READWRITE );
 		rscTracker.UseBuffer( occludedMeshlets, HT_COMPUTE_READWRITE );
 		rscTracker.UseBuffer( occludedMeshletsCounter, HT_COMPUTE_READWRITE );
 
 		rscTracker.UseBuffer( drawCmds, HT_COMPUTE_WRITE );
-		rscTracker.UseBuffer( drawCounter, HT_COMPUTE_READWRITE );
+		rscTracker.UseBuffer( drawCounter, HT_COMPUTE_WRITE );
 
 		rscTracker.UseBuffer( dispatchIndirect, HT_COMPUTE_WRITE );
-
-		rscTracker.UseBuffer( visibleInstCounter, HT_COMPUTE_WRITE );
-		rscTracker.UseBuffer( visibleInstances, HT_COMPUTE_WRITE );
-
-		rscTracker.UseBuffer( visibleMeshlets, HT_COMPUTE_WRITE );
-		rscTracker.UseBuffer( visibleMeshletsCounter, HT_COMPUTE_WRITE );
 
 		rscTracker.UseBuffer( args.dbgGpuInstBuff, HT_COMPUTE_WRITE );
 		rscTracker.UseBuffer( args.dbgGpuInstCountBuff, HT_COMPUTE_WRITE );
@@ -927,18 +925,23 @@ struct culling_pass
 		{
 			culling_init_params pushBlock = {
 				.visibleInstCounterIdx		= visibleInstCounterIdx.slot,
+				.occludedInstCounterIdx		= occludedInstCounterIdx.slot,
 				.visibleMeshletsCounterIdx	= visibleMeshletsCounterIdx.slot,
 				.occludedMeshletsCounterIdx = occludedMeshletsCounterIdx.slot,
 				.drawCounterIdx				= drawCounterIdx.slot,
+				.cullShaderWorkGrX			= instCullPass.groupSize.x,
+				.dispatchCmdBuffIdx			= dispatchIndirectIdx.slot,
+				.instCount					= args.instCount,
 				.isLatePass					= latePass
 			};
 			cmdBuff.DispatchCompute( cullingInitPass, pushBlock, { 1, 1, 1 } );
 		}
-		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
+		cmdBuff.CmdPipelineMemoryBarriers( computeToIndirectComputeExecDependency );
 		{
 			culling_params pushBlock = {
 				.instCount				= args.instCount,
-				.occludedInstCacheIdx	= instOccludedCacheIdx.slot,
+				.occludedInstCounterIdx	= occludedInstCounterIdx.slot,
+				.occludedInstBuffIdx	= occludedInstIdx.slot,
 				.instDescIdx			= args.instBuffIdx.slot,
 				.meshDescIdx			= args.meshTableIdx.slot,
 				.viewBuffIdx			= args.viewBuffIdx.slot,
@@ -947,12 +950,9 @@ struct culling_pass
 				.hizSamplerIdx			= args.samplerDesc.slot,
 				.visibleItemsCountIdx	= visibleInstCounterIdx.slot,
 				.visibleItemsIdx		= visibleInstIdx.slot,
-				.isLatePass				= latePass,
-
-				.dbgInstCountIdx		= args.dbgGpuInstCountBuffIdx.slot,
-				.dbgInstBuffIdx			= args.dbgGpuInstBuffIdx.slot
+				.isLatePass				= latePass
 			};
-			cmdBuff.DispatchCompute( instCullPass, pushBlock, { args.instCount, 1, 1 } );
+			cmdBuff.DispatchComputeIndirect( instCullPass, pushBlock, dispatchIndirect );
 		}
 		cmdBuff.CmdPipelineMemoryBarriers( computeToComputeExecDependency );
 		{
@@ -986,10 +986,10 @@ struct culling_pass
 		{
 			meshlet_cull_params pushBlock = {
 				.mltCountIdx			= !latePass ? visibleMeshletsCounterIdx.slot	: occludedMeshletsCounterIdx.slot,
-				.expandedMltsIdx		= !latePass ? visibleMeshletsIdx.slot		: occludedMeshletsIdx.slot,
+				.expandedMltsIdx		= !latePass ? visibleMeshletsIdx.slot			: occludedMeshletsIdx.slot,
 
-				.occludedMltBuffIdx		= !latePass ? occludedMeshletsIdx.slot		: ~u32( 0 ),
-				.occludedMltCountIdx	= !latePass ? occludedMeshletsCounterIdx.slot : ~u32( 0 ),
+				.occludedMltBuffIdx		= !latePass ? occludedMeshletsIdx.slot			: ~u32( 0 ),
+				.occludedMltCountIdx	= !latePass ? occludedMeshletsCounterIdx.slot	: ~u32( 0 ),
 
 				.instDescIdx			= args.instBuffIdx.slot,
 				.viewBuffIdx			= args.viewBuffIdx.slot,
@@ -2057,7 +2057,6 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 		imguiPass.CreateUploadFontAtlasSync( *pVkCtx, thisFrameCmdBuff, currentFrameIdx );
 
-		cullingPass.InitSceneDependentData( *pVkCtx, MAX_INSTANCES_IN_SCENE );
 		// TODO: add UploadDataSync function in the renderer
 		dbgPass.InitAndUploadDebugGeometry( *pVkCtx );
 
@@ -2152,7 +2151,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	[[unlikely]]
 	if( frameData.dbgDrawFlags.dbgDraw )
 	{
-		dbgPass.DrawWireframesGPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
+		//dbgPass.DrawWireframesGPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
 	}
 
 	[[unlikely]]
