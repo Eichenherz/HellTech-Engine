@@ -43,9 +43,9 @@ struct view_data
 	float4x4	mainViewProj;
 	float4x4	prevViewProj;
 	float3	    worldPos;
-	float		pad0;
+	float		zNear;
 	float3		camViewDir;
-	float		pad1;
+	float		pad0;
 };
 
 struct packed_trs

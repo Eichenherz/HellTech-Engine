@@ -64,4 +64,24 @@ float4 QuatConj( float4 q )
     return float4( -q.xyz, q.w );
 }
 
+float Min4_f32( float v0, float v1, float v2, float v3 )
+{
+    float2 min2 = min( float2( v0, v1 ), float2( v2, v3 ) );
+    return min( min2.x, min2.y );
+}
+
+float Min8_f32( float v0, float v1, float v2, float v3, float v4, float v5, float v6, float v7 )
+{
+    return min( Min4_f32( v0, v1, v2, v3 ), Min4_f32( v4, v5, v6, v7 ) );
+}
+
+float2 Min4_f32x2( float2 v0, float2 v1, float2 v2, float2 v3 )
+{
+    return min( min( v0, v1 ), min( v2, v3 ) );
+}
+float2 Max4_f32x2( float2 v0, float2 v1, float2 v2, float2 v3 )
+{
+    return max( max( v0, v1 ), max( v2, v3 ) );
+}
+
 #endif //!__HELLTECH_HT_HLSL_MATH_H__
