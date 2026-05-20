@@ -397,9 +397,12 @@ struct vk_command_buffer
 		vkCmdResetQueryPool( hndl, queryPool.hndl, 0, queryPool.queryCount );
 	}
 
-	void CmdWriteTimestamp( const vk_query_pool& queryPool, VkPipelineStageFlagBits2 stage, u32 queryIdx )
-	{
-		vkCmdWriteTimestamp2( hndl, stage, queryPool.hndl, queryIdx );
+	void CmdWriteTimestamp(
+		const vk_query_pool&		queryPool,
+		VkPipelineStageFlagBits2	stage,
+		vk_timestamp_query_id		queryIdx
+	) {
+		vkCmdWriteTimestamp2( hndl, stage, queryPool.hndl, ( u32 ) queryIdx );
 	}
 };
 

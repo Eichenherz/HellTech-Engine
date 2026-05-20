@@ -108,22 +108,46 @@ enum class vk_queue_t : u32
 	COUNT
 };
 
-struct vk_query_pool
+enum class vk_timestamp_query_id : u32
 {
-	VkQueryPool hndl;
-	VkQueryType type;
-	mutable u64	queries[ 128 ];
-	u32         queryCount;
-	float       timestampPeriod;
+	FRAME_BEGIN  = 0,
+	FRAME_END,
+	CULL_BEGIN,
+	CULL_END,
+	EXPAND_BEGIN,
+	EXPAND_END,
+	VBUFFER_BEGIN,
+	VBUFFER_END,
+	SHADE_BEGIN,
+	SHADE_END,
+	COUNT
+};
 
-	// TODO: redo
-	inline float ReadTimestampQuery() const
-	{
-		HT_ASSERT( VK_QUERY_TYPE_TIMESTAMP == type );
+enum class vk_pipeline_stats_query_id : u32
+{
+	CULL = 0,
+	EXPAND,
+	VBUFFER,
+	SHADE,
+	COUNT
+};
 
-		constexpr float nsToMs = 1.0e-6f;
-		return float( queries[ 1 ] - queries[ 0 ] ) * timestampPeriod * nsToMs;
-	}
+constexpr u64 INVALID_VK_QUERY = ~u64( 0 );
+
+constexpr bool IsVkQueryValid( u64 q )
+{
+	return INVALID_VK_QUERY != q;
+}
+
+struct vk_pipeline_stats_query_res
+{
+	u64 inputAssemblyVtxNum			= INVALID_VK_QUERY;
+	u64 inputAssemblyPrimitiveNum	= INVALID_VK_QUERY;
+	u64 vsInvocationNum				= INVALID_VK_QUERY;
+	u64 clipInvocationNum			= INVALID_VK_QUERY;
+	u64 clipPrimitiveNum			= INVALID_VK_QUERY;
+	u64 psInvocationCount			= INVALID_VK_QUERY;
+	u64 csInvocationCount			= INVALID_VK_QUERY;
 };
 
 

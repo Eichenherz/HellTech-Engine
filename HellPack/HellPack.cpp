@@ -499,8 +499,10 @@ struct materials_jobs
 	std::vector<compression_job> jobs;
 };
 
-materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> rawMaterials, std::span<const raw_image_view> imageViews )
-{
+materials_jobs PrepareBcnCompressionBatch(
+	std::span<const raw_material_info>	rawMaterials,
+	std::span<const raw_image_view>		imageViews
+) {
 	HT_ASSERT( std::size( imageViews ) < u16( INVALID_IDX ) );
 
 	// NOTE: we use indices and vfs_path here bc we're deduping wrt to tinygltf's stuff which is index based
@@ -541,10 +543,10 @@ materials_jobs PrepareBcnCompressionBatch( std::span<const raw_material_info> ra
 		// NOTE: currently not supporting ambient occlusion which must be packed into MR
 		//HT_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
 
-		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { mtrl.name + "_albedo.dds" } );
-		u64 normalHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, { mtrl.name + "_normal.dds" } );
-		u64 metallicRoughnessHash = ProcessImageView( mtrl.metallicRoughnessIdx, dds::DXGI_FORMAT_BC7_UNORM, { mtrl.name + "_mro.dds" } );
-		u64 emissiveHash = ProcessImageView( mtrl.emissiveIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { mtrl.name + "_emissive.dds" } );
+		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { "{}_albedo.dds", mtrl.name } );
+		u64 normalHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, { "{}_normal.dds", mtrl.name } );
+		u64 metallicRoughnessHash = ProcessImageView( mtrl.metallicRoughnessIdx, dds::DXGI_FORMAT_BC7_UNORM, { "{}_mro.dds", mtrl.name } );
+		u64 emissiveHash = ProcessImageView( mtrl.emissiveIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { "{}_emissive.dds", mtrl.name } );
 
 		materials.push_back( {
 			.baseColorHash			= baseColorHash,

@@ -6,14 +6,15 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
-#include "vk_utils.h"
 #include "vk_error.h"
 #include "vk_types.h"
 #include "ht_core_types.h"
 
-#include <dds.h>
+#include "ht_utils.h"
 
 #include <vk_mem_alloc.h>
+
+#include "ht_stretchybuff.h"
 
 constexpr u32 MAX_MIP_LEVELS = 12;
 
@@ -44,25 +45,6 @@ struct image_info
 	u8					layerCount;
 	u8					mipCount;
 };
-
-inline image_info ImageInfoFromDds( const dds::Header& h, const char* nameStr )
-{
-	VkImageType imgType = h.is_1d() ? VK_IMAGE_TYPE_1D : 
-		h.is_3d() ? VK_IMAGE_TYPE_3D :
-		VK_IMAGE_TYPE_2D;
-
-	return {
-		.name          = nameStr,
-		.format        = VkFromatFromDdsDxgi(h.format()),
-		.createFlags   = h.is_cubemap() ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u,
-		.type          = imgType,
-		.usgFlags      = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.width         = ( u16 ) h.width(),
-		.height        = ( u16 ) h.height(),
-		.layerCount    = ( u8 ) h.array_size(),
-		.mipCount      = ( u8 ) h.mip_levels(),
-	};
-}
 
 struct vk_buffer
 {
@@ -220,6 +202,49 @@ struct vk_descriptor_write
 {
 	vk_descriptor_info	descInfo;
 	desc_hndl32			hndl;
+};
+
+// NOTE: in Vk we must read the EXACT number of written queries otherwise we ain't getting anything back
+struct vk_query_pool
+{
+	static constexpr u64 MAX_QUERIES = 128;
+
+	mutable u64	resultBuff[ MAX_QUERIES ] = {};
+	VkQueryPool hndl;
+	VkQueryType type;
+	u32			queryStrideInSlots;
+	u32			queryCount; // NEED this bc the resultBuff holds slots
+	float       timestampPeriod;
+
+	inline u64 ReadTimestampQuery( vk_timestamp_query_id queryId ) const
+	{
+		HT_ASSERT( VK_QUERY_TYPE_TIMESTAMP == type );
+
+		u32 resultIdx = ( u32 ) queryId * queryStrideInSlots;
+
+		HT_ASSERT( resultIdx < std::size( resultBuff ) );
+
+		return resultBuff[ resultIdx ];
+	}
+
+	inline vk_pipeline_stats_query_res ReadPipelineStatsQuery( vk_pipeline_stats_query_id queryId ) const
+	{
+		HT_ASSERT( VK_QUERY_TYPE_PIPELINE_STATISTICS == type );
+
+		u32 resultIdx = ( u32 ) queryId * queryStrideInSlots;
+
+		HT_ASSERT( resultIdx < std::size( resultBuff ) );
+
+		return {
+			.inputAssemblyVtxNum		= resultBuff[ resultIdx + 0 ],
+			.inputAssemblyPrimitiveNum	= resultBuff[ resultIdx + 1 ],
+			.vsInvocationNum			= resultBuff[ resultIdx + 2 ],
+			.clipInvocationNum			= resultBuff[ resultIdx + 3 ],
+			.clipPrimitiveNum			= resultBuff[ resultIdx + 4 ],
+			.psInvocationCount			= resultBuff[ resultIdx + 5 ],
+			.csInvocationCount			= resultBuff[ resultIdx + 6 ]
+		};
+	}
 };
 
 #endif // !__VK_RESOURCES_H__

@@ -10,6 +10,8 @@ constexpr u64 GB = 1ull << 30;
 constexpr u64 MB = 1ull << 20;
 constexpr u64 KB = 1ull << 10;
 
+constexpr float NS_TO_MS = 1.0e-6f;
+
 template<typename T>
 constexpr bool IsStructZero( const T& inStruct )
 {

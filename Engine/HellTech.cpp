@@ -40,7 +40,7 @@ struct virtual_camera
 	float3				worldPos	= { 0.0f, 0.0f, 0.0f };
 	float3				camViewDir	= {};
 	PFN_XMLookAtCoord	LookAt		= nullptr;
-
+	float				zNear		= NAN;
 	// NOTE: pitch must be in [-pi/2,pi/2]
 	float				pitch		= 0.0f;
 	float				yaw			= 0.0f;
@@ -81,26 +81,32 @@ struct virtual_camera
 			.mainViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( xmView, xmProj ) ),
 			.prevViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( xmPrevView, xmProj ) ),
 			.worldPos		= worldPos,
+			.zNear			= zNear,
 			// NOTE: this must not be negative for LH coords
 			.camViewDir		= camViewDir
 		};
 	}
 };
 
-inline virtual_camera MakeVirtualCameraWithProjLH( float radsYFov, float aspectRatioWH, float zNear )
+template<bool IS_RH>
+virtual_camera MakeVirtualCamera( float radsYFov, float aspectRatioWH, float zNear )
 {
-	return {
-		.proj		= PerspRevZInfFarFromFovAndAspectRatioLH( radsYFov, aspectRatioWH, zNear ),
-		.LookAt		= DirectX::XMMatrixLookAtLH
-	};
-}
-
-inline virtual_camera MakeVirtualCameraWithProjRH( float radsYFov, float aspectRatioWH, float zNear )
-{
-	return {
-		.proj		= PerspRevZInfFarFromFovAndAspectRatioRH( radsYFov, aspectRatioWH, zNear ),
-		.LookAt		= DirectX::XMMatrixLookAtRH
-	};
+	if constexpr( IS_RH )
+	{
+		return {
+			.proj	= PerspRevZInfFarFromFovAndAspectRatioRH( radsYFov, aspectRatioWH, zNear ),
+			.LookAt = DirectX::XMMatrixLookAtRH,
+			.zNear	= zNear
+		};
+	}
+	else
+	{
+		return {
+			.proj	= PerspRevZInfFarFromFovAndAspectRatioLH( radsYFov, aspectRatioWH, zNear ),
+			.LookAt = DirectX::XMMatrixLookAtLH,
+			.zNear	= zNear
+		};
+	}
 }
 
 // Input
@@ -237,16 +243,8 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 
 	float aspecRatioWH = float( width ) / float( height );
 
-	if constexpr( IS_WORLD_RH )
-	{
-		mainActiveCam	= MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
-		debugCam		= MakeVirtualCameraWithProjRH( fovRads, aspecRatioWH, zNear );
-	}
-	else // IS_LH
-	{
-		mainActiveCam	= MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
-		debugCam		= MakeVirtualCameraWithProjLH( fovRads, aspecRatioWH, zNear );
-	}
+	mainActiveCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
+	debugCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
 
 	pRenderer = MakeRenderer();
 

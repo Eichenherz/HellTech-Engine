@@ -32,6 +32,7 @@
 #include "vk_types.h"
 #include "vk_resources.h"
 #include "vk_command_buffer.h"
+#include "vk_utils.h"
 
 constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
@@ -40,84 +41,6 @@ constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
 	//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
-
-
-inline static VkMemoryPropertyFlags VkChooseMemoryPropertiesFromBufferUsage( buffer_usage usage )
-{
-	using enum buffer_usage;
-	switch( usage )
-	{
-	case GPU_ONLY: return VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-	case HOST_VISIBLE: return 
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-	case STAGING: return VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-	default: HT_ASSERT( 0 && "Unknown memory type" );
-	}
-	return 0;
-}
-
-// NOTE: from Sascha Willems
-static u32 VkGetQueueFamilyIndex( 
-	std::span<const VkQueueFamilyProperties>	queueFamProps,
-	VkQueueFlags								queueFlags,
-	VkBool32									mustPresent,
-	VkPhysicalDevice							gpu,
-	VkSurfaceKHR								vkSurf
-) {
-	if( ( queueFlags & VK_QUEUE_TRANSFER_BIT ) == queueFlags )
-	{
-		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
-		{
-			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
-			bool hasTransfer = queueFamProps[ qfi ].queueFlags & VK_QUEUE_TRANSFER_BIT;
-			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
-			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT; 
-			if( hasTransfer && !hasCompute && !hasGfx )
-			{
-				return qfi;
-			}
-		}
-	}
-
-	if( ( queueFlags & VK_QUEUE_COMPUTE_BIT ) == queueFlags )
-	{
-		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++)
-		{
-			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
-			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
-			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
-			if( hasCompute && !hasGfx )
-			{
-				if( mustPresent )
-				{
-					VkBool32 hasPresent = 0;
-					vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qfi, vkSurf, &hasPresent );
-					if( !hasPresent ) continue;
-				}
-				return qfi;
-			}
-		}
-	}
-
-	// NOTE: For other queue types or if no separate compute queue is present,
-	// return the first one to support the requested flags
-	for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
-	{
-		if( ( queueFamProps[ qfi ].queueFlags & queueFlags ) == queueFlags )
-		{
-			if( mustPresent )
-			{
-				VkBool32 hasPresent = 0;
-				vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qfi, vkSurf, &hasPresent );
-				if( !hasPresent ) continue;
-			}
-			return qfi;
-		}
-	}
-
-	HT_ASSERT( 0 && "No queue found that matches the requirements !" );
-	return ~0u;
-}
 
 inline static VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
 {
@@ -774,25 +697,6 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 	};
 }
 
-inline static void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
-{
-	VkFormatFeatureFlags2 formatFeatures = 0;
-	if( usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT )         formatFeatures |= VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT;
-	if( usg & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT;
-	if( usg & VK_IMAGE_USAGE_TRANSFER_DST_BIT )             formatFeatures |= VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
-	if( usg & VK_IMAGE_USAGE_SAMPLED_BIT )                  formatFeatures |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT;
-	if( usg & VK_IMAGE_USAGE_HOST_TRANSFER_BIT )            formatFeatures |= VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT;
-
-
-	VkFormatProperties3 formatProps3 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
-	VkFormatProperties2 fomratProps2 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &formatProps3 };
-
-	vkGetPhysicalDeviceFormatProperties2( vkGpu, format, &fomratProps2 );
-
-	HT_ASSERT( ( formatProps3.optimalTilingFeatures & formatFeatures ) == formatFeatures );
-	// Fallback to a different format or use other means of uploading data
-}
-
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
 	VkCheckFormatProperties( gpu, imgInfo.usgFlags, imgInfo.format );
@@ -1012,7 +916,7 @@ vk_compute_pipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 	return { .hndl = pipeline, .groupSize = shader.groupSize };
 }
 
-vk_query_pool vk_context::CreateQueryPool( u32 queryCount, VkQueryType queryType )
+vk_query_pool vk_context::CreateQueryPool( u32 maxQueryCount, VkQueryType queryType )
 {
 	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags = VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
@@ -1022,10 +926,14 @@ vk_query_pool vk_context::CreateQueryPool( u32 queryCount, VkQueryType queryType
 		| VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
 
+	constexpr u32 statFlagsCount = std::popcount( ( u32 ) pipelineStatsFlags );
+
+	HT_ASSERT( maxQueryCount <= vk_query_pool::MAX_QUERIES );
+
 	VkQueryPoolCreateInfo queryPoolInfo = {
 		.sType				= VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
 		.queryType			= queryType,
-		.queryCount			= queryCount,
+		.queryCount			= maxQueryCount,
 		.pipelineStatistics = ( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ) ? pipelineStatsFlags : 0
 	};
 
@@ -1034,14 +942,10 @@ vk_query_pool vk_context::CreateQueryPool( u32 queryCount, VkQueryType queryType
 
 	vkResetQueryPool( device, queryPool, 0, queryPoolInfo.queryCount );
 
-	constexpr u64 QUERY_CAP = sizeof( vk_query_pool::queries ) / sizeof( vk_query_pool::queries[ 0 ] );
-
-	HT_ASSERT( queryCount <= QUERY_CAP );
-
 	return {
 		.hndl				= queryPool,
 		.type				= queryPoolInfo.queryType,
-		.queries			= {},
+		.queryStrideInSlots	= ( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ? statFlagsCount : 1 ),
 		.queryCount			= queryPoolInfo.queryCount,
 		.timestampPeriod	= gpuProps.limits.timestampPeriod
 	};
@@ -1155,6 +1059,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 	}
 }
 
+// TODO: move Surface logic here so we can recreate
 void vk_context::CreateSwapchain()
 {
 	// NOTE: rn we can't recreate the swapchian atm

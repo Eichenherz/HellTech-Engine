@@ -9,6 +9,7 @@
 #include "ht_core_types.h"
 
 #include "vk_types.h"
+#include "vk_resources.h"
 #include "ht_error.h"
 
 #include <dds.h>
@@ -127,6 +128,22 @@ inline VkFormat VkFromatFromDdsDxgi( dds::DXGI_FORMAT fmt )
     }
 }
 
+inline image_info ImageInfoFromDds( const dds::Header& h, const char* nameStr )
+{
+	VkImageType imgType = h.is_1d() ? VK_IMAGE_TYPE_1D : h.is_3d() ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+	return {
+		.name          = nameStr,
+		.format        = VkFromatFromDdsDxgi( h.format() ),
+		.createFlags   = h.is_cubemap() ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u,
+		.type          = imgType,
+		.usgFlags      = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.width         = ( u16 ) h.width(),
+		.height        = ( u16 ) h.height(),
+		.layerCount    = ( u8 ) h.array_size(),
+		.mipCount      = ( u8 ) h.mip_levels(),
+	};
+}
+
 inline VkBufferCopy2 MakeVkBufferCopy2( VkDeviceSize srcOffset, VkDeviceSize dstOffset, VkDeviceSize size )
 {
 	return {
@@ -166,6 +183,102 @@ constexpr VkClearColorValue GetVBufferClearValue()
 	clearVal.uint32[ 3 ] = ~u32( 0 );
 
 	return clearVal;
+}
+
+inline VkMemoryPropertyFlags VkChooseMemoryPropertiesFromBufferUsage( buffer_usage usage )
+{
+	using enum buffer_usage;
+	switch( usage )
+	{
+		case GPU_ONLY: return VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+		case HOST_VISIBLE: return
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		case STAGING: return VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		default: HT_ASSERT( 0 && "Unknown memory type" );
+	}
+	return 0;
+}
+
+// NOTE: from Sascha Willems
+inline u32 VkGetQueueFamilyIndex(
+	std::span<const VkQueueFamilyProperties>	queueFamProps,
+	VkQueueFlags								queueFlags,
+	VkBool32									mustPresent,
+	VkPhysicalDevice							gpu,
+	VkSurfaceKHR								vkSurf
+) {
+	if( ( queueFlags & VK_QUEUE_TRANSFER_BIT ) == queueFlags )
+	{
+		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
+		{
+			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
+			bool hasTransfer = queueFamProps[ qfi ].queueFlags & VK_QUEUE_TRANSFER_BIT;
+			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
+			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
+			if( hasTransfer && !hasCompute && !hasGfx )
+			{
+				return qfi;
+			}
+		}
+	}
+
+	if( ( queueFlags & VK_QUEUE_COMPUTE_BIT ) == queueFlags )
+	{
+		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++)
+		{
+			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
+			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
+			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
+			if( hasCompute && !hasGfx )
+			{
+				if( mustPresent )
+				{
+					VkBool32 hasPresent = 0;
+					vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qfi, vkSurf, &hasPresent );
+					if( !hasPresent ) continue;
+				}
+				return qfi;
+			}
+		}
+	}
+
+	// NOTE: For other queue types or if no separate compute queue is present,
+	// return the first one to support the requested flags
+	for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
+	{
+		if( ( queueFamProps[ qfi ].queueFlags & queueFlags ) == queueFlags )
+		{
+			if( mustPresent )
+			{
+				VkBool32 hasPresent = 0;
+				vkGetPhysicalDeviceSurfaceSupportKHR( gpu, qfi, vkSurf, &hasPresent );
+				if( !hasPresent ) continue;
+			}
+			return qfi;
+		}
+	}
+
+	HT_ASSERT( 0 && "No queue found that matches the requirements !" );
+	return ~0u;
+}
+
+inline void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
+{
+	VkFormatFeatureFlags2 formatFeatures = 0;
+	if( usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT )         formatFeatures |= VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT;
+	if( usg & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT ) formatFeatures |= VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT;
+	if( usg & VK_IMAGE_USAGE_TRANSFER_DST_BIT )             formatFeatures |= VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+	if( usg & VK_IMAGE_USAGE_SAMPLED_BIT )                  formatFeatures |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT;
+	if( usg & VK_IMAGE_USAGE_HOST_TRANSFER_BIT )            formatFeatures |= VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT;
+
+
+	VkFormatProperties3 formatProps3 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
+	VkFormatProperties2 fomratProps2 = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &formatProps3 };
+
+	vkGetPhysicalDeviceFormatProperties2( vkGpu, format, &fomratProps2 );
+
+	HT_ASSERT( ( formatProps3.optimalTilingFeatures & formatFeatures ) == formatFeatures );
+	// Fallback to a different format or use other means of uploading data
 }
 
 #endif // !__VK_UTILS_H__

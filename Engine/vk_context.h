@@ -249,14 +249,23 @@ struct vk_context
 		return sampler;
 	}
 
-	vk_query_pool CreateQueryPool( u32 queryCount, VkQueryType queryType );
+	vk_query_pool CreateQueryPool( u32 maxQueryCount, VkQueryType queryType );
 
-	VkResult ReadQueryPoolResults( const vk_query_pool& queryPool )
+	bool TryReadQueryPoolResults( const vk_query_pool& queryPool )
 	{
-		 return vkGetQueryPoolResults( device, queryPool.hndl, 0, queryPool.queryCount,
-		 	queryPool.queryCount * sizeof( u64 ), queryPool.queries, sizeof( u64 ), VK_QUERY_RESULT_64_BIT );
+		VkResult queryRes = vkGetQueryPoolResults( device, queryPool.hndl, 0, queryPool.queryCount,
+			BYTE_COUNT( queryPool.resultBuff ), queryPool.resultBuff, queryPool.queryStrideInSlots * sizeof( u64 ),
+			VK_QUERY_RESULT_64_BIT );
 
+		vkResetQueryPool( device, queryPool.hndl, 0, queryPool.queryCount );
+
+		if( VK_NOT_READY == queryRes ) return false;
+
+		VK_CHECK( queryRes );
+
+		return true;
 	}
+
 	VkSemaphore CreateBinarySemaphore();
 
 	// NOTE: passing UINT64_MAX will block forever

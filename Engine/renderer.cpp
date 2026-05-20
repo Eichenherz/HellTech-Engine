@@ -570,6 +570,28 @@ struct debug_draw_passes
 		cmdBuff.CmdFillBuffer( gpuInstCountBuff, 0u );
 	}
 
+	void AssembleCPUInstanceBuffer( const float4x4& frustumTransf, bool aabbDraws, bool frustumDraw )
+	{
+		cpuInstView.resize( 0 );
+
+		[[ unlikely ]]
+		if( frustumDraw )
+		{
+			cpuInstView.push_back( {
+				.toWorld	= frustumTransf,
+				.color		= DXPackedXMColorToFloat4( HT_CYAN ),
+				.minAabb	= BOX_MIN,
+				.maxAabb	= BOX_MAX
+			} );
+		}
+
+		[[ unlikely ]]
+		if( aabbDraws )
+		{
+
+		}
+	}
+
 	void DrawWireframesGPU(
 		vk_command_buffer&      		cmdBuff,
 		vk_rsc_state_tracker&			rscTracker,
@@ -630,12 +652,14 @@ struct debug_draw_passes
 	}
 
 	// TODO: don't hardcode
-	void DrawWireframeCPU(
+	void DbgDrawWireframeCPU(
 		vk_command_buffer&      		cmdBuff,
 		vk_rsc_state_tracker&			rscTracker,
 		const vk_image&  				colorTarget,
 		desc_hndl32						camIdx
 	) {
+		if( 0 == std::size( cpuInstView ) ) return;
+
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_DrawWireframeCPU", {} );
 
 		rscTracker.UseImage( colorTarget, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
@@ -1007,16 +1031,16 @@ struct culling_pass
 
 struct tone_mapping_pass
 {
-	vk_buffer					averageLuminanceBuffer;
-	vk_buffer					luminanceHistogramBuffer;
-	vk_buffer					atomicWgCounterBuff;
+	vk_buffer			averageLuminanceBuffer;
+	vk_buffer			luminanceHistogramBuffer;
+	vk_buffer			atomicWgCounterBuff;
 
-	vk_compute_pipeline			compAvgLumPipe;
-	vk_compute_pipeline			compTonemapPipe;
+	vk_compute_pipeline	compAvgLumPipe;
+	vk_compute_pipeline	compTonemapPipe;
 
-	desc_hndl32					avgLumIdx;
-	desc_hndl32					atomicWgCounterIdx;
-	desc_hndl32					lumHistoIdx;
+	desc_hndl32			avgLumIdx;
+	desc_hndl32			atomicWgCounterIdx;
+	desc_hndl32			lumHistoIdx;
 
 	void Init( vk_context& dc )
 	{
@@ -1590,6 +1614,13 @@ struct virtual_frame
 	desc_hndl32                 instDesc;
 
 	u32                         fifIdx; // NOTE: for debug
+
+	float ReadTimestampQueries() const
+	{
+		u64 frameEnd = timestampQueryPool.ReadTimestampQuery( vk_timestamp_query_id::FRAME_END );
+		u64 frameBeg = timestampQueryPool.ReadTimestampQuery( vk_timestamp_query_id::FRAME_BEGIN );
+		return float( frameEnd - frameBeg ) * timestampQueryPool.timestampPeriod * NS_TO_MS;
+	}
 };
 
 static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes, u32 fifIdx )
@@ -1629,8 +1660,8 @@ static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes, u32 f
 		.viewData				= viewData,
 		.gpuMeshTable			= gpuMeshTable,
 		.gpuInstances			= gpuInstances,
-		.timestampQueryPool 	= vkCtx.CreateQueryPool( 2, VK_QUERY_TYPE_TIMESTAMP ),
-		.pipelineStatsQueryPool = vkCtx.CreateQueryPool( 128, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
+		.timestampQueryPool 	= vkCtx.CreateQueryPool( ( u32 ) vk_timestamp_query_id::FRAME_END + 1, VK_QUERY_TYPE_TIMESTAMP ),
+		.pipelineStatsQueryPool = vkCtx.CreateQueryPool( ( u32 ) vk_pipeline_stats_query_id::COUNT, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
 		.viewDataIdx			= vkCtx.AllocDescriptorIdx( viewData ),
 		.gpuMeshTableDesc		= vkCtx.AllocDescriptorIdx( gpuMeshTable ),
 		.instDesc				= vkCtx.AllocDescriptorIdx( gpuInstances ),
@@ -1638,7 +1669,11 @@ static virtual_frame MakeVirtualFrame( vk_context& vkCtx, u64 sizeInBytes, u32 f
 	};
 }
 
-
+// NOTE: we always create a gpu_mesh descriptor before upload
+// the actual payload is uploaded on the xfer queue and the engine polls the associated fence,
+// then the fence triggers it will promote all the new instances;
+// So basically the gpu_mesh buffer can point to stall or unresolved data,
+// but the engine only issues the available instances and only valid data is accessed.
 struct renderer_context final : renderer_interface
 {
 	using mesh_hndl32 = slot_vector<ht_mesh_component>::hndl32;
@@ -1693,24 +1728,26 @@ struct renderer_context final : renderer_interface
 	const u32								framesInFlight = MAX_FIF;
 
 
-	virtual void InitBackend( u64 hInst, u64 hWnd ) override;
+	void InitBackend( u64 hInst, u64 hWnd ) override;
 
-	virtual HRNDMESH32 AllocMeshComponent( const hellpack_mesh_asset& mesh ) override;
+	HRNDMESH32 AllocMeshComponent( const hellpack_mesh_asset& mesh ) override;
 
-	inline virtual HJOBFENCE32 AllocJobFence() override
+	inline HJOBFENCE32 AllocJobFence() override
 	{
 		return std::bit_cast<HJOBFENCE32>( jobFences.PushEntry( pVkCtx->AllocFence() ) );
 	}
-	inline virtual bool PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) override
+	inline bool PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) override
 	{
 		VkFence fence = jobFences[ ( fence_hndl32 ) hJobFence ];
 		return pVkCtx->FenceWaitAndResetOnDone( fence, timeoutNanosecs );
 	}
-	virtual void UploadMeshes(
+	void UploadMeshes(
 		HJOBFENCE32							hRndUpload,
 		std::span<const mesh_upload_req>	meshAssets,
 		virtual_arena&						arena
 	) override;
+
+	void HostFrames( const frame_data& frameData, virtual_arena& scratchArena, gpu_data& gpuData ) override;
 
 	u32 /* numValidInstances */ UpdateSceneData( const virtual_frame& thisVFrame, const frame_data& frameData );
 
@@ -1746,8 +1783,6 @@ struct renderer_context final : renderer_interface
 		colorSrv = pVkCtx->AllocDescriptorIdx( { colorTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 		colorUav = pVkCtx->AllocDescriptorIdx( { colorTarget.view, VK_IMAGE_LAYOUT_GENERAL } );
 	}
-
-	virtual void HostFrames( const frame_data& frameData, virtual_arena& scratchArena, gpu_data& gpuData ) override;
 };
 
 std::unique_ptr<renderer_interface> MakeRenderer()
@@ -2018,9 +2053,9 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
-	if( VK_SUCCESS == pVkCtx->ReadQueryPoolResults( thisVFrame.timestampQueryPool ) )
+	if( pVkCtx->TryReadQueryPoolResults( thisVFrame.timestampQueryPool ) )
 	{
-		gpuData.timeMs = thisVFrame.timestampQueryPool.ReadTimestampQuery();
+		gpuData.timeMs = thisVFrame.ReadTimestampQueries();
 	}
 
 	u32 instCount = UpdateSceneData( thisVFrame, frameData );
@@ -2029,9 +2064,10 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	thisFrameCmdBuff.CmdBeginCmdBuffer();
 
-	thisFrameCmdBuff.CmdResetQueryPool( thisVFrame.timestampQueryPool );
+	//thisFrameCmdBuff.CmdResetQueryPool( thisVFrame.timestampQueryPool );
 
-	thisFrameCmdBuff.CmdWriteTimestamp( thisVFrame.timestampQueryPool, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0 );
+	thisFrameCmdBuff.CmdWriteTimestamp( thisVFrame.timestampQueryPool, VK_PIPELINE_STAGE_2_NONE,
+		vk_timestamp_query_id::FRAME_BEGIN );
 
 	static bool initResources = false;
 	if( !initResources )
@@ -2153,19 +2189,10 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	{
 		//dbgPass.DrawWireframesGPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
 	}
-
-	[[unlikely]]
-	if( frameData.dbgDrawFlags.freezeMainView )
-	{
-		dbgPass.cpuInstView.resize( 0 );
-		dbgPass.cpuInstView.push_back( {
-			.toWorld	= frameData.frustTransf,
-			.color		= DXPackedXMColorToFloat4( HT_CYAN ),
-			.minAabb	= BOX_MIN,
-			.maxAabb	= BOX_MAX
-		} );
-		dbgPass.DrawWireframeCPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
-	}
+	// NOTE: these are conditional
+	dbgPass.AssembleCPUInstanceBuffer( frameData.frustTransf, frameData.dbgDrawFlags.dbgDraw,
+		frameData.dbgDrawFlags.freezeMainView );
+	dbgPass.DbgDrawWireframeCPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
 
 	rscStateTracker.UseImage( colorTarget, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 	rscStateTracker.FlushBarriers( thisFrameCmdBuff );
@@ -2194,7 +2221,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	// NOTE: remove sc image to avoid handling this logic inside the tracker
 	rscStateTracker.StopTrackingResource( ( u64 ) scImg.img.hndl );
 
-	thisFrameCmdBuff.CmdWriteTimestamp( thisVFrame.timestampQueryPool, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 1 );
+	thisFrameCmdBuff.CmdWriteTimestamp( thisVFrame.timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		vk_timestamp_query_id::FRAME_END );
 
 	thisFrameCmdBuff.CmdEndCmdBuffer();
 

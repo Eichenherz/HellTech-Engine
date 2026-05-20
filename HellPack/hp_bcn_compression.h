@@ -50,12 +50,12 @@ using rgba4x4 = std::array<u8, BLOCK_SIZE_IN_BYTES>;
 inline rgba4x4 GatherBlockRGBA8_Clamp( std::span<const u8> rgba8, u32 width, u32 height, u32 blockX, u32 blockY )
 {
     rgba4x4 blockRGBA;
-    [[unroll]]
+    //[[unroll]]
     for( u32 by = 0; by < 4; ++by )
     {
         u32 y = blockY * 4u + by;
         if( y >= height ) y = height - 1u;
-        [[unroll]]
+        //[[unroll]]
         for( u32 bx = 0; bx < 4; ++bx )
         {
             u32 x = blockX * 4u + bx;
