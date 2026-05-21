@@ -584,6 +584,38 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 	};
 }
 
+vk_query_pool VkMakeQueryPool( VkDevice vkDevice, u32 maxQueryCount, VkQueryType queryType )
+{
+	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags = VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
+		| VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
+		| VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT
+		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT
+		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT
+		| VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT
+		| VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
+
+	constexpr u32 statFlagsCount = std::popcount( ( u32 ) pipelineStatsFlags );
+
+	VkQueryPoolCreateInfo queryPoolInfo = {
+		.sType				= VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+		.queryType			= queryType,
+		.queryCount			= maxQueryCount,
+		.pipelineStatistics = ( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ) ? pipelineStatsFlags : 0
+	};
+
+	VkQueryPool queryPool = {};
+	VK_CHECK( vkCreateQueryPool( vkDevice, &queryPoolInfo, nullptr, &queryPool ) );
+
+	vkResetQueryPool( vkDevice, queryPool, 0, queryPoolInfo.queryCount );
+
+	return {
+		.hndl				= queryPool,
+		.type				= queryPoolInfo.queryType,
+		.queryStrideInSlots	= VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ? statFlagsCount : 1u,
+		.queryCount			= ( u16 ) queryPoolInfo.queryCount
+	};
+}
+
 vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_config& cfg )
 {
 	auto[ vkInst, vkDbgMsg ] = VkMakeInstance();
@@ -618,10 +650,14 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		bindingSlots[ bi ] = { poolSizes[ bi ] };
 	}
 
+	constexpr u32 MAX_QUERY_COUNT = 1024;
+
 	return {
 		.descBindingSlots		= std::move( bindingSlots ),
 		.gfxQueue				= VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
 		.copyQueue				= VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx ),
+		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_TIMESTAMP ),
+		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
 		.gpuFrameTimeline		= { .sema = VkMakeSemaphore( vkDevice.logical, true, 0 ), .submitsIssuedCount = 0 },
 		.allocator				= MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
 		.descPool				= descPool,
@@ -914,41 +950,6 @@ vk_compute_pipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 	VkDbgNameObj( pipeline, device, ( const char* ) pipelineName );
 
 	return { .hndl = pipeline, .groupSize = shader.groupSize };
-}
-
-vk_query_pool vk_context::CreateQueryPool( u32 maxQueryCount, VkQueryType queryType )
-{
-	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags = VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
-
-	constexpr u32 statFlagsCount = std::popcount( ( u32 ) pipelineStatsFlags );
-
-	HT_ASSERT( maxQueryCount <= vk_query_pool::MAX_QUERIES );
-
-	VkQueryPoolCreateInfo queryPoolInfo = {
-		.sType				= VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-		.queryType			= queryType,
-		.queryCount			= maxQueryCount,
-		.pipelineStatistics = ( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ) ? pipelineStatsFlags : 0
-	};
-
-	VkQueryPool queryPool = {};
-	VK_CHECK( vkCreateQueryPool( device, &queryPoolInfo, nullptr, &queryPool ) );
-
-	vkResetQueryPool( device, queryPool, 0, queryPoolInfo.queryCount );
-
-	return {
-		.hndl				= queryPool,
-		.type				= queryPoolInfo.queryType,
-		.queryStrideInSlots	= ( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ? statFlagsCount : 1 ),
-		.queryCount			= queryPoolInfo.queryCount,
-		.timestampPeriod	= gpuProps.limits.timestampPeriod
-	};
 }
 
 VkSemaphore vk_context::CreateBinarySemaphore()

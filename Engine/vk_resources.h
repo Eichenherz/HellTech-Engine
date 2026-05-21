@@ -204,47 +204,5 @@ struct vk_descriptor_write
 	desc_hndl32			hndl;
 };
 
-// NOTE: in Vk we must read the EXACT number of written queries otherwise we ain't getting anything back
-struct vk_query_pool
-{
-	static constexpr u64 MAX_QUERIES = 128;
-
-	mutable u64	resultBuff[ MAX_QUERIES ] = {};
-	VkQueryPool hndl;
-	VkQueryType type;
-	u32			queryStrideInSlots;
-	u32			queryCount; // NEED this bc the resultBuff holds slots
-	float       timestampPeriod;
-
-	inline u64 ReadTimestampQuery( vk_timestamp_query_id queryId ) const
-	{
-		HT_ASSERT( VK_QUERY_TYPE_TIMESTAMP == type );
-
-		u32 resultIdx = ( u32 ) queryId * queryStrideInSlots;
-
-		HT_ASSERT( resultIdx < std::size( resultBuff ) );
-
-		return resultBuff[ resultIdx ];
-	}
-
-	inline vk_pipeline_stats_query_res ReadPipelineStatsQuery( vk_pipeline_stats_query_id queryId ) const
-	{
-		HT_ASSERT( VK_QUERY_TYPE_PIPELINE_STATISTICS == type );
-
-		u32 resultIdx = ( u32 ) queryId * queryStrideInSlots;
-
-		HT_ASSERT( resultIdx < std::size( resultBuff ) );
-
-		return {
-			.inputAssemblyVtxNum		= resultBuff[ resultIdx + 0 ],
-			.inputAssemblyPrimitiveNum	= resultBuff[ resultIdx + 1 ],
-			.vsInvocationNum			= resultBuff[ resultIdx + 2 ],
-			.clipInvocationNum			= resultBuff[ resultIdx + 3 ],
-			.clipPrimitiveNum			= resultBuff[ resultIdx + 4 ],
-			.psInvocationCount			= resultBuff[ resultIdx + 5 ],
-			.csInvocationCount			= resultBuff[ resultIdx + 6 ]
-		};
-	}
-};
 
 #endif // !__VK_RESOURCES_H__

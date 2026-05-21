@@ -5,10 +5,11 @@
 #include <vulkan.h>
 #include <Volk/volk.h>
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
 #define __VK // NOTE: used to not include all the vk shit everywhere
 #include "ht_renderer_types.h"
 
+#include "vk_types.h"
 #include "vk_resources.h"
 
 #include <span>
@@ -113,6 +114,7 @@ struct vk_scoped_timestamp
 		vkCmdWriteTimestamp2( cmdBuff, stageEnd, queryPool, queryIdx + 1 );
 	}
 };
+
 
 struct vk_command_buffer
 {
@@ -397,12 +399,31 @@ struct vk_command_buffer
 		vkCmdResetQueryPool( hndl, queryPool.hndl, 0, queryPool.queryCount );
 	}
 
-	void CmdWriteTimestamp(
-		const vk_query_pool&		queryPool,
-		VkPipelineStageFlagBits2	stage,
-		vk_timestamp_query_id		queryIdx
-	) {
-		vkCmdWriteTimestamp2( hndl, stage, queryPool.hndl, ( u32 ) queryIdx );
+	void CmdReadQueryPoolResults( const vk_query_pool& queryPool, const vk_buffer& resBuff, u32 firstQuery, u32 queryCount )
+	{
+		u64 maxQueryCount = queryCount * queryPool.queryStrideInSlots * sizeof( u64 );
+		HT_ASSERT( maxQueryCount <= resBuff.sizeInBytes );
+
+		vkCmdCopyQueryPoolResults( hndl, queryPool.hndl, firstQuery, queryCount, resBuff.hndl, 0,
+			queryPool.queryStrideInSlots * sizeof( u64 ), VK_QUERY_RESULT_64_BIT );
+	}
+
+	void CmdWriteTimestamp( const vk_query_pool& queryPool, VkPipelineStageFlagBits2 stage, u32	queryId )
+	{
+		HT_ASSERT( VK_QUERY_TYPE_TIMESTAMP == queryPool.type );
+		vkCmdWriteTimestamp2( hndl, stage, queryPool.hndl, queryId );
+	}
+
+	void CmdQueryBegin( const vk_query_pool& queryPool, u32 queryId )
+	{
+		HT_ASSERT( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryPool.type );
+		vkCmdBeginQuery( hndl, queryPool.hndl, queryId, 0 );
+	}
+
+	void CmdQueryEnd( const vk_query_pool& queryPool, u32 queryId )
+	{
+		HT_ASSERT( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryPool.type );
+		vkCmdEndQuery( hndl, queryPool.hndl, queryId );
 	}
 };
 

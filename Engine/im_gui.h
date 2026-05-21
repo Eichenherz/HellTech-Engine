@@ -132,12 +132,7 @@ inline void ImGuiPrintFloatAction( const void* pData )
 	ImGui::Text( "%.2f", *( const float* ) pData );
 }
 
-//struct ht_load_hpk_req
-//{
-//	sys_physical_path path;
-//};
-
-inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds ) //, std::vector<ht_load_hpk_req>& loadHpkReqs )
+inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds )
 {
 	static bool initialPosSet = false;
 
@@ -147,7 +142,7 @@ inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds ) //, std:
 	{
 		if( !initialPosSet )
 		{
-			ImGui::SetNextWindowPos( { std::size( imguiWnd.name ) * ImGui::GetFontSize(), ImGui::GetFontSize() },
+			ImGui::SetNextWindowPos( { ( float ) std::size( imguiWnd.name ) * ImGui::GetFontSize(), ImGui::GetFontSize() },
 				ImGuiCond_FirstUseEver );
 			ImGui::SetNextWindowSize( {}, ImGuiCond_FirstUseEver );
 			initialPosSet = true;

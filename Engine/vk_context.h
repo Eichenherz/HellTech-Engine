@@ -28,7 +28,7 @@
 #include "System/sys_sync.h"
 #include "ht_mem_arena.h"
 
-#include "ht_mtx_queue.h"
+#include "ht_ring_buffer.h"
 
 struct vk_timeline
 {
@@ -89,8 +89,8 @@ struct vk_cb_deletion
 
 struct vk_cb_pool
 {
-	fixed_mtx_queue<vk_cmd_pool_buff, 128>	free;
-	fixed_mtx_queue<vk_cb_deletion, 128>	pending;
+	fixed_ringbuff_w_lock<vk_cmd_pool_buff, 128>	free;
+	fixed_ringbuff_w_lock<vk_cb_deletion, 128>	pending;
 };
 
 struct vk_desc_deletion
@@ -120,7 +120,7 @@ struct vk_resc_deletion
 
 struct vk_desc_binding
 {
-	mtx_queue<desc_hndl32>	slots;
+	ringbuff_w_lock<desc_hndl32>	slots;
 
 	VkDescriptorType		type;
 
@@ -182,6 +182,9 @@ struct vk_context
 
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
+
+	vk_query_pool							timestampQueryPool;
+	vk_query_pool							pplnStatsQueryPool;
 
 	vk_timeline							    gpuFrameTimeline;
 
@@ -247,23 +250,6 @@ struct vk_context
 		VkSampler sampler;
 		VK_CHECK( vkCreateSampler( device, &samplerCreateInfo, 0, &sampler ) );
 		return sampler;
-	}
-
-	vk_query_pool CreateQueryPool( u32 maxQueryCount, VkQueryType queryType );
-
-	bool TryReadQueryPoolResults( const vk_query_pool& queryPool )
-	{
-		VkResult queryRes = vkGetQueryPoolResults( device, queryPool.hndl, 0, queryPool.queryCount,
-			BYTE_COUNT( queryPool.resultBuff ), queryPool.resultBuff, queryPool.queryStrideInSlots * sizeof( u64 ),
-			VK_QUERY_RESULT_64_BIT );
-
-		vkResetQueryPool( device, queryPool.hndl, 0, queryPool.queryCount );
-
-		if( VK_NOT_READY == queryRes ) return false;
-
-		VK_CHECK( queryRes );
-
-		return true;
 	}
 
 	VkSemaphore CreateBinarySemaphore();

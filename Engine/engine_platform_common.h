@@ -11,7 +11,7 @@
 #include "engine_types.h"
 
 // TODO: maybe make ht_engine_systems.h ?
-#include "ht_mtx_queue.h"
+#include "ht_ring_buffer.h"
 #include "ht_stretchybuff.h"
 
 struct virtual_arena;
@@ -41,7 +41,7 @@ struct job_t
 struct job_system_ctx
 {
     sys_semaphore		sema;
-    mtx_queue<job_t>	queue;
+    ringbuff_w_lock<job_t>	queue;
 
     job_system_ctx();
 
