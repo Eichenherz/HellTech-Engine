@@ -4,8 +4,13 @@
 #if defined(_MSC_VER)
 #define HT_FORCEINLINE __forceinline
 
+#define EMBED_TYPE [[msvc::no_unique_address]]
+
 #elif defined(__clang__)
 #define HT_FORCEINLINE __attribute__((always_inline))
+
+#else
+#define EMBED_TYPE [[no_unique_address]]
 
 #endif
 

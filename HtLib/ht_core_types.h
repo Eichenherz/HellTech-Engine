@@ -35,7 +35,7 @@ template<typename T>
 concept TRIVIAL_T = std::is_trivially_destructible_v<T> && std::is_trivially_copyable_v<T>;
 
 template<typename T>
-T BitCount()
+consteval T BitCount()
 {
     return sizeof( T ) * 8;
 }
