@@ -23,11 +23,6 @@ constexpr bool IS_WORLD_RH = CrossProd( WORLD_FWD, WORLD_LEFT ) == WORLD_UP;
 static_assert( IS_WORLD_RH, "Current convention is RH !!! But basis doesn't match" );
 // -----------------------------------------------------------------------------
 
-struct gpu_data
-{
-	float timeMs;
-};
-
 // TODO: these must be strong typed
 using HRNDMESH32 = u32;
 
@@ -73,6 +68,8 @@ struct renderer_dbg_draw
 	bool freezeMainView = false;
 	bool dbgDraw		= false;
 	bool drawXRayMode	= false;
+	bool toggleInstCull = true;
+	bool toggleMltCull	= true;
 };
 
 struct frame_data
@@ -82,6 +79,38 @@ struct frame_data
 	float4x4						frustTransf;
 	float							elapsedSeconds;
 	renderer_dbg_draw				dbgDrawFlags;
+};
+
+constexpr u64 INVALID_QUERY = ~u64( 0 );
+
+constexpr bool IsQueryValid( u64 q )
+{
+	return INVALID_QUERY != q;
+}
+
+struct ht_pipeline_stats
+{
+	fixed_string<64>	name;
+	u64 				inputAssemblyVtxNum			= INVALID_QUERY;
+	u64 				inputAssemblyPrimitiveNum	= INVALID_QUERY;
+	u64 				vsInvocationNum				= INVALID_QUERY;
+	u64 				clipInvocationNum			= INVALID_QUERY;
+	u64 				clipPrimitiveNum			= INVALID_QUERY;
+	u64 				psInvocationCount			= INVALID_QUERY;
+	u64 				csInvocationCount			= INVALID_QUERY;
+};
+
+struct ht_timed_zone
+{
+	fixed_string<64>	name;
+	float				timeMs;
+};
+
+
+struct gpu_data
+{
+	std::vector<ht_timed_zone>&		timedZones;
+	std::vector<ht_pipeline_stats>& pipelinesStats;
 };
 
 #endif // !__ENGINE_TYPES_H__

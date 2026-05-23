@@ -228,7 +228,9 @@ struct culling_params
 	u32 hizSamplerIdx;
 	u32 visibleItemsCountIdx;
 	u32 visibleItemsIdx;
+
 	u32	isLatePass;
+	u32 toggleCulling;
 };
 // TODO: rename
 struct draw_expansion_params
@@ -264,6 +266,7 @@ struct meshlet_cull_params
 	u32 drawCmsIdx;
 
 	u32	isLatePass;
+	u32 toggleCulling;
 };
 
 struct culling_init_params

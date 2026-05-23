@@ -56,6 +56,14 @@ struct vk_buffer
 	VkBufferUsageFlags  usgFlags;
 };
 
+template<typename T>
+std::span<const T> VkBufferHostView( const vk_buffer& vkBuff )
+{
+	// NOTE: this saves us nothing really
+	HT_ASSERT( 0 == ( vkBuff.sizeInBytes % sizeof( T ) ) );
+	return { ( const T* ) vkBuff.hostVisible, vkBuff.sizeInBytes / sizeof( T ) };
+}
+
 inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
 {
 	return VkDescriptorBufferInfo{ b.hndl, 0, b.sizeInBytes };

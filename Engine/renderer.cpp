@@ -122,7 +122,7 @@ template<ht_query_type QUERY_T>
 struct gpu_query_handle
 {
 	fixed_string<64>	name;
-	u32 				beginIdx : 16;
+	u32 				begIdx : 16;
 	u32 				endIdx : 16;
 };
 
@@ -131,30 +131,72 @@ using pipestats_query = gpu_query_handle<ht_query_type::TIMESTAMP>;
 
 struct ht_gpu_frame_profiler
 {
-	std::vector<timestamp_query>	timedZones; // NOTE: these are 2 per query so we need std::size * 2
-	std::vector<pipestats_query>	pipelineStats;
+	std::vector<timestamp_query>	timedZonesQueries; // NOTE: these are 2 per query so we need std::size * 2
+	std::vector<pipestats_query>	pipelineStatsQueries;
 	vk_buffer						timestampQueryBuff;
 	vk_buffer						pipelineStatsQueryBuff;
 
-	void ReadbackResultsAndResetQueryPools( vk_command_buffer& cmdBuff )
-	{
+	void ReadbackResultsAndResetQueryPools(
+		vk_command_buffer&				cmdBuff,
+		std::vector<ht_timed_zone>&		timedGpuZones,
+		std::vector<ht_pipeline_stats>& pipelinesStats
+	) {
 		cmdBuff.CmdReadQueryPoolResults( pVkCtx->timestampQueryPool, timestampQueryBuff,
-			0, ( u32 ) std::size( timedZones ) * 2 );
-		cmdBuff.CmdResetQueryPool( pVkCtx->timestampQueryPool );
+			0, ( u32 ) std::size( timedZonesQueries ) * 2 );
 		cmdBuff.CmdReadQueryPoolResults( pVkCtx->pplnStatsQueryPool, pipelineStatsQueryBuff,
-			0, ( u32 ) std::size( pipelineStats ) );
+			0, ( u32 ) std::size( pipelineStatsQueries ) );
+
+		// TODO: fuck C++
+		timedGpuZones.append_range( timedZonesQueries | std::views::transform( [ this ]( const auto& q )
+		{
+			return ResolveTimestampQuery( q );
+		} ) );
+		pipelinesStats.append_range( pipelineStatsQueries |std::views::transform( [ this ]( const auto& q )
+		{
+			return ResolvePipelineStatsQuery( q );
+		} ) );
+
+		cmdBuff.CmdResetQueryPool( pVkCtx->timestampQueryPool );
 		cmdBuff.CmdResetQueryPool( pVkCtx->pplnStatsQueryPool );
 
-		timedZones.resize( 0 );
-		pipelineStats.resize( 0 );
+		timedZonesQueries.resize( 0 );
+		pipelineStatsQueries.resize( 0 );
+	}
+
+	ht_timed_zone ResolveTimestampQuery( const timestamp_query& hQuery ) const
+	{
+		u32 startIdx = hQuery.begIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
+		u32 endIdx = hQuery.endIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
+		u64 endTs = VkBufferHostView<u64>( timestampQueryBuff )[ endIdx ];
+		u64 startTs = VkBufferHostView<u64>( timestampQueryBuff )[ startIdx ];
+		return {
+			.name	= hQuery.name,
+			.timeMs = float( endTs - startTs ) * pVkCtx->timestampPeriod * NS_TO_MS
+		};
+	}
+
+	ht_pipeline_stats ResolvePipelineStatsQuery( const pipestats_query& hQuery ) const
+	{
+		u32 resultIdx = hQuery.begIdx * pVkCtx->pplnStatsQueryPool.queryStrideInSlots;
+
+		return {
+			.name						= hQuery.name,
+			.inputAssemblyVtxNum		= VkBufferHostView<u64>( pipelineStatsQueryBuff )[ resultIdx + 0 ],
+			.inputAssemblyPrimitiveNum	= VkBufferHostView<u64>( pipelineStatsQueryBuff )[ resultIdx + 1 ],
+			.vsInvocationNum			= VkBufferHostView<u64>( pipelineStatsQueryBuff )[ resultIdx + 2 ],
+			.clipInvocationNum			= VkBufferHostView<u64>( pipelineStatsQueryBuff )[ resultIdx + 3 ],
+			.clipPrimitiveNum			= VkBufferHostView<u64>( pipelineStatsQueryBuff )[ resultIdx + 4 ],
+			.psInvocationCount			= VkBufferHostView<u64>( pipelineStatsQueryBuff )[ resultIdx + 5 ],
+			.csInvocationCount			= VkBufferHostView<u64>( pipelineStatsQueryBuff )[ resultIdx + 6 ]
+		};
 	}
 
 	timestamp_query BeginTimedZone( vk_command_buffer& cmdBuff, const char* name )
 	{
-		u16 currOffset = ( u16 ) std::size( timedZones ) * 2; // NOTE: these are 2 per query so we need std::size * 2
-		timestamp_query hQuery = { .name = name, .beginIdx = currOffset, .endIdx = currOffset + 1u };
-		cmdBuff.CmdWriteTimestamp( pVkCtx->timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.beginIdx );
-		timedZones.push_back( hQuery );
+		u16 currOffset = ( u16 ) std::size( timedZonesQueries ) * 2; // NOTE: these are 2 per query so we need std::size * 2
+		timestamp_query hQuery = { .name = name, .begIdx = currOffset, .endIdx = currOffset + 1u };
+		cmdBuff.CmdWriteTimestamp( pVkCtx->timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.begIdx );
+		timedZonesQueries.push_back( hQuery );
 		return hQuery;
 	}
 
@@ -165,15 +207,15 @@ struct ht_gpu_frame_profiler
 
 	pipestats_query BeginStatsQuery( vk_command_buffer& cmdBuff, const char* name )
 	{
-		pipestats_query hQuery = { .name = name, .beginIdx = ( u16 ) std::size( pipelineStats ), .endIdx	= u16( -1 ) };
-		cmdBuff.CmdQueryBegin( pVkCtx->pplnStatsQueryPool, hQuery.beginIdx );
-		pipelineStats.push_back( hQuery );
+		pipestats_query hQuery = { .name = name, .begIdx = ( u16 ) std::size( pipelineStatsQueries ), .endIdx	= u16( -1 ) };
+		cmdBuff.CmdQueryBegin( pVkCtx->pplnStatsQueryPool, hQuery.begIdx );
+		pipelineStatsQueries.push_back( hQuery );
 		return hQuery;
 	}
 
 	void EndStatsQuery( vk_command_buffer& cmdBuff, const pipestats_query& hQuery )
 	{
-		cmdBuff.CmdQueryEnd( pVkCtx->pplnStatsQueryPool, hQuery.beginIdx );
+		cmdBuff.CmdQueryEnd( pVkCtx->pplnStatsQueryPool, hQuery.begIdx );
 	}
 };
 
@@ -1005,7 +1047,9 @@ struct culling_pass
 		vk_command_buffer&			cmdBuff,
 		vk_rsc_state_tracker&		rscTracker,
 		const culling_pass_args&	args,
-		bool						latePass
+		bool						latePass,
+		bool						toggleInstCull,
+		bool						toggleMltCull
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Cull Pass",{} );
 
@@ -1081,7 +1125,8 @@ struct culling_pass
 				.hizSamplerIdx			= args.samplerDesc.slot,
 				.visibleItemsCountIdx	= visibleInstCounterIdx.slot,
 				.visibleItemsIdx		= visibleInstIdx.slot,
-				.isLatePass				= latePass
+				.isLatePass				= latePass,
+				.toggleCulling			= toggleInstCull
 			};
 			fixed_string<64> regionName = { "Instance Culling {}", latePass ? 1 : 0 };
 			HT_PIPELINE_STATS_QUERY( cmdBuff, ( const char* ) regionName, cmdBuff.DispatchComputeIndirect(
@@ -1131,7 +1176,9 @@ struct culling_pass
 				.hizSamplerIdx			= args.samplerDesc.slot,
 				.drawCountIdx			= drawCounterIdx.slot,
 				.drawCmsIdx				= drawCmdsIdx.slot,
+
 				.isLatePass				= latePass,
+				.toggleCulling			= toggleMltCull
 			};
 
 			fixed_string<64> regionName = { "Instance Culling {}", latePass ? 1 : 0 };
@@ -2137,7 +2184,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	stack_adaptor<virtual_arena> virtualStack = { scratchArena };
 
 	const u64 currentFrameIdx			= vFrameIdx++;
-	const u64 currentFrameInFlightIdx	= currentFrameIdx % framesInFlight;
+	const u32 currentFrameInFlightIdx	= currentFrameIdx % framesInFlight;
 
 	globalCurrentFifIdx = currentFrameInFlightIdx;
 
@@ -2155,8 +2202,9 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	thisFrameCmdBuff.CmdBeginCmdBuffer();
 
-	HtGetGpuFrameProfiler()->ReadbackResultsAndResetQueryPools( thisFrameCmdBuff );
-	timestamp_query hQuery = HtGetGpuFrameProfiler()->BeginTimedZone( thisFrameCmdBuff, "GPU Frame" );
+	HtGetGpuFrameProfiler()->ReadbackResultsAndResetQueryPools( thisFrameCmdBuff,
+		gpuData.timedZones, gpuData.pipelinesStats );
+	timestamp_query hQuery = HtGetGpuFrameProfiler()->BeginTimedZone( thisFrameCmdBuff, "GPU FrameTime" );
 
 	static bool initResources = false;
 	if( !initResources )
@@ -2216,8 +2264,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.dbgGpuInstBuffIdx		= dbgPass.gpuInstBuffIdx,
 		.dbgGpuInstCountBuffIdx = dbgPass.gpuInstCountBuffIdx
 	};
-	HT_TIMED_ZONE( thisFrameCmdBuff, "Culling 1st Pass", cullingPass.Execute(
-		thisFrameCmdBuff, rscStateTracker, cullPassArgs, false ) );
+	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 1nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
+		cullPassArgs, false, frameData.dbgDrawFlags.toggleInstCull, frameData.dbgDrawFlags.toggleMltCull ) );
 
 	const vbuffer_pass_args vbuffPassArgs = {
 		.depthTarget			= depthTarget,
@@ -2246,8 +2294,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
-	HT_TIMED_ZONE( thisFrameCmdBuff, "Culling 2nd Pass", cullingPass.Execute(
-		thisFrameCmdBuff, rscStateTracker, cullPassArgs, true ) );
+	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 2nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
+		cullPassArgs, true, frameData.dbgDrawFlags.toggleInstCull, frameData.dbgDrawFlags.toggleMltCull ) );
 
 	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
 	//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, vbuffPassArgs, true );

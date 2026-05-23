@@ -109,24 +109,6 @@ enum class vk_queue_t : u32
 	COUNT
 };
 
-constexpr u64 INVALID_VK_QUERY = ~u64( 0 );
-
-constexpr bool IsVkQueryValid( u64 q )
-{
-	return INVALID_VK_QUERY != q;
-}
-
-struct vk_pipeline_stats_query_res
-{
-	u64 inputAssemblyVtxNum			= INVALID_VK_QUERY;
-	u64 inputAssemblyPrimitiveNum	= INVALID_VK_QUERY;
-	u64 vsInvocationNum				= INVALID_VK_QUERY;
-	u64 clipInvocationNum			= INVALID_VK_QUERY;
-	u64 clipPrimitiveNum			= INVALID_VK_QUERY;
-	u64 psInvocationCount			= INVALID_VK_QUERY;
-	u64 csInvocationCount			= INVALID_VK_QUERY;
-};
-
 // NOTE: in Vk we must read a subrange ( or exact range ) of written queries otherwise we ain't getting anything back
 struct vk_query_pool
 {
@@ -136,37 +118,6 @@ struct vk_query_pool
 	u32				queryCount;
 
 	inline u64 GetSizeInSlots() const { return queryCount * queryStrideInSlots; }
-
-	//inline float ReadTimestampQuery( ht_timer_query hQuery  ) const
-	//{
-	//	HT_ASSERT( VK_QUERY_TYPE_TIMESTAMP == type );
-	//
-	//	u32 startIdx = hQuery.begId * queryStrideInSlots;
-	//	u32 endIdx = hQuery.endId * queryStrideInSlots;
-	//
-	//	HT_ASSERT( ( startIdx < std::size( resultBuff ) ) && ( endIdx < std::size( resultBuff ) ) );
-	//
-	//	return float( resultBuff[ endIdx ] - resultBuff[ startIdx ] ) * timestampPeriod * NS_TO_MS;
-	//}
-	//
-	//inline vk_pipeline_stats_query_res ReadPipelineStatsQuery( ht_pipeline_stats_query hQuery ) const
-	//{
-	//	HT_ASSERT( VK_QUERY_TYPE_PIPELINE_STATISTICS == type );
-	//
-	//	u32 resultIdx = hQuery.id * queryStrideInSlots;
-	//
-	//	HT_ASSERT( resultIdx < std::size( resultBuff ) );
-	//
-	//	return {
-	//		.inputAssemblyVtxNum		= resultBuff[ resultIdx + 0 ],
-	//		.inputAssemblyPrimitiveNum	= resultBuff[ resultIdx + 1 ],
-	//		.vsInvocationNum			= resultBuff[ resultIdx + 2 ],
-	//		.clipInvocationNum			= resultBuff[ resultIdx + 3 ],
-	//		.clipPrimitiveNum			= resultBuff[ resultIdx + 4 ],
-	//		.psInvocationCount			= resultBuff[ resultIdx + 5 ],
-	//		.csInvocationCount			= resultBuff[ resultIdx + 6 ]
-	//	};
-	//}
 };
 
 #endif // !__VK_TYPES_H__

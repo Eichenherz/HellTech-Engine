@@ -124,6 +124,8 @@ struct ht_demo_action_map
 	u16 slowDown;
 	u16 frustumDbg;
 	u16 xrayDraw;
+	u16 instCull;
+	u16 mltCull;
 };
 
 constexpr ht_demo_action_map GLOB_ACTION_MAP = {
@@ -135,7 +137,9 @@ constexpr ht_demo_action_map GLOB_ACTION_MAP = {
 	.down		= HT_SC_C,
 	.slowDown	= HT_SC_LCTRL,
 	.frustumDbg = HT_SC_F,
-	.xrayDraw	= HT_SC_X
+	.xrayDraw	= HT_SC_X,
+	.instCull	= HT_SC_I,
+	.mltCull	= HT_SC_M
 };
 
 struct move_cam_action
@@ -178,13 +182,6 @@ inline move_cam_action GetMoveCamAction(
 	return { .camMove = DX_XMStoreFloat3( camMove ), .dRot = yawPitch };
 }
 
-// Misc
-struct ht_engine_stats
-{
-	float gpuMs;
-	float cpuFrameMs;
-};
-
 // Job system
 job_system_ctx::job_system_ctx() : sema{}, queue{ 128 } {}
 void job_system_ctx::SubmitJob( job_t job )
@@ -219,13 +216,10 @@ struct helltech final : helltech_interface
     virtual_camera                      mainActiveCam   = {};
     virtual_camera                      debugCam        = {};
 
-	gpu_data							gpuData			= {};
-
 	im_gui_ctx							imGuiCtx		= {};
 	// TODO: no vector
 	std::vector<imgui_window>			imguiWnds		= {};
 
-	ht_engine_stats						engineStats		= {};
 	renderer_dbg_draw					rndDbgFlags		= {};
 	// TODO: no vector
 	std::vector<instance_desc>			drawables		= {};
@@ -235,6 +229,9 @@ struct helltech final : helltech_interface
 	job_system_ctx*						pJobSys			= nullptr;
 	// TODO: no vector
 	std::vector<upload_job_payload*>	jobCache		= {};
+
+	std::vector<ht_timed_zone>			timedZones	= {};
+	std::vector<ht_pipeline_stats>		pipelinesStats	= {};
 
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
@@ -281,13 +278,13 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 		.widgets = {
 			imgui_widget {
 				.name	= "GPU ms: ",
-				.pData	= &engineStats.gpuMs,
+				.pData	= nullptr,
 				.Action = ImGuiPrintFloatAction,
 				.type	= imgui_widget_type::TEXT
 			},
 			imgui_widget {
 				.name	= "CPU frame ms: ",
-				.pData	= &engineStats.cpuFrameMs,
+				.pData	= nullptr,
 				.Action = ImGuiPrintFloatAction,
 				.type	= imgui_widget_type::TEXT
 			}
@@ -304,12 +301,6 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 				.Action = nullptr,
 				.type	= imgui_widget_type::CHECKBOX
 			},
-			//imgui_widget {
-			//	.name	= " VBuffer MltId",
-			//	.pData	= &rndDbgFlags.vBuffMeshletId,
-			//	.Action = nullptr,
-			//	.type	= imgui_widget_type::CHECKBOX
-			//},
 			imgui_widget {
 				.name	= " Draw Inst AABBs",
 				.pData	= &rndDbgFlags.dbgDraw,
@@ -425,6 +416,15 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	rndDbgFlags.freezeMainView = inputState.IsButtonHeld( GLOB_ACTION_MAP.frustumDbg );
 	rndDbgFlags.drawXRayMode = inputState.IsButtonHeld( GLOB_ACTION_MAP.xrayDraw );
 
+	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.instCull ) )
+	{
+		rndDbgFlags.toggleInstCull = !rndDbgFlags.toggleInstCull;
+	}
+	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.mltCull ) )
+	{
+		rndDbgFlags.toggleMltCull = !rndDbgFlags.toggleMltCull;
+	}
+
 	mainActiveCam.Move( camMove, dRot );
 	[[likely]]
 	if( !rndDbgFlags.freezeMainView )
@@ -458,9 +458,12 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	// here we must the drawables instances
 
-	engineStats = { .gpuMs = gpuData.timeMs, .cpuFrameMs = ( float )( elapsedTime * 1000.0 ) };
+	timedZones.push_back( { .name = "CPU FrameMs: ", .timeMs = ( float )( elapsedTime * 1000.0 ) } );
 
 	ImGuiRenderUI( imguiWnds );
+
+	timedZones.resize( 0 );
+	pipelinesStats.resize( 0 );
 
 	frame_data frameData = {
 		.views 			= views,
@@ -470,6 +473,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		.dbgDrawFlags	= rndDbgFlags
 	};
 
+	gpu_data gpuData = { timedZones, pipelinesStats };
 	pRenderer->HostFrames( frameData, scratchArena, gpuData );
 }
 

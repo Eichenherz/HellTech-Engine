@@ -22,36 +22,41 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     }
 
     const bool isLatePass = bool( pushBlock.isLatePass );
-
-    // NOTE: we use camIdx here bc we'll have a debug camera
-    view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
-    Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
-    SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
+    const bool toggleCulling = bool( pushBlock.toggleCulling );
 
     visible_meshlet mltToTest = BufferLoad<visible_meshlet>( pushBlock.expandedMltsIdx, mltId );
     gpu_instance currentInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltToTest.instId );
 
-    float4x4 toWorld = float4x4(
-        float4( currentInst.toWorld[ 0 ], 0.0f ),
-        float4( currentInst.toWorld[ 1 ], 0.0f ),
-        float4( currentInst.toWorld[ 2 ], 0.0f ),
-        float4( currentInst.toWorld[ 3 ], 1.0f )
-    );
-
-    visibility_res mltVisRes = TestVisibility( mltToTest.minAabb, mltToTest.maxAabb, toWorld, cam, hizTex, quadMin, isLatePass );
-
-    if( !isLatePass )
+    bool visible = true;
+    if( toggleCulling )
     {
-        bool mltIsOccluded = !mltVisRes.notOccluded;
-        u32 occSlotIdx = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
-        if( mltIsOccluded )
+        float4x4 toWorld = float4x4(
+            float4( currentInst.toWorld[ 0 ], 0.0f ),
+            float4( currentInst.toWorld[ 1 ], 0.0f ),
+            float4( currentInst.toWorld[ 2 ], 0.0f ),
+            float4( currentInst.toWorld[ 3 ], 1.0f )
+        );
+
+        // NOTE: we use camIdx here bc we'll have a debug camera
+        view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
+        Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
+        SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
+
+        visibility_res mltVisRes = TestVisibility( mltToTest.minAabb, mltToTest.maxAabb, toWorld, cam,
+            hizTex, quadMin, isLatePass );
+
+        if( !isLatePass )
         {
-            BufferStore<visible_meshlet>( pushBlock.occludedMltBuffIdx, mltToTest, occSlotIdx );
+            bool mltIsOccluded = !mltVisRes.notOccluded;
+            u32 occSlotIdx = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
+            if( mltIsOccluded )
+            {
+                BufferStore<visible_meshlet>( pushBlock.occludedMltBuffIdx, mltToTest, occSlotIdx );
+            }
         }
+
+        visible = mltVisRes.inFrustum && mltVisRes.notOccluded;
     }
-
-    bool visible = mltVisRes.inFrustum && mltVisRes.notOccluded;
-
     u32 slotIdx = HTWaveReserveGlobalSlot( visible, pushBlock.drawCountIdx );
 
     if( visible )
