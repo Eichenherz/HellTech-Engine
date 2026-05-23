@@ -18,6 +18,7 @@
 #include <System/sys_thread.h>
 
 #include "engine_platform_common.h"
+#include "System/Win32/win32_kbd_scancodes.h"
 
 static inline void SysOsCreateConsole()
 {
@@ -66,17 +67,17 @@ static inline bool SysPumpUserInput()
 	return true;
 }
 
-static void Win32ProcessRawInput( const RAWINPUT& ri, input_state& inputState )
+static void Win32ProcessRawInput( const RAWINPUT& ri, ht_input_state& inputState )
 {
 	if( RIM_TYPEKEYBOARD == ri.header.dwType )
 	{
 		const RAWKEYBOARD& kb = ri.data.keyboard;
 		if( KEYBOARD_OVERRUN_MAKE_CODE == kb.MakeCode ) return;
 
-		bool isPressed = !( kb.Flags & RI_KEY_BREAK );
 		bool isE0 = kb.Flags & RI_KEY_E0;
 		u16 keyIndex = ( u16 ) ( kb.MakeCode | ( isE0 ? 0x100 : 0 ) );
-		inputState.keyStates[ keyIndex ] = isPressed;
+		bool isPressed = !( kb.Flags & RI_KEY_BREAK );
+		inputState.UpdateButtonState( keyIndex, isPressed );
 	}
 	if( RIM_TYPEMOUSE == ri.header.dwType )
 	{
@@ -86,69 +87,62 @@ static void Win32ProcessRawInput( const RAWINPUT& ri, input_state& inputState )
 			inputState.mouseDy += ri.data.mouse.lLastY;
 		}
 
-		USHORT usButtonFlags =  ri.data.mouse.usButtonFlags;
-		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN )   inputState.mouseButtons[ 0 ] = 1;
-		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_UP )     inputState.mouseButtons[ 0 ] = 0;
-		if( usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN )  inputState.mouseButtons[ 1 ] = 1;
-		if( usButtonFlags & RI_MOUSE_RIGHT_BUTTON_UP )    inputState.mouseButtons[ 1 ] = 0;
-		if( usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_DOWN ) inputState.mouseButtons[ 2 ] = 1;
-		if( usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_UP )   inputState.mouseButtons[ 2 ] = 0;
+		USHORT usButtonFlags = ri.data.mouse.usButtonFlags;
+		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN )   inputState.UpdateButtonState( HT_MB_LEFT, 1 );
+		if( usButtonFlags & RI_MOUSE_LEFT_BUTTON_UP )     inputState.UpdateButtonState( HT_MB_LEFT, 0 );
+		if( usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN )  inputState.UpdateButtonState( HT_MB_RIGHT, 1 );
+		if( usButtonFlags & RI_MOUSE_RIGHT_BUTTON_UP )    inputState.UpdateButtonState( HT_MB_RIGHT, 0 );
+		if( usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_DOWN ) inputState.UpdateButtonState( HT_MB_MIDDLE, 1 );
+		if( usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_UP )   inputState.UpdateButtonState( HT_MB_MIDDLE, 0 );
+		if( usButtonFlags & RI_MOUSE_BUTTON_4_DOWN )      inputState.UpdateButtonState( HT_MB_4, 1 );
+		if( usButtonFlags & RI_MOUSE_BUTTON_4_UP )        inputState.UpdateButtonState( HT_MB_4, 0 );
+		if( usButtonFlags & RI_MOUSE_BUTTON_5_DOWN )      inputState.UpdateButtonState( HT_MB_5, 1 );
+		if( usButtonFlags & RI_MOUSE_BUTTON_5_UP )        inputState.UpdateButtonState( HT_MB_5, 0 );
 	}
 }
+
+// TODO: add memory, interp mouse pos wrt frameTime
+static ht_input_state globalHtInputState = {};
 
 LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
 	switch( uMsg )
 	{
-	case WM_NCCREATE:
-	{
-		CREATESTRUCTW* cs = ( CREATESTRUCTW* ) lParam;
-		SetWindowLongPtr( hwnd, GWLP_USERDATA, ( LONG_PTR ) cs->lpCreateParams );
-		return TRUE;
-	}
-	// TODO: this will exit the Loop immediately. 
-	case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); return 0; // NOTE: no more def handling 
-	case WM_MOUSEMOVE:
-	{
-		LONG_PTR pUserData = GetWindowLongPtr( hwnd, GWLP_USERDATA );
-		if( pUserData )
+		// TODO: this will exit the Loop immediately.
+		case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); break;
+		case WM_MOUSEMOVE:
 		{
-			input_state& inputState = *( input_state* ) pUserData;
-			inputState.mousePos = { ( float ) GET_X_LPARAM( lParam ), ( float ) GET_Y_LPARAM( lParam ) };
+			globalHtInputState.mousePos = { ( float ) GET_X_LPARAM( lParam ), ( float ) GET_Y_LPARAM( lParam ) };
+			break;
 		}
-		break;
-	}
 		
-	case WM_INPUT:
-	{
-		constexpr u64 cbSzHeader = sizeof( RAWINPUTHEADER );
-		HRAWINPUT hri = ( HRAWINPUT ) lParam;
-
-		// TODO: self supply this
-		static thread_local std::vector<u8> scratchPad;
-
-		UINT size = 0;
-		if( GetRawInputData( hri, RID_INPUT, nullptr, &size, cbSzHeader ) == UINT( -1 ) || !size  )
+		case WM_INPUT:
 		{
-			return 0;
+			HRAWINPUT hri = ( HRAWINPUT ) lParam;
+
+			// TODO: self supply this
+			thread_local std::vector<u8> scratchPad;
+
+			UINT size = 0;
+			if( GetRawInputData( hri, RID_INPUT, nullptr, &size,
+				sizeof( RAWINPUTHEADER ) ) == UINT( -1 ) || !size  )
+			{
+				break;
+			}
+
+			scratchPad.resize( size );
+			if( GetRawInputData( hri, RID_INPUT, std::data( scratchPad ), &size,
+				sizeof( RAWINPUTHEADER ) ) == UINT( -1 ) )
+			{
+				break;
+			}
+
+			const RAWINPUT& ri = *( const RAWINPUT* ) std::data( scratchPad );
+			Win32ProcessRawInput( ri, globalHtInputState );
+
+			break;
 		}
-
-		scratchPad.resize( size );
-		if( GetRawInputData( hri, RID_INPUT, std::data( scratchPad ), &size, cbSzHeader ) == UINT( -1 ) )
-		{
-			return 0;
-		}
-
-		const RAWINPUT& ri = *( const RAWINPUT* ) std::data( scratchPad );
-
-		LONG_PTR pUserData = GetWindowLongPtr( hwnd, GWLP_USERDATA );
-		if( !pUserData ) return 0;
-
-		input_state& inputState = *( input_state* ) pUserData;
-		Win32ProcessRawInput( ri, inputState );
-
-		return 0;
-	}
+		default : break;
 	}
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }
@@ -255,12 +249,10 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	RECT wr = { .left = left, .top = top, .right = ( LONG ) SCREEN_WIDTH + left, .bottom = ( LONG ) SCREEN_HEIGHT + top };
 
-	input_state inputState = {};
-
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, 0 );
 	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left, wr.top,
-		wr.right - wr.left, wr.bottom - wr.top, 0, 0, hInst, &inputState );
+		wr.right - wr.left, wr.bottom - wr.top, 0, 0, hInst, 0 );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
@@ -316,13 +308,10 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		currentTicks = newTicks;
 		//accumulator += elapsedTime;
 
-		// NOTE: reset mouse dMove
-		inputState.mouseDx = 0;
-		inputState.mouseDy = 0;
-
+		globalHtInputState = HTReinitInputState( globalHtInputState );
 		isRunning = SysPumpUserInput();
 
-		pHelltech->RunLoop( elapsedTime, isRunning, scratchArena, inputState );
+		pHelltech->RunLoop( elapsedTime, isRunning, scratchArena, globalHtInputState );
 	}
 
 	return 0;

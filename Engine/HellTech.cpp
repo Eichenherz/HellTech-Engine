@@ -45,7 +45,7 @@ struct virtual_camera
 	float				pitch		= 0.0f;
 	float				yaw			= 0.0f;
 
-	inline void XM_CALLCONV Move( DirectX::XMVECTOR camMove, float2 dRot )
+	inline void XM_CALLCONV Move( float3 camMove, float2 dRot )
 	{
 		using namespace DirectX;
 
@@ -53,7 +53,7 @@ struct virtual_camera
 		pitch = std::clamp( pitch + dRot.y, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
 
 		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 );
-		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( camMove ), tRotScale );
+		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( DX_XMLoadFloat3( camMove ) ), tRotScale );
 		XMVECTOR xmWorldPos = XMVectorAdd( XMLoadFloat3( &worldPos ), xmCamMove );
 		XMVECTOR camLookAt = XMVector3Transform( DX_XMLoadFloat3( WORLD_FWD ),
 			XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
@@ -112,30 +112,56 @@ virtual_camera MakeVirtualCamera( float radsYFov, float aspectRatioWH, float zNe
 // Input
 #include <System/Win32/win32_kbd_scancodes.h>
 
+// TODO: don't hardcode
+struct ht_demo_action_map
+{
+	u16 fwd;
+	u16 bwd;
+	u16 left;
+	u16 right;
+	u16 up;
+	u16 down;
+	u16 slowDown;
+	u16 frustumDbg;
+	u16 xrayDraw;
+};
+
+constexpr ht_demo_action_map GLOB_ACTION_MAP = {
+	.fwd		= HT_SC_W,
+	.bwd		= HT_SC_S,
+	.left		= HT_SC_A,
+	.right		= HT_SC_D,
+	.up			= HT_SC_SPACE,
+	.down		= HT_SC_C,
+	.slowDown	= HT_SC_LCTRL,
+	.frustumDbg = HT_SC_F,
+	.xrayDraw	= HT_SC_X
+};
+
 struct move_cam_action
 {
-	DirectX::XMVECTOR	camMove;
-	float2				dRot;
+	float3 camMove;
+	float2 dRot;
 };
 
 inline move_cam_action GetMoveCamAction(
-	const input_state&	inputState,
-	float				elapsedTime,
-	float				moveSpeed,
-	float				mouseSensitivity
+	const ht_input_state&	inputState,
+	float					elapsedTime,
+	float					moveSpeed,
+	float					mouseSensitivity
 ) {
 	using namespace DirectX;
 
 	XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
-	if( inputState.keyStates[ HT_SC_W ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_FWD ) );
-	if( inputState.keyStates[ HT_SC_A ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_LEFT ) );
-	if( inputState.keyStates[ HT_SC_S ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_FWD ) );
-	if( inputState.keyStates[ HT_SC_D ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_LEFT ) );
-	if( inputState.keyStates[ HT_SC_SPACE ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_UP ) );
-	if( inputState.keyStates[ HT_SC_C ] ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_UP ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.fwd ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_FWD ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.left ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_LEFT ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.bwd ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_FWD ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.right ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_LEFT ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.up ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_UP ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.down ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_UP ) );
 
 	float mvSpeed = moveSpeed;
-	if( inputState.keyStates[ HT_SC_LCTRL ] )
+	if( inputState.IsButtonHeld( GLOB_ACTION_MAP.slowDown ) )
 	{
 		mvSpeed *= 0.4f;
 	}
@@ -149,7 +175,7 @@ inline move_cam_action GetMoveCamAction(
 		YAW_SIGN * ( float ) inputState.mouseDx * mouseSensitivity,
 		PITCH_SIGN * ( float ) inputState.mouseDy * mouseSensitivity
 	};
-	return { .camMove = camMove, .dRot = yawPitch };
+	return { .camMove = DX_XMStoreFloat3( camMove ), .dRot = yawPitch };
 }
 
 // Misc
@@ -214,7 +240,7 @@ struct helltech final : helltech_interface
 	float								mouseSensitivity = 0.002f;
 
 	void Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height ) override;
-	void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const input_state& inputState ) override;
+	void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const ht_input_state& inputState ) override;
 
 	// TODO: must use own memory
 	inline upload_job_payload* IssueUploadBatch( std::vector<mesh_upload_req>&& uploadReqs, std::vector<instance_desc>&& entities )
@@ -381,7 +407,7 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 	jobCache.push_back( IssueUploadBatch( MOV( uploads ), MOV( entities ) ) );
 }
 
-void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const input_state& inputState )
+void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const ht_input_state& inputState )
 {
 	using namespace DirectX;
 
@@ -396,8 +422,8 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	auto[ camMove, dRot ] = GetMoveCamAction( inputState, ( float ) elapsedTime, moveSpeed, mouseSensitivity );
 
-	rndDbgFlags.freezeMainView = inputState.keyStates[ HT_SC_F ];
-	rndDbgFlags.drawXRayMode = inputState.keyStates[ HT_SC_X ];
+	rndDbgFlags.freezeMainView = inputState.IsButtonHeld( GLOB_ACTION_MAP.frustumDbg );
+	rndDbgFlags.drawXRayMode = inputState.IsButtonHeld( GLOB_ACTION_MAP.xrayDraw );
 
 	mainActiveCam.Move( camMove, dRot );
 	[[likely]]

@@ -8,6 +8,8 @@
 
 #include <ht_fixed_string.h>
 
+#include <System/Win32/win32_kbd_scancodes.h>
+
 #include <vector>
 
 struct im_gui_ctx
@@ -28,13 +30,15 @@ struct im_gui_ctx
 		io->Fonts->Build();
 	}
 
-	inline void UpdateTimeAndInputState( float elapsedSecs, const input_state& inputState )
+	inline void UpdateTimeAndInputState( float elapsedSecs, const ht_input_state& inputState )
 	{
 		io->DeltaTime = elapsedSecs;
 		io->MousePos = { inputState.mousePos.x, inputState.mousePos.y };
-		io->MouseDown[ 0 ] = inputState.mouseButtons[ 0 ];
-		io->MouseDown[ 1 ] = inputState.mouseButtons[ 1 ];
-		io->MouseDown[ 2 ] = inputState.mouseButtons[ 2 ];
+		io->MouseDown[ 0 ] = inputState.IsButtonPressed( HT_MB_LEFT );
+		io->MouseDown[ 1 ] = inputState.IsButtonPressed( HT_MB_RIGHT );
+		io->MouseDown[ 2 ] = inputState.IsButtonPressed( HT_MB_MIDDLE );
+		io->MouseDown[ 3 ] = inputState.IsButtonPressed( HT_MB_4 );
+		io->MouseDown[ 4 ] = inputState.IsButtonPressed( HT_MB_5 );
 	}
 };
 

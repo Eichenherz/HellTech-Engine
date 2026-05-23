@@ -10,6 +10,8 @@
 #include <ht_core_types.h>
 #include "engine_types.h"
 
+#include <bitset>
+
 // TODO: maybe make ht_engine_systems.h ?
 #include "ht_ring_buffer.h"
 #include "ht_stretchybuff.h"
@@ -20,16 +22,49 @@ struct sys_semaphore;
 constexpr u32 SCREEN_WIDTH = 1024;
 constexpr u32 SCREEN_HEIGHT = 640;
 
-#include <bitset>
-
-struct input_state
+struct ht_input_state
 {
-    std::bitset<512>    keyStates;
-    std::bitset<5>      mouseButtons;
-    i32 	            mouseDx;
-    i32 	            mouseDy;
-    float2 	            mousePos;
+    static constexpr u64 BUTTON_COUNT = 0x205; // TODO: maybe not here
+    // NOTE: includes mouse buttons
+    std::bitset<BUTTON_COUNT>   buttonsEndedDown = {};
+    u16                         buttonsHalfTransitions[ BUTTON_COUNT ] = {};
+    i32 	                    mouseDx = {};
+    i32 	                    mouseDy = {};
+    float2 	                    mousePos = {};
+
+    inline bool IsButtonDown( u16 buttonId ) const
+    {
+        return buttonsEndedDown[ buttonId ];
+    }
+
+    inline bool IsButtonPressed( u16 buttonId ) const
+    {
+        return buttonsEndedDown[ buttonId ] && ( buttonsHalfTransitions[ buttonId ] & 1 );
+    }
+    inline bool IsButtonReleased( u16 buttonId ) const
+    {
+        return !buttonsEndedDown[ buttonId ] && ( buttonsHalfTransitions[ buttonId ] & 1 );
+    }
+    inline bool IsButtonHeld( u16 buttonId ) const
+    {
+        return buttonsEndedDown[ buttonId ] && ( 0 == buttonsHalfTransitions[ buttonId ] );
+    }
+    inline bool IsButtonIdle( u16 buttonId ) const
+    {
+        return !buttonsEndedDown[ buttonId ] && ( 0 == buttonsHalfTransitions[ buttonId ] );
+    }
+
+    inline void UpdateButtonState( u16 buttonId, const bool keyPressed )
+    {
+        buttonsHalfTransitions[ buttonId ] += ( keyPressed == buttonsEndedDown[ buttonId ] ) ? 0 : 1;
+        buttonsEndedDown[ buttonId ] = keyPressed;
+    }
 };
+
+inline ht_input_state HTReinitInputState( const ht_input_state& inputState )
+{
+    return { .buttonsEndedDown = inputState.buttonsEndedDown };
+}
 
 using PFN_Job = void ( * )( void*, virtual_arena* );
 struct job_t
@@ -40,7 +75,7 @@ struct job_t
 
 struct job_system_ctx
 {
-    sys_semaphore		sema;
+    sys_semaphore		    sema;
     ringbuff_w_lock<job_t>	queue;
 
     job_system_ctx();
@@ -67,7 +102,7 @@ struct helltech_interface
 {
     // TODO: maybe place somewhere else
     virtual void Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height ) = 0;
-    virtual void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const input_state& inputState ) = 0;
+    virtual void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const ht_input_state& inputState ) = 0;
 };
 
 helltech_interface* MakeHelltech( virtual_arena& arena );
