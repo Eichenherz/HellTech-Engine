@@ -14,7 +14,6 @@ call :clone "3rdParty/meshoptimizer"            "https://github.com/zeux/meshopt
 call :clone "3rdParty/MikkTSpace"               "https://github.com/mmikk/MikkTSpace.git"
 call :clone "3rdParty/bc7enc_rdo"               "https://github.com/Eichenherz/bc7enc_rdo.git"
 call :clone "3rdParty/ImGuiFileDialog"          "https://github.com/aiekick/ImGuiFileDialog.git"
-call :clone "3rdParty/flux"                     "https://github.com/tcbrindle/flux.git"
 call :clone "3rdParty/minunit"                  "https://github.com/kattkieru/minunit.git"
 call :clone "3rdParty/OffsetAllocator"          "https://github.com/sebbbi/OffsetAllocator.git"
 
