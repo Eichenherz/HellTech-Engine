@@ -8,27 +8,6 @@
 - dedicated GPU ( preferably NV )
 
 
-### HtLib SUBTREE :
-- Remote: https://github.com/Eichenherz/HtLib.git → `HtLib/`
-- Pull upstream changes: `git htlib-pull`
-- Push local changes back: `git htlib-push`
-- Aliases are local to this repo (`.git/config`)
-
-
-### DEPENDENCIES :
-- [meshoptimizer](https://github.com/zeux/meshoptimizer)
-- [cgltf](https://github.com/jkuhlmann/cgltf)
-- [Dear ImGui](https://github.com/ocornut/imgui)
-- [ImGuiFileDialog](https://github.com/aiekick/ImGuiFileDialog)
-- [VulkanMemoryAllocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
-- [bc7enc_rdo](https://github.com/Eichenherz/bc7enc_rdo)
-- [miniz](https://github.com/richgel999/miniz)
-- [unordered_dense](https://github.com/martinus/unordered_dense)
-- [dds](https://github.com/turanszkij/dds)
-- [OffsetAllocator](https://github.com/sebbbi/OffsetAllocator)
-- [minunit](https://github.com/kattkieru/minunit)
-- DirectXShaderCompiler ( comes with Win10SDK )
-
 ### FEATURES ( WIP ):
 - Descriptor Indexing + BDAs for all ( bindless design )
 - Frustum and Double pass HZB Occlusion culling ( Instance and Meshlets )
@@ -36,6 +15,7 @@
 - Custom binary file format ( hpk - HellPack ) based on ZIP ( Quake 3 style )
 - Asset compiler and exporter ( gltf -> hpk only ): features mesh optimization and tex compression
 - Custom memory and job system
+
 
 ### POINTS OF INTEREST:
 ----------------------------------
@@ -76,7 +56,7 @@
 | `engine_platform_common.h` | Platform↔engine interface: `renderer_interface`, `ht_input_state`, `job_system_ctx` |
 | `HellTech.cpp` | Game-side logic: camera, input bindings, UI assembly, frame loop                    |
 
-#### Shared Foundation — `Lib/`
+#### Shared Lib — `Lib/`
 | File | What it does |
 |------|-------------|
 | `ht_gfx_types.h` | GPU-facing structs shared between C++ and GLSL shaders |
@@ -86,6 +66,28 @@
 
 ![HellTech Engine 8_27_2021 12_35_42 PM](https://user-images.githubusercontent.com/32171756/135079403-c1c025b4-bb22-4181-a33a-0a49b469a5e6.png)
 ![HellTech Engine 9_2_2021 1_43_40 PM](https://user-images.githubusercontent.com/32171756/135079505-5b91c42c-8445-46d4-b7e2-c3f41124a4a9.png)
-![HellTech Engine 10_3_2021 1_15_57 PM](https://user-images.githubusercontent.com/32171756/135749331-4a191c8f-d44b-473b-baba-4361418860cc.png)
+<img width="1280" height="800" alt="Screenshot 5_5_2026 1_32_30 PM" src="https://github.com/user-attachments/assets/ff02beb3-53d8-46dc-bbe9-0a202eee8c67" />
+<img width="1280" height="800" alt="HellTech Engine 5_25_2026 1_31_46 PM" src="https://github.com/user-attachments/assets/99b92af6-1b8d-4ce1-9a3e-c0ddaf62825c" />
 
+
+### HtLib SUBTREE :
+- Remote: https://github.com/Eichenherz/HtLib.git -> `HtLib/`
+- Pull upstream changes: `git htlib-pull`
+- Push local changes back: `git htlib-push`
+- Aliases are local to this repo (`.git/config`)
+
+
+### DEPENDENCIES :
+- [meshoptimizer](https://github.com/zeux/meshoptimizer)
+- [cgltf](https://github.com/jkuhlmann/cgltf)
+- [Dear ImGui](https://github.com/ocornut/imgui)
+- [ImGuiFileDialog](https://github.com/aiekick/ImGuiFileDialog)
+- [VulkanMemoryAllocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
+- [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) 
+- [miniz](https://github.com/richgel999/miniz)
+- [unordered_dense](https://github.com/martinus/unordered_dense)
+- [dds](https://github.com/turanszkij/dds)
+- [OffsetAllocator](https://github.com/sebbbi/OffsetAllocator)
+- [minunit](https://github.com/kattkieru/minunit)
+- DirectXShaderCompiler ( comes with Win10SDK )
 
