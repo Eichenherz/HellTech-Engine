@@ -63,7 +63,7 @@ struct ht_input_state
 
 inline ht_input_state HTReinitInputState( const ht_input_state& inputState )
 {
-    return { .buttonsEndedDown = inputState.buttonsEndedDown };
+    return { .buttonsEndedDown = inputState.buttonsEndedDown, .mousePos = inputState.mousePos };
 }
 
 using PFN_Job = void ( * )( void*, virtual_arena* );

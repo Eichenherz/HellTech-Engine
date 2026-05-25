@@ -78,11 +78,11 @@ struct vk_image
 	VkImageType         type;
 	VkImageUsageFlags	usageFlags;
 	VkFormat			format;
-	u32					width : 16;
-	u32					height : 16;
-	u32					layerCount : 8;
-	u32					mipCount : 8;
-	u32					padding : 16;
+	u32					width		: 16;
+	u32					height		: 16;
+	u32					layerCount	: 8;
+	u32					mipCount	: 8;
+	u32					padding		: 16;
 
 	inline VkExtent3D Extent3D() const
 	{
@@ -131,8 +131,8 @@ VkMakeImgView(
 	u32				mipLevel,
 	u32				levelCount,
 	VkImageViewType imgViewType = VK_IMAGE_VIEW_TYPE_2D,
-	u32				arrayLayer = 0,
-	u32				layerCount = 1
+	u32				arrayLayer	= 0,
+	u32				layerCount	= 1
 ){
 	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( imgFormat );
 	VkImageViewCreateInfo viewInfo = { 

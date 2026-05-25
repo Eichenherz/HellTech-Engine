@@ -245,20 +245,20 @@ HT_FORCEINLINE ht_gpu_frame_profiler* const HtGetGpuFrameProfiler()
 	return &globalHtGpuFrameProfiler[ globalCurrentFifIdx ];
 }
 
-#define HT_TIMED_ZONE( cmdBuff, name, code )									\
-	do																			\
-	{																			\
-		auto hQuery = HtGetGpuFrameProfiler()->BeginTimedZone( cmdBuff, name );	\
-		code;																	\
-		HtGetGpuFrameProfiler()->EndTimedZone( cmdBuff, hQuery );				\
+#define HT_TIMED_ZONE( cmdBuff, name, code )										 \
+	do																				 \
+	{																				 \
+		auto hQuery = HtGetGpuFrameProfiler()->BeginTimedZone( cmdBuff, name );		 \
+		code;																		 \
+		HtGetGpuFrameProfiler()->EndTimedZone( cmdBuff, hQuery );					 \
 	} while( 0 )
 
-#define HT_PIPELINE_STATS_QUERY( cmdBuff, name, code )							\
-	do																			\
-	{																			\
-		auto hQuery = HtGetGpuFrameProfiler()->BeginTimedZone( cmdBuff, name );	\
-		code;																	\
-		HtGetGpuFrameProfiler()->EndTimedZone( cmdBuff, hQuery );				\
+#define HT_PIPELINE_STATS_QUERY( cmdBuff, name, code )								\
+	do																				\
+	{																				\
+		auto hQuery = HtGetGpuFrameProfiler()->BeginStatsQuery( cmdBuff, name );	\
+		code;																		\
+		HtGetGpuFrameProfiler()->EndStatsQuery( cmdBuff, hQuery );					\
 	} while( 0 )
 
 #include "ht_renderer_types.h"
@@ -1181,7 +1181,7 @@ struct culling_pass
 				.toggleCulling			= toggleMltCull
 			};
 
-			fixed_string<64> regionName = { "Instance Culling {}", latePass ? 1 : 0 };
+			fixed_string<64> regionName = { "Meshlet Culling {}", latePass ? 1 : 0 };
 			HT_PIPELINE_STATS_QUERY( cmdBuff, ( const char* ) regionName, cmdBuff.DispatchComputeIndirect(
 				meshletCullPass, pushBlock, dispatchIndirect ) );
 		}

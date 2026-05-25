@@ -217,8 +217,6 @@ struct helltech final : helltech_interface
     virtual_camera                      debugCam        = {};
 
 	im_gui_ctx							imGuiCtx		= {};
-	// TODO: no vector
-	std::vector<imgui_window>			imguiWnds		= {};
 
 	renderer_dbg_draw					rndDbgFlags		= {};
 	// TODO: no vector
@@ -230,7 +228,7 @@ struct helltech final : helltech_interface
 	// TODO: no vector
 	std::vector<upload_job_payload*>	jobCache		= {};
 
-	std::vector<ht_timed_zone>			timedZones	= {};
+	std::vector<ht_timed_zone>			timedZones		= {};
 	std::vector<ht_pipeline_stats>		pipelinesStats	= {};
 
 	float								moveSpeed		= 1.2f;
@@ -258,34 +256,56 @@ struct helltech final : helltech_interface
 
 };
 
-
-void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height )
+void ImGuiPrintTimedZones( const void* pData )
 {
-	constexpr float fovRads = DirectX::XMConvertToRadians( 70.0f );
-	constexpr float zNear = 0.5f;
+	const std::vector<ht_timed_zone>& timedZones = *( const std::vector<ht_timed_zone>* ) pData;
+	for( const ht_timed_zone& tz : timedZones )
+	{
+		ImGui::Text( "%-20s %.5f ms", ( const char* ) tz.name, tz.timeMs );
+	}
+}
 
-	float aspecRatioWH = float( width ) / float( height );
+void ImGuiPrintPipelineStats( const void* pData )
+{
+	const std::vector<ht_pipeline_stats>& pipeStats = *( const std::vector<ht_pipeline_stats>* ) pData;
+	for( const ht_pipeline_stats& ps : pipeStats )
+	{
+		if( 0 != ps.inputAssemblyVtxNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "IA vertices",
+			ps.inputAssemblyVtxNum );
+		if( 0 != ps.inputAssemblyPrimitiveNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "IA primitives",
+			ps.inputAssemblyPrimitiveNum );
+		if( 0 != ps.vsInvocationNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "VS invocations",
+			ps.vsInvocationNum );
+		if( 0 != ps.clipInvocationNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "Clip invocations",
+			ps.clipInvocationNum );
+		if( 0 != ps.clipPrimitiveNum ) ImGui::Text( "%-20s %-20s %llu", ( const char* ) ps.name, "Clip primitives",
+			ps.clipPrimitiveNum );
+		if( 0 != ps.psInvocationCount ) ImGui::Text( "%-20s %-20s %llu", ( const char* ) ps.name, "PS invocations",
+			ps.psInvocationCount );
+		if( 0 != ps.csInvocationCount ) ImGui::Text( "%-20s %-20s %llu", ( const char* ) ps.name, "CS invocations",
+			ps.csInvocationCount );
+	}
+}
 
-	mainActiveCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
-	debugCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
-
-	pRenderer = MakeRenderer();
-
-	pRenderer->InitBackend( hInst, hWnd );
-
-	imGuiCtx = { width, height };
+// TODO: no vector
+void HTAssembleUI(
+	renderer_dbg_draw						rndDbgFlags,
+	const std::vector<ht_timed_zone>&		timedZones,
+	const std::vector<ht_pipeline_stats>&	pipeStats
+) {
+	std::vector<imgui_window> imguiWnds;
 	imguiWnds.push_back( {
 		.widgets = {
 			imgui_widget {
-				.name	= "GPU ms: ",
-				.pData	= nullptr,
-				.Action = ImGuiPrintFloatAction,
+				.name	= "",
+				.pData	= &timedZones, // NOTE: this is a local
+				.Action = ImGuiPrintTimedZones,
 				.type	= imgui_widget_type::TEXT
 			},
 			imgui_widget {
-				.name	= "CPU frame ms: ",
-				.pData	= nullptr,
-				.Action = ImGuiPrintFloatAction,
+				.name	= "",
+				.pData	= &pipeStats, // NOTE: this is a local
+				.Action = ImGuiPrintPipelineStats,
 				.type	= imgui_widget_type::TEXT
 			}
 		},
@@ -317,6 +337,26 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 		.name	= "Renderer Dbg Modes",
 		.flags	= ImGuiWindowFlags_NoScrollbar
 	} );
+
+	ImGuiRenderUI( imguiWnds );
+}
+
+
+void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height )
+{
+	constexpr float fovRads = DirectX::XMConvertToRadians( 70.0f );
+	constexpr float zNear = 0.5f;
+
+	float aspecRatioWH = float( width ) / float( height );
+
+	mainActiveCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
+	debugCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
+
+	pRenderer = MakeRenderer();
+
+	pRenderer->InitBackend( hInst, hWnd );
+
+	imGuiCtx = { width, height };
 
 	// TODO: vfs
 	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
@@ -460,7 +500,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	timedZones.push_back( { .name = "CPU FrameMs: ", .timeMs = ( float )( elapsedTime * 1000.0 ) } );
 
-	ImGuiRenderUI( imguiWnds );
+	HTAssembleUI( rndDbgFlags, timedZones, pipelinesStats );
 
 	timedZones.resize( 0 );
 	pipelinesStats.resize( 0 );

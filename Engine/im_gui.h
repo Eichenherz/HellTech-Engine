@@ -34,11 +34,11 @@ struct im_gui_ctx
 	{
 		io->DeltaTime = elapsedSecs;
 		io->MousePos = { inputState.mousePos.x, inputState.mousePos.y };
-		io->MouseDown[ 0 ] = inputState.IsButtonPressed( HT_MB_LEFT );
-		io->MouseDown[ 1 ] = inputState.IsButtonPressed( HT_MB_RIGHT );
-		io->MouseDown[ 2 ] = inputState.IsButtonPressed( HT_MB_MIDDLE );
-		io->MouseDown[ 3 ] = inputState.IsButtonPressed( HT_MB_4 );
-		io->MouseDown[ 4 ] = inputState.IsButtonPressed( HT_MB_5 );
+		io->MouseDown[ 0 ] = inputState.IsButtonDown( HT_MB_LEFT );
+		io->MouseDown[ 1 ] = inputState.IsButtonDown( HT_MB_RIGHT );
+		io->MouseDown[ 2 ] = inputState.IsButtonDown( HT_MB_MIDDLE );
+		io->MouseDown[ 3 ] = inputState.IsButtonDown( HT_MB_4 );
+		io->MouseDown[ 4 ] = inputState.IsButtonDown( HT_MB_5 );
 	}
 };
 
@@ -107,8 +107,12 @@ inline void ImGuiHandleWidget( const imgui_widget& widget )
 		}
 		case TEXT:
 		{
-			ImGui::Text( "%s\x20", std::data( widget.name ) );
-			ImGui::SameLine();
+			if( std::size( widget.name ) )
+			{
+				ImGui::Text( "%s\x20", std::data( widget.name ) );
+				ImGui::SameLine();
+			}
+
 			if( widget.pData )
 			{
 				widget.Action( widget.pData );
@@ -123,11 +127,6 @@ inline void ImGuiHandleWidget( const imgui_widget& widget )
 		}
 		default: break;
 	}
-}
-
-inline void ImGuiLoadFileAction( const void* )
-{
-	ImGuiFileDialog::Instance()->OpenDialog( "loadFileDlg", "Choose File", ".hpk" );
 }
 
 inline void ImGuiPrintFloatAction( const void* pData )
@@ -159,16 +158,6 @@ inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds )
 		}
 		ImGui::End();
 	}
-
-	//if( ImGuiFileDialog::Instance()->Display( "loadFileDlg" ) )
-	//{
-	//	if( ImGuiFileDialog::Instance()->IsOk() )
-	//	{
-	//		std::string path = ImGuiFileDialog::Instance()->GetFilePathName();
-	//		loadHpkReqs.push_back( { path.c_str() } );
-	//	}
-	//	ImGuiFileDialog::Instance()->Close();
-	//}
 
 	ImGui::Render();
 
