@@ -10,6 +10,8 @@
 
 #define ALIGNAS( x ) alignas( x )
 
+#define CONSTEXPR constexpr
+
 #define STATIC_ASSERT( expr, str ) static_assert( expr, str )
 
 #else
@@ -29,11 +31,18 @@ typedef uint4		u32x4;
 typedef uint3		u32x3;
 typedef uint2		u32x2;
 
+typedef float_16t2	fp16x2;
+
 #define ALIGNAS( x )
+// TODO: remove when hlsl gets a constexpr
+#define CONSTEXPR static const
 
 #define STATIC_ASSERT( expr, str )
 
 #endif
+
+CONSTEXPR u64 RASTER_MAX_VTX_PER_MLT = 64;
+CONSTEXPR u64 RASTER_MAX_TRIS_PER_MLT = 128;
 
 struct view_data
 {
@@ -59,28 +68,14 @@ struct packed_trs
 
 STATIC_ASSERT( 48 == sizeof( packed_trs ), "Size mismatch!");
 
-struct packed_vtx
-{
-	float	px;
-	float	py;
-	float	pz;
-	float	tu;
-	float	tv;
-	float	octNX;
-	float	octNY;
-	float	tanAngle;
-	u16		tanSign;
-};
+// NOTE: octahedron encoded normal + tan angle + bitan sign; will alias bc we will select the bit depth in the end/dec
+typedef u32 oct10x2s_a11_s1;
 
-// TODO: compressed coords u8, u16
-struct vertex
+// NOTE: the positions will be given as a bit stream of variable len
+struct packed_vtx_attr
 {
-	float px;
-	float py;
-	float pz;
-	float tu;
-	float tv;
-	u32 snorm8octTanFrame;
+	oct10x2s_a11_s1 encodedTBN;
+	fp16x2			encodedUVs;
 };
 
 struct gpu_instance
@@ -95,10 +90,11 @@ STATIC_ASSERT( 56 == sizeof( gpu_instance ), "Size mismatch!");
 // NOTE: weird alignments bc this will be read by the GPU !
 struct gpu_mesh
 {
-	float3	minAabb;
-	float3	maxAabb;
+	float3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
+	float3	aabbMax;
 	u32		meshletOffset;
-	u32		vtxOffset;
+	u32		vtxPosOffsetInBytes;
+	u32		vtxAttrsOffset;
 	u32		triOffset;
 	u32		meshletCount;
 	u32		vtxCount;
@@ -107,12 +103,15 @@ struct gpu_mesh
 
 struct gpu_meshlet
 {
-	float3	minAabb;
-	float3	maxAabb;
-	u32		vtxOffset;
+	float3	aabbMin;
+	float3	aabbMax;
+	u32		vtxPosOffsetBits;
+	u32		vtxAttrsOffset;
 	u32		triOffset;
-	u16		vtxCount;
-	u16		triCount;
+	u32		vtxCount	: 8;
+	u32		triCount	: 8;
+	u32		posBitDepth	: 8;
+	u32		padding0	: 8;
 };
 
 struct dispatch_command
@@ -128,8 +127,6 @@ struct dispatch_command
 
 struct draw_meshlet_command
 {
-	u32 	globalInstId;
-	u32 	globalMltId;
 #if defined( __cplusplus ) && defined( __VK )
 	VkDrawIndexedIndirectCommand cmd;
 #else
@@ -139,6 +136,14 @@ struct draw_meshlet_command
 	u32    vertexOffset;
 	u32    firstInstance;
 #endif
+};
+
+struct draw_meshlet_cmd_data
+{
+	u32 globalInstId;
+	u32 globalMltId;
+	u32 vtxAttrOffset;
+	u32 vtxPosOffsetInBits;
 };
 
 struct draw_instanced_indexed_indirect
@@ -199,19 +204,18 @@ struct visible_instance
 	u32 instId;
 	u32 meshletOffset;
 	u32 meshletCount;
-	u32 vtxOffset;
+	u32 vtxPosOffsetInBytes;
+	u32 vtxAttrsOffset;
 	u32 triOffset;
 };
 
-struct visible_meshlet
+struct meshlet_cull_wok_item
 {
-	float3	minAabb;
-	float3	maxAabb;
-	u32 	instId;
-	u32 	globMltId; // actual id in the meshlet buffer
-	u32 	triCount;
-	u32 	globVtxOffset;
-	u32 	globTriOffset;
+	u32 instId;
+	u32 globMltId;
+	u32 vtxPosOffsetInBytes;
+	u32 vtxAttrsOffset;
+	u32 triOffset;
 };
 
 struct culling_params
@@ -264,6 +268,7 @@ struct meshlet_cull_params
 
 	u32 drawCountIdx;
 	u32 drawCmsIdx;
+	u32 drawDataIdx;
 
 	u32	isLatePass;
 	u32 toggleCulling;
@@ -284,20 +289,21 @@ struct culling_init_params
 
 struct vbuffer_params
 {
-	u32 drawBuffIdx;
+	u32 drawDataBuffIdx;
 	u32 instBuffIdx;
 	u32 camIdx;
 };
 // TODO: maybe use the same struct here ?
 struct depth_prepass_params
 {
-	u32 drawBuffIdx;
+	u32 drawDataBuffIdx;
 	u32 instBuffIdx;
+	u32 mltBuffIdx;
 	u32 camIdx;
 };
 struct meshlet_pass_params
 {
-	u32 drawBuffIdx;
+	u32 drawDataBuffIdx;
 	u32 instBuffIdx;
 	u32 camIdx;
 };
@@ -305,14 +311,15 @@ struct meshlet_pass_params
 // NOTE: src and dst assumed to be the same dimensions, asserted on the host
 struct vbuffer_dbg_draw_params
 {
-	u32 srcIdx;
-	u32 dstIdx;
+	u32x2	vbuffRes;
+	u32 	srcIdx;
+	u32 	dstIdx;
 };
 
 struct lambertian_clay_params
 {
-	float2	texResolution; // NOTE: asserted in the renderer that they're eq size
-	u32		vbuffIdx;
+	u32x2	vbuffRes;
+	u32		vbuffIdx; // NOTE: asserted in the renderer that they're eq size
 	u32		dstIdx;
 	u32		instBuffIdx;
 	u32		meshDescIdx;
@@ -366,7 +373,8 @@ struct multi_pass_downsampler_params
 struct global_data
 {
 	u64 mltAddr;
-	u64 vtxAddr;
+	u64 vtxPosAddr;
+	u64 vtxAttrsAddr;
 	u64 triAddr;
 };
 

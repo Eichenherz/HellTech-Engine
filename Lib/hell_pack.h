@@ -60,11 +60,12 @@ struct hellpack_level
 using index_t = u8;
 struct hellpack_mesh_asset
 {
-	typed_view<packed_vtx>	vertices;
-	typed_view<index_t>		triangles;
-	typed_view<gpu_meshlet>	meshlets;
-	float3					aabbMin;
-	float3					aabbMax;
+	byte_view					vtxPosBitstream;
+	typed_view<packed_vtx_attr>	vertexAttrs;
+	typed_view<index_t>			triangles;
+	typed_view<gpu_meshlet>		meshlets;
+	float3						aabbMin;
+	float3						aabbMax;
 };
 
 struct hellpack_texture_asset
@@ -106,11 +107,12 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 		HT_ASSERT( 4 == h.entriesCount );
 
 		return hellpack_mesh_asset{
-			.vertices	= MakeTypedView<packed_vtx>( base + entryTable[ 0 ].offsetInBytes, entryTable[ 0 ].sizeInBytes ),
-			.triangles	= MakeTypedView<u8>( base + entryTable[ 1 ].offsetInBytes, entryTable[ 1 ].sizeInBytes ),
-			.meshlets	= MakeTypedView<gpu_meshlet>( base + entryTable[ 2 ].offsetInBytes, entryTable[ 2 ].sizeInBytes ),
-			.aabbMin	= *( const float3* ) ( base + entryTable[ 3 ].offsetInBytes ),
-			.aabbMax	= *( const float3* ) ( base + entryTable[ 3 ].offsetInBytes + sizeof( float3 ) )
+			.vtxPosBitstream	= MakeByteView( base + entryTable[ 0 ].offsetInBytes, entryTable[ 0 ].sizeInBytes ),
+			.vertexAttrs		= MakeTypedView<packed_vtx_attr>( base + entryTable[ 1 ].offsetInBytes, entryTable[ 1 ].sizeInBytes ),
+			.triangles			= MakeTypedView<u8>( base + entryTable[ 2 ].offsetInBytes, entryTable[ 2 ].sizeInBytes ),
+			.meshlets			= MakeTypedView<gpu_meshlet>( base + entryTable[ 3 ].offsetInBytes, entryTable[ 3 ].sizeInBytes ),
+			.aabbMin			= *( const float3* ) ( base + entryTable[ 4 ].offsetInBytes ),
+			.aabbMax			= *( const float3* ) ( base + entryTable[ 4 ].offsetInBytes + sizeof( float3 ) )
 		};
 	}
 	else if constexpr( std::is_same_v<HPK_T, hellpack_texture_asset> )

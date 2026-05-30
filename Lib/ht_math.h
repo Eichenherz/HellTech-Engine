@@ -8,10 +8,6 @@
 
 constexpr float HT_ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
 
-
-#include <DirectXPackedVector.h>
-namespace DXPacked = DirectX::PackedVector;
-
 inline const DXPacked::XMCOLOR HT_WHITE		= { 255u, 255u, 255u, 1 };
 inline const DXPacked::XMCOLOR HT_BLACK		= { 0u, 0u, 0u, 1 };
 inline const DXPacked::XMCOLOR HT_GRAY		= { 0x80u, 0x80u, 0x80u, 1 };
@@ -91,6 +87,24 @@ struct aabb_t
 	Vec min;
 	Vec max;
 };
+
+inline float3 AabbCenter( const aabb_t<float3> aabb )
+{
+	return {
+		( aabb.max.x + aabb.min.x ) * 0.5f,
+		( aabb.max.y + aabb.min.y ) * 0.5f,
+		( aabb.max.z + aabb.min.z ) * 0.5f
+	};
+}
+
+inline float3 AabbExtent( const aabb_t<float3> aabb )
+{
+	return {
+		( aabb.max.x - aabb.min.x ) * 0.5f,
+		( aabb.max.y - aabb.min.y ) * 0.5f,
+		( aabb.max.z - aabb.min.z ) * 0.5f
+	};
+}
 
 inline aabb_t<float3> ComputeAabb( std::span<const float3> vertices )
 {

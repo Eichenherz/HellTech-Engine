@@ -57,6 +57,10 @@ inline byte_view MakeByteView( const R& r )
 	return { ( const u8* ) std::data( r ), ( u32 ) std::size( r ) * sizeof( T ) };
 }
 
+inline byte_view MakeByteView( const u8* pData, u64 sizeInBytes )
+{
+	return { pData, sizeInBytes };
+}
 
 template<typename T, typename Idx>
 inline auto PermutedView( std::vector<T>& src, const std::vector<Idx>& remap )

@@ -1,5 +1,8 @@
 #include <meshoptimizer.h>
 
+//#define CLUSTERLOD_IMPLEMENTATION
+//#include "clusterlod.h"
+
 #include <iostream>
 #include <filesystem>
 namespace fs = std::filesystem;
@@ -28,7 +31,6 @@ namespace fs = std::filesystem;
 #include "hp_encoding.h"
 #include "hp_bcn_compression.h"
 #include "hp_serialization.h"
-#include "mikkt_space.h"
 
 #include "gltf_loader.h"
 
@@ -111,43 +113,6 @@ inline std::vector<Idx> BuildVertexRemapFromPermutedIndices( const std::vector<I
 	return remap;
 }
 
-// TODO: dedup geometry
-//void DeduplicateTriangles( raw_mesh& rawMesh )
-//{
-//	auto canonicalize = [&]( u32x3 tri ) -> triangle_pos {
-//		triangle_pos p = { rawMesh.pos[ tri.x ], rawMesh.pos[ tri.y ], rawMesh.pos[ tri.z ] };
-//
-//		if( LexicalLessThan( p.v1, p.v0 ) && LexicalLessThan( p.v1, p.v2 ) )
-//		{
-//			return { p.v1, p.v2, p.v0 };
-//		}
-//		if( LexicalLessThan( p.v2, p.v0 ) && LexicalLessThan( p.v2, p.v1 ) )
-//		{
-//			return { p.v2, p.v0, p.v1 };
-//		}
-//		return p;
-//	};
-//
-//	ankerl::unordered_dense::set<triangle_pos, ankerl_hash_as_bytes<triangle_pos>> seen;
-//	seen.reserve( std::size( rawMesh.indices ) / 3 );
-//
-//	std::vector<u32> out;
-//	out.reserve( std::size( rawMesh.indices ) );
-//
-//	for( u64 i = 0; i + 2 < std::size( rawMesh.indices ); i += 3 )
-//	{
-//		u32x3 tri = { rawMesh.indices[ i ], rawMesh.indices[ i + 1 ], rawMesh.indices[ i + 2 ] };
-//		if( seen.insert( canonicalize( tri ) ).second )
-//		{
-//			out.push_back( tri.x );
-//			out.push_back( tri.y );
-//			out.push_back( tri.z );
-//		}
-//	}
-//
-//	rawMesh.indices = std::move( out );
-//}
-
 void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 {
 	HT_ASSERT( std::size( rawMesh.pos ) > 0 );
@@ -159,7 +124,13 @@ void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 
 	if( std::size( rawMesh.tans ) == 0 )
 	{
-		rawMesh.tans = ComputeMikkTSpaceTangentsInplace( rawMesh );
+		// NOTE: this only works because we reindex later on
+		std::vector<float4> tangents( std::size( rawMesh.indices ) );
+		meshopt_generateTangents( &tangents[ 0 ].x, &rawMesh.indices[ 0 ], std::size( rawMesh.indices ),
+			&rawMesh.pos[ 0 ].x, std::size( rawMesh.pos ), sizeof( rawMesh.pos[ 0 ] ),
+			&rawMesh.normals[ 0 ].x, sizeof( rawMesh.normals[ 0 ] ),
+			&rawMesh.uvs[ 0 ].x, sizeof( rawMesh.uvs[ 0 ] ) );
+		rawMesh.tans = MOV( tangents );
 	}
 
 	HT_ASSERT( ( std::size( rawMesh.pos ) == std::size( rawMesh.normals ) )
@@ -171,8 +142,8 @@ void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 struct meshlet_config
 {
 	float   coneWeight		= 0.8f;
-	u16		maxVertices		= 64;
-	u16		maxTriangles	= 128;
+	u16		maxVertices		= RASTER_MAX_VTX_PER_MLT;
+	u16		maxTriangles	= RASTER_MAX_TRIS_PER_MLT;
 };
 
 struct rt_cluster_config
@@ -243,24 +214,6 @@ void MeshoptReindexAndOptimizeMesh( raw_mesh& rawMesh )
 	MeshoptRemapAttributeBufferInplace( rawMesh.normals, newVtxCount, fetchRemap );
 	MeshoptRemapAttributeBufferInplace( rawMesh.tans, newVtxCount, fetchRemap );
 	MeshoptRemapAttributeBufferInplace( rawMesh.uvs, newVtxCount, fetchRemap );
-
-	// NOTE: sanity checks
-	std::span<const u32x3> triRange = { ( const u32x3* ) std::data( rawMesh.indices ),
-		std::size( rawMesh.indices ) / 3 };
-
-	//ankerl::unordered_dense::set<u32x3, ankerl_hash_as_bytes<u32x3>, u32x3_eq> triSet;
-	//HT_ASSERT( !RangeHasDuplicates<u32x3>( triRange, triSet, CanonicallySortTriangleIndices ) );
-
-	//ankerl::unordered_dense::set<triangle_pos, ankerl_hash_as_bytes<triangle_pos>> posTriSet;
-	//HT_ASSERT( !RangeHasDuplicates<u32x3>( triRange, posTriSet, [&]( u32x3 tri ) {
-	//	triangle_pos p = { rawMesh.pos[ tri.x ], rawMesh.pos[ tri.y ], rawMesh.pos[ tri.z ] };
-//
-	//	if( LexicalLessThan( p.v1, p.v0 ) ) std::swap( p.v0, p.v1 );
-	//	if( LexicalLessThan( p.v2, p.v1 ) ) std::swap( p.v1, p.v2 );
-	//	if( LexicalLessThan( p.v1, p.v0 ) ) std::swap( p.v0, p.v1 );
-//
-	//	return p;
-	//} ) );
 }
 
 struct __meshopt_meshlets
@@ -300,41 +253,6 @@ __meshopt_meshlets MeshoptMakeClusters(
 	return {  .info = MOV( meshlets ), .vertices = MOV( mltVtx ), .triIndices = MOV( mltTris ) };
 }
 
-__meshopt_meshlets MeshoptMakeClusters( 
-	std::span<const float3> pos, 
-	std::span<const u32>	indices,
-	rt_cluster_config		cfg
-) { 
-	const u64 indexCount = std::size( indices );
-
-	// NOTE( meshoptimizer ): use minTriangles to compute worst case bound
-	const u64 maxMeshletCount = meshopt_buildMeshletsBound( indexCount, cfg.maxVertices, cfg.minTriangles );
-	std::vector<meshopt_Meshlet> meshlets( maxMeshletCount );
-	std::vector<u32> mletVtx( indexCount );
-	std::vector<u8> mletTris( indexCount );
-
-	u64 meshletCount = meshopt_buildMeshletsSpatial( &meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ],
-		std::size( indices ), &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ),
-		cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles, cfg.fillWeight );
-
-	const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
-
-	meshlets.resize( meshletCount );
-	mletVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
-	mletTris.resize( ( u64 ) last.triangle_offset + ( ( ( u64 ) last.triangle_count * 3 + 3 ) & ~3 ) );
-
-	for( const meshopt_Meshlet& m : meshlets )
-	{
-		meshopt_optimizeMeshlet( &mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ], m.triangle_count,
-			m.vertex_count );
-	}
-
-	return {
-		.info		= MOV( meshlets ),
-		.vertices	= MOV( mletVtx ),
-		.triIndices	= MOV( mletTris )
-	};
-}
 
 template<TRIVIAL_T T>
 inline std::vector<T> GetMeshletLocalAttrStream(
@@ -352,6 +270,7 @@ inline std::vector<T> GetMeshletLocalAttrStream(
 	return localStream;
 }
 
+// NOTE: vtx quant from https://daniilvinn.github.io/2024/05/04/omniforce-vertex-quantization.html
 mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 {
 	meshlet_config mltCfg = {};
@@ -362,13 +281,18 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 	std::span<const float4> tan		= rawMesh.tans;
 	std::span<const float2> uvs		= rawMesh.uvs;
 
-	std::vector<packed_vtx>		vertices;
-	std::vector<u8>				triIndices;
-	std::vector<gpu_meshlet>	meshlets;
+	bit_stream						vtxPosBitstream;
+	std::vector<packed_vtx_attr>	verticesAttrs;
+	std::vector<u8>					triIndices;
+	std::vector<gpu_meshlet>		meshlets;
+	aabb_t<float3>					meshAabb = {};
 
-	vertices.reserve( std::size( meshoptMeshlets.vertices ) );
+	verticesAttrs.reserve( std::size( meshoptMeshlets.vertices ) );
 	triIndices.reserve( std::size( meshoptMeshlets.triIndices ) );
 	meshlets.reserve( std::size( meshoptMeshlets.info ) );
+
+	constexpr u32 vertexBitrate = 8;
+	constexpr u32 gridSize = 1u << vertexBitrate;
 
 	for( const meshopt_Meshlet& m : meshoptMeshlets.info )
 	{
@@ -385,65 +309,60 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 			m.vertex_count );
 
 		const aabb_t<float3> aabb = ComputeAabb( mltPosStream );
+		// NOTE: bc we quantize it later we have to merge them here
+		meshAabb = MergeAabbs( std::array{ meshAabb, aabb } );
 
-		std::vector<packed_vtx> packedVtx( std::size( mltPosStream ) );
-		for( u64 vi = 0; vi < m.vertex_count; ++vi )
+		float3 extent = AabbExtent( aabb );
+		// NOTE: diameter to get the full max grid span of the meshlet
+		float mltDiameter = 2.0f * std::sqrtf( DotProd( extent, extent ) );
+
+		u32 meshletBitrate = std::clamp( ( u32 ) std::ceil(
+			std::log2( mltDiameter * gridSize ) ), 1u, 32u );
+
+		std::vector<packed_vtx_attr> packedVtxAttrs( std::size( mltPosStream ) );
+		for( u64 vai = 0; vai < m.vertex_count; ++vai )
 		{
-			float3 p	= mltPosStream[ vi ];
-			float3 n	= mltNormStream[ vi ];
-			float4 t	= mltTanStream[ vi ];
-			float2 uv	= mltUvStream[ vi ];
-			float2 octNormal = OctaNormalEncode( n );
-			float tanAngle = EncodeTanToAngle( n, { t.x,t.y,t.z } );
-			u8 tanSign = ( -1.0f == t.w ) ? 1 : 0;
+			float3 n = mltNormStream[ vai ];
+			float4 t = mltTanStream[ vai ];
+			float2 uv = mltUvStream[ vai ];
 
-			packedVtx[ vi ] = {
-				.px 		= p.x,
-				.py 		= p.y,
-				.pz 		= p.z,
-				.tu 		= uv.x,
-				.tv 		= uv.y,
-				.octNX		= octNormal.x,
-				.octNY		= octNormal.y,
-				.tanAngle	= tanAngle,
-				.tanSign	= tanSign
+			packedVtxAttrs[ vai ] = {
+				.encodedTBN = EncodeTanFrame( n, { t.x, t.y, t.z }, t.w ),
+				.encodedUVs = { meshopt_quantizeHalf( uv.x ), meshopt_quantizeHalf( uv.y ) }
 			};
 		}
 
-		gpu_meshlet outMeshlet = {
-			.minAabb	= aabb.min,
-			.maxAabb	= aabb.max,
-			.vtxOffset	= ( u32 ) std::size( vertices ),
-			.triOffset	= ( u32 ) std::size( triIndices ),
-			.vtxCount	= ( u16 ) m.vertex_count,
-			.triCount	= ( u16 ) m.triangle_count
-		};
-		meshlets.push_back( outMeshlet );
+		meshlets.push_back( {
+			.aabbMin				= aabb.min,
+			.aabbMax				= aabb.max,
+			.vtxPosOffsetBits		= ( u32 ) vtxPosBitstream.cursorInBits,
+			.vtxAttrsOffset			= ( u32 ) std::size( verticesAttrs ),
+			.triOffset				= ( u32 ) std::size( triIndices ),
+			.vtxCount				= m.vertex_count,
+			.triCount				= m.triangle_count,
+			.posBitDepth			= meshletBitrate
+		} );
 
-		std::span<const u8> mltTriIndices = { std::data( meshoptMeshlets.triIndices ) + m.triangle_offset,
-			m.triangle_count * 3 };
-
-		vertices.append_range( packedVtx );
-		triIndices.append_range( mltTriIndices );
+		for( float3 p : mltPosStream )
+		{
+			u32 x = QuantizeVertexPosComp( p.x, vertexBitrate, meshletBitrate );
+			u32 y = QuantizeVertexPosComp( p.y, vertexBitrate, meshletBitrate );
+			u32 z = QuantizeVertexPosComp( p.z, vertexBitrate, meshletBitrate );
+			vtxPosBitstream.AppendBits( x, meshletBitrate );
+			vtxPosBitstream.AppendBits( y, meshletBitrate );
+			vtxPosBitstream.AppendBits( z, meshletBitrate );
+		}
+		verticesAttrs.append_range( packedVtxAttrs );
+		triIndices.append_range( std::span{ std::data( meshoptMeshlets.triIndices ) + m.triangle_offset,
+			m.triangle_count * 3 } );
 	}
 
-	auto aabbView = meshlets | std::views::transform( [] ( const gpu_meshlet& m )
-	{
-		return aabb_t<float3>{ .min = m.minAabb, .max = m.maxAabb };
-	} );
-
-	aabb_t<float3> aabb = MergeAabbs( aabbView );
-
-#ifdef _DEBUG
-	ankerl::unordered_dense::set<gpu_meshlet, ankerl_hash_as_bytes<gpu_meshlet>, gpu_meshlet_eq> mltSet;
-	HT_ASSERT( !RangeHasDuplicates<gpu_meshlet>( meshlets, mltSet ) );
-#endif
-
 	return {
-		.vertices	= MOV( vertices ),
-		.triIndices	= MOV( triIndices ),
-		.meshlets	= MOV( meshlets ),
-		.aabb		= { aabb.min, aabb.max }
+		.vtxPosBitstream	= MOV( vtxPosBitstream ),
+		.vtxAttrs			= MOV( verticesAttrs ),
+		.triIndices			= MOV( triIndices ),
+		.meshlets			= MOV( meshlets ),
+		.aabb				= { meshAabb.min, meshAabb.max }
 	};
 }
 
@@ -658,15 +577,15 @@ i32 main( i32 argc, char** argv  )
 		HT_ASSERT( fs::exists( hpkFilePath ) );
 
 		{
-			hellpack_serializble_buffer buffs[] = { worldNodes };//, materialTable };
+			hellpack_serializable_buffer buffs[] = { worldNodes };//, materialTable };
 			std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::LEVEL );
 			zipArchive.WriteBytesToFile( { "world.lvl" }, bytes );
 		}
 		{
 			for( auto& [ filePath, meshAsset ] : meshAssetMap )
 			{
-				hellpack_serializble_buffer buffs[] = { meshAsset.vertices, meshAsset.triIndices,
-					meshAsset.meshlets, meshAsset.aabb };
+				hellpack_serializable_buffer buffs[] = { meshAsset.vtxPosBitstream.GetSerializableBuffer(),
+					meshAsset.vtxAttrs, meshAsset.triIndices, meshAsset.meshlets, meshAsset.aabb };
 				std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::MESH );
 				zipArchive.WriteBytesToFile( filePath, bytes );
 			}

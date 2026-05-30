@@ -1,7 +1,11 @@
+#pragma once
+
 #ifndef __HP_TYPES_INTERNAL_H__
 #define __HP_TYPES_INTERNAL_H__
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
+
+#include "hp_serialization.h"
 
 #include <ankerl/unordered_dense.h>
 #include <vector>
@@ -58,14 +62,6 @@ struct raw_image_view
 	image_metadata		metadata;
 };
 
-struct raw_meshlet
-{
-	std::vector<packed_vtx> vertices;
-	std::vector<u8>			triIndices;
-	float3					aabbMin;
-	float3					aabbMax;
-};
-
 struct raw_material_info
 {
 	std::string name;
@@ -86,12 +82,49 @@ struct raw_material_info
 	alpha_mode	alphaMode;
 };
 
+struct bit_stream
+{
+	std::vector<u64>	qwords;
+	u64					cursorInBits = 0;  // NOTE: lsb
+
+	void AppendBits( u32 inVal, u32 bitLen )
+	{
+		HT_ASSERT( bitLen < 64 );
+		u64 val = u64( inVal ) & ( ( 1ull << bitLen ) - 1 );
+
+		u64 qwBucket = cursorInBits >> 6;
+		u32 bitOffset = cursorInBits & 63;
+		u32 howManyBitWillFit = 64 - bitOffset;
+		bool carryOver = bitLen > howManyBitWillFit;
+
+		if( u64 sz = std::size( qwords ); sz <= ( qwBucket + u64( carryOver ) ) )
+		{
+			qwords.resize( sz + 64, 0 );
+		}
+
+		qwords[ qwBucket ] |= val << bitOffset;
+		if( carryOver )
+		{
+			qwords[ qwBucket + 1 ] |= val >> howManyBitWillFit;
+		}
+
+		cursorInBits += bitLen;
+	}
+
+	hellpack_serializable_buffer GetSerializableBuffer() const
+	{
+		HT_ASSERT( std::data( qwords ) && cursorInBits );
+		return { MakeTypedView<u8>( ( const u8* ) std::data( qwords ), cursorInBits / 8 ) };
+	}
+};
+
 struct mesh_asset
 {
-	std::vector<packed_vtx>		vertices;
-	std::vector<u8>				triIndices;
-	std::vector<gpu_meshlet>	meshlets;
-	std::array<float3, 2>		aabb; // NOTE: helps with serialization { min, max }
+	bit_stream						vtxPosBitstream;
+	std::vector<packed_vtx_attr>	vtxAttrs;
+	std::vector<u8>					triIndices;
+	std::vector<gpu_meshlet>		meshlets;
+	std::array<float3, 2>			aabb; // NOTE: helps with serialization { min, max }
 };
 
 struct packed_trs;
@@ -131,9 +164,12 @@ struct gpu_meshlet_eq
 {
 	bool operator()( const gpu_meshlet& a, const gpu_meshlet& b ) const
 	{
-		return ( a.minAabb == b.minAabb ) && ( a.maxAabb == b.maxAabb )
-			&& ( a.vtxOffset == b.vtxOffset ) && ( a.triOffset == b.triOffset )
-			&& ( a.vtxCount == b.vtxCount ) && ( a.triCount == b.triCount );
+		return ( a.aabbMin == b.aabbMin ) && ( a.aabbMax == b.aabbMax )
+			&& ( a.vtxPosOffsetBits == b.vtxPosOffsetBits )
+			&& ( a.triOffset == b.triOffset )
+			&& ( a.vtxCount == b.vtxCount )
+			&& ( a.triCount == b.triCount )
+			&& ( a.posBitDepth == b.posBitDepth );
 	}
 };
 

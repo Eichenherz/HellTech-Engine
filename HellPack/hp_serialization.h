@@ -9,23 +9,26 @@
 
 #include <span>
 
-// NOTE: takes const lvalues and rejects temporaries ( prevents dangling views )
-struct hellpack_serializble_buffer
+struct hellpack_serializable_buffer
 {
 	const byte_view data;
-	u64 allignmentInBytes;
+	u64				alignmentInBytes;
+
+	template<typename T>
+	hellpack_serializable_buffer( typed_view<T> typedView )
+		: data{ AsBytes( typedView ) }, alignmentInBytes{ alignof( T ) } {}
 
 	template<std::ranges::contiguous_range R>
-	inline hellpack_serializble_buffer( const R& r )
-		: data{ MakeByteView( r ) }, allignmentInBytes{ alignof( std::ranges::range_value_t<R> ) } {}
+	hellpack_serializable_buffer( const R& r )
+		: data{ MakeByteView( r ) }, alignmentInBytes{ alignof( std::ranges::range_value_t<R> ) } {}
 
 	template <std::ranges::contiguous_range R>
-	hellpack_serializble_buffer( const R&& ) = delete;
+	hellpack_serializable_buffer( const R&& ) = delete;
 };
 
 using hellpack_blob = std::vector<u8>;
 
-inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializble_buffer> buffs, hellpack_entry_t type )
+inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializable_buffer> buffs, hellpack_entry_t type )
 {
 	const u32 entriesCount = ( u32 ) std::size( buffs );
 
@@ -44,13 +47,13 @@ inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializble_buf
 
 	u64 cursor = entryTableOffsetInBytes + entryTableSizeInBytes;
 
-	for( const hellpack_serializble_buffer& hpkBuff : buffs ) 
+	for( const hellpack_serializable_buffer& hpkBuff : buffs )
 	{
 		u64 thisBuffSizeInBytes = std::size( hpkBuff.data );
 
 		HT_ASSERT( ( thisBuffSizeInBytes < u64( u32( -1 ) ) ) && ( cursor < u64( u32( -1 ) ) ) );
 
-		cursor = FwdAlign( cursor, hpkBuff.allignmentInBytes );
+		cursor = FwdAlign( cursor, hpkBuff.alignmentInBytes );
 		entryTable.push_back( { .offsetInBytes = cursor, .sizeInBytes = thisBuffSizeInBytes } );
 
 		cursor += thisBuffSizeInBytes;
