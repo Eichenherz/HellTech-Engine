@@ -285,14 +285,26 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 	std::vector<packed_vtx_attr>	verticesAttrs;
 	std::vector<u8>					triIndices;
 	std::vector<gpu_meshlet>		meshlets;
-	aabb_t<float3>					meshAabb = {};
 
 	verticesAttrs.reserve( std::size( meshoptMeshlets.vertices ) );
 	triIndices.reserve( std::size( meshoptMeshlets.triIndices ) );
 	meshlets.reserve( std::size( meshoptMeshlets.info ) );
 
-	constexpr u32 vertexBitrate = 8;
-	constexpr u32 gridSize = 1u << vertexBitrate;
+	const aabb_t<float3> meshAabb = ComputeAabb( pos );
+
+	constexpr u32	gridResolutionInBis = 16;
+	constexpr u32	gridStep = 1u << gridResolutionInBis;
+	constexpr bool	validatePosEncoding = true;
+
+	float maxExtent = std::max( {
+		( meshAabb.max.x - meshAabb.min.x ),
+		( meshAabb.max.y - meshAabb.min.y ),
+		( meshAabb.max.z - meshAabb.min.z )
+	} );
+
+	HT_ASSERT( ( maxExtent > 0.0f ) && std::isfinite( maxExtent ) );
+
+	float meshGridQuantMaxErr = 0.5f / gridStep; // NOTE: 1/2 bc we round !
 
 	for( const meshopt_Meshlet& m : meshoptMeshlets.info )
 	{
@@ -308,16 +320,61 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 		std::vector<float2> mltUvStream = GetMeshletLocalAttrStream( uvs, meshoptMeshlets.vertices, m.vertex_offset,
 			m.vertex_count );
 
-		const aabb_t<float3> aabb = ComputeAabb( mltPosStream );
-		// NOTE: bc we quantize it later we have to merge them here
-		meshAabb = MergeAabbs( std::array{ meshAabb, aabb } );
+		const aabb_t<float3> meshletAabb = ComputeAabb( mltPosStream );
 
-		float3 extent = AabbExtent( aabb );
-		// NOTE: diameter to get the full max grid span of the meshlet
-		float mltDiameter = 2.0f * std::sqrtf( DotProd( extent, extent ) );
+		i32 minMltX = ( i32 ) std::round( meshletAabb.min.x * gridStep );
+		i32 maxMltX = ( i32 ) std::round( meshletAabb.max.x * gridStep );
+		i32 minMltY = ( i32 ) std::round( meshletAabb.min.y * gridStep );
+		i32 maxMltY = ( i32 ) std::round( meshletAabb.max.y * gridStep );
+		i32 minMltZ = ( i32 ) std::round( meshletAabb.min.z * gridStep );
+		i32 maxMltZ = ( i32 ) std::round( meshletAabb.max.z * gridStep );
 
-		u32 meshletBitrate = std::clamp( ( u32 ) std::ceil(
-			std::log2( mltDiameter * gridSize ) ), 1u, 32u );
+		u32x3 mltPerAxisBitRate = {
+			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltX - minMltX ) ),
+			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltY - minMltY ) ),
+			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltZ - minMltZ ) )
+		};
+
+		HT_ASSERT( u32x3{} != mltPerAxisBitRate );
+
+		meshlets.push_back( {
+			.aabbMin			= { minMltX, minMltY, minMltZ },
+			.aabbMax			= { maxMltX, maxMltY, maxMltZ },
+			.vtxPosOffsetBits	= ( u32 ) vtxPosBitstream.cursorInBits,
+			.vtxAttrsOffset		= ( u32 ) std::size( verticesAttrs ),
+			.triOffset			= ( u32 ) std::size( triIndices ),
+			.xBitDepth			= mltPerAxisBitRate.x,
+			.yBitDepth			= mltPerAxisBitRate.y,
+			.zBitDepth			= mltPerAxisBitRate.z,
+			.gridBitResolution	= gridResolutionInBis,
+			.vtxCount			= m.vertex_count,
+			.triCount			= m.triangle_count
+		} );
+
+		for( float3 p : mltPosStream )
+		{
+			u32 x = QuantizeVertexPosCompWithMinAnchor( p.x, gridResolutionInBis, minMltX );
+			u32 y = QuantizeVertexPosCompWithMinAnchor( p.y, gridResolutionInBis, minMltY );
+			u32 z = QuantizeVertexPosCompWithMinAnchor( p.z, gridResolutionInBis, minMltZ );
+			vtxPosBitstream.AppendBits( x, gridResolutionInBis ); //mltPerAxisBitRate.x );
+			vtxPosBitstream.AppendBits( y, gridResolutionInBis ); //mltPerAxisBitRate.y );
+			vtxPosBitstream.AppendBits( z, gridResolutionInBis ); //mltPerAxisBitRate.z );
+
+			if constexpr( validatePosEncoding )
+			{
+				float decX = DecodeVertexPosCompWithAnchor( x, gridStep, minMltX, gridResolutionInBis ); //mltPerAxisBitRate.x );
+				float decY = DecodeVertexPosCompWithAnchor( y, gridStep, minMltY, gridResolutionInBis ); //mltPerAxisBitRate.y );
+				float decZ = DecodeVertexPosCompWithAnchor( z, gridStep, minMltZ, gridResolutionInBis ); //mltPerAxisBitRate.z );
+
+				float xErr = std::fabsf( p.x - decX );
+				float yErr = std::fabsf( p.y - decY );
+				float zErr = std::fabsf( p.z - decZ );
+
+				HT_ASSERT( ( xErr <= meshGridQuantMaxErr )
+					&& ( yErr <= meshGridQuantMaxErr )
+					&& ( zErr <= meshGridQuantMaxErr ) );
+			}
+		}
 
 		std::vector<packed_vtx_attr> packedVtxAttrs( std::size( mltPosStream ) );
 		for( u64 vai = 0; vai < m.vertex_count; ++vai )
@@ -332,26 +389,6 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 			};
 		}
 
-		meshlets.push_back( {
-			.aabbMin				= aabb.min,
-			.aabbMax				= aabb.max,
-			.vtxPosOffsetBits		= ( u32 ) vtxPosBitstream.cursorInBits,
-			.vtxAttrsOffset			= ( u32 ) std::size( verticesAttrs ),
-			.triOffset				= ( u32 ) std::size( triIndices ),
-			.vtxCount				= m.vertex_count,
-			.triCount				= m.triangle_count,
-			.posBitDepth			= meshletBitrate
-		} );
-
-		for( float3 p : mltPosStream )
-		{
-			u32 x = QuantizeVertexPosComp( p.x, vertexBitrate, meshletBitrate );
-			u32 y = QuantizeVertexPosComp( p.y, vertexBitrate, meshletBitrate );
-			u32 z = QuantizeVertexPosComp( p.z, vertexBitrate, meshletBitrate );
-			vtxPosBitstream.AppendBits( x, meshletBitrate );
-			vtxPosBitstream.AppendBits( y, meshletBitrate );
-			vtxPosBitstream.AppendBits( z, meshletBitrate );
-		}
 		verticesAttrs.append_range( packedVtxAttrs );
 		triIndices.append_range( std::span{ std::data( meshoptMeshlets.triIndices ) + m.triangle_offset,
 			m.triangle_count * 3 } );

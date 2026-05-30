@@ -401,10 +401,11 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 		HRNDMESH32 hMesh = pRenderer->AllocMeshComponent( mesh );
 
 		uploads.push_back( {
-			.mltAsBytes = AsBytes( mesh.meshlets ),
-			.vtxAsBytes = AsBytes( mesh.vertices ),
-			.triAsBytes = AsBytes( mesh.triangles ),
-			.hSlot		= hMesh
+			.mltAsBytes			= AsBytes( mesh.meshlets ),
+			.vtxPosAsBytes		= AsBytes( mesh.vtxPosBitstream ),
+			.vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs ),
+			.triAsBytes			= AsBytes( mesh.triangles ),
+			.hSlot				= hMesh
 		} );
 
 		meshIdMap.emplace( pathHash, hMesh );

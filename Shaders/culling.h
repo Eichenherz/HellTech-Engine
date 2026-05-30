@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef __CULLING_H__
 #define __CULLING_H__
 
@@ -13,7 +15,7 @@ struct frustum_culling_result
 };
 
 // NOTE: Gribb-Hartmann method
-frustum_culling_result FrustumCulling( float3 aabbMin, float3 aabbMax, float4x4 mvp )
+frustum_culling_result FrustumCulling( in float3 aabbMin, in float3 aabbMax, in float4x4 mvp )
 {
 	float4x4 transpMvp = transpose( mvp );
 	float4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];

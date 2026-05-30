@@ -23,25 +23,6 @@ float3 ComputeNDCBarycentrics( float2 pixelCenter, float2 s0, float2 s1, float2 
    return float3( b0, b1, b2 );
 }
 
-// NOTE: Rune Stubbe's version : https://twitter.com/Stubbesaurus/status/937994790553227264
-float3 DecodeOctaNormal( float2 octa )
-{
-    float3 n = float3( octa, 1.0 - abs( octa.x ) - abs( octa.y ) );
-    float2 t = float2( max( -n.z, 0.0f ), max( -n.z, 0.0f ) );
-    n.xy += select( n.xy < 0.0f, -t, t );
-
-    return normalize( n );
-}
-
-// NOTE: inspired by Doom Eternal
-float3 DecodeTanFromAngle( float3 n, float tanAngle )
-{
-    float3 tanRef = ( abs( n.x ) > abs( n.z ) ) ? float3( -n.y, n.x, 0.0f ) : float3( 0.0f, -n.z, n.y );
-
-    tanAngle *= PI;
-    return tanRef * cos( tanAngle ) + cross( n, tanRef ) * sin( tanAngle );
-}
-
 // Hamilton product: q = a * b
 float4 QuatMul( float4 a, float4 b )
 {
@@ -82,6 +63,16 @@ float2 Min4_f32x2( float2 v0, float2 v1, float2 v2, float2 v3 )
 float2 Max4_f32x2( float2 v0, float2 v1, float2 v2, float2 v3 )
 {
     return max( max( v0, v1 ), max( v2, v3 ) );
+}
+
+float4x4 f4x3_To_f4x4_Affine( float4x3 transf )
+{
+    return float4x4(
+        float4( transf[ 0 ], 0.0f ),
+        float4( transf[ 1 ], 0.0f ),
+        float4( transf[ 2 ], 0.0f ),
+        float4( transf[ 3 ], 1.0f )
+    );
 }
 
 #endif //!__HELLTECH_HT_HLSL_MATH_H__

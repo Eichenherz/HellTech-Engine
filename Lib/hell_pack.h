@@ -104,7 +104,7 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 	else if constexpr( std::is_same_v<HPK_T, hellpack_mesh_asset> )
 	{
 		HT_ASSERT( hellpack_entry_t::MESH == h.type );
-		HT_ASSERT( 4 == h.entriesCount );
+		HT_ASSERT( 5 == h.entriesCount );
 
 		return hellpack_mesh_asset{
 			.vtxPosBitstream	= MakeByteView( base + entryTable[ 0 ].offsetInBytes, entryTable[ 0 ].sizeInBytes ),

@@ -120,7 +120,6 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/unordered_dense/include
     ${THIRD_PARTY}/miniz
     ${THIRD_PARTY}/bc7enc_rdo
-    ${THIRD_PARTY}/MikkTSpace
     ${THIRD_PARTY}/meshoptimizer/src
     ${THIRD_PARTY}/cgltf
     ${THIRD_PARTY}/minunit

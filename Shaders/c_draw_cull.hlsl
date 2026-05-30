@@ -41,7 +41,7 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
         Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
         SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
 
-        visibility_res instVisRes = TestVisibility( currentMesh.minAabb, currentMesh.maxAabb, toWorld, cam,
+        visibility_res instVisRes = TestVisibility( currentMesh.aabbMin, currentMesh.aabbMax, toWorld, cam,
             hizTex, quadMin, isLatePass );
 
         if( !isLatePass )
@@ -61,13 +61,13 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
 	if( visible )
 	{
-		visible_instance thisInst = {
-		    instID,
-		    currentMesh.meshletOffset,
-		    currentMesh.meshletCount,
-			currentMesh.vtxOffset,
-			currentMesh.triOffset
-		};
+		visible_instance thisInst;
+		thisInst.instId						= instID;
+		thisInst.meshletOffset				= currentMesh.meshletOffset;
+		thisInst.meshletCount				= currentMesh.meshletCount;
+		thisInst.vtxPosOffsetInBytes		= currentMesh.vtxPosOffsetInBytes;
+		thisInst.vtxAttrsOffset				= currentMesh.vtxAttrsOffset;
+		thisInst.triOffset					= currentMesh.triOffset;
 		BufferStore<visible_instance>( pushBlock.visibleItemsIdx, thisInst, slotIdx );
 	}
 }

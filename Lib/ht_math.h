@@ -97,7 +97,7 @@ inline float3 AabbCenter( const aabb_t<float3> aabb )
 	};
 }
 
-inline float3 AabbExtent( const aabb_t<float3> aabb )
+inline float3 AabbHalfExtent( const aabb_t<float3> aabb )
 {
 	return {
 		( aabb.max.x - aabb.min.x ) * 0.5f,

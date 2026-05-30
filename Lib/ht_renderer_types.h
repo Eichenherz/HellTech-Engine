@@ -31,7 +31,9 @@ typedef uint4		u32x4;
 typedef uint3		u32x3;
 typedef uint2		u32x2;
 
-typedef float_16t2	fp16x2;
+typedef uint16_t2	u16x2;
+
+//typedef float16_t2	fp16x2;
 
 #define ALIGNAS( x )
 // TODO: remove when hlsl gets a constexpr
@@ -68,14 +70,18 @@ struct packed_trs
 
 STATIC_ASSERT( 48 == sizeof( packed_trs ), "Size mismatch!");
 
+CONSTEXPR u32 BIT_DEPTH_OCT_N = 11;
+CONSTEXPR u32 BIT_DEPTH_TAN_A = 9;
+CONSTEXPR u32 BIT_DEPTH_BTAN_S = 1;
+
 // NOTE: octahedron encoded normal + tan angle + bitan sign; will alias bc we will select the bit depth in the end/dec
-typedef u32 oct10x2s_a11_s1;
+typedef u32 oct11x2s_a9_s1;
 
 // NOTE: the positions will be given as a bit stream of variable len
 struct packed_vtx_attr
 {
-	oct10x2s_a11_s1 encodedTBN;
-	fp16x2			encodedUVs;
+	oct11x2s_a9_s1	encodedTBN;
+	u16x2			encodedUVs;  // NOTE: use f16tof32 in the shader
 };
 
 struct gpu_instance
@@ -103,16 +109,22 @@ struct gpu_mesh
 
 struct gpu_meshlet
 {
-	float3	aabbMin;
-	float3	aabbMax;
+	i32x3	aabbMin;
+	i32x3	aabbMax;
 	u32		vtxPosOffsetBits;
 	u32		vtxAttrsOffset;
 	u32		triOffset;
-	u32		vtxCount	: 8;
-	u32		triCount	: 8;
-	u32		posBitDepth	: 8;
-	u32		padding0	: 8;
+	u32		xBitDepth 		: 8;
+	u32		yBitDepth 		: 8;
+	u32		zBitDepth 		: 8;
+	// NOTE: this defines our uniform grid; the ones above just how many bits we used for encoding
+	u32		gridBitResolution	: 8;
+	u32		vtxCount		: 8;
+	u32		triCount		: 8;
+	u32		padding0		: 16;
 };
+
+STATIC_ASSERT( 44 == sizeof( gpu_meshlet ), "Size mismatch!");
 
 struct dispatch_command
 {
@@ -289,21 +301,20 @@ struct culling_init_params
 
 struct vbuffer_params
 {
-	u32 drawDataBuffIdx;
+	u32 drawDataIdx;
 	u32 instBuffIdx;
 	u32 camIdx;
 };
 // TODO: maybe use the same struct here ?
 struct depth_prepass_params
 {
-	u32 drawDataBuffIdx;
+	u32 drawDataIdx;
 	u32 instBuffIdx;
-	u32 mltBuffIdx;
 	u32 camIdx;
 };
 struct meshlet_pass_params
 {
-	u32 drawDataBuffIdx;
+	u32 drawDataIdx;
 	u32 instBuffIdx;
 	u32 camIdx;
 };

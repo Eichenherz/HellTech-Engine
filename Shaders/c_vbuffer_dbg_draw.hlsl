@@ -38,10 +38,12 @@ float4 ColorId( u32 id )
 	);
 }
 
-[numthreads(16, 16, 1)]
-[shader("compute")]
+[shader( "compute" )]
+[numthreads( 16, 16, 1 )]
 void VBufferDbgDrawCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
+    if( any( globalDispatchID.xy >= pushBlock.vbuffRes ) ) return;
+
 	u32x2 rawPixel = gTexture2D_u32x2[ pushBlock.srcIdx ].Load( i32x3( globalDispatchID.xy, 0 ) );
 
 	float4 col = float4( 0.0f, 0.0f, 0.0f, 1.0f );

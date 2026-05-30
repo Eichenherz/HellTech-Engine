@@ -23,9 +23,14 @@
 
 namespace DXPacked = DirectX::PackedVector;
 
-using fp16x2	= DXPacked::XMUSHORT2;
+using i32x3		= DirectX::XMINT3;
+
+using u16x2		= DXPacked::XMUSHORT2;
+
 using u32x2		= DirectX::XMUINT2;
 using u32x3		= DirectX::XMUINT3;
+
+using fp16x2	= DXPacked::XMUSHORT2;
 
 using float2	= DirectX::XMFLOAT2;
 using float3	= DirectX::XMFLOAT3;

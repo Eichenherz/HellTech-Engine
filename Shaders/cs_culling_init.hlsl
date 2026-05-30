@@ -21,6 +21,9 @@ void CsMainCullingInit()
 
     u32 workItemsCount = !bool( pushBlock.isLatePass ) ?
         pushBlock.instCount : BufferLoad<u32>( pushBlock.occludedInstCounterIdx, 0 );
-    dispatch_command dispatchCmd = { ( workItemsCount + pushBlock.cullShaderWorkGrX - 1 ) / pushBlock.cullShaderWorkGrX, 1, 1 };
+    dispatch_command dispatchCmd;
+    dispatchCmd.localSizeX = ( workItemsCount + pushBlock.cullShaderWorkGrX - 1 ) / pushBlock.cullShaderWorkGrX;
+    dispatchCmd.localSizeY = 1;
+    dispatchCmd.localSizeZ = 1;
     BufferStore<dispatch_command>( pushBlock.dispatchCmdBuffIdx, dispatchCmd, 0 );
 }

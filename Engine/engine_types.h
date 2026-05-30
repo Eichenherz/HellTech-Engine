@@ -37,7 +37,8 @@ enum class upload_t
 struct mesh_upload_req
 {
 	byte_view	mltAsBytes;
-	byte_view	vtxAsBytes;
+	byte_view	vtxPosAsBytes;
+	byte_view	vtxAttrsAsBytes;
 	byte_view	triAsBytes;
 	HRNDMESH32  hSlot;
 };

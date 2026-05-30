@@ -2,7 +2,7 @@
 
 #include "ht_hlsl_lang.h"
 #include "ht_hlsl_math.h"
-
+#include "ht_unpacking.h"
 #include "culling.h"
 
 [[vk::push_constant]]
@@ -24,17 +24,18 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     const bool isLatePass = bool( pushBlock.isLatePass );
     const bool toggleCulling = bool( pushBlock.toggleCulling );
 
-    visible_meshlet mltToTest = BufferLoad<visible_meshlet>( pushBlock.expandedMltsIdx, mltId );
-    gpu_instance currentInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltToTest.instId );
+    meshlet_cull_wok_item mltWorkItem = BufferLoad<meshlet_cull_wok_item>( pushBlock.expandedMltsIdx, mltId );
+    gpu_instance currInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltWorkItem.instId );
+    gpu_meshlet currMlt = device_ptr<gpu_meshlet>( gGlobData.mltAddr )[ mltWorkItem.globMltId ];
 
     bool visible = true;
     if( toggleCulling )
     {
         float4x4 toWorld = float4x4(
-            float4( currentInst.toWorld[ 0 ], 0.0f ),
-            float4( currentInst.toWorld[ 1 ], 0.0f ),
-            float4( currentInst.toWorld[ 2 ], 0.0f ),
-            float4( currentInst.toWorld[ 3 ], 1.0f )
+            float4( currInst.toWorld[ 0 ], 0.0f ),
+            float4( currInst.toWorld[ 1 ], 0.0f ),
+            float4( currInst.toWorld[ 2 ], 0.0f ),
+            float4( currInst.toWorld[ 3 ], 1.0f )
         );
 
         // NOTE: we use camIdx here bc we'll have a debug camera
@@ -42,8 +43,8 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
         Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
         SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
 
-        visibility_res mltVisRes = TestVisibility( mltToTest.minAabb, mltToTest.maxAabb, toWorld, cam,
-            hizTex, quadMin, isLatePass );
+        float3 cullMin = 0.0f, cullMax = 0.0f; DecodeMeshletCullingBoundsFromRound( currMlt, cullMin, cullMax );
+        visibility_res mltVisRes = TestVisibility( cullMin, cullMax, toWorld, cam, hizTex, quadMin, isLatePass );
 
         if( !isLatePass )
         {
@@ -51,7 +52,7 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
             u32 occSlotIdx = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
             if( mltIsOccluded )
             {
-                BufferStore<visible_meshlet>( pushBlock.occludedMltBuffIdx, mltToTest, occSlotIdx );
+                BufferStore<meshlet_cull_wok_item>( pushBlock.occludedMltBuffIdx, mltWorkItem, occSlotIdx );
             }
         }
 
@@ -61,15 +62,22 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     if( visible )
     {
-        draw_meshlet_command drawMltCmd = {
-            mltToTest.instId,
-            mltToTest.globMltId,
-            mltToTest.triCount * 3, // NOTE: * 3 bc it's an idx count
-            1,
-            mltToTest.globTriOffset,
-            mltToTest.globVtxOffset,
-            0
-        };
+        draw_meshlet_command drawMltCmd = ( draw_meshlet_command ) 0;
+        drawMltCmd.indexCount     = currMlt.triCount * 3; // NOTE: * 3 bc it's an idx count
+        drawMltCmd.instanceCount  = 1;
+        drawMltCmd.firstIndex     = currMlt.triOffset + mltWorkItem.triOffset;
+        // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,
+        // so we need to manually compute it in the shader
+        drawMltCmd.vertexOffset   = 0;
+        drawMltCmd.firstInstance  = 0;
+
+        draw_meshlet_cmd_data drawMltData = ( draw_meshlet_cmd_data ) 0;
+        drawMltData.globalInstId        = mltWorkItem.instId;
+        drawMltData.globalMltId         = mltWorkItem.globMltId;
+        drawMltData.vtxAttrOffset       = mltWorkItem.vtxAttrsOffset;
+        drawMltData.vtxPosOffsetInBits  = mltWorkItem.vtxPosOffsetInBytes * 8u;
+
     	BufferStore<draw_meshlet_command>( pushBlock.drawCmsIdx, drawMltCmd, slotIdx );
+    	BufferStore<draw_meshlet_cmd_data>( pushBlock.drawDataIdx, drawMltData, slotIdx );
     }
 }

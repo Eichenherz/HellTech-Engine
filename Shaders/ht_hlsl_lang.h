@@ -130,27 +130,6 @@ u32 BufferAtomicOr( u32 buffIdx, u32 newValue, u32 idx = 0, u32 offsetInBytes = 
 	return oldValue;
 }
 
-template<typename T>
-T BitCount()
-{
-	return sizeof( T ) * 8;
-}
-
-bool GetBitAtIdx( u32 buffIdx, u32 idx )
-{
-	u32 bucketIdx = idx / BitCount<u32>();
-	u32 dword = BufferLoad<u32>( buffIdx, bucketIdx );
-	u32 bit = 1u << ( idx % BitCount<u32>() );
-	return bool( dword & bit );
-}
-
-u32 SetBitAtIdx( u32 buffIdx, u32 idx )
-{
-	u32 bucketIdx = idx / BitCount<u32>();
-	u32 bit = 1u << ( idx % BitCount<u32>() );
-	return BufferAtomicOr( buffIdx, bit, bucketIdx );
-}
-
 static const global_data gGlobData = BufferLoad<global_data>( GLOB_DATA_BINDING_SLOT );
 
 template<typename T>
@@ -173,16 +152,6 @@ void HTStoreCoherentImageFloat( u32 imgIdx, i32x2 pix, float val )
 {
 	ImageWriteCoherent( gRWTexture2D_float[ imgIdx ], pix, float4( val, 0.0f, 0.0f, 0.0f ),
 		SPV_COHERENT_WRITE_OPERANDS, vk::QueueFamilyScope );
-}
-
-u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
-{
-	device_ptr<u32> triBuff = { gGlobData.triAddr };
-	u64 lo = triBuff[ globalIdxInBytes >> 2 ];
-	u64 hi = triBuff[ ( globalIdxInBytes >> 2 ) + 1 ];
-	u64 shift = ( globalIdxInBytes & 3 ) * 8;
-	u64 raw = ( ( hi << 32 ) | lo ) >> shift;
-	return unpack_u8u32( u32( raw & 0xFFFFFF ) ).xyz;
 }
 
 float4 HTQuadBroadcast( float v )

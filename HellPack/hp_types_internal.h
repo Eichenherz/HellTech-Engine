@@ -114,7 +114,7 @@ struct bit_stream
 	hellpack_serializable_buffer GetSerializableBuffer() const
 	{
 		HT_ASSERT( std::data( qwords ) && cursorInBits );
-		return { MakeTypedView<u8>( ( const u8* ) std::data( qwords ), cursorInBits / 8 ) };
+		return { MakeByteView( ( const u8* ) std::data( qwords ), ( cursorInBits + 7 ) / 8 ) };
 	}
 };
 
@@ -157,19 +157,6 @@ struct raw_node_eq
 			&& ( at.t.x == bt.t.x ) && ( at.t.y == bt.t.y ) && ( at.t.z == bt.t.z )
 			&& ( at.r.x == bt.r.x ) && ( at.r.y == bt.r.y ) && ( at.r.z == bt.r.z ) && ( at.r.w == bt.r.w )
 			&& ( at.s.x == bt.s.x ) && ( at.s.y == bt.s.y ) && ( at.s.z == bt.s.z );
-	}
-};
-
-struct gpu_meshlet_eq
-{
-	bool operator()( const gpu_meshlet& a, const gpu_meshlet& b ) const
-	{
-		return ( a.aabbMin == b.aabbMin ) && ( a.aabbMax == b.aabbMax )
-			&& ( a.vtxPosOffsetBits == b.vtxPosOffsetBits )
-			&& ( a.triOffset == b.triOffset )
-			&& ( a.vtxCount == b.vtxCount )
-			&& ( a.triCount == b.triCount )
-			&& ( a.posBitDepth == b.posBitDepth );
 	}
 };
 

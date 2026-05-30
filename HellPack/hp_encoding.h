@@ -54,7 +54,7 @@ struct tan_bitan
 	float3 bitan;
 };
 
-inline tan_bitan BuildBasisFromNormalDuffFrisvad( float3 n  )
+inline tan_bitan BuildBasisFromNormalDuffFrisvad( float3 n )
 {
 	float sign = SignNonZero( n.z );
 	float a = -1.0f / ( sign + n.z );
@@ -81,13 +81,9 @@ inline float EncodeTanToAngle( float3 decodedNormal, float3 t )
 
 #include <meshoptimizer.h>
 
-constexpr u32 BIT_DEPTH_OCT_N = 11;
-constexpr u32 BIT_DEPTH_TAN_A = 9;
-constexpr u32 BIT_DEPTH_BTAN_S = 1;
-
 static_assert( ( 2 * BIT_DEPTH_OCT_N + BIT_DEPTH_TAN_A + BIT_DEPTH_BTAN_S ) == BitCount<u32>() );
 
-inline oct10x2s_a11_s1 EncodeTanFrame( float3 n, float3 t, float bs )
+inline oct11x2s_a9_s1 EncodeTanFrame( float3 n, float3 t, float bs )
 {
 	float2 octaNormal = EncodeOctaNormal( n );
 	// NOTE: no it's not redundant, we need to encode the tan based on this
@@ -104,12 +100,25 @@ inline oct10x2s_a11_s1 EncodeTanFrame( float3 n, float3 t, float bs )
 		 | ( bh << ( 2 * BIT_DEPTH_OCT_N + BIT_DEPTH_TAN_A ) );
 }
 
-// NOTE: from // NOTE: vtx quant from https://daniilvinn.github.io/2024/05/04/omniforce-vertex-quantization.html
-inline u32 QuantizeVertexPosComp( float comp, u32 vtxBitrate, u32 mltBitrate )
+// NOTE: inspired https://daniilvinn.github.io/2024/05/04/omniforce-vertex-quantization.html
+inline u32 QuantizeVertexPosCompWithMinAnchor( float comp, u32 gridBitDepth, i32 minBound )
 {
 	// Quantize with multiplication by pow( 2, precision ) with further rounding
-	i32 v = ( i32 ) std::round( comp * float( 1u << vtxBitrate ) );
-	return ( v < 0 ) ? ( ( 1u << mltBitrate ) + v ) : v; // https://graphics.stanford.edu/~seander/bithacks.html#VariableSignExtend
+	i32 quantPos = i32( std::round( comp * float( 1u << gridBitDepth ) ) ) - minBound;
+	HT_ASSERT( quantPos >= 0 );
+	return std::bit_cast<u32>( quantPos );
+}
+
+// NOTE: https://graphics.stanford.edu/~seander/bithacks.html#VariableSignExtend
+i32 RestoreSign( u32 comp, u32 bitDepth )
+{
+	i32 bitmask = 1u << ( bitDepth - 1 );
+	return i32( ( comp ^ bitmask ) - bitmask );
+}
+
+inline float DecodeVertexPosCompWithAnchor( u32 comp, float gridStep, i32 minBound, u32 mltBitDepth )
+{
+	return float( i32( comp & ( ( 1u << mltBitDepth ) - 1 ) ) + minBound ) / gridStep;
 }
 
 #endif // !__HP_ENCODING_H__
