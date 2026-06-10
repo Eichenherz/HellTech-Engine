@@ -295,7 +295,7 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 
 	constexpr u32	gridResolutionInBits = 21;
 	constexpr u32	gridStep = 1u << gridResolutionInBits;
-	constexpr bool	validatePosEncoding = false;
+	constexpr bool	validatePosEncoding = true;
 
 	float maxExtent = std::max( {
 		( meshAabb.max.x - meshAabb.min.x ),
@@ -331,11 +331,11 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 		i32 maxMltY = ( i32 ) std::ceil( meshletAabb.max.y * gridStep );
 		i32 maxMltZ = ( i32 ) std::ceil( meshletAabb.max.z * gridStep );
 
-		u32x3 mltBitDepthPerAxis = { 32, 32, 32 };
-		//	( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltX - minMltX ) ),
-		//	( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltY - minMltY ) ),
-		//	( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltZ - minMltZ ) )
-		//};
+		u32x3 mltBitDepthPerAxis = {
+			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltX - minMltX ) ),
+			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltY - minMltY ) ),
+			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltZ - minMltZ ) )
+		};
 		HT_ASSERT( u32x3{} != mltBitDepthPerAxis );
 
 		float3 aabbMin = { float( minMltX ) / gridStep, float( minMltY ) / gridStep, float( minMltZ ) / gridStep };
@@ -347,8 +347,8 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 			| ( gridResolutionInBits << 24 );
 
 		meshlets.push_back( {
-			.aabbMin						= meshletAabb.min, //aabbMin,
-			.aabbMax						= meshletAabb.max, //aabbMax,
+			.aabbMin						= aabbMin,
+			.aabbMax						= aabbMax,
 			.vtxPosOffsetBits				= ( u32 ) vtxPosBitstream.cursorInBits,
 			.vtxAttrsOffset					= ( u32 ) std::size( verticesAttrs ),
 			.triOffset						= ( u32 ) std::size( triIndices ),
@@ -359,9 +359,9 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 
 		for( float3 p : mltPosStream )
 		{
-			u32 x = std::bit_cast<u32>( p.x );//- meshletAabb.min.x );//QuantizeVertexPosCompWithAnchor( p.x, minMltX, gridResolutionInBits );
-			u32 y = std::bit_cast<u32>( p.y );//- meshletAabb.min.y );//QuantizeVertexPosCompWithAnchor( p.y, minMltY, gridResolutionInBits );
-			u32 z = std::bit_cast<u32>( p.z );//- meshletAabb.min.z );//QuantizeVertexPosCompWithAnchor( p.z, minMltZ, gridResolutionInBits );
+			u32 x = QuantizeVertexPosCompWithAnchor( p.x, minMltX, gridResolutionInBits );
+			u32 y = QuantizeVertexPosCompWithAnchor( p.y, minMltY, gridResolutionInBits );
+			u32 z = QuantizeVertexPosCompWithAnchor( p.z, minMltZ, gridResolutionInBits );
 
 			vtxPosBitstream.AppendBits( x, mltBitDepthPerAxis.x );
 			vtxPosBitstream.AppendBits( y, mltBitDepthPerAxis.y );

@@ -102,9 +102,8 @@ float3 DecodeVertexFromMegaBuff( in gpu_meshlet mlt, in u32 globalOffsetInBits, 
     u32 z = UnpackFromBitstream( posBuff, xyz_Grid_BitDepth.z,
         vtxBase + xyz_Grid_BitDepth.x + xyz_Grid_BitDepth.y );
 
-    //i32x3 exp = i32x3( -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w );
-    //return ldexp( float3( x, y, z ), exp ) + mlt.aabbMin;
-    return float3( asfloat( x ), asfloat( y ), asfloat( z ) );// + mlt.aabbMin;
+    i32x3 exp = i32x3( -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w );
+    return ldexp( float3( x, y, z ), exp ) + mlt.aabbMin;
 }
 
 #endif //!__HELLTECH_HT_UNPACKING_H__
