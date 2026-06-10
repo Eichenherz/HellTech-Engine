@@ -30,10 +30,15 @@ inline bool IsPowOf2( u64 addr )
 {
     return !( addr & ( addr - 1 ) );
 }
-inline u64 FwdAlign( u64 addr, u64 alignment )
+inline u64 FwdAlignPot( u64 addr, u64 alignment )
 {
     HT_ASSERT( IsPowOf2( alignment ) );
     return ( addr + ( alignment - 1 ) ) & ~( alignment - 1 );
+}
+// NOTE: works for any alignment, not just power-of-2 (e.g. struct strides like 44)
+inline u64 FwdAlignGeneric( u64 addr, u64 alignment )
+{
+    return ( ( addr + alignment - 1 ) / alignment ) * alignment;
 }
 
 constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;

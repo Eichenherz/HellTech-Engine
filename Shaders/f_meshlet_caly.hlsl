@@ -36,5 +36,5 @@ float4 MeshletClayPassPsMain( in meshlet_vs_out vsOut ) : SV_Target
     float  spec = pow( saturate( dot( n, H ) ), 16.0f );
     col += spec * 0.1f;
 
-	return float4( 1.0f, 0.5f, 0.3f, 0.2f );// col, 0.2f );
+	return float4( col, 0.2f );
 }

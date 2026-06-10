@@ -41,7 +41,6 @@ groupshared uint tailValsCountLDS[ NUM_WAVES_PER_WG ];
 groupshared uint ldsGroupCounter;
 
 NUMTHREADS( 16, 16, 1 )
-[WaveSize( WAVE_LANE_COUNT )]
 [shader( "compute" )]
 void AvgLuminanceCsMain( 
 	uint3 globalThreadDispatchID : SV_DispatchThreadID, 

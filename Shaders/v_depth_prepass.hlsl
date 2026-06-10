@@ -6,7 +6,9 @@
 depth_prepass_params pushBlock;
 
 [shader( "vertex" )]
-float4 DepthPrepassVsMain(
+// NOTE: we need precise here and on the meshlet pass otherwise we'll get tears due to mis match
+// only needed when doing depth prepass tho
+precise float4 DepthPrepassVsMain(
     in u32 vtxID    : SV_VertexID,
     [[vk::builtin("DrawIndex")]]
     in u32 drawId   : DRAW_ID

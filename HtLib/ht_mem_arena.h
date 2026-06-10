@@ -20,7 +20,7 @@ struct static_arena
 	void*	Alloc( u64 bytes, u64 alignment )
 	{
 		u64 base = ( u64 ) mem;
-		u64 alignedAddr = FwdAlign( base + offset, alignment );
+		u64 alignedAddr = FwdAlignPot( base + offset, alignment );
 		u64 newOffset = ( alignedAddr - base ) + bytes;
 
 		HT_ASSERT( newOffset <= SZ_IN_BYTES );
@@ -44,7 +44,7 @@ struct dynamic_arena
 	void*	Alloc( u64 bytes, u64 alignment )
 	{
 		u64 base = ( u64 ) mem;
-		u64 alignedAddr = FwdAlign( base + offset, alignment );
+		u64 alignedAddr = FwdAlignPot( base + offset, alignment );
 		u64 newOffset = ( alignedAddr - base ) + bytes;
 
 		HT_ASSERT( newOffset <= size );

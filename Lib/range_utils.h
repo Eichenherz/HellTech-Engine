@@ -5,7 +5,6 @@
 #include "ht_error.h"
 
 #include <ranges>
-#include <vector>
 
 template<typename T>
 struct typed_view
@@ -60,18 +59,6 @@ inline byte_view MakeByteView( const R& r )
 inline byte_view MakeByteView( const u8* pData, u64 sizeInBytes )
 {
 	return { pData, sizeInBytes };
-}
-
-template<typename T, typename Idx>
-inline auto PermutedView( std::vector<T>& src, const std::vector<Idx>& remap )
-{
-	return remap | std::views::transform( [&]( Idx oldIdx ) -> T& { return src[ oldIdx ]; } );
-}
-
-template<typename T, typename Idx>
-inline auto PermutedView( const std::vector<T>& src, const std::vector<Idx>& remap )
-{
-	return remap | std::views::transform( [ & ] ( Idx oldIdx ) -> const T& { return src[ oldIdx ]; } );
 }
 
 inline auto PermutedView( 

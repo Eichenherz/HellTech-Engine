@@ -75,6 +75,15 @@ constexpr bool operator!=( const float3& a, const float3& b )
 {
 	return !( a == b );
 }
+constexpr bool operator>=( const float3& a, const float3& b )
+{
+	return a.x >= b.x && a.y >= b.y && a.z >= b.z;
+}
+
+constexpr bool operator<=( const float3& a, const float3& b )
+{
+	return a.x <= b.x && a.y <= b.y && a.z <= b.z;
+}
 
 constexpr bool operator==( const float4& a, const float4& b )
 {

@@ -43,8 +43,7 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
         Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
         SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
 
-        float3 cullMin = 0.0f, cullMax = 0.0f; DecodeMeshletCullingBoundsFromRound( currMlt, cullMin, cullMax );
-        visibility_res mltVisRes = TestVisibility( cullMin, cullMax, toWorld, cam, hizTex, quadMin, isLatePass );
+        visibility_res mltVisRes = TestVisibility( currMlt.aabbMin, currMlt.aabbMax, toWorld, cam, hizTex, quadMin, isLatePass );
 
         if( !isLatePass )
         {
@@ -63,7 +62,7 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     if( visible )
     {
         draw_meshlet_command drawMltCmd = ( draw_meshlet_command ) 0;
-        drawMltCmd.indexCount     = currMlt.triCount * 3; // NOTE: * 3 bc it's an idx count
+        drawMltCmd.indexCount     = currMlt.triCount * 3;
         drawMltCmd.instanceCount  = 1;
         drawMltCmd.firstIndex     = currMlt.triOffset + mltWorkItem.triOffset;
         // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,

@@ -16,11 +16,19 @@ struct hellpack_serializable_buffer
 
 	template<typename T>
 	hellpack_serializable_buffer( typed_view<T> typedView )
-		: data{ AsBytes( typedView ) }, alignmentInBytes{ alignof( T ) } {}
+		: data{ AsBytes( typedView ) }, alignmentInBytes{ alignof( T ) }
+	{
+		// NOTE: must be an integer multiple of T;
+		// else reconstructing typed_view<T> like (sizeInBytes / sizeof(T)) silently truncates
+		HT_ASSERT( 0 == ( std::size( data ) % sizeof( T ) ) );
+	}
 
 	template<std::ranges::contiguous_range R>
 	hellpack_serializable_buffer( const R& r )
-		: data{ MakeByteView( r ) }, alignmentInBytes{ alignof( std::ranges::range_value_t<R> ) } {}
+		: data{ MakeByteView( r ) }, alignmentInBytes{ alignof( std::ranges::range_value_t<R> ) }
+	{
+		HT_ASSERT( 0 == ( std::size( data ) % sizeof( std::ranges::range_value_t<R> ) ) );
+	}
 
 	template <std::ranges::contiguous_range R>
 	hellpack_serializable_buffer( const R&& ) = delete;
@@ -43,7 +51,7 @@ inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializable_bu
 	entryTable.reserve( entriesCount );
 	
 	u64 entryTableSizeInBytes = entriesCount * sizeof( hellpack_data_ref );
-	u64 entryTableOffsetInBytes = FwdAlign( sizeof( h ), alignof( hellpack_data_ref ) );
+	u64 entryTableOffsetInBytes = FwdAlignPot( sizeof( h ), alignof( hellpack_data_ref ) );
 
 	u64 cursor = entryTableOffsetInBytes + entryTableSizeInBytes;
 
@@ -53,7 +61,7 @@ inline hellpack_blob HpkMakeBinaryBlob( std::span<const hellpack_serializable_bu
 
 		HT_ASSERT( ( thisBuffSizeInBytes < u64( u32( -1 ) ) ) && ( cursor < u64( u32( -1 ) ) ) );
 
-		cursor = FwdAlign( cursor, hpkBuff.alignmentInBytes );
+		cursor = FwdAlignPot( cursor, hpkBuff.alignmentInBytes );
 		entryTable.push_back( { .offsetInBytes = cursor, .sizeInBytes = thisBuffSizeInBytes } );
 
 		cursor += thisBuffSizeInBytes;

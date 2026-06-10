@@ -91,6 +91,15 @@ tinygltf::Node
 | `c_expand_draws.comp.hlsl` | Instance→meshlet expansion | Copies `packed_trs toWorld`, no matrix math |
 | `c_meshlet_issue_draws.comp.hlsl` | Emits indirect draw commands | No matrix math |
 
+## Two-pass occlusion culling + draw order (verified 2026-06)
+
+Frame order (renderer.cpp ~2277-2315): early cull → fwd draw (early) → HZB build → late cull → fwd draw (late) → HZB build.
+- `cs_culling_init.hlsl` resets drawCounter/visible counters **both** passes; occluded counters only in early pass. Early drawCmds are consumed by the early draw before the late-pass reset, so no stale redraw.
+- Early/late sets are disjoint: occluded-list insertion requires `!notOccluded` which is mutually exclusive with draw emission (`visible = inFrustum && notOccluded`) — c_draw_cull.hlsl:49-57, c_meshlet_cull.hlsl:50-58. Late pass appends newly-expanded meshlets onto occludedMeshlets (renderer.cpp:1129-1130).
+- **drawCmds/drawData element order is nondeterministic frame-to-frame**: every compaction slot comes from `HTWaveReserveGlobalSlot` (ht_hlsl_lang.h:172-186, per-wave atomicAdd) or per-WG atomicAdd (c_expand_draws.comp.hlsl:67) — wave/WG retire order is scheduler-dependent. No sort exists before `vkCmdDrawIndexedIndirectCount`. Harmless for opaque; order-dependent for blending (x-ray flicker root cause).
+- fwd_pass pipeline: SRC_ALPHA/ONE_MINUS_SRC_ALPHA ADD, depth GREATER, depthWrite **stays on in x-ray** (only blend-enable is dynamic; depth dynamic state commented out, renderer.cpp:1652-1666). Fragment alpha hardcoded 0.2 (f_meshlet_caly.hlsl:39).
+- Vertex shader maps draw slot → data via `DrawIndex` (v_meshlet_pass.hlsl:14-17), so raster order == drawCmds buffer order.
+
 ## GPU render pipeline (culling → shading)
 
 ```

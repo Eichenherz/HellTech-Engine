@@ -88,7 +88,7 @@ HPK_T HpkReadBinaryBlob( std::span<const u8> blob )
 	HT_ASSERT( h.fileSizeBytes == sizeInBytes );
 	HT_ASSERT( h.entriesCount > 0 );
 
-	u64 entryTableOffsetInBytes = FwdAlign( sizeof( h ), alignof( hellpack_data_ref ) );
+	u64 entryTableOffsetInBytes = FwdAlignPot( sizeof( h ), alignof( hellpack_data_ref ) );
 	std::span<const hellpack_data_ref> entryTable = { ( const hellpack_data_ref* ) ( base + entryTableOffsetInBytes ), h.entriesCount };
 
 	if constexpr( std::is_same_v<HPK_T, hellpack_level> )

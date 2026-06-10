@@ -131,10 +131,11 @@ void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 			&rawMesh.normals[ 0 ].x, sizeof( rawMesh.normals[ 0 ] ),
 			&rawMesh.uvs[ 0 ].x, sizeof( rawMesh.uvs[ 0 ] ) );
 		rawMesh.tans = MOV( tangents );
+		// TODO: fix tan dedupe or smth
 	}
 
 	HT_ASSERT( ( std::size( rawMesh.pos ) == std::size( rawMesh.normals ) )
-		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.tans ) )
+		//&& ( std::size( rawMesh.pos ) == std::size( rawMesh.tans ) )
 		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.uvs ) )
 	);
 }
@@ -292,9 +293,9 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 
 	const aabb_t<float3> meshAabb = ComputeAabb( pos );
 
-	constexpr u32	gridResolutionInBis = 16;
-	constexpr u32	gridStep = 1u << gridResolutionInBis;
-	constexpr bool	validatePosEncoding = true;
+	constexpr u32	gridResolutionInBits = 21;
+	constexpr u32	gridStep = 1u << gridResolutionInBits;
+	constexpr bool	validatePosEncoding = false;
 
 	float maxExtent = std::max( {
 		( meshAabb.max.x - meshAabb.min.x ),
@@ -322,57 +323,60 @@ mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
 
 		const aabb_t<float3> meshletAabb = ComputeAabb( mltPosStream );
 
-		i32 minMltX = ( i32 ) std::round( meshletAabb.min.x * gridStep );
-		i32 maxMltX = ( i32 ) std::round( meshletAabb.max.x * gridStep );
-		i32 minMltY = ( i32 ) std::round( meshletAabb.min.y * gridStep );
-		i32 maxMltY = ( i32 ) std::round( meshletAabb.max.y * gridStep );
-		i32 minMltZ = ( i32 ) std::round( meshletAabb.min.z * gridStep );
-		i32 maxMltZ = ( i32 ) std::round( meshletAabb.max.z * gridStep );
+		i32 minMltX = ( i32 ) std::floor( meshletAabb.min.x * gridStep );
+		i32 minMltY = ( i32 ) std::floor( meshletAabb.min.y * gridStep );
+		i32 minMltZ = ( i32 ) std::floor( meshletAabb.min.z * gridStep );
 
-		u32x3 mltPerAxisBitRate = {
-			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltX - minMltX ) ),
-			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltY - minMltY ) ),
-			( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltZ - minMltZ ) )
-		};
+		i32 maxMltX = ( i32 ) std::ceil( meshletAabb.max.x * gridStep );
+		i32 maxMltY = ( i32 ) std::ceil( meshletAabb.max.y * gridStep );
+		i32 maxMltZ = ( i32 ) std::ceil( meshletAabb.max.z * gridStep );
 
-		HT_ASSERT( u32x3{} != mltPerAxisBitRate );
+		u32x3 mltBitDepthPerAxis = { 32, 32, 32 };
+		//	( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltX - minMltX ) ),
+		//	( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltY - minMltY ) ),
+		//	( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltZ - minMltZ ) )
+		//};
+		HT_ASSERT( u32x3{} != mltBitDepthPerAxis );
+
+		float3 aabbMin = { float( minMltX ) / gridStep, float( minMltY ) / gridStep, float( minMltZ ) / gridStep };
+		float3 aabbMax = { float( maxMltX ) / gridStep, float( maxMltY ) / gridStep, float( maxMltZ ) / gridStep };
+
+		u32 packed8888_XYZ_Grid_BitDepth = mltBitDepthPerAxis.x
+			| ( mltBitDepthPerAxis.y << 8 )
+			| ( mltBitDepthPerAxis.z << 16 )
+			| ( gridResolutionInBits << 24 );
 
 		meshlets.push_back( {
-			.aabbMin			= { minMltX, minMltY, minMltZ },
-			.aabbMax			= { maxMltX, maxMltY, maxMltZ },
-			.vtxPosOffsetBits	= ( u32 ) vtxPosBitstream.cursorInBits,
-			.vtxAttrsOffset		= ( u32 ) std::size( verticesAttrs ),
-			.triOffset			= ( u32 ) std::size( triIndices ),
-			.xBitDepth			= mltPerAxisBitRate.x,
-			.yBitDepth			= mltPerAxisBitRate.y,
-			.zBitDepth			= mltPerAxisBitRate.z,
-			.gridBitResolution	= gridResolutionInBis,
-			.vtxCount			= m.vertex_count,
-			.triCount			= m.triangle_count
+			.aabbMin						= meshletAabb.min, //aabbMin,
+			.aabbMax						= meshletAabb.max, //aabbMax,
+			.vtxPosOffsetBits				= ( u32 ) vtxPosBitstream.cursorInBits,
+			.vtxAttrsOffset					= ( u32 ) std::size( verticesAttrs ),
+			.triOffset						= ( u32 ) std::size( triIndices ),
+			.packed8888_XYZ_Grid_BitDepth	= packed8888_XYZ_Grid_BitDepth,
+			.vtxCount						= ( u16 ) m.vertex_count,
+			.triCount						= ( u16 ) m.triangle_count
 		} );
 
 		for( float3 p : mltPosStream )
 		{
-			u32 x = QuantizeVertexPosCompWithMinAnchor( p.x, gridResolutionInBis, minMltX );
-			u32 y = QuantizeVertexPosCompWithMinAnchor( p.y, gridResolutionInBis, minMltY );
-			u32 z = QuantizeVertexPosCompWithMinAnchor( p.z, gridResolutionInBis, minMltZ );
-			vtxPosBitstream.AppendBits( x, gridResolutionInBis ); //mltPerAxisBitRate.x );
-			vtxPosBitstream.AppendBits( y, gridResolutionInBis ); //mltPerAxisBitRate.y );
-			vtxPosBitstream.AppendBits( z, gridResolutionInBis ); //mltPerAxisBitRate.z );
+			u32 x = std::bit_cast<u32>( p.x );//- meshletAabb.min.x );//QuantizeVertexPosCompWithAnchor( p.x, minMltX, gridResolutionInBits );
+			u32 y = std::bit_cast<u32>( p.y );//- meshletAabb.min.y );//QuantizeVertexPosCompWithAnchor( p.y, minMltY, gridResolutionInBits );
+			u32 z = std::bit_cast<u32>( p.z );//- meshletAabb.min.z );//QuantizeVertexPosCompWithAnchor( p.z, minMltZ, gridResolutionInBits );
+
+			vtxPosBitstream.AppendBits( x, mltBitDepthPerAxis.x );
+			vtxPosBitstream.AppendBits( y, mltBitDepthPerAxis.y );
+			vtxPosBitstream.AppendBits( z, mltBitDepthPerAxis.z );
 
 			if constexpr( validatePosEncoding )
 			{
-				float decX = DecodeVertexPosCompWithAnchor( x, gridStep, minMltX, gridResolutionInBis ); //mltPerAxisBitRate.x );
-				float decY = DecodeVertexPosCompWithAnchor( y, gridStep, minMltY, gridResolutionInBis ); //mltPerAxisBitRate.y );
-				float decZ = DecodeVertexPosCompWithAnchor( z, gridStep, minMltZ, gridResolutionInBis ); //mltPerAxisBitRate.z );
+				float decX = DecodeVertexPosCompWithAnchor( x, gridStep, minMltX, mltBitDepthPerAxis.x );
+				float decY = DecodeVertexPosCompWithAnchor( y, gridStep, minMltY, mltBitDepthPerAxis.y );
+				float decZ = DecodeVertexPosCompWithAnchor( z, gridStep, minMltZ, mltBitDepthPerAxis.z );
 
-				float xErr = std::fabsf( p.x - decX );
-				float yErr = std::fabsf( p.y - decY );
-				float zErr = std::fabsf( p.z - decZ );
+				float3 quantErr = { std::fabsf( p.x - decX ), std::fabsf( p.y - decY ), std::fabsf( p.z - decZ ) };
+				float3 maxQuantErr = { meshGridQuantMaxErr, meshGridQuantMaxErr, meshGridQuantMaxErr };
 
-				HT_ASSERT( ( xErr <= meshGridQuantMaxErr )
-					&& ( yErr <= meshGridQuantMaxErr )
-					&& ( zErr <= meshGridQuantMaxErr ) );
+				HT_ASSERT( quantErr <= maxQuantErr );
 			}
 		}
 

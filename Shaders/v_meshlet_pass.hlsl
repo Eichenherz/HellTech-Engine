@@ -31,8 +31,8 @@ meshlet_vs_out MeshletPassVsMain(
 
     meshlet_vs_out vsOut = ( meshlet_vs_out ) 0;
     vsOut.pos       = mul( float4( pos, 1.0f ), mul( f4x3_To_f4x4_Affine( inst.toWorld ), cam.mainViewProj ) );
-    vsOut.n         = normalize( mul( float4( t, 0.0f ), f4x3_To_f4x4_Affine( inst.toWorld ) ).xyz );
-    vsOut.t         = normalize( mul( float4( n, 0.0f ), f4x3_To_f4x4_Affine( inst.toWorld ) ).xyz );
+    vsOut.n         = normalize( mul( float4( n, 0.0f ), f4x3_To_f4x4_Affine( inst.toWorld ) ).xyz );
+    vsOut.t         = normalize( mul( float4( t, 0.0f ), f4x3_To_f4x4_Affine( inst.toWorld ) ).xyz );
     vsOut.wrldPos   = mul( float4( pos, 1.0f ), f4x3_To_f4x4_Affine( inst.toWorld ) ).xyz;
     vsOut.tanSgn    = tbn.bitanSign;
     return vsOut;

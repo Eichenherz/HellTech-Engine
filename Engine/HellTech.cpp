@@ -360,7 +360,6 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 
 	// TODO: vfs
 	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_no_flicker_group_question_mark.hpk";
 	constexpr char assetFile[] = "D:/3d models/bistro.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/cyberbaron/cyberbaron.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
@@ -497,7 +496,21 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		}
 	}
 
+	// DBG
+	static u64 drawablesCount = 0;
+	drawablesCount += inputState.IsButtonPressed( HT_SC_J );
+	drawablesCount -= inputState.IsButtonPressed( HT_SC_K );
+
+	std::vector<instance_desc> drw;
 	// here we must the drawables instances
+	if( std::size( drawables ) >= drawablesCount )
+	{
+		for( u64 i = 0; i < drawablesCount; i++ )
+		{
+			drw.push_back( drawables[ i ] );
+		}
+	}
+	// !DBG
 
 	timedZones.push_back( { .name = "CPU FrameMs: ", .timeMs = ( float )( elapsedTime * 1000.0 ) } );
 

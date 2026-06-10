@@ -41,8 +41,8 @@ void BuildBasisFromNormalDuffFrisvad( in float3 n, out float3 tan, out float3 bi
     float sign = ( n.z >= 0.0f ) ? 1.0f : -1.0f;
     float a = -1.0f / ( sign + n.z );
     float b = n.x * n.y * a;
-    tan = float3( 1.0f + sign * n.x * n.x * a, sign * b, -sign * n.x );
-    bitan = float3( b, sign + n.y * n.y * a, -n.y );
+    tan     = float3( 1.0f + sign * n.x * n.x * a, sign * b, -sign * n.x );
+    bitan   = float3( b, sign + n.y * n.y * a, -n.y );
 }
 
 // NOTE: Rune Stubbe's version : https://twitter.com/Stubbesaurus/status/937994790553227264
@@ -69,10 +69,10 @@ u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
     u64 hi = triBuff[ ( globalIdxInBytes >> 2 ) + 1 ];
     u64 shift = ( globalIdxInBytes & 3 ) * 8;
     u64 raw = ( ( hi << 32 ) | lo ) >> shift;
-    return unpack_u8u32( u32( raw & 0xFFFFFF ) ).xyz;
+    return unpack_u8u32( u32( raw & 0x00FFFFFF ) ).xyz;
 }
 
-u32 UnpackFromBitstream( in device_ptr<u32>  packedPosMegaBuff, in u32 bitDepth, in u32 globalOffsetInBits )
+u32 UnpackFromBitstream( in device_ptr<u32> packedPosMegaBuff, in u32 bitDepth, in u32 globalOffsetInBits )
 {
     u32 bucketIdx = globalOffsetInBits >> 5;
     u32 bitIdxInBucket = globalOffsetInBits & 31;
@@ -85,29 +85,26 @@ u32 UnpackFromBitstream( in device_ptr<u32>  packedPosMegaBuff, in u32 bitDepth,
     u32 shiftAmount = 32u - bitIdxInBucket;
     u32 hi = ( 32u == shiftAmount ) ? 0u : ( w1 << shiftAmount );
 
-    return ( lo | hi ) & ( ( 1u << bitDepth ) - 1 );
+    u32 mask = ( 32u == bitDepth ) ? 0xFFFFFFFFu : ( ( 1u << bitDepth ) - 1u );
+    return ( lo | hi ) & mask;
 }
 
 float3 DecodeVertexFromMegaBuff( in gpu_meshlet mlt, in u32 globalOffsetInBits, in u32 vtxId )
 {
     device_ptr<u32> posBuff = { gGlobData.vtxPosAddr };
+    u32x4 xyz_Grid_BitDepth = unpack_u8u32( mlt.packed8888_XYZ_Grid_BitDepth );
 
-    u32 bitsPerVtx = mlt.xBitDepth + mlt.yBitDepth + mlt.zBitDepth;
+    u32 bitsPerVtx = xyz_Grid_BitDepth.x + xyz_Grid_BitDepth.y + xyz_Grid_BitDepth.z;
     u32 vtxBase    = globalOffsetInBits + mlt.vtxPosOffsetBits + vtxId * bitsPerVtx;
 
-    i32 x = UnpackFromBitstream( posBuff, mlt.xBitDepth, vtxBase );
-    i32 y = UnpackFromBitstream( posBuff, mlt.yBitDepth, vtxBase + mlt.xBitDepth );
-    i32 z = UnpackFromBitstream( posBuff, mlt.zBitDepth, vtxBase + mlt.xBitDepth + mlt.yBitDepth );
+    u32 x = UnpackFromBitstream( posBuff, xyz_Grid_BitDepth.x, vtxBase );
+    u32 y = UnpackFromBitstream( posBuff, xyz_Grid_BitDepth.y, vtxBase + xyz_Grid_BitDepth.x );
+    u32 z = UnpackFromBitstream( posBuff, xyz_Grid_BitDepth.z,
+        vtxBase + xyz_Grid_BitDepth.x + xyz_Grid_BitDepth.y );
 
-    float3 exp = -float3( mlt.gridBitResolution, mlt.gridBitResolution, mlt.gridBitResolution );
-    return ldexp( float3( i32x3( x, y, z ) + mlt.aabbMin ), exp );
-}
-
-void DecodeMeshletCullingBoundsFromRound( in gpu_meshlet mlt, out float3 min, out float3 max )
-{
-    float gridScale = 1.0f / float( 1u << mlt.gridBitResolution );
-    min = float3( mlt.aabbMin ) * gridScale - gridScale;
-    max = float3( mlt.aabbMax ) * gridScale + gridScale;
+    //i32x3 exp = i32x3( -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w );
+    //return ldexp( float3( x, y, z ), exp ) + mlt.aabbMin;
+    return float3( asfloat( x ), asfloat( y ), asfloat( z ) );// + mlt.aabbMin;
 }
 
 #endif //!__HELLTECH_HT_UNPACKING_H__

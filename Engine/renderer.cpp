@@ -934,14 +934,16 @@ struct culling_pass
 			.name			= "Buff_DrawCmds",
 			.usageFlags		= usgStorageAndBDA | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT ,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_command ),
-			.usage			= buffer_usage::GPU_ONLY } );
+			.usage			= buffer_usage::GPU_ONLY
+		} );
 		drawCmdsIdx = pVkCtx->AllocDescriptorIdx( drawCmds );
 
 		drawData = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DrawData",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_cmd_data ),
-			.usage			= buffer_usage::GPU_ONLY } );
+			.usage			= buffer_usage::GPU_ONLY
+		} );
 		drawDataIdx = pVkCtx->AllocDescriptorIdx( drawData );
 
 		dispatchIndirect = pVkCtx->CreateBuffer( {
@@ -992,21 +994,24 @@ struct culling_pass
 			.name			= "Buff_MeshletsToProcess",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
-			.usage			= buffer_usage::GPU_ONLY } );
+			.usage			= buffer_usage::GPU_ONLY
+		} );
 		meshletsToProcessIdx = pVkCtx->AllocDescriptorIdx( meshletsToProcessBuff );
 
 		meshletsToProcessCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_MeshletsToProcessCount",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY } );
+			.usage			= buffer_usage::GPU_ONLY
+		} );
 		meshletsToProcessCounterIdx = pVkCtx->AllocDescriptorIdx( meshletsToProcessCounter );
 
 		occludedMeshlets = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedMeshlets",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
-			.usage			= buffer_usage::GPU_ONLY } );
+			.usage			= buffer_usage::GPU_ONLY
+		} );
 		occludedMeshletsIdx = pVkCtx->AllocDescriptorIdx( occludedMeshlets );
 
 		occludedMeshletsCounter = pVkCtx->CreateBuffer( {
@@ -1521,7 +1526,9 @@ struct vbuffer_pass
 		rscTracker.UseImage( vbuffRG32Target, HT_COLOR_TARGET_OUT_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
 		rscTracker.UseBuffer( args.drawCmds, HT_DRAW_INDIRECT_READ );
-		rscTracker.UseBuffer( args.drawData, HT_DRAW_INDIRECT_READ );
+		// NOTE: drawData is NOT consumed by the indirect-draw HW; it's BufferLoad'd as a regular
+		// storage buffer in the vertex shader, so it needs a vertex-shader read dependency
+		rscTracker.UseBuffer( args.drawData, { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT } );
 		rscTracker.UseBuffer( args.drawCount, HT_DRAW_INDIRECT_READ );
 		rscTracker.FlushBarriers( cmdBuff );
 
@@ -1549,8 +1556,8 @@ struct vbuffer_pass
 
 		vbuffer_params pushBlock = {
 			.drawDataIdx	= args.drawDataIdx.slot,
-			.instBuffIdx		= args.instBuffIdx.slot,
-			.camIdx				= args.camIdx.slot
+			.instBuffIdx	= args.instBuffIdx.slot,
+			.camIdx			= args.camIdx.slot
 		};
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
 		cmdBuff.CmdDrawIndexedIndirectCount<draw_meshlet_command>( args.indexBuff, args.indexType,
@@ -1581,13 +1588,13 @@ struct vbuffer_pass
 	}
 
 	void DgrDrawAsLamberitanClay(
-		vk_command_buffer&        		cmdBuff,
-		vk_rsc_state_tracker&			rscTracker,
-		const vk_image&					dstImg,
-		desc_hndl32						dstWriteDesc,
-		desc_hndl32						instDesc,
-		desc_hndl32						meshTableDesc,
-		desc_hndl32						viewDataIdx
+		vk_command_buffer&       cmdBuff,
+		vk_rsc_state_tracker&	rscTracker,
+		const vk_image&			dstImg,
+		desc_hndl32				dstWriteDesc,
+		desc_hndl32				instDesc,
+		desc_hndl32				meshTableDesc,
+		desc_hndl32				viewDataIdx
 	) {
 		HT_ASSERT( ( vbuffRG32Target.width == dstImg.width ) && ( vbuffRG32Target.height == dstImg.height ) );
 
@@ -1611,25 +1618,25 @@ struct vbuffer_pass
 
 struct fwd_pass_args
 {
-	const vk_image&			colorTarget;
-	const vk_image&			depthTarget;
+	const vk_image&		colorTarget;
+	const vk_image&		depthTarget;
 
-	const vk_buffer&      	indexBuff;
-	VkIndexType           	indexType;
+	const vk_buffer&	indexBuff;
+	VkIndexType     	indexType;
 
-	const vk_buffer&		drawCmds;
-	const vk_buffer&		drawData;
-	const vk_buffer&		drawCount;
+	const vk_buffer&	drawCmds;
+	const vk_buffer&	drawData;
+	const vk_buffer&	drawCount;
 
-	desc_hndl32				drawDataIdx;
-	desc_hndl32				instBuffIdx;
-	desc_hndl32				camIdx;
+	desc_hndl32			drawDataIdx;
+	desc_hndl32			instBuffIdx;
+	desc_hndl32			camIdx;
 };
 
 struct fwd_pass
 {
-	VkPipeline gfxDepthPrepass;
-	VkPipeline gfxLambertianClay;
+	VkPipeline 			gfxDepthPrepass;
+	VkPipeline 			gfxLambertianClay;
 
 	void Init( VkFormat depthFormat, VkFormat colorFormat )
 	{
@@ -1668,7 +1675,7 @@ struct fwd_pass
 				.srcColorBlendFactor	= VK_BLEND_FACTOR_SRC_ALPHA,
 				.dstColorBlendFactor	= VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 				.colorBlendOp			= VK_BLEND_OP_ADD,
-				.depthCompareOp			= VK_COMPARE_OP_GREATER_OR_EQUAL, // NOTE: OR_EQ bc we basically draw the same geom again
+				.depthCompareOp			= VK_COMPARE_OP_GREATER_OR_EQUAL,
 				.depthWrite				= false,
 				.depthTestEnable		= true
 			};
@@ -1694,13 +1701,13 @@ struct fwd_pass
 		bool					latePass,
 		bool					isXRayOn
 	) {
-		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Depth_Prepass + Fwd/Transparency Pass", {} );
+		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Depth_Prepass + Fwd/XRay Pass", {} );
 
 		rscTracker.UseImage( args.depthTarget, HT_DEPTH_TARGET_FRAG_TESTS_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 		rscTracker.UseImage( args.colorTarget, HT_COLOR_TARGET_OUT_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
 		rscTracker.UseBuffer( args.drawCmds, HT_DRAW_INDIRECT_READ );
-		rscTracker.UseBuffer( args.drawData, HT_DRAW_INDIRECT_READ );
+		rscTracker.UseBuffer( args.drawData, { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT } );
 		rscTracker.UseBuffer( args.drawCount, HT_DRAW_INDIRECT_READ );
 		rscTracker.FlushBarriers( cmdBuff );
 
@@ -1828,26 +1835,26 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 	} );
 
 	return {
-		.canGetImgSema			= pVkCtx->CreateBinarySemaphore(),
-		.viewData				= viewData,
-		.gpuMeshTable			= gpuMeshTable,
-		.gpuInstances			= gpuInstances,
-		.viewDataIdx			= pVkCtx->AllocDescriptorIdx( viewData ),
-		.gpuMeshTableDesc		= pVkCtx->AllocDescriptorIdx( gpuMeshTable ),
-		.instDesc				= pVkCtx->AllocDescriptorIdx( gpuInstances ),
-		.fifIdx					= fifIdx,
+		.canGetImgSema		= pVkCtx->CreateBinarySemaphore(),
+		.viewData			= viewData,
+		.gpuMeshTable		= gpuMeshTable,
+		.gpuInstances		= gpuInstances,
+		.viewDataIdx		= pVkCtx->AllocDescriptorIdx( viewData ),
+		.gpuMeshTableDesc	= pVkCtx->AllocDescriptorIdx( gpuMeshTable ),
+		.instDesc			= pVkCtx->AllocDescriptorIdx( gpuInstances ),
+		.fifIdx				= fifIdx,
 	};
 }
 
 // NOTE: we always create a gpu_mesh descriptor before upload
-// the actual payload is uploaded on the xfer queue and the engine polls the associated fence,
-// then the fence triggers it will promote all the new instances;
+// the actual payload is uploaded on the transfer queue and the engine polls the associated fence,
+// when it triggers all the new associated instances will be promoted;
 // So basically the gpu_mesh buffer can point to stall or unresolved data,
 // but the engine only issues the available instances and only valid data is accessed.
 struct renderer_context final : renderer_interface
 {
-	using mesh_hndl32 = slot_vector<ht_mesh_component>::hndl32;
-	using fence_hndl32 = slot_vector<VkFence>::hndl32;
+	using mesh_hndl32	= slot_vector<ht_mesh_component>::hndl32;
+	using fence_hndl32	= slot_vector<VkFence>::hndl32;
 
 	alignas( 8 ) vk_renderer_config         config = {};
 
@@ -1994,7 +2001,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuMeshletBuff",
 		.usageFlags		= megaBuffUsg,
-		.sizeInBytes	= sizeof( gpu_meshlet ) * MAX_MESHLETS_IN_SCENE,
+		.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( gpu_meshlet ),
 		.usage			= buffer_usage::GPU_ONLY
 	} );
 	megaGpuVtxAttrsBuff = pVkCtx->CreateBuffer( {
@@ -2007,20 +2014,20 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		.name			= "MegaGpuVtxPosBuff",
 		.usageFlags		= megaBuffUsg,
 		// NOTE: to u32 bc we'll unpack via that in the shader
-		.sizeInBytes	= FwdAlign( MAX_VERTICES_IN_SCENE * sizeof( u32x3 ), sizeof( u32 ) ),
+		.sizeInBytes	= FwdAlignPot( MAX_VERTICES_IN_SCENE * sizeof( u32x3 ), sizeof( u32 ) ),
 		.usage			= buffer_usage::GPU_ONLY
 	} );
+	HT_ASSERT( FwdAlignPot( megaGpuVtxPosBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuVtxPosBuff.sizeInBytes );
 
-	// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
-	// bounds accesses, essentially we'll read garbage data safely
-	u64 triMegaBuffSzInBytes = FwdAlign( sizeof( index_t ) * MAX_TRIANGLES_IN_SCENE, sizeof( u32 ) );
 	megaGpuTriBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuTriBuff",
 		.usageFlags		= megaBuffUsg | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-		.sizeInBytes	= triMegaBuffSzInBytes,
+		// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
+		// bounds accesses, essentially we'll read garbage data safely
+		.sizeInBytes	= FwdAlignPot( MAX_TRIANGLES_IN_SCENE * sizeof( index_t ), sizeof( u32 ) ),
 		.usage			= buffer_usage::GPU_ONLY
 	} );
-	HT_ASSERT( FwdAlign( megaGpuTriBuff.sizeInBytes, sizeof( u64 ) ) == megaGpuTriBuff.sizeInBytes );
+	HT_ASSERT( FwdAlignPot( megaGpuTriBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuTriBuff.sizeInBytes );
 
 	meshletAllocator= { ( u32 ) megaGpuMeshletBuff.sizeInBytes };
 	vtxPosAllocator = { ( u32 ) megaGpuVtxPosBuff.sizeInBytes };
@@ -2068,6 +2075,10 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hellpack_mesh_asset& mesh
 	offset_alloc_t vtxAttrAlloc	= vtxAttrsAllocator.Alloc( ( u32 ) std::size( vtxAttrsAsBytes ) );
 	offset_alloc_t triAlloc	= triAllocator.Alloc( ( u32 ) std::size( triAsBytes ) );
 
+	// NOTE: since we alloc elements of the same type, the allocator MUST preserve the stride. Sanity check
+	HT_ASSERT( 0 == ( mltAlloc.offset % mesh.meshlets.STRIDE ) );
+	HT_ASSERT( 0 == ( vtxAttrAlloc.offset % mesh.vertexAttrs.STRIDE ) );
+
 	// NOTE: this MUST be in elements bc we use it on the gpu as such
 	gpu_mesh gpuMesh = {
 		.aabbMin				= mesh.aabbMin,
@@ -2075,7 +2086,7 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hellpack_mesh_asset& mesh
 		.meshletOffset			= mltAlloc.offset / mesh.meshlets.STRIDE,
 		.vtxPosOffsetInBytes	= vtxPosAlloc.offset,
 		.vtxAttrsOffset			= vtxAttrAlloc.offset / mesh.vertexAttrs.STRIDE,
-		.triOffset				= triAlloc.offset / mesh.triangles.STRIDE,
+		.triOffset				= triAlloc.offset / mesh.triangles.STRIDE, // NOTE: these are bytes so it don't matter
 		.meshletCount			= ( u32 ) std::size( mesh.meshlets ),
 		// NOTE: must have the same number as positions
 		.vtxCount				= ( u32 ) std::size( mesh.vertexAttrs ),
@@ -2219,10 +2230,7 @@ u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const fr
 	for( const instance_desc& sceneNode : frameData.instances )
 	{
 		mesh_hndl32 hMesh = std::bit_cast<mesh_hndl32>( sceneNode.meshIdx );
-		gpuInstList.push_back( {
-			.toWorld = TrsToFloat4x3RowMaj( sceneNode.transform ),
-			.meshIdx = hMesh.slotIdx
-		} );
+		gpuInstList.push_back( { .toWorld = TrsToFloat4x3RowMaj( sceneNode.transform ), .meshIdx = hMesh.slotIdx } );
 	}
 
 	return ( u32 ) std::size( gpuInstList );
@@ -2321,29 +2329,29 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		cullPassArgs, false, frameData.dbgDrawFlags.toggleInstCull, frameData.dbgDrawFlags.toggleMltCull ) );
 
 	const vbuffer_pass_args vbuffPassArgs = {
-		.depthTarget			= depthTarget,
-		.indexBuff 				= megaGpuTriBuff,
-		.indexType 				= VK_INDEX_TYPE_UINT8,
-		.drawCmds				= cullingPass.drawCmds,
-		.drawData				= cullingPass.drawData,
-		.drawCount				= cullingPass.drawCounter,
-		.drawDataIdx			= cullingPass.drawDataIdx,
-		.instBuffIdx			= thisVFrame.instDesc,
-		.camIdx					= thisVFrame.viewDataIdx
+		.depthTarget	= depthTarget,
+		.indexBuff 		= megaGpuTriBuff,
+		.indexType 		= VK_INDEX_TYPE_UINT8,
+		.drawCmds		= cullingPass.drawCmds,
+		.drawData		= cullingPass.drawData,
+		.drawCount		= cullingPass.drawCounter,
+		.drawDataIdx	= cullingPass.drawDataIdx,
+		.instBuffIdx	= thisVFrame.instDesc,
+		.camIdx			= thisVFrame.viewDataIdx
 	};
 	//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, vbuffPassArgs, false );
 
 	const fwd_pass_args fwdPassArgs = {
-		.colorTarget			= colorTarget,
-		.depthTarget			= depthTarget,
-		.indexBuff 				= megaGpuTriBuff,
-		.indexType 				= VK_INDEX_TYPE_UINT8,
-		.drawCmds				= cullingPass.drawCmds,
-		.drawData				= cullingPass.drawData,
-		.drawCount				= cullingPass.drawCounter,
-		.drawDataIdx			= cullingPass.drawDataIdx,
-		.instBuffIdx			= thisVFrame.instDesc,
-		.camIdx					= thisVFrame.viewDataIdx
+		.colorTarget	= colorTarget,
+		.depthTarget	= depthTarget,
+		.indexBuff 		= megaGpuTriBuff,
+		.indexType 		= VK_INDEX_TYPE_UINT8,
+		.drawCmds		= cullingPass.drawCmds,
+		.drawData		= cullingPass.drawData,
+		.drawCount		= cullingPass.drawCounter,
+		.drawDataIdx	= cullingPass.drawDataIdx,
+		.instBuffIdx	= thisVFrame.instDesc,
+		.camIdx			= thisVFrame.viewDataIdx
 	};
 	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
 

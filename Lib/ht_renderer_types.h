@@ -109,22 +109,17 @@ struct gpu_mesh
 
 struct gpu_meshlet
 {
-	i32x3	aabbMin;
-	i32x3	aabbMax;
+	float3	aabbMin;
+	float3	aabbMax;
 	u32		vtxPosOffsetBits;
 	u32		vtxAttrsOffset;
 	u32		triOffset;
-	u32		xBitDepth 		: 8;
-	u32		yBitDepth 		: 8;
-	u32		zBitDepth 		: 8;
-	// NOTE: this defines our uniform grid; the ones above just how many bits we used for encoding
-	u32		gridBitResolution	: 8;
-	u32		vtxCount		: 8;
-	u32		triCount		: 8;
-	u32		padding0		: 16;
+	u32		packed8888_XYZ_Grid_BitDepth;
+	u16		vtxCount;
+	u16		triCount;
 };
 
-STATIC_ASSERT( 44 == sizeof( gpu_meshlet ), "Size mismatch!");
+STATIC_ASSERT( 44 == sizeof( gpu_meshlet ), "Size mismatch!" );
 
 struct dispatch_command
 {

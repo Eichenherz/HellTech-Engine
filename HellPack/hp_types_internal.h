@@ -87,28 +87,28 @@ struct bit_stream
 	std::vector<u64>	qwords;
 	u64					cursorInBits = 0;  // NOTE: lsb
 
-	void AppendBits( u32 inVal, u32 bitLen )
+	void AppendBits( u32 inBitStream, u32 bitDepth )
 	{
-		HT_ASSERT( bitLen < 64 );
-		u64 val = u64( inVal ) & ( ( 1ull << bitLen ) - 1 );
+		HT_ASSERT( bitDepth < 64 );
+		u64 bitStream = u64( inBitStream ) & ( ( 1ull << bitDepth ) - 1 );
 
 		u64 qwBucket = cursorInBits >> 6;
 		u32 bitOffset = cursorInBits & 63;
 		u32 howManyBitWillFit = 64 - bitOffset;
-		bool carryOver = bitLen > howManyBitWillFit;
+		bool carryOver = bitDepth > howManyBitWillFit;
 
 		if( u64 sz = std::size( qwords ); sz <= ( qwBucket + u64( carryOver ) ) )
 		{
 			qwords.resize( sz + 64, 0 );
 		}
 
-		qwords[ qwBucket ] |= val << bitOffset;
+		qwords[ qwBucket ] |= bitStream << bitOffset;
 		if( carryOver )
 		{
-			qwords[ qwBucket + 1 ] |= val >> howManyBitWillFit;
+			qwords[ qwBucket + 1 ] |= bitStream >> howManyBitWillFit;
 		}
 
-		cursorInBits += bitLen;
+		cursorInBits += bitDepth;
 	}
 
 	hellpack_serializable_buffer GetSerializableBuffer() const

@@ -48,21 +48,13 @@ inline float3 DecodeOctaNormal( float2 octa )
 
 // NOTE: https://zeux.io/2026/04/30/quantizing-tangent-frames/
 // NOTE: from `Building an Orthonormal Basis, Revisited`
-struct tan_bitan
-{
-	float3 tan;
-	float3 bitan;
-};
-
-inline tan_bitan BuildBasisFromNormalDuffFrisvad( float3 n )
+inline void BuildBasisFromNormalDuffFrisvad( float3 n, float3& oTan, float3& oBitan )
 {
 	float sign = SignNonZero( n.z );
 	float a = -1.0f / ( sign + n.z );
 	float b = n.x * n.y * a;
-	return {
-		.tan	= { 1.0f + sign * n.x * n.x * a, sign * b, -sign * n.x },
-		.bitan	= { b, sign + n.y * n.y * a, -n.y }
-	};
+	oTan = { 1.0f + sign * n.x * n.x * a, sign * b, -sign * n.x };
+	oBitan	= { b, sign + n.y * n.y * a, -n.y };
 
 }
 // NOTE: must use reconstructed normal not original
@@ -70,7 +62,7 @@ inline float EncodeTanToAngle( float3 decodedNormal, float3 t )
 {
 	using namespace DirectX;
 
-	auto[ tanRef, bitanRef ] = BuildBasisFromNormalDuffFrisvad( decodedNormal );
+	float3 tanRef, bitanRef; BuildBasisFromNormalDuffFrisvad( decodedNormal, tanRef, bitanRef );
 
 	float cosA  = t.x * tanRef.x + t.y * tanRef.y + t.z * tanRef.z;
 	float sinA  = t.x * bitanRef.x  + t.y * bitanRef.y  + t.z * bitanRef.z;
@@ -101,12 +93,11 @@ inline oct11x2s_a9_s1 EncodeTanFrame( float3 n, float3 t, float bs )
 }
 
 // NOTE: inspired https://daniilvinn.github.io/2024/05/04/omniforce-vertex-quantization.html
-inline u32 QuantizeVertexPosCompWithMinAnchor( float comp, u32 gridBitDepth, i32 minBound )
+inline u32 QuantizeVertexPosCompWithAnchor( float comp, i32 anchor, u32 gridBitDepth )
 {
-	// Quantize with multiplication by pow( 2, precision ) with further rounding
-	i32 quantPos = i32( std::round( comp * float( 1u << gridBitDepth ) ) ) - minBound;
+	i32 quantPos = i32( std::round( comp * float( 1u << gridBitDepth ) ) ) - anchor;
 	HT_ASSERT( quantPos >= 0 );
-	return std::bit_cast<u32>( quantPos );
+	return u32( quantPos );
 }
 
 // NOTE: https://graphics.stanford.edu/~seander/bithacks.html#VariableSignExtend

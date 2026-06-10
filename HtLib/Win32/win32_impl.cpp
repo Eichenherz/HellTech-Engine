@@ -45,7 +45,7 @@ void virtual_arena::Reset()
 
 void* virtual_arena::Alloc( u64 bytes, u64 alignment ) 
 {
-    u64 alignedOffset = FwdAlign( offset, alignment );
+    u64 alignedOffset = FwdAlignPot( offset, alignment );
     u64 newOffset = alignedOffset + bytes;
 
     HT_ASSERT( newOffset <= reserved );
