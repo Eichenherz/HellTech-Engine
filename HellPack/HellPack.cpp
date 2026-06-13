@@ -1,7 +1,7 @@
 #include <meshoptimizer.h>
 
-//#define CLUSTERLOD_IMPLEMENTATION
-//#include "clusterlod.h"
+#define CLUSTERLOD_IMPLEMENTATION
+#include "meshopt_clusterlod.h"
 
 #include <iostream>
 #include <filesystem>
