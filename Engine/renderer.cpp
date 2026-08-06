@@ -536,10 +536,13 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 	VkDescriptorUpdateTemplate descTemplate = {};
 	VK_CHECK( vkCreateDescriptorUpdateTemplate( pVkCtx->device, &templateInfo, 0, &descTemplate ) );
 
-	unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv(
-		ReadFileBinary( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
-	unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv(
-		ReadFileBinary( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
+	vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
+	vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
+
+	defer {
+		pVkCtx->DestroyShaderModule( vtx.module );
+		pVkCtx->DestroyShaderModule( frag.module );
+	};
 
 	vk_gfx_pso_config guiState = {
 		.polyMode				= VK_POLYGON_MODE_FILL,
@@ -558,7 +561,7 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 		.blendCol				= true
 	};
 
-	vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
+	vk_gfx_shader_stage shaderStages[] = { vtx, frag };
 	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
 	VkPipeline pipeline = pVkCtx->CreateGfxPipeline(
@@ -602,11 +605,16 @@ struct debug_draw_passes
 
 	void Init( vk_renderer_config& rndCfg )
 	{
-		unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_DbgBoxVsMain.spirv" ) );
-		unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_ColPassPsMain.spirv" ) );
+		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_DbgBoxVsMain.spirv" ) );
+		vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_ColPassPsMain.spirv" ) );
+
+		defer {
+			pVkCtx->DestroyShaderModule( vtx.module );
+			pVkCtx->DestroyShaderModule( frag.module );
+		};
 
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-		vk_gfx_shader_stage gfxStages[] = { *vtx, *frag };
+		vk_gfx_shader_stage gfxStages[] = { vtx, frag };
 
 		{
 			vk_gfx_pso_config lineDrawPipelineState = {
@@ -637,9 +645,11 @@ struct debug_draw_passes
 		//drawAsTriangles = dc.CreateGfxPipeline( gfxStages, dynamicStates, &rndCfg.desiredColorFormat,
 		//	1, rndCfg.desiredDepthFormat, triDrawPipelineState );
 
-		unique_shader_ptr recordDbgDraw = pVkCtx->CreateShaderFromSpirv(
+		vk_shader recordDbgDraw = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_RecordDbgDrawCsMain.spirv" ) );
-		compRecordDbgDraw = pVkCtx->CreateComputePipeline( *recordDbgDraw );
+		defer {  pVkCtx->DestroyShaderModule( recordDbgDraw.module ); };
+
+		compRecordDbgDraw = pVkCtx->CreateComputePipeline( recordDbgDraw );
 
 		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 		drawCountBuff = pVkCtx->CreateBuffer( {
@@ -899,25 +909,33 @@ struct culling_pass
 
 	void Init()
 	{
-		unique_shader_ptr instCull = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
+		vk_shader instCull = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
 			"bin/SpirV/compute_DrawCullCsMain.spirv" ) );
-		instCullPass = pVkCtx->CreateComputePipeline( *instCull );
+		instCullPass = pVkCtx->CreateComputePipeline( instCull );
 
-		unique_shader_ptr instExp = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
+		vk_shader instExp = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
 			"bin/SpirV/compute_ExpandDrawsCsMain.spirv" ) );
-		instExpansionPass = pVkCtx->CreateComputePipeline( *instExp );
+		instExpansionPass = pVkCtx->CreateComputePipeline( instExp );
 
-		unique_shader_ptr dispatcher = pVkCtx->CreateShaderFromSpirv(
+		vk_shader dispatcher = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv" ) );
-		indirectDispatchPass = pVkCtx->CreateComputePipeline( *dispatcher );
+		indirectDispatchPass = pVkCtx->CreateComputePipeline( dispatcher );
 
-		unique_shader_ptr meshletCs = pVkCtx->CreateShaderFromSpirv(
+		vk_shader meshletCs = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_MeshletCullCsMain.spirv" ) );
-		meshletCullPass = pVkCtx->CreateComputePipeline( *meshletCs );
+		meshletCullPass = pVkCtx->CreateComputePipeline( meshletCs );
 
-		unique_shader_ptr initCs = pVkCtx->CreateShaderFromSpirv(
+		vk_shader initCs = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_CsMainCullingInit.spirv" ) );
-		cullingInitPass = pVkCtx->CreateComputePipeline( *initCs );
+		cullingInitPass = pVkCtx->CreateComputePipeline( initCs );
+
+		defer {
+			pVkCtx->DestroyShaderModule( instCull.module );
+			pVkCtx->DestroyShaderModule( instExp.module );
+			pVkCtx->DestroyShaderModule( dispatcher.module );
+			pVkCtx->DestroyShaderModule( meshletCs.module );
+			pVkCtx->DestroyShaderModule( initCs.module );
+		};
 
 		constexpr VkBufferUsageFlags usgStorageAndBDA = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
 			| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -1184,13 +1202,18 @@ struct tone_mapping_pass
 
 	void Init()
 	{
-		unique_shader_ptr avgLum = pVkCtx->CreateShaderFromSpirv(
+		vk_shader avgLum = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
-		compAvgLumPipe = pVkCtx->CreateComputePipeline( *avgLum );
+		compAvgLumPipe = pVkCtx->CreateComputePipeline( avgLum );
 
-		unique_shader_ptr toneMapper = pVkCtx->CreateShaderFromSpirv(
+		vk_shader toneMapper = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
-		compTonemapPipe = pVkCtx->CreateComputePipeline( *toneMapper );
+		compTonemapPipe = pVkCtx->CreateComputePipeline( toneMapper );
+
+		defer {
+			pVkCtx->DestroyShaderModule( avgLum.module );
+			pVkCtx->DestroyShaderModule( toneMapper.module );
+		};
 
 		VkBufferUsageFlags usageFlags = 
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -1249,7 +1272,8 @@ struct tone_mapping_pass
 			u32					avgLumIdx;
 		} pushConst = { avgLumInfo, hdrColSrcDesc.slot, lumHistoIdx.slot, atomicWgCounterIdx.slot, avgLumIdx.slot };
 
-		cmdBuff.DispatchCompute( compAvgLumPipe, pushConst, { colTarget.width, colTarget.height, 1 } );
+		cmdBuff.DispatchCompute( compAvgLumPipe, pushConst,
+			GroupCount( { colTarget.width, colTarget.height, 1 }, compAvgLumPipe.groupSize ) );
 	}
 
 	void TonemappingGammaPass(
@@ -1277,31 +1301,43 @@ struct tone_mapping_pass
 			u32 avgLumIdx;
 		} pushConst = { hdrColDesc.slot, sdrColDesc.slot, avgLumIdx.slot };
 
-		cmdBuff.DispatchCompute( compTonemapPipe, pushConst, { hdrTrgSize.x, hdrTrgSize.y, 1 } );
+		cmdBuff.DispatchCompute( compTonemapPipe, pushConst,
+			GroupCount( { hdrTrgSize.x, hdrTrgSize.y, 1 }, compTonemapPipe.groupSize ) );
 	}
 };
 
 struct depth_pyramid_pass
 {
-	vk_compute_pipeline		pipeline;
+	vk_compute_pipeline		pow2DownsamplerPipeline;
+	vk_compute_pipeline		multiPassPipeline;
 	vk_image				hzb;
 	VkImageView				hzbMipViews[ MAX_MIP_LEVELS ];
+
+	vk_buffer				atomicWgCounterBuff;
 
 	VkSampler       		quadMinSampler;
 	VkSampler       		pointSampler;
 
 	desc_hndl32     		hzbSrv;
-
 	desc_hndl32				hzbMipUavs[ MAX_MIP_LEVELS ];
+
+	desc_hndl32				atomicWgCounterIdx;
+
 	desc_hndl32				quadMinSamplerIdx;
 
 	desc_hndl32				pointSamplerIdx;
 
 	void Init( u16 srcWidth, u16 srcHeight )
 	{
-		unique_shader_ptr downsampler = pVkCtx->CreateShaderFromSpirv(
+		vk_shader downsampler = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
-		pipeline = pVkCtx->CreateComputePipeline( *downsampler );
+		defer { pVkCtx->DestroyShaderModule( downsampler.module ); };
+
+		multiPassPipeline = pVkCtx->CreateComputePipeline( downsampler );
+
+		vk_shader pow2DownsamplerShader = pVkCtx->CreateShaderFromSpirv(
+			ReadFileBinary( "bin/SpirV/compute_DownsamplerCsMain.spirv" ) );
+		pow2DownsamplerPipeline = pVkCtx->CreateComputePipeline( pow2DownsamplerShader );
 
 		u16 hzbWidth = ( u16 ) FloorPowOf2( srcWidth );
 		u16 hzbHeight = ( u16 ) FloorPowOf2( srcHeight );
@@ -1333,6 +1369,14 @@ struct depth_pyramid_pass
 				VK_IMAGE_VIEW_TYPE_2D, 0, hzbInfo.layerCount );
 			hzbMipUavs[ mi ] = pVkCtx->AllocDescriptorIdx( { hzbMipViews[ mi ], VK_IMAGE_LAYOUT_GENERAL } );
 		}
+
+		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
+			.name = "Buff_DownsamplerAtomicWgCounter",
+			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.sizeInBytes = 1 * sizeof( u32 ),
+			.usage = buffer_usage::GPU_ONLY } );
+		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
+
 
 		VkSamplerReductionModeCreateInfo reduxInfo = { 
 			.sType			= VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
@@ -1376,7 +1420,52 @@ struct depth_pyramid_pass
 		pointSamplerIdx = pVkCtx->AllocDescriptorIdx( { pointSampler } );
 	}
 
-	void Execute( 
+	void Execute(
+		vk_command_buffer&		cmdBuff,
+		vk_rsc_state_tracker&	rscTracker,
+		const vk_image&			depthTarget,
+		desc_hndl32				depthIdx
+	) {
+		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "HZB Single Pass", {} );
+
+		rscTracker.UseBuffer( atomicWgCounterBuff, HT_TRANSFER_WRITE );
+		rscTracker.FlushBarriers( cmdBuff );
+
+		cmdBuff.CmdFillBuffer( atomicWgCounterBuff, 0 );
+
+		rscTracker.UseBuffer( atomicWgCounterBuff, HT_COMPUTE_READWRITE );
+
+		rscTracker.UseImage( depthTarget, HT_COMPUTE_READ, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL );
+		rscTracker.UseImage( hzb, HT_COMPUTE_READWRITE, VK_IMAGE_LAYOUT_GENERAL );
+
+		rscTracker.FlushBarriers( cmdBuff );
+
+		downsampler_params pushConst = {
+			.srcResolution			= { depthTarget.width, depthTarget.height },
+			.mip0Resolution			= { hzb.width, hzb.height },
+			.mipCount				= hzb.mipCount,
+			.reductionSamplerIdx	= quadMinSamplerIdx.slot,
+			.srcSrvIdx				= depthIdx.slot,
+			.dstMipsIdx				= {},
+			.atomicWgCounterIdx		= atomicWgCounterIdx.slot,
+			.isMip0FromNonPot		= u32( !IsPowOf2( depthTarget.width ) || !IsPowOf2( depthTarget.height ) ),
+		};
+
+		HT_ASSERT( hzb.mipCount <= std::size( pushConst.dstMipsIdx ) );
+		for( u32 mi = 0; mi < std::size( pushConst.dstMipsIdx ); ++mi )
+		{
+			pushConst.dstMipsIdx[ mi ] = ( mi < hzb.mipCount ) ? hzbMipUavs[ mi ].slot : ~0u;
+		}
+
+		u32x3 dispatchSize = {
+			GroupCount( hzb.width, MIP0_TILE_SIZE.x ),
+			GroupCount( hzb.height, MIP0_TILE_SIZE.y ),
+			1
+		};
+		cmdBuff.DispatchCompute( pow2DownsamplerPipeline, pushConst, dispatchSize );
+	}
+
+	void ExecuteMultiPass(
 		vk_command_buffer&		cmdBuff,
 		vk_rsc_state_tracker&	rscTracker,
 		const vk_image&			depthTarget,
@@ -1423,18 +1512,13 @@ struct depth_pyramid_pass
 				.isMip0FromNonPot		= u32( 0 == mi )
 			};
 
-			cmdBuff.DispatchCompute( pipeline, pushConst, { levelWidth, levelHeight, 1 } );
+			cmdBuff.DispatchCompute( multiPassPipeline, pushConst,
+				GroupCount( { levelWidth, levelHeight, 1 }, multiPassPipeline.groupSize ) );
 			cmdBuff.CmdPipelineMemoryBarriers( executionBarrier );
 
 			srcWidth = levelWidth;
 			srcHeight = levelHeight;
 		}
-
-		// TODO: del ?
-		rscTracker.UseImage( depthTarget,
-			{  HT_DEPTH_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT },
-			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
-		rscTracker.FlushBarriers( cmdBuff );
 	}
 };
 
@@ -1481,37 +1565,42 @@ struct vbuffer_pass
 
 		vbuffRG32Srv = pVkCtx->AllocDescriptorIdx( { vbuffRG32Target.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		{
-			unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_VBufferVsMain.spirv" ) );
-			unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_VBufferPsMain.spirv" ) );
+		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_VBufferVsMain.spirv" ) );
+		vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_VBufferPsMain.spirv" ) );
 
-			vk_gfx_pso_config vbuffState = {
-				.polyMode			= VK_POLYGON_MODE_FILL,
-				.cullFlags			= HT_CULL_MODE,
-				.frontFace			= HT_FRONT_FACE,
-				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-				.depthCompareOp		= VK_COMPARE_OP_GREATER,
-				.depthWrite			= true,
-				.depthTestEnable	= true,
-				.blendCol			= false
-			};
+		defer {
+			pVkCtx->DestroyShaderModule( vtx.module );
+			pVkCtx->DestroyShaderModule( frag.module );
+		};
 
-			vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
-			VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+		vk_gfx_pso_config vbuffState = {
+			.polyMode			= VK_POLYGON_MODE_FILL,
+			.cullFlags			= HT_CULL_MODE,
+			.frontFace			= HT_FRONT_FACE,
+			.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+			.depthCompareOp		= VK_COMPARE_OP_GREATER,
+			.depthWrite			= true,
+			.depthTestEnable	= true,
+			.blendCol			= false
+		};
 
-			gfxVBuffPipeline = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, &VBUFF_FORMAT,
-				1, depthFormat, vbuffState, pVkCtx->globalPipelineLayout );
-		}
-		{
-			unique_shader_ptr comp = pVkCtx->CreateShaderFromSpirv(
+		vk_gfx_shader_stage shaderStages[] = { vtx, frag };
+		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+		gfxVBuffPipeline = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, &VBUFF_FORMAT,
+			1, depthFormat, vbuffState, pVkCtx->globalPipelineLayout );
+
+		vk_shader comp = pVkCtx->CreateShaderFromSpirv(
 				ReadFileBinary( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv" ) );
-			compDbgHashTriToScPipeline = pVkCtx->CreateComputePipeline( *comp );
-		}
-		{
-			unique_shader_ptr lambert = pVkCtx->CreateShaderFromSpirv(
+		compDbgHashTriToScPipeline = pVkCtx->CreateComputePipeline( comp );
+		vk_shader lambert = pVkCtx->CreateShaderFromSpirv(
 				ReadFileBinary( "bin/SpirV/compute_LambertianClayCsMain.spirv" ) );
-			compLambertianClay = pVkCtx->CreateComputePipeline( *lambert );
-		}
+		compLambertianClay = pVkCtx->CreateComputePipeline( lambert );
+
+		defer {
+			pVkCtx->DestroyShaderModule( comp.module );
+			pVkCtx->DestroyShaderModule( lambert.module );
+		};
 	}
 
 	void DrawIndexedIndirect(
@@ -1522,7 +1611,17 @@ struct vbuffer_pass
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "VBuffer Pass", {} );
 
-		rscTracker.UseImage( args.depthTarget, HT_DEPTH_TARGET_FRAG_TESTS_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		if( !latePass )
+		{
+			rscTracker.UseImage( args.depthTarget, HT_DEPTH_TARGET_FRAG_TESTS_WRITE,
+				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		}
+		else
+		{
+			rscTracker.UseImage( args.depthTarget,
+				{  HT_DEPTH_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT },
+				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		}
 		rscTracker.UseImage( vbuffRG32Target, HT_COLOR_TARGET_OUT_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
 		rscTracker.UseBuffer( args.drawCmds, HT_DRAW_INDIRECT_READ );
@@ -1584,7 +1683,8 @@ struct vbuffer_pass
 			.dstIdx		= dstImgIdx.slot
 		};
 		cmdBuff.DispatchCompute( compDbgHashTriToScPipeline, pushBlock,
-			{ vbuffRG32Target.width, vbuffRG32Target.height, 1 } );
+			GroupCount( { vbuffRG32Target.width, vbuffRG32Target.height, 1 },
+				compDbgHashTriToScPipeline.groupSize ) );
 	}
 
 	void DgrDrawAsLamberitanClay(
@@ -1612,7 +1712,8 @@ struct vbuffer_pass
 			.meshDescIdx 	= meshTableDesc.slot,
 			.camIdx			= viewDataIdx.slot
 		};
-		cmdBuff.DispatchCompute( compLambertianClay, pushBlock, { dstImg.width, dstImg.height, 1 } );
+		cmdBuff.DispatchCompute( compLambertianClay, pushBlock,
+			GroupCount( { dstImg.width, dstImg.height, 1 }, compLambertianClay.groupSize ) );
 	}
 };
 
@@ -1640,58 +1741,61 @@ struct fwd_pass
 
 	void Init( VkFormat depthFormat, VkFormat colorFormat )
 	{
-		{
-			unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
+		vk_shader vtxDepth = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
 				"bin/SpirV/vertex_DepthPrepassVsMain.spirv" ) );
 
-			vk_gfx_pso_config depthPrepassState = {
-				.polyMode			= VK_POLYGON_MODE_FILL,
-				.cullFlags			= HT_CULL_MODE,
-				.frontFace			= HT_FRONT_FACE,
-				.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-				.depthCompareOp		= VK_COMPARE_OP_GREATER,
-				.depthWrite			= true,
-				.depthTestEnable	= true,
-				.blendCol			= false
-			};
+		vk_gfx_pso_config depthPrepassState = {
+			.polyMode			= VK_POLYGON_MODE_FILL,
+			.cullFlags			= HT_CULL_MODE,
+			.frontFace			= HT_FRONT_FACE,
+			.primTopology		= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+			.depthCompareOp		= VK_COMPARE_OP_GREATER,
+			.depthWrite			= true,
+			.depthTestEnable	= true,
+			.blendCol			= false
+		};
 
-			vk_gfx_shader_stage shaderStages[] = { *vtx };
-			VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+		vk_gfx_shader_stage shaderStagesDepth[] = { vtxDepth };
+		VkDynamicState dynamicStatesDepth[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-			gfxDepthPrepass = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, 0,
-				0, depthFormat, depthPrepassState, pVkCtx->globalPipelineLayout );
-		}
-		{
-			unique_shader_ptr vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
+		gfxDepthPrepass = pVkCtx->CreateGfxPipeline( shaderStagesDepth, dynamicStatesDepth, 0,
+			0, depthFormat, depthPrepassState, pVkCtx->globalPipelineLayout );
+
+		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
 				"bin/SpirV/vertex_MeshletPassVsMain.spirv" ) );
-			unique_shader_ptr frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
-				"bin/SpirV/pixel_MeshletClayPassPsMain.spirv" ) );
+		vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
+			"bin/SpirV/pixel_MeshletClayPassPsMain.spirv" ) );
 
-			vk_gfx_pso_config gfxState = {
-				.polyMode				= VK_POLYGON_MODE_FILL,
-				.cullFlags				= HT_CULL_MODE,
-				.frontFace				= HT_FRONT_FACE,
-				.primTopology			= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-				.srcColorBlendFactor	= VK_BLEND_FACTOR_SRC_ALPHA,
-				.dstColorBlendFactor	= VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-				.colorBlendOp			= VK_BLEND_OP_ADD,
-				.depthCompareOp			= VK_COMPARE_OP_GREATER_OR_EQUAL,
-				.depthWrite				= false,
-				.depthTestEnable		= true
-			};
+		vk_gfx_pso_config gfxState = {
+			.polyMode				= VK_POLYGON_MODE_FILL,
+			.cullFlags				= HT_CULL_MODE,
+			.frontFace				= HT_FRONT_FACE,
+			.primTopology			= VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+			.srcColorBlendFactor	= VK_BLEND_FACTOR_SRC_ALPHA,
+			.dstColorBlendFactor	= VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+			.colorBlendOp			= VK_BLEND_OP_ADD,
+			.depthCompareOp			= VK_COMPARE_OP_GREATER_OR_EQUAL,
+			.depthWrite				= false,
+			.depthTestEnable		= true
+		};
 
-			vk_gfx_shader_stage shaderStages[] = { *vtx, *frag };
-			VkDynamicState dynamicStates[] = {
-				VK_DYNAMIC_STATE_VIEWPORT,
-				VK_DYNAMIC_STATE_SCISSOR,
-				//VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
-				//VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
-				VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT
-			};
+		vk_gfx_shader_stage shaderStages[] = { vtx, frag };
+		VkDynamicState dynamicStates[] = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR,
+			//VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+			//VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+			VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT
+		};
 
-			gfxLambertianClay = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, &colorFormat,
-				1, depthFormat, gfxState, pVkCtx->globalPipelineLayout );
-		}
+		gfxLambertianClay = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, &colorFormat,
+			1, depthFormat, gfxState, pVkCtx->globalPipelineLayout );
+
+		defer {
+			pVkCtx->DestroyShaderModule( vtxDepth.module );
+			pVkCtx->DestroyShaderModule( vtx.module );
+			pVkCtx->DestroyShaderModule( frag.module );
+		};
 	}
 
 	void DrawIndexedIndirect(
@@ -1703,7 +1807,17 @@ struct fwd_pass
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Depth_Prepass + Fwd/XRay Pass", {} );
 
-		rscTracker.UseImage( args.depthTarget, HT_DEPTH_TARGET_FRAG_TESTS_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		if( !latePass )
+		{
+			rscTracker.UseImage( args.depthTarget, HT_DEPTH_TARGET_FRAG_TESTS_WRITE,
+				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		}
+		else
+		{
+			rscTracker.UseImage( args.depthTarget,
+				{  HT_DEPTH_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT },
+				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
+		}
 		rscTracker.UseImage( args.colorTarget, HT_COLOR_TARGET_OUT_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 
 		rscTracker.UseBuffer( args.drawCmds, HT_DRAW_INDIRECT_READ );
@@ -2264,7 +2378,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	thisFrameCmdBuff.CmdBeginCmdBuffer();
 
 	HtGetGpuFrameProfiler()->GPUReadAndResetQueryPools( thisFrameCmdBuff );
-	timestamp_query hQuery = HtGetGpuFrameProfiler()->BeginTimedZone( thisFrameCmdBuff, "GPU FrameTime" );
+
+	timestamp_query hQueryGPUFrame = HtGetGpuFrameProfiler()->BeginTimedZone( thisFrameCmdBuff, "GPU FrameTime" );
 
 	static bool initResources = false;
 	if( !initResources )
@@ -2417,7 +2532,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	// NOTE: remove sc image to avoid handling this logic inside the tracker
 	rscStateTracker.StopTrackingResource( ( u64 ) scImg.img.hndl );
 
-	HtGetGpuFrameProfiler()->EndTimedZone( thisFrameCmdBuff, hQuery );
+	HtGetGpuFrameProfiler()->EndTimedZone( thisFrameCmdBuff, hQueryGPUFrame );
 
 	thisFrameCmdBuff.CmdEndCmdBuffer();
 

@@ -156,10 +156,6 @@ struct vk_desc_binding
 	}
 };
 
-
-using PFN_VkShaderDestroyer = std::function<void( vk_shader* )>;
-using unique_shader_ptr = std::unique_ptr<vk_shader, PFN_VkShaderDestroyer>;
-
 struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
@@ -227,7 +223,7 @@ struct vk_context
 		descriptorDeletionQueue.push_back( rscDeletion );
 	}
 
-	unique_shader_ptr CreateShaderFromSpirv( std::span<const u8> spvByteCode );
+	vk_shader CreateShaderFromSpirv( std::span<const u8> spvByteCode );
 	inline void DestroyShaderModule( VkShaderModule module )
 	{
 		vkDestroyShaderModule( device, module, 0 );

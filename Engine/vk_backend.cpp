@@ -781,7 +781,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 	};
 }
 
-unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
+vk_shader vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 {
 	HT_ASSERT( 0 != std::size( spvByteCode ) );
 
@@ -801,20 +801,12 @@ unique_shader_ptr vk_context::CreateShaderFromSpirv( std::span<const u8> spvByte
 	VkShaderModule sm;
 	VK_CHECK( vkCreateShaderModule( device, &shaderModuleInfo, 0, &sm ) );
 
-	PFN_VkShaderDestroyer deleter = [ this ]( vk_shader* p )
-	{
-		if( !p ) return;
-		this->DestroyShaderModule( p->module );
-		delete p;
-	};
-
-
-	return { new vk_shader{
+	return {
 		.entryPoint = entryPt.name,
 		.module		= sm,
 		.stage		= ( VkShaderStageFlagBits ) entryPt.shader_stage,
 		.groupSize	= { entryPt.local_size.x, entryPt.local_size.y, entryPt.local_size.z }
-	}, std::move( deleter ) };
+	};
 }
 
 VkPipeline vk_context::CreateGfxPipeline( 

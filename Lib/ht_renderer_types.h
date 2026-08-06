@@ -350,18 +350,19 @@ struct record_dbg_draw_params
 	u32 vertexOffset;
 };
 
+CONSTEXPR u32x2  MIP0_TILE_SIZE = u32x2( 32, 32 );
+
 struct downsampler_params
 {
 	u32x2   srcResolution;
+	u32x2	mip0Resolution;
 	// u32x2 numWorkgroups; // NOTE: only for DX12-hlsl
 	u32     mipCount;
-	u32		samplerIdx;
+	u32     reductionSamplerIdx;
 	u32		srcSrvIdx;
 	u32		dstMipsIdx[ 12 ];
-	// NOTE: this is used with globallycoherent, if we have more than 5 mips,
-	// only the last group will perform reductions, hence it starts at mip 6 by reading this !!!!
-	u32		fifthMipIdx;
 	u32		atomicWgCounterIdx;
+	u32     isMip0FromNonPot;
 };
 
 struct multi_pass_downsampler_params

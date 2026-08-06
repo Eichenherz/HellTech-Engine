@@ -202,17 +202,12 @@ struct vk_command_buffer
 		vkCmdPushConstants2( hndl, &pushConstInfo );
 	}
 
-	void CmdDispatch( u32x3 numWorkgroups )
-	{
-		vkCmdDispatch( hndl, numWorkgroups.x, numWorkgroups.y, numWorkgroups.z );
-	}
-
 	template<typename T>
 	void DispatchCompute( const vk_compute_pipeline& compPipe, const T& pushConst, u32x3 numWorkgroups )
 	{
 		CmdBindPipelineAndBindlessDesc( compPipe.hndl, VK_PIPELINE_BIND_POINT_COMPUTE );
 		CmdPushConstants( &pushConst, sizeof( T ) );
-		CmdDispatch(GroupCount( numWorkgroups,  compPipe.groupSize ) );
+		vkCmdDispatch( hndl, numWorkgroups.x, numWorkgroups.y, numWorkgroups.z );
 	}
 
 	template<typename T>
