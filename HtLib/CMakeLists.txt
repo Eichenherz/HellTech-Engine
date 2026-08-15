@@ -1,6 +1,3 @@
-cmake_minimum_required(VERSION 3.25)
-project(HtLib LANGUAGES CXX C)
-
 set(HTLIB_DIR  "${CMAKE_CURRENT_SOURCE_DIR}")
 # TODO: fetch minunit ourselves (FetchContent or git submodule) instead of relying on root 3rdParty
 set(MINUNIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../3rdParty/minunit")
@@ -30,3 +27,4 @@ endfunction()
 #add_ht_test(TestSlotBuffer     Tests/test_slot_buffer.cpp     ${HTLIB_WIN32_IMPL})
 #add_ht_test(TestStretchyBuffer Tests/test_stretchy_buffer.cpp ${HTLIB_WIN32_IMPL})
 add_ht_test(TestMemArena       Tests/test_mem_arena.cpp       ${HTLIB_WIN32_IMPL})
+add_ht_test(TestFixedVector    Tests/test_fixed_vector.cpp    ${HTLIB_WIN32_IMPL})

@@ -5,8 +5,6 @@
 
 #include <ht_core_types.h>
 
-#include "hp_serialization.h"
-
 #include <ankerl/unordered_dense.h>
 #include <vector>
 #include <string>
@@ -19,6 +17,7 @@ struct raw_mesh
 	std::vector<float4> tans;
 	std::vector<float2> uvs;
 	std::vector<u32>    indices;
+	aabb_t<float3>		aabb;
 	u32                 materialIdx;
 };
 
@@ -80,51 +79,6 @@ struct raw_material_info
 	u16 		samplerIdx;
 
 	alpha_mode	alphaMode;
-};
-
-struct bit_stream
-{
-	std::vector<u64>	qwords;
-	u64					cursorInBits = 0;  // NOTE: lsb
-
-	void AppendBits( u32 inBitStream, u32 bitDepth )
-	{
-		HT_ASSERT( bitDepth < 64 );
-		u64 bitStream = u64( inBitStream ) & ( ( 1ull << bitDepth ) - 1 );
-
-		u64 qwBucket = cursorInBits >> 6;
-		u32 bitOffset = cursorInBits & 63;
-		u32 howManyBitWillFit = 64 - bitOffset;
-		bool carryOver = bitDepth > howManyBitWillFit;
-
-		if( u64 sz = std::size( qwords ); sz <= ( qwBucket + u64( carryOver ) ) )
-		{
-			qwords.resize( sz + 64, 0 );
-		}
-
-		qwords[ qwBucket ] |= bitStream << bitOffset;
-		if( carryOver )
-		{
-			qwords[ qwBucket + 1 ] |= bitStream >> howManyBitWillFit;
-		}
-
-		cursorInBits += bitDepth;
-	}
-
-	hellpack_serializable_buffer GetSerializableBuffer() const
-	{
-		HT_ASSERT( std::data( qwords ) && cursorInBits );
-		return { MakeByteView( ( const u8* ) std::data( qwords ), ( cursorInBits + 7 ) / 8 ) };
-	}
-};
-
-struct mesh_asset
-{
-	bit_stream						vtxPosBitstream;
-	std::vector<packed_vtx_attr>	vtxAttrs;
-	std::vector<u8>					triIndices;
-	std::vector<gpu_meshlet>		meshlets;
-	std::array<float3, 2>			aabb; // NOTE: helps with serialization { min, max }
 };
 
 struct packed_trs;

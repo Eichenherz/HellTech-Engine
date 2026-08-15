@@ -6,6 +6,8 @@
 #include "ht_core_types.h"
 #include "ht_error.h"
 #include <array>
+#include <ranges>
+#include <span>
 
 
 template<TRIVIAL_T T, u64 N>
@@ -32,6 +34,17 @@ struct fixed_vector
 
                             template<typename Iter>
                             fixed_vector( Iter first, Iter last );
+
+                            // NOTE: templated on the span's element type so a span<T> converts in a single
+                            // user-defined conversion, copy-init from one would need 2 with span<const T>
+                            template<typename U, std::size_t E>
+                                requires std::same_as<std::remove_const_t<U>, T>
+                            fixed_vector( std::span<U, E> s );
+
+                            // NOTE: non-explicit so views assign through a braced init: fv = { std::from_range, r };
+                            template<std::ranges::sized_range R>
+                                requires std::convertible_to<std::ranges::range_reference_t<R>, T>
+                            fixed_vector( std::from_range_t, R&& r );
 
                             fixed_vector( const fixed_vector& )            = default;
                             fixed_vector& operator=( const fixed_vector& ) = default;
@@ -95,6 +108,32 @@ fixed_vector<T, N>::fixed_vector( Iter first, Iter last )
     for ( ; first != last; ++first )
     {
         elems[ elemCount ] = *first;
+        elemCount++;
+    }
+}
+
+template<TRIVIAL_T T, u64 N>
+template<typename U, std::size_t E>
+    requires std::same_as<std::remove_const_t<U>, T>
+fixed_vector<T, N>::fixed_vector( std::span<U, E> s )
+{
+    HT_ASSERT( std::size( s ) <= N );
+    for ( const T& v : s )
+    {
+        elems[ elemCount ] = v;
+        elemCount++;
+    }
+}
+
+template<TRIVIAL_T T, u64 N>
+template<std::ranges::sized_range R>
+    requires std::convertible_to<std::ranges::range_reference_t<R>, T>
+fixed_vector<T, N>::fixed_vector( std::from_range_t, R&& r )
+{
+    HT_ASSERT( std::ranges::size( r ) <= N );
+    for ( auto&& v : r )
+    {
+        elems[ elemCount ] = v;
         elemCount++;
     }
 }

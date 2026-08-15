@@ -68,13 +68,13 @@ struct packed_trs
 	float	pad1;
 };
 
-STATIC_ASSERT( 48 == sizeof( packed_trs ), "Size mismatch!");
+STATIC_ASSERT( 48 == sizeof( packed_trs ), "Size mismatch!" );
 
 CONSTEXPR u32 BIT_DEPTH_OCT_N = 11;
 CONSTEXPR u32 BIT_DEPTH_TAN_A = 9;
 CONSTEXPR u32 BIT_DEPTH_BTAN_S = 1;
 
-// NOTE: octahedron encoded normal + tan angle + bitan sign; will alias bc we will select the bit depth in the end/dec
+// NOTE: octahedron encoded normal + tan angle + bitan sign; will alias bc we will select the bit depth in the enc/dec
 typedef u32 oct11x2s_a9_s1;
 
 // NOTE: the positions will be given as a bit stream of variable len
@@ -91,22 +91,34 @@ struct gpu_instance
 	u32			mtrlIdx;
 };
 
-STATIC_ASSERT( 56 == sizeof( gpu_instance ), "Size mismatch!");
+STATIC_ASSERT( 56 == sizeof( gpu_instance ), "Size mismatch!" );
 
-// NOTE: weird alignments bc this will be read by the GPU !
+CONSTEXPR u64 MAX_LOD_LEVELS_COUNT = 4;
+CONSTEXPR u64 MAX_MESHLETS_PER_MESH = ~u16( 0 );
+
+// NOTE: we can pack x4 bc we know the exact count of LODs; this is tailored to 4 lods only !!!!
+
 struct gpu_mesh
 {
+	float4	error;
+
 	float3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
 	float3	aabbMax;
-	u32		meshletOffset;
+
+	u32x2	packed16x4_meshletCounts;
+
 	u32		vtxPosOffsetInBytes;
 	u32		vtxAttrsOffset;
 	u32		triOffset;
-	u32		meshletCount;
-	u32		vtxCount;
-	u32		triCount;
+	u32		meshletOffset;
+	// u32		vtxCount;
+	// u32		triCount;
 };
 
+// NOTE: this 2 level LOD scheme is inspired by https://x.com/zeuxcg/status/1810841187433205817
+
+// NOTE: we will pack the data in the triangle buffer as such
+// ( ..., mlt N tris [ LOD 0, LOD 1 ], mlt N+1 tris[ LOD 0, LOD 1 ], ... )
 struct gpu_meshlet
 {
 	float3	aabbMin;
@@ -115,11 +127,13 @@ struct gpu_meshlet
 	u32		vtxAttrsOffset;
 	u32		triOffset;
 	u32		packed8888_XYZ_Grid_BitDepth;
-	u16		vtxCount;
-	u16		triCount;
+	// NOTE: packed as: lowest bytes - [ 8 VtxCount | 12 lod0_Tri | 12 lod_1_Tri ] - highest bytes
+	// NOTE: both counts are local: triOffsetLod1 = triOffset + LOD0_TriCount
+	u32		packed8_12_12_VtxCount_Lod_01_TriCount;
+	float	lodError;
 };
 
-STATIC_ASSERT( 44 == sizeof( gpu_meshlet ), "Size mismatch!" );
+STATIC_ASSERT( 48 == sizeof( gpu_meshlet ), "Size mismatch!" );
 
 struct dispatch_command
 {
@@ -385,6 +399,6 @@ struct global_data
 	u64 triAddr;
 };
 
-static const u64 GLOB_DATA_BINDING_SLOT = 0;
+CONSTEXPR u64 GLOB_DATA_BINDING_SLOT = 0;
 
 #endif // !__HT_RENDERER_TYPES_H__

@@ -35,6 +35,19 @@ inline byte_view AsBytes( typed_view<T> v )
 	return { ( const u8* ) std::data( v ), ( u32 ) std::size( v ) * sizeof( T ) };
 }
 
+template<typename T, u64 Extent>
+inline std::span<const u8> AsBytes( std::span<T, Extent> s )
+{
+	return { ( const u8* ) std::data( s ), std::size( s ) * sizeof( T ) };
+}
+
+template<typename T, u64 Extent>
+inline std::span<u8> AsBytesWritable( std::span<T, Extent> s )
+{
+	static_assert( !std::is_const_v<T> );
+	return { ( u8* ) std::data( s ), std::size( s ) * sizeof( T ) };
+}
+
 template<typename T>
 inline typed_view<T> MakeTypedView( std::span<const T> s )
 {
@@ -73,5 +86,27 @@ inline bool ByteEqual( std::span<const u8> a, std::span<const u8> b )
 	bool sizeEq = std::size( a ) == std::size( b );
 	return sizeEq && ( std::memcmp( std::data( a ), std::data( b ), std::size( a ) ) == 0 );
 }
+
+template<typename R>
+concept CONTIGUOUS_RANGE_T = std::ranges::contiguous_range<R>;
+
+template<typename R, typename T>
+concept CONTIGUOUS_TYPED_RANGE_T = CONTIGUOUS_RANGE_T<R> && std::same_as<std::ranges::range_value_t<R>, T>;
+
+template<TRIVIAL_T T, CONTIGUOUS_TYPED_RANGE_T<T> R, typename Set, typename KeyFn = std::identity>
+inline bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
+{
+	for( const T& elem : range )
+	{
+		if( !seenElems.insert( std::invoke( keyFn, elem ) ).second ) return true;
+	}
+	return false;
+}
+
+template<typename T>
+inline constexpr auto HtCastTo = []( auto x ) { return static_cast<T>(x); };
+
+template <typename T, u64 Extent>
+constexpr u32 HtElemStrideInBytes( std::span<T, Extent> ) { return sizeof( T ); }
 
 #endif // !__RANGE_UTILS_H__

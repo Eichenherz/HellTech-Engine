@@ -154,8 +154,7 @@ add_custom_target(shaders
 
 # ============================================================================
 # Subdirectories
-# HtLib is an independent sub-project — added before link_libraries so its
-# test targets don't inherit CommonDeps.
+# HtLib is added before link_libraries so its test targets don't inherit CommonDeps.
 # Engine + HellPack come after and get CommonDeps automatically.
 # ============================================================================
 

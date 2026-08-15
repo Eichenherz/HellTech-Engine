@@ -29,6 +29,7 @@ using u16x2		= DXPacked::XMUSHORT2;
 
 using u32x2		= DirectX::XMUINT2;
 using u32x3		= DirectX::XMUINT3;
+using u32x4		= DirectX::XMUINT4;
 
 using fp16x2	= DXPacked::XMUSHORT2;
 
@@ -107,6 +108,11 @@ constexpr float3 operator-( float3 v )
 constexpr float4 operator-( float4 v )
 {
 	return { -v.x, -v.y, -v.z, -v.w };
+}
+
+constexpr float3 operator-( float3 a, float3 b )
+{
+	return { a.x - b.x, a.y - b.y, a.z - b.z };
 }
 
 __forceinline float3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
