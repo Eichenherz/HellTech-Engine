@@ -460,21 +460,23 @@ bool HpkDecodeVerifyQuantized( float3 pos, u32x3 encPos, const mlt_quantized_gri
 
 constexpr bool validatePosEncoding = true;
 
+constexpr u64 LODS_PER_MESHLET = 2;
+
 // NOTE: vtx quant from https://daniilvinn.github.io/2024/05/04/omniforce-vertex-quantization.html
 void HpkQuantizeAndAppendLODLevel(
 	const std::vector<__hp_meshlet>&	meshoptMeshlets,
 	bit_stream&							vtxPosBitstream,
 	std::vector<packed_vtx_attr>&		verticesAttrs,
-	std::vector<u8>&					triIndices,
+	std::vector<u8>&					indices,
 	std::vector<gpu_meshlet>&			meshlets
 ) {
+	const u64 mltCount = std::size( meshoptMeshlets );
 	// NOTE: reserve max cap
-	verticesAttrs.reserve( std::size( verticesAttrs ) + std::size( meshoptMeshlets ) * RASTER_MAX_VTX_PER_MLT );
-	// NOTE: * 2 for LOD
-	triIndices.reserve( std::size( triIndices ) + std::size( meshoptMeshlets ) * RASTER_MAX_TRIS_PER_MLT * 3 * 2 );
-	meshlets.reserve( std::size( meshlets ) + std::size( meshoptMeshlets ) );
+	verticesAttrs.reserve( std::size( verticesAttrs ) + mltCount * RASTER_MAX_VTX_PER_MLT );
+	indices.reserve( std::size( indices ) + mltCount * RASTER_MLT_MAX_INDEX * LODS_PER_MESHLET );
+	meshlets.reserve( std::size( meshlets ) + mltCount );
 
-	for( u64 mi = 0; mi < std::size( meshoptMeshlets ); ++mi )
+	for( u64 mi = 0; mi < mltCount; ++mi )
 	{
 		const __hp_meshlet& m = meshoptMeshlets[ mi ];
 		const aabb_t<float3> meshletAabb = ComputeAabb( m.pos );
@@ -486,20 +488,22 @@ void HpkQuantizeAndAppendLODLevel(
 			| ( mltEncodingGrid.bitDepthPerAxis.z << 16 )
 			| ( mltEncodingGrid.gridResolutionInBits << 24 );
 
-		u32 packed8_12_12_VtxCount_Lod_01_TriCount = u32( m.vtxCount )
+		u32 packed8_12_12_VtxCount_Lod_01_IdxCount = u32( m.vtxCount )
 			| ( u32( std::size( m.indices ) ) << 8 )
 			| ( u32( std::size( m.idxLod ) ) << 20 );
 
-		HT_ASSERT( (  m.vtxCount < 256 ) && ( std::size( m.idxLod ) < ( 1 << 12 ) ) && ( std::size( m.indices ) < ( 1 << 12 ) ) );
+		HT_ASSERT( (  m.vtxCount < 256 ) &&
+			( std::size( m.idxLod ) < RASTER_MLT_MAX_INDEX ) &&
+			( std::size( m.indices ) < RASTER_MLT_MAX_INDEX ) );
 
 		meshlets.push_back( {
 			.aabbMin								= mltEncodingGrid.quantAabbMin,
 			.aabbMax								= mltEncodingGrid.quantAabbMax,
 			.vtxPosOffsetBits						= ( u32 ) vtxPosBitstream.cursorInBits,
 			.vtxAttrsOffset							= ( u32 ) std::size( verticesAttrs ),
-			.triOffset								= ( u32 ) std::size( triIndices ),
+			.idxOffset								= ( u32 ) std::size( indices ),
 			.packed8888_XYZ_Grid_BitDepth			= packed8888_XYZ_Grid_BitDepth,
-			.packed8_12_12_VtxCount_Lod_01_TriCount	= packed8_12_12_VtxCount_Lod_01_TriCount,
+			.packed8_12_12_VtxCount_Lod_01_IdxCount	= packed8_12_12_VtxCount_Lod_01_IdxCount,
 			.lodError								= m.lodError
 		} );
 
@@ -518,10 +522,10 @@ void HpkQuantizeAndAppendLODLevel(
 		}
 
 		verticesAttrs.append_range( HpkMeshletPackVtxAttributes( m ) );
-		triIndices.append_range( m.indices );
+		indices.append_range( m.indices );
 		if( std::size( m.idxLod ) )
 		{
-			triIndices.append_range( m.idxLod );
+			indices.append_range( m.idxLod );
 		}
 
 	}
@@ -717,7 +721,7 @@ i32 main( i32 argc, char** argv  )
 
 		bit_stream							vtxPosBitstream;
 		std::vector<packed_vtx_attr>		verticesAttrs;
-		std::vector<u8>						triIndices;
+		std::vector<index_t>				indices;
 		std::vector<gpu_meshlet>			meshlets;
 
 		for( u64 li = 0; li < std::size( meshLods ); li++ )
@@ -731,19 +735,19 @@ i32 main( i32 argc, char** argv  )
 			lodMltNum[ li ] = u32( std::size( lodMeshlets ) );
 			lodErr[ li ] = lod.error;
 
-			HpkQuantizeAndAppendLODLevel( lodMeshlets, vtxPosBitstream, verticesAttrs, triIndices, meshlets );
+			HpkQuantizeAndAppendLODLevel( lodMeshlets, vtxPosBitstream, verticesAttrs, indices, meshlets );
 		}
 
 		HT_ASSERT( ( 0 != std::ranges::size( vtxPosBitstream ) ) &&
 			( 0 != std::ranges::size( verticesAttrs ) ) &&
-			( 0 != std::ranges::size( triIndices ) ) &&
+			( 0 != std::ranges::size( indices ) ) &&
 			( 0 != std::ranges::size( meshlets ) ) );
 
 		HT_ASSERT( 4 == MAX_LOD_LEVELS_COUNT );
 		hpk_mesh_asset meshAsset = {
 			.vtxPosBitstream			= MOV( vtxPosBitstream ),
 			.vertexAttrs				= MOV( verticesAttrs ),
-			.triIndices					= MOV( triIndices ),
+			.indices					= MOV( indices ),
 			.meshlets					= MOV( meshlets ),
 			.aabb						= { mesh.aabb.min, mesh.aabb.max },
 			.lodErrors					= { lodErr[ 0 ], lodErr[ 1 ], lodErr[ 2 ], lodErr[ 3 ] },

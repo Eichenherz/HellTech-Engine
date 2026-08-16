@@ -28,9 +28,9 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     // NOTE: this is fucking stupid but we'll see later
     gpu_mesh mesh = BufferLoad<gpu_mesh>( pushBlock.meshDescIdx, inst.meshIdx );
 
-    u32 triIdx = vBuffPixel.triId * 3 + mlt.triOffset + mesh.triOffset;
+    u32 triIdxStartInBytes = vBuffPixel.triId * 3 + mlt.idxOffset + mesh.idxOffset;
 
-    u32x3 localTriVtxIDs = FetchTriangleFromMegaBuff( triIdx );
+    u32x3 localTriVtxIDs = FetchTriangleIndicesFromMegaBuff( triIdxStartInBytes );
 
     u32 globalOffsetInBits = mesh.vtxPosOffsetInBytes * 8u;
 
@@ -54,7 +54,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     float3 ndcBary = ComputeNDCBarycentrics( pixelNdc, ndc0.xy, ndc1.xy, ndc2.xy );
 
-    // NOTE: Perspective-correct — need per-vertex W
+    // NOTE: Perspective-correct -- need per-vertex W
     float3 invW = float3( 1.0f / clip0.w, 1.0f / clip1.w, 1.0f / clip2.w );
     float3 baryW = ndcBary * invW;
     float3 perspBary = baryW / ( baryW.x + baryW.y + baryW.z );

@@ -95,7 +95,7 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
         mltWorkItem.globMltId           = globalMltId;
         mltWorkItem.vtxPosOffsetInBytes = visInst.vtxPosOffsetInBytes;
         mltWorkItem.vtxAttrsOffset      = visInst.vtxAttrsOffset;
-        mltWorkItem.triOffset           = visInst.triOffset;
+        mltWorkItem.idxOffset           = visInst.idxOffset;
 
         u32 writeSlotIdx = ldsWgOffset + perWgMltId;
         BufferStore<meshlet_cull_wok_item>( pushBlock.expandedItemsBuffIdx, mltWorkItem, writeSlotIdx );

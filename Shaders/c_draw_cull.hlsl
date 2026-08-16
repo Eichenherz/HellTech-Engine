@@ -2,8 +2,8 @@
 
 #include "ht_hlsl_lang.h"
 #include "ht_hlsl_math.h"
+#include "ht_culling.h"
 
-#include "culling.h"
 
 [[vk::push_constant]]
 culling_params pushBlock;
@@ -64,10 +64,10 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 		visible_instance thisInst;
 		thisInst.instId						= instID;
 		thisInst.meshletOffset				= currentMesh.meshletOffset;
-		thisInst.meshletCount				= currentMesh.meshletCount;
+		thisInst.meshletCount				= ( u32 )( currentMesh.packed16x4_meshletCounts.x & 0xffff );
 		thisInst.vtxPosOffsetInBytes		= currentMesh.vtxPosOffsetInBytes;
 		thisInst.vtxAttrsOffset				= currentMesh.vtxAttrsOffset;
-		thisInst.triOffset					= currentMesh.triOffset;
+		thisInst.idxOffset					= currentMesh.idxOffset;
 		BufferStore<visible_instance>( pushBlock.visibleItemsIdx, thisInst, slotIdx );
 	}
 }

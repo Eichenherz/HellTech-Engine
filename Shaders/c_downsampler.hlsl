@@ -323,10 +323,11 @@ void DownsampleMip7( u32x2 quadID, float4 q )
 // 256 threads = 16x16 lanes
 //    32x32 mip0   (4 texels/thread, registers)
 //    16x16 mip1   quad ops
-//     8x8  mip2   ┐
-//     4x4  mip3   ├ LDS
-//     2x2  mip4   ┤
-//     1x1  mip5   ┘   <- 6 levels per WG
+//      ___________
+//     8x8  mip2   |
+//     4x4  mip3   | - LDS
+//     2x2  mip4   |
+//     1x1  mip5   |   <- 6 levels per WG
 [shader( "compute" )]
 [numthreads( 256, 1, 1 )]
 void DownsamplerCsMain( u32 localLinearID : SV_GroupIndex, u32x3 workgroupID : SV_GroupID )

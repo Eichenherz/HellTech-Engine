@@ -68,7 +68,7 @@ template<CONTIGUOUS_RANGE_T R> struct hpk_view_of<R> { using type = std::span<co
 #define HPK_MESH_ASSET( X )										  \
 	X( bit_stream,                   vtxPosBitstream			) \
 	X( std::vector<packed_vtx_attr>, vertexAttrs				) \
-	X( std::vector<index_t>,         triIndices					) \
+	X( std::vector<index_t>,         indices					) \
 	X( std::vector<gpu_meshlet>,     meshlets					) \
 	X( aabb_t<float3>,               aabb						) \
 	X( float4,                       lodErrors					) \

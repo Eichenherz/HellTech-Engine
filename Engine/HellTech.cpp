@@ -10,6 +10,8 @@
 
 #include "engine_types.h"
 
+#include <ht_serialization.h>
+
 #include "im_gui.h"
 
 #include <System/sys_file.h>
@@ -395,7 +397,7 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 		if( std::cend( meshIdMap ) != meshIdMap.find( pathHash ) ) continue;
 
 		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
-		hellpack_mesh_asset mesh = HpkReadBinaryBlob<hellpack_mesh_asset>( rawBytes );
+		hpk_mesh_view mesh = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
 
 		HRNDMESH32 hMesh = pRenderer->AllocMeshComponent( mesh );
 
@@ -403,7 +405,7 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 			.mltAsBytes			= AsBytes( mesh.meshlets ),
 			.vtxPosAsBytes		= AsBytes( mesh.vtxPosBitstream ),
 			.vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs ),
-			.triAsBytes			= AsBytes( mesh.triangles ),
+			.idxAsBytes			= AsBytes( mesh.indices ),
 			.hSlot				= hMesh
 		} );
 
@@ -424,7 +426,7 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 	for( const vfs_path& vpath : levelFiles )
 	{
 		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
-		hellpack_level lvl = HpkReadBinaryBlob<hellpack_level>( rawBytes );
+		hpk_level_view lvl = HpkDeserializeAsset<hpk_level_asset>( rawBytes );
 
 		entities.reserve( std::size( entities ) + std::size( lvl.nodes ) );
 		for( const world_node& node : lvl.nodes )

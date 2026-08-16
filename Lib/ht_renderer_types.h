@@ -43,8 +43,6 @@ typedef uint16_t2	u16x2;
 
 #endif
 
-CONSTEXPR u64 RASTER_MAX_VTX_PER_MLT = 64;
-CONSTEXPR u64 RASTER_MAX_TRIS_PER_MLT = 128;
 
 struct view_data
 {
@@ -109,12 +107,13 @@ struct gpu_mesh
 
 	u32		vtxPosOffsetInBytes;
 	u32		vtxAttrsOffset;
-	u32		triOffset;
+	u32		idxOffset;
 	u32		meshletOffset;
-	// u32		vtxCount;
-	// u32		triCount;
 };
 
+CONSTEXPR u64 RASTER_MAX_VTX_PER_MLT = 64;
+CONSTEXPR u64 RASTER_MAX_TRIS_PER_MLT = 128;
+CONSTEXPR u64 RASTER_MLT_MAX_INDEX = 1ull << 12;
 // NOTE: this 2 level LOD scheme is inspired by https://x.com/zeuxcg/status/1810841187433205817
 
 // NOTE: we will pack the data in the triangle buffer as such
@@ -125,15 +124,16 @@ struct gpu_meshlet
 	float3	aabbMax;
 	u32		vtxPosOffsetBits;
 	u32		vtxAttrsOffset;
-	u32		triOffset;
+	u32		idxOffset;
 	u32		packed8888_XYZ_Grid_BitDepth;
-	// NOTE: packed as: lowest bytes - [ 8 VtxCount | 12 lod0_Tri | 12 lod_1_Tri ] - highest bytes
-	// NOTE: both counts are local: triOffsetLod1 = triOffset + LOD0_TriCount
-	u32		packed8_12_12_VtxCount_Lod_01_TriCount;
+	// NOTE: packed as: lowest bytes - [ 8 VtxCount | 12 lod0_Idx | 12 lod_1_Idx ] - highest bytes
+	// NOTE: both counts are local: idxOffsetLod1 = idxOffset + LOD0_idxCount
+	u32		packed8_12_12_VtxCount_Lod_01_IdxCount;
 	float	lodError;
 };
 
 STATIC_ASSERT( 48 == sizeof( gpu_meshlet ), "Size mismatch!" );
+STATIC_ASSERT( ( 1ull << 12) == RASTER_MLT_MAX_INDEX, "The max mltidx convention is broken" );
 
 struct dispatch_command
 {
@@ -227,7 +227,7 @@ struct visible_instance
 	u32 meshletCount;
 	u32 vtxPosOffsetInBytes;
 	u32 vtxAttrsOffset;
-	u32 triOffset;
+	u32 idxOffset;
 };
 
 struct meshlet_cull_wok_item
@@ -236,7 +236,7 @@ struct meshlet_cull_wok_item
 	u32 globMltId;
 	u32 vtxPosOffsetInBytes;
 	u32 vtxAttrsOffset;
-	u32 triOffset;
+	u32 idxOffset;
 };
 
 struct culling_params
@@ -396,7 +396,7 @@ struct global_data
 	u64 mltAddr;
 	u64 vtxPosAddr;
 	u64 vtxAttrsAddr;
-	u64 triAddr;
+	u64 idxAddr;
 };
 
 CONSTEXPR u64 GLOB_DATA_BINDING_SLOT = 0;

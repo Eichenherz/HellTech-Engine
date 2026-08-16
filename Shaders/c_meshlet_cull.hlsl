@@ -3,7 +3,8 @@
 #include "ht_hlsl_lang.h"
 #include "ht_hlsl_math.h"
 #include "ht_unpacking.h"
-#include "culling.h"
+#include "ht_culling.h"
+
 
 [[vk::push_constant]]
 meshlet_cull_params pushBlock;
@@ -62,9 +63,9 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     if( visible )
     {
         draw_meshlet_command drawMltCmd = ( draw_meshlet_command ) 0;
-        drawMltCmd.indexCount     = currMlt.triCount * 3;
+        drawMltCmd.indexCount     = ( u32 ) ( ( currMlt.packed8_12_12_VtxCount_Lod_01_IdxCount >> 8 ) & ( ( 1u << 12 ) - 1 ) );
         drawMltCmd.instanceCount  = 1;
-        drawMltCmd.firstIndex     = currMlt.triOffset + mltWorkItem.triOffset;
+        drawMltCmd.firstIndex     = currMlt.idxOffset + mltWorkItem.idxOffset;
         // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,
         // so we need to manually compute it in the shader
         drawMltCmd.vertexOffset   = 0;

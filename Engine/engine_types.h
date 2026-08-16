@@ -38,11 +38,11 @@ enum class upload_t
 
 struct mesh_upload_req
 {
-	byte_view	mltAsBytes;
-	byte_view	vtxPosAsBytes;
-	byte_view	vtxAttrsAsBytes;
-	byte_view	triAsBytes;
-	HRNDMESH32  hSlot;
+	std::span<const u8>	mltAsBytes;
+	std::span<const u8>	vtxPosAsBytes;
+	std::span<const u8>	vtxAttrsAsBytes;
+	std::span<const u8>	idxAsBytes;
+	HRNDMESH32			hSlot;
 };
 
 struct mesh_upload_resp

@@ -62,11 +62,11 @@ float3 DecodeTanFromAngle( float3 n, float tanAngle )
     return tanRef * cs + bitanRef * sn;
 }
 
-u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
+u32x3 FetchTriangleIndicesFromMegaBuff( u64 globalIdxInBytes )
 {
-    device_ptr<u32> triBuff = { gGlobData.triAddr };
-    u64 lo = triBuff[ globalIdxInBytes >> 2 ];
-    u64 hi = triBuff[ ( globalIdxInBytes >> 2 ) + 1 ];
+    device_ptr<u32> idxBuff = { gGlobData.idxAddr };
+    u64 lo = idxBuff[ globalIdxInBytes >> 2 ];
+    u64 hi = idxBuff[ ( globalIdxInBytes >> 2 ) + 1 ];
     u64 shift = ( globalIdxInBytes & 3 ) * 8;
     u64 raw = ( ( hi << 32 ) | lo ) >> shift;
     return unpack_u8u32( u32( raw & 0x00FFFFFF ) ).xyz;

@@ -38,7 +38,7 @@
 
 namespace DXPacked = DirectX::PackedVector;
 
-#include "hell_pack.h"
+#include "../HtLib/hell_pack.h"
 
 using offset_alloc_t = OffsetAllocator::Allocation;
 
@@ -1337,16 +1337,16 @@ struct depth_pyramid_pass
 
 		vk_shader pow2DownsamplerShader = pVkCtx->CreateShaderFromSpirv(
 			ReadFileBinary( "bin/SpirV/compute_DownsamplerCsMain.spirv" ) );
+		defer { pVkCtx->DestroyShaderModule( pow2DownsamplerShader.module ); };
+
 		pow2DownsamplerPipeline = pVkCtx->CreateComputePipeline( pow2DownsamplerShader );
 
 		u16 hzbWidth = ( u16 ) FloorPowOf2( srcWidth );
 		u16 hzbHeight = ( u16 ) FloorPowOf2( srcHeight );
 
 		constexpr VkImageUsageFlags hiZUsg =
-			VK_IMAGE_USAGE_SAMPLED_BIT |
-			VK_IMAGE_USAGE_STORAGE_BIT |
-			VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-			VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
 		image_info hzbInfo = {
 			.name		= "Img_HZB",
@@ -1992,7 +1992,7 @@ struct renderer_context final : renderer_interface
 
 	vk_buffer                               megaGpuVtxPosBuff;
 	vk_buffer                               megaGpuVtxAttrsBuff;
-	vk_buffer                               megaGpuTriBuff;
+	vk_buffer                               megaGpuIdxBuff;
 	vk_buffer                               megaGpuMeshletBuff;
 
 	vk_buffer								globalData;
@@ -2003,7 +2003,7 @@ struct renderer_context final : renderer_interface
 	offset_allocator_t						meshletAllocator;
 	offset_allocator_t						vtxPosAllocator;
 	offset_allocator_t						vtxAttrsAllocator;
-	offset_allocator_t						triAllocator;
+	offset_allocator_t						idxAllocator;
 
 	u64										vFrameIdx = 0;
 
@@ -2021,7 +2021,7 @@ struct renderer_context final : renderer_interface
 
 	void InitBackend( u64 hInst, u64 hWnd ) override;
 
-	HRNDMESH32 AllocMeshComponent( const hellpack_mesh_asset& mesh ) override;
+	HRNDMESH32 AllocMeshComponent( const hpk_mesh_view& mesh ) override;
 
 	inline HJOBFENCE32 AllocJobFence() override
 	{
@@ -2133,20 +2133,20 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	} );
 	HT_ASSERT( FwdAlignPot( megaGpuVtxPosBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuVtxPosBuff.sizeInBytes );
 
-	megaGpuTriBuff = pVkCtx->CreateBuffer( {
-		.name			= "MegaGpuTriBuff",
+	megaGpuIdxBuff = pVkCtx->CreateBuffer( {
+		.name			= "MegaGpuIdxBuff",
 		.usageFlags		= megaBuffUsg | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
 		// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
 		// bounds accesses, essentially we'll read garbage data safely
-		.sizeInBytes	= FwdAlignPot( MAX_TRIANGLES_IN_SCENE * sizeof( index_t ), sizeof( u32 ) ),
+		.sizeInBytes	= FwdAlignPot( 3 * MAX_TRIANGLES_IN_SCENE * sizeof( index_t ), sizeof( u32 ) ),
 		.usage			= buffer_usage::GPU_ONLY
 	} );
-	HT_ASSERT( FwdAlignPot( megaGpuTriBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuTriBuff.sizeInBytes );
+	HT_ASSERT( FwdAlignPot( megaGpuIdxBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuIdxBuff.sizeInBytes );
 
 	meshletAllocator= { ( u32 ) megaGpuMeshletBuff.sizeInBytes };
 	vtxPosAllocator = { ( u32 ) megaGpuVtxPosBuff.sizeInBytes };
 	vtxAttrsAllocator = { ( u32 ) megaGpuVtxAttrsBuff.sizeInBytes };
-	triAllocator	= { ( u32 ) megaGpuTriBuff.sizeInBytes };
+	idxAllocator	= { ( u32 ) megaGpuIdxBuff.sizeInBytes };
 
 	// TODO: move
 	VkSamplerCreateInfo samplerCreateInfo = {
@@ -2174,38 +2174,35 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	}
 }
 
-HRNDMESH32 renderer_context::AllocMeshComponent( const hellpack_mesh_asset& mesh )
+HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 {
-	byte_view mltAsBytes = AsBytes( mesh.meshlets );
-	byte_view vtxPosBitstreamAsBytes = AsBytes( mesh.vtxPosBitstream );
-	byte_view vtxAttrsAsBytes = AsBytes( mesh.vertexAttrs );
-	byte_view triAsBytes = AsBytes( mesh.triangles );
+	std::span<const u8> mltAsBytes = AsBytes( mesh.meshlets );
+	std::span<const u8> vtxPosBitstreamAsBytes = AsBytes( mesh.vtxPosBitstream );
+	std::span<const u8> vtxAttrsAsBytes = AsBytes( mesh.vertexAttrs );
+	std::span<const u8> idxAsBytes = AsBytes( mesh.indices );
 
 	HT_ASSERT( std::size( mltAsBytes ) && std::size( vtxPosBitstreamAsBytes )
-		&& std::size( vtxAttrsAsBytes ) && std::size( triAsBytes ) );
+		&& std::size( vtxAttrsAsBytes ) && std::size( idxAsBytes ) );
 
 	offset_alloc_t mltAlloc	= meshletAllocator.Alloc( ( u32 ) std::size( mltAsBytes ) );
 	offset_alloc_t vtxPosAlloc = vtxPosAllocator.Alloc( ( u32 ) std::size( vtxPosBitstreamAsBytes ) );
 	offset_alloc_t vtxAttrAlloc	= vtxAttrsAllocator.Alloc( ( u32 ) std::size( vtxAttrsAsBytes ) );
-	offset_alloc_t triAlloc	= triAllocator.Alloc( ( u32 ) std::size( triAsBytes ) );
+	offset_alloc_t idxAlloc	= idxAllocator.Alloc( ( u32 ) std::size( idxAsBytes ) );
 
 	// NOTE: since we alloc elements of the same type, the allocator MUST preserve the stride. Sanity check
-	HT_ASSERT( 0 == ( mltAlloc.offset % mesh.meshlets.STRIDE ) );
-	HT_ASSERT( 0 == ( vtxAttrAlloc.offset % mesh.vertexAttrs.STRIDE ) );
+	HT_ASSERT( 0 == ( mltAlloc.offset % HtElemStrideInBytes( mesh.meshlets ) ) );
+	HT_ASSERT( 0 == ( vtxAttrAlloc.offset % HtElemStrideInBytes( mesh.vertexAttrs ) ) );
 
 	// NOTE: this MUST be in elements bc we use it on the gpu as such
 	gpu_mesh gpuMesh = {
-		.aabbMin				= mesh.aabbMin,
-		.aabbMax				= mesh.aabbMax,
-		.meshletOffset			= mltAlloc.offset / mesh.meshlets.STRIDE,
-		.vtxPosOffsetInBytes	= vtxPosAlloc.offset,
-		.vtxAttrsOffset			= vtxAttrAlloc.offset / mesh.vertexAttrs.STRIDE,
-		.triOffset				= triAlloc.offset / mesh.triangles.STRIDE, // NOTE: these are bytes so it don't matter
-		.meshletCount			= ( u32 ) std::size( mesh.meshlets ),
-		// NOTE: must have the same number as positions
-		.vtxCount				= ( u32 ) std::size( mesh.vertexAttrs ),
-		// NOTE: in this particular case it will double as byte count too
-		.triCount				= ( u32 ) std::size( mesh.triangles )
+		.error						= mesh.lodErrors,
+		.aabbMin					= mesh.aabb.min,
+		.aabbMax					= mesh.aabb.max,
+		.packed16x4_meshletCounts	= mesh.packed16x4_lodMltCounts,
+		.vtxPosOffsetInBytes		= vtxPosAlloc.offset,
+		.vtxAttrsOffset				= vtxAttrAlloc.offset / HtElemStrideInBytes( mesh.vertexAttrs ),
+		.idxOffset					= idxAlloc.offset / HtElemStrideInBytes( mesh.indices ),
+		.meshletOffset				= mltAlloc.offset / HtElemStrideInBytes( mesh.meshlets ),
 	};
 
 	ht_mesh_component htMesh = {
@@ -2213,7 +2210,7 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hellpack_mesh_asset& mesh
 		.mltAlloc		= mltAlloc,
 		.vtxPosAlloc	= vtxPosAlloc,
 		.vtxAttrsAlloc	= vtxAttrAlloc,
-		.triAlloc		= triAlloc
+		.triAlloc		= idxAlloc
 	};
 
 	return std::bit_cast<u32>( rendererComponents.PushEntry( htMesh ) );
@@ -2249,7 +2246,7 @@ void renderer_context::UploadMeshes(
 	auto CopyScaffoldingLambda = [ & ] (
 		const vk_buffer&					dstBuff,
 		std::pmr::vector<VkBufferCopy2>&	regionCopies,
-		byte_view							bytesSrc,
+		std::span<const u8>					bytesSrc,
 		u32									dstOffsetInBytes
 	){
 		u64 srcOffsetInBytes = std::size( stagingScratch );
@@ -2276,7 +2273,7 @@ void renderer_context::UploadMeshes(
 		CopyScaffoldingLambda( megaGpuMeshletBuff, mltRegionCopies, meshUpload.mltAsBytes, htMesh.mltAlloc.offset );
 		CopyScaffoldingLambda( megaGpuVtxPosBuff, vtxPosRegionCopies, meshUpload.vtxPosAsBytes, htMesh.vtxPosAlloc.offset );
 		CopyScaffoldingLambda( megaGpuVtxAttrsBuff, vtxAttrsRegionCopies, meshUpload.vtxAttrsAsBytes, htMesh.vtxAttrsAlloc.offset );
-		CopyScaffoldingLambda( megaGpuTriBuff, triRegionCopies, meshUpload.triAsBytes, htMesh.triAlloc.offset );
+		CopyScaffoldingLambda( megaGpuIdxBuff, triRegionCopies, meshUpload.idxAsBytes, htMesh.triAlloc.offset );
 	}
 
 	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
@@ -2288,7 +2285,7 @@ void renderer_context::UploadMeshes(
 	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuMeshletBuff, mltRegionCopies );
 	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuVtxPosBuff, vtxPosRegionCopies );
 	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuVtxAttrsBuff, vtxAttrsRegionCopies );
-	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuTriBuff, triRegionCopies );
+	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuIdxBuff, triRegionCopies );
 
 	copyCmdBuff.CmdPipelineBufferBarriers( buffEndCpyBarriers );
 
@@ -2354,6 +2351,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 {
 	const auto& storageReportVtxAttrs = vtxAttrsAllocator.mAlloc->storageReport();
 	const auto& storageReportVtxPos = vtxPosAllocator.mAlloc->storageReport();
+
 	stack_adaptor<virtual_arena> virtualStack = { scratchArena };
 
 	const u64 currentFrameIdx			= vFrameIdx++;
@@ -2401,7 +2399,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 			.mltAddr		= megaGpuMeshletBuff.devicePointer,
 			.vtxPosAddr		= megaGpuVtxPosBuff.devicePointer,
 			.vtxAttrsAddr	= megaGpuVtxAttrsBuff.devicePointer,
-			.triAddr		= megaGpuTriBuff.devicePointer
+			.idxAddr		= megaGpuIdxBuff.devicePointer
 		};
 
 		// TODO: add UploadDataSync function in the renderer
@@ -2445,7 +2443,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	const vbuffer_pass_args vbuffPassArgs = {
 		.depthTarget	= depthTarget,
-		.indexBuff 		= megaGpuTriBuff,
+		.indexBuff 		= megaGpuIdxBuff,
 		.indexType 		= VK_INDEX_TYPE_UINT8,
 		.drawCmds		= cullingPass.drawCmds,
 		.drawData		= cullingPass.drawData,
@@ -2459,7 +2457,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	const fwd_pass_args fwdPassArgs = {
 		.colorTarget	= colorTarget,
 		.depthTarget	= depthTarget,
-		.indexBuff 		= megaGpuTriBuff,
+		.indexBuff 		= megaGpuIdxBuff,
 		.indexType 		= VK_INDEX_TYPE_UINT8,
 		.drawCmds		= cullingPass.drawCmds,
 		.drawData		= cullingPass.drawData,
