@@ -22,34 +22,29 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     	return;
     }
 
-    const bool isLatePass = bool( pushBlock.isLatePass );
-    const bool toggleCulling = bool( pushBlock.toggleCulling );
+    const bool isLatePass       = bool( pushBlock.isLatePass );
+    const bool enableCulling    = bool( pushBlock.enableCulling );
 
-    meshlet_cull_wok_item mltWorkItem = BufferLoad<meshlet_cull_wok_item>( pushBlock.expandedMltsIdx, mltId );
-    gpu_instance currInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltWorkItem.instId );
-    gpu_meshlet currMlt = device_ptr<gpu_meshlet>( gGlobData.mltAddr )[ mltWorkItem.globMltId ];
+    meshlet_cull_wok_item   mltWorkItem = BufferLoad<meshlet_cull_wok_item>( pushBlock.expandedMltsIdx, mltId );
+    gpu_instance            currInst    = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltWorkItem.instId );
+    gpu_meshlet             currMlt     = device_ptr<gpu_meshlet>( gGlobData.mltAddr )[ mltWorkItem.globMltId ];
 
     bool visible = true;
-    if( toggleCulling )
+    if( enableCulling )
     {
-        float4x4 toWorld = float4x4(
-            float4( currInst.toWorld[ 0 ], 0.0f ),
-            float4( currInst.toWorld[ 1 ], 0.0f ),
-            float4( currInst.toWorld[ 2 ], 0.0f ),
-            float4( currInst.toWorld[ 3 ], 1.0f )
-        );
+        float4x4 toWorld = f4x3_To_f4x4_Affine( currInst.toWorld );
 
         // NOTE: we use camIdx here bc we'll have a debug camera
-        view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
-        Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
-        SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
+        view_data           cam     = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
+        Texture2D<float4>   hizTex  = gTexture2D_float4[ pushBlock.hizTexIdx ];
+        SamplerState        quadMin = samplers[ pushBlock.hizSamplerIdx ];
 
         visibility_res mltVisRes = TestVisibility( currMlt.aabbMin, currMlt.aabbMax, toWorld, cam, hizTex, quadMin, isLatePass );
 
         if( !isLatePass )
         {
-            bool mltIsOccluded = !mltVisRes.notOccluded;
-            u32 occSlotIdx = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
+            bool mltIsOccluded  = !mltVisRes.notOccluded;
+            u32 occSlotIdx      = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
             if( mltIsOccluded )
             {
                 BufferStore<meshlet_cull_wok_item>( pushBlock.occludedMltBuffIdx, mltWorkItem, occSlotIdx );
@@ -58,11 +53,13 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
         visible = mltVisRes.inFrustum && mltVisRes.notOccluded;
     }
+
     u32 slotIdx = HTWaveReserveGlobalSlot( visible, pushBlock.drawCountIdx );
 
     if( visible )
     {
         draw_meshlet_command drawMltCmd = ( draw_meshlet_command ) 0;
+
         drawMltCmd.indexCount     = ( u32 ) ( ( currMlt.packed8_12_12_VtxCount_Lod_01_IdxCount >> 8 ) & ( ( 1u << 12 ) - 1 ) );
         drawMltCmd.instanceCount  = 1;
         drawMltCmd.firstIndex     = currMlt.idxOffset + mltWorkItem.idxOffset;
@@ -72,6 +69,7 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
         drawMltCmd.firstInstance  = 0;
 
         draw_meshlet_cmd_data drawMltData = ( draw_meshlet_cmd_data ) 0;
+
         drawMltData.globalInstId        = mltWorkItem.instId;
         drawMltData.globalMltId         = mltWorkItem.globMltId;
         drawMltData.vtxAttrOffset       = mltWorkItem.vtxAttrsOffset;

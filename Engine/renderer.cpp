@@ -38,7 +38,7 @@
 
 namespace DXPacked = DirectX::PackedVector;
 
-#include "../HtLib/hell_pack.h"
+#include <hell_pack.h>
 
 using offset_alloc_t = OffsetAllocator::Allocation;
 
@@ -1045,8 +1045,9 @@ struct culling_pass
 		vk_rsc_state_tracker&		rscTracker,
 		const culling_pass_args&	args,
 		bool						latePass,
-		bool						toggleInstCull,
-		bool						toggleMltCull
+		bool						enableInstCull,
+		bool						enableMltCull,
+		bool						enableLod
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Cull Pass",{} );
 
@@ -1124,7 +1125,8 @@ struct culling_pass
 				.visibleItemsCountIdx	= visibleInstCounterIdx.slot,
 				.visibleItemsIdx		= visibleInstIdx.slot,
 				.isLatePass				= latePass,
-				.toggleCulling			= toggleInstCull
+				.enableCulling			= enableInstCull,
+				.enableLod				= enableLod
 			};
 			fixed_string<64> regionName = { "Instance Culling {}", latePass ? 1 : 0 };
 			HT_PIPELINE_STATS_QUERY( cmdBuff, ( const char* ) regionName, cmdBuff.DispatchComputeIndirect(
@@ -1177,7 +1179,7 @@ struct culling_pass
 				.drawDataIdx			= drawDataIdx.slot,
 
 				.isLatePass				= latePass,
-				.toggleCulling			= toggleMltCull
+				.enableCulling			= enableMltCull
 			};
 
 			fixed_string<64> regionName = { "Meshlet Culling {}", latePass ? 1 : 0 };
@@ -1687,7 +1689,7 @@ struct vbuffer_pass
 				compDbgHashTriToScPipeline.groupSize ) );
 	}
 
-	void DgrDrawAsLamberitanClay(
+	void DbgDrawAsLamberitanClay(
 		vk_command_buffer&       cmdBuff,
 		vk_rsc_state_tracker&	rscTracker,
 		const vk_image&			dstImg,
@@ -2176,18 +2178,18 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 {
-	std::span<const u8> mltAsBytes = AsBytes( mesh.meshlets );
-	std::span<const u8> vtxPosBitstreamAsBytes = AsBytes( mesh.vtxPosBitstream );
-	std::span<const u8> vtxAttrsAsBytes = AsBytes( mesh.vertexAttrs );
-	std::span<const u8> idxAsBytes = AsBytes( mesh.indices );
+	std::span<const u8> mltAsBytes				= AsBytes( mesh.meshlets );
+	std::span<const u8> vtxPosBitstreamAsBytes	= AsBytes( mesh.vtxPosBitstream );
+	std::span<const u8> vtxAttrsAsBytes			= AsBytes( mesh.vertexAttrs );
+	std::span<const u8> idxAsBytes				= AsBytes( mesh.indices );
 
 	HT_ASSERT( std::size( mltAsBytes ) && std::size( vtxPosBitstreamAsBytes )
 		&& std::size( vtxAttrsAsBytes ) && std::size( idxAsBytes ) );
 
-	offset_alloc_t mltAlloc	= meshletAllocator.Alloc( ( u32 ) std::size( mltAsBytes ) );
-	offset_alloc_t vtxPosAlloc = vtxPosAllocator.Alloc( ( u32 ) std::size( vtxPosBitstreamAsBytes ) );
+	offset_alloc_t mltAlloc		= meshletAllocator.Alloc( ( u32 ) std::size( mltAsBytes ) );
+	offset_alloc_t vtxPosAlloc	= vtxPosAllocator.Alloc( ( u32 ) std::size( vtxPosBitstreamAsBytes ) );
 	offset_alloc_t vtxAttrAlloc	= vtxAttrsAllocator.Alloc( ( u32 ) std::size( vtxAttrsAsBytes ) );
-	offset_alloc_t idxAlloc	= idxAllocator.Alloc( ( u32 ) std::size( idxAsBytes ) );
+	offset_alloc_t idxAlloc		= idxAllocator.Alloc( ( u32 ) std::size( idxAsBytes ) );
 
 	// NOTE: since we alloc elements of the same type, the allocator MUST preserve the stride. Sanity check
 	HT_ASSERT( 0 == ( mltAlloc.offset % HtElemStrideInBytes( mesh.meshlets ) ) );
@@ -2195,7 +2197,7 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 
 	// NOTE: this MUST be in elements bc we use it on the gpu as such
 	gpu_mesh gpuMesh = {
-		.error						= mesh.lodErrors,
+		.lod4Err					= mesh.lodErrors,
 		.aabbMin					= mesh.aabb.min,
 		.aabbMax					= mesh.aabb.max,
 		.packed16x4_meshletCounts	= mesh.packed16x4_lodMltCounts,
@@ -2237,8 +2239,8 @@ void renderer_context::UploadMeshes(
 	vtxPosRegionCopies.reserve( copyCmdCount );
 	std::pmr::vector<VkBufferCopy2> vtxAttrsRegionCopies{ &vaStack };
 	vtxAttrsRegionCopies.reserve( copyCmdCount );
-	std::pmr::vector<VkBufferCopy2> triRegionCopies{ &vaStack };
-	triRegionCopies.reserve( copyCmdCount );
+	std::pmr::vector<VkBufferCopy2> idxRegionCopies{ &vaStack };
+	idxRegionCopies.reserve( copyCmdCount );
 
 	std::pmr::vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &vaStack };
 	buffEndCpyBarriers.reserve( barrierCount );
@@ -2273,7 +2275,7 @@ void renderer_context::UploadMeshes(
 		CopyScaffoldingLambda( megaGpuMeshletBuff, mltRegionCopies, meshUpload.mltAsBytes, htMesh.mltAlloc.offset );
 		CopyScaffoldingLambda( megaGpuVtxPosBuff, vtxPosRegionCopies, meshUpload.vtxPosAsBytes, htMesh.vtxPosAlloc.offset );
 		CopyScaffoldingLambda( megaGpuVtxAttrsBuff, vtxAttrsRegionCopies, meshUpload.vtxAttrsAsBytes, htMesh.vtxAttrsAlloc.offset );
-		CopyScaffoldingLambda( megaGpuIdxBuff, triRegionCopies, meshUpload.idxAsBytes, htMesh.triAlloc.offset );
+		CopyScaffoldingLambda( megaGpuIdxBuff, idxRegionCopies, meshUpload.idxAsBytes, htMesh.triAlloc.offset );
 	}
 
 	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
@@ -2285,7 +2287,7 @@ void renderer_context::UploadMeshes(
 	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuMeshletBuff, mltRegionCopies );
 	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuVtxPosBuff, vtxPosRegionCopies );
 	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuVtxAttrsBuff, vtxAttrsRegionCopies );
-	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuIdxBuff, triRegionCopies );
+	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuIdxBuff, idxRegionCopies );
 
 	copyCmdBuff.CmdPipelineBufferBarriers( buffEndCpyBarriers );
 
@@ -2341,7 +2343,11 @@ u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const fr
 	for( const instance_desc& sceneNode : frameData.instances )
 	{
 		mesh_hndl32 hMesh = std::bit_cast<mesh_hndl32>( sceneNode.meshIdx );
-		gpuInstList.push_back( { .toWorld = TrsToFloat4x3RowMaj( sceneNode.transform ), .meshIdx = hMesh.slotIdx } );
+		gpuInstList.push_back( {
+			.toWorld	= TrsToFloat4x3RowMaj( sceneNode.transform ),
+			.scale		= sceneNode.transform.s,
+			.meshIdx	= hMesh.slotIdx
+		} );
 	}
 
 	return ( u32 ) std::size( gpuInstList );
@@ -2424,6 +2430,10 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	dbgPass.ResetDrawCounters( thisFrameCmdBuff, rscStateTracker );
 
+	//float lodTarget = // * float( 1 << debugLodStep ); // 1px
+
+	const renderer_dbg_draw& dbgDrawFlags = frameData.dbgDrawFlags;
+
 	const culling_pass_args cullPassArgs = {
 		.dbgGpuInstBuff			= dbgPass.gpuInstBuff,
 		.dbgGpuInstCountBuff	= dbgPass.gpuInstCountBuff,
@@ -2432,14 +2442,14 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.instBuffIdx			= thisVFrame.instDesc,
 		.meshTableIdx			= thisVFrame.gpuMeshTableDesc,
 		.viewBuffIdx			= thisVFrame.viewDataIdx,
-		.camIdx					= !frameData.dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here
+		.camIdx					= !dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here
 		.hizDesc				= hzbPass.hzbSrv,
 		.samplerDesc			= hzbPass.quadMinSamplerIdx,
 		.dbgGpuInstBuffIdx		= dbgPass.gpuInstBuffIdx,
 		.dbgGpuInstCountBuffIdx = dbgPass.gpuInstCountBuffIdx
 	};
 	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 1nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
-		cullPassArgs, false, frameData.dbgDrawFlags.toggleInstCull, frameData.dbgDrawFlags.toggleMltCull ) );
+		cullPassArgs, false, dbgDrawFlags.toggleInstCull, dbgDrawFlags.toggleMltCull, dbgDrawFlags.toggleMeshLOD ) );
 
 	const vbuffer_pass_args vbuffPassArgs = {
 		.depthTarget	= depthTarget,
@@ -2466,20 +2476,20 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.instBuffIdx	= thisVFrame.instDesc,
 		.camIdx			= thisVFrame.viewDataIdx
 	};
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
+	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, dbgDrawFlags.drawXRayMode );
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
 	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 2nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
-		cullPassArgs, true, frameData.dbgDrawFlags.toggleInstCull, frameData.dbgDrawFlags.toggleMltCull ) );
+		cullPassArgs, true, dbgDrawFlags.toggleInstCull, dbgDrawFlags.toggleMltCull, dbgDrawFlags.toggleMeshLOD ) );
 
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
+	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, dbgDrawFlags.drawXRayMode );
 	//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, vbuffPassArgs, true );
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
 	[[unlikely]]
-	if( !frameData.dbgDrawFlags.vBuffPixelHash )
+	if( !dbgDrawFlags.vBuffPixelHash )
 	{
 		//vBuffPass.DbgDrawAsLamberitanClay( thisFrameCmdBuffer, rscStateTracker, colorTarget, colorUav,
 		//	thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx );
@@ -2499,8 +2509,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	// TODO: upload the actual aabbs
 	// NOTE: these are conditional
-	dbgPass.AssembleCPUInstanceBuffer( frameData.frustTransf, frameData.dbgDrawFlags.dbgDraw,
-		frameData.dbgDrawFlags.freezeMainView );
+	dbgPass.AssembleCPUInstanceBuffer( frameData.frustTransf, dbgDrawFlags.dbgDraw,
+		dbgDrawFlags.freezeMainView );
 	dbgPass.DbgDrawWireframeCPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
 
 	rscStateTracker.UseImage( colorTarget, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );

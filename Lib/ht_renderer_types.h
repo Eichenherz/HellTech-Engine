@@ -54,7 +54,7 @@ struct view_data
 	float3	    worldPos;
 	float		zNear;
 	float3		camViewDir;
-	float		pad0;
+	float		lodTarget;
 };
 
 struct packed_trs
@@ -85,11 +85,12 @@ struct packed_vtx_attr
 struct gpu_instance
 {
 	float4x3	toWorld;
+	float3		scale;
 	u32			meshIdx;
-	u32			mtrlIdx;
+	//u32			mtrlIdx;
 };
 
-STATIC_ASSERT( 56 == sizeof( gpu_instance ), "Size mismatch!" );
+STATIC_ASSERT( 64 == sizeof( gpu_instance ), "Size mismatch!" );
 
 CONSTEXPR u64 MAX_LOD_LEVELS_COUNT = 4;
 CONSTEXPR u64 MAX_MESHLETS_PER_MESH = ~u16( 0 );
@@ -98,7 +99,7 @@ CONSTEXPR u64 MAX_MESHLETS_PER_MESH = ~u16( 0 );
 
 struct gpu_mesh
 {
-	float4	error;
+	float4	lod4Err; // NOTE: monotonically increasing x -> w
 
 	float3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
 	float3	aabbMax;
@@ -111,9 +112,18 @@ struct gpu_mesh
 	u32		meshletOffset;
 };
 
-CONSTEXPR u64 RASTER_MAX_VTX_PER_MLT = 64;
-CONSTEXPR u64 RASTER_MAX_TRIS_PER_MLT = 128;
-CONSTEXPR u64 RASTER_MLT_MAX_INDEX = 1ull << 12;
+#ifndef __cplusplus
+u32x4 UnpackLODMeshletCount( in gpu_mesh m )
+{
+	u32x2 packed16x4LOD = m.packed16x4_meshletCounts;
+	u32x4 unpackShifted = { packed16x4LOD.x, ( packed16x4LOD.x >> 16 ), packed16x4LOD.y, ( packed16x4LOD.y >> 16 ) };
+	return unpackShifted & 0xffff;
+}
+#endif
+
+CONSTEXPR u64 RASTER_MAX_VTX_PER_MLT	= 64;
+CONSTEXPR u64 RASTER_MAX_TRIS_PER_MLT	= 128;
+CONSTEXPR u64 RASTER_MLT_MAX_INDEX		= 1ull << 12;
 // NOTE: this 2 level LOD scheme is inspired by https://x.com/zeuxcg/status/1810841187433205817
 
 // NOTE: we will pack the data in the triangle buffer as such
@@ -255,7 +265,8 @@ struct culling_params
 	u32 visibleItemsIdx;
 
 	u32	isLatePass;
-	u32 toggleCulling;
+	u32 enableCulling;
+	u32 enableLod;
 };
 // TODO: rename
 struct draw_expansion_params
@@ -292,7 +303,7 @@ struct meshlet_cull_params
 	u32 drawDataIdx;
 
 	u32	isLatePass;
-	u32 toggleCulling;
+	u32 enableCulling;
 };
 
 struct culling_init_params

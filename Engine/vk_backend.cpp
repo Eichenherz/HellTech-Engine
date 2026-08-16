@@ -1055,7 +1055,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 // TODO: move Surface logic here so we can recreate
 void vk_context::CreateSwapchain()
 {
-	// NOTE: rn we can't recreate the swapchian atm
+	// NOTE: rn we can't recreate the swapchain atm
 	HT_ASSERT( !std::size( scImgs ) && ( VK_NULL_HANDLE == swapchain ) );
 
 	u32					minNumImgs	= scConfig.minNumImgs;

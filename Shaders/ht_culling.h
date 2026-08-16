@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __CULLING_H__
-#define __CULLING_H__
+#ifndef __HT_CULLING_H__
+#define __HT_CULLING_H__
 
 #include "ht_hlsl_math.h"
 
@@ -17,11 +17,11 @@ struct frustum_culling_result
 // NOTE: Gribb-Hartmann method
 frustum_culling_result FrustumCulling( in float3 aabbMin, in float3 aabbMax, in float4x4 mvp )
 {
-	float4x4 transpMvp = transpose( mvp );
-	float4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
-	float4 yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
-	float4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
-	float4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
+	float4x4	transpMvp = transpose( mvp );
+	float4 		xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
+	float4 		yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
+	float4 		xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
+	float4 		yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 
 	static const float3 ZERO = float3( 0.0f, 0.0f, 0.0f );
 
@@ -49,10 +49,10 @@ bool ProjectBoundsToScreenSpace(
 	out float4			outUVBox,
 	out float			outMaxZ
 ) {
-	float3 extent = boundsMax - boundsMin;
-	float4 projExtentX = mul( float4( extent.x, 0.0f, 0.0f, 0.0f ), mvp );
-	float4 projExtentY = mul( float4( 0.0f, extent.y, 0.0f, 0.0f ), mvp );
-	float4 projExtentZ = mul( float4( 0.0f, 0.0f, extent.z, 0.0f ), mvp );
+	float3 extent		= boundsMax - boundsMin;
+	float4 projExtentX 	= mul( float4( extent.x, 0.0f, 0.0f, 0.0f ), mvp );
+	float4 projExtentY 	= mul( float4( 0.0f, extent.y, 0.0f, 0.0f ), mvp );
+	float4 projExtentZ 	= mul( float4( 0.0f, 0.0f, extent.z, 0.0f ), mvp );
 
 	float4 clip0 = mul( float4( boundsMin, 1.0f ), mvp );
 	float4 clip1 = clip0 + projExtentZ;
@@ -118,8 +118,8 @@ visibility_res TestVisibility(
 	if( inFrustum && !intersectsZNear )
 	{
 		// NOTE: 1st pass uses prev instTransform, prevView and prev HZB
-		float4x4 view = isLatePass ? cam.mainView : cam.prevView;
-		float4x4 mvp = mul( toWorld, mul( view, cam.proj ) );
+		float4x4 view	= isLatePass ? cam.mainView : cam.prevView;
+		float4x4 mvp	= mul( toWorld, mul( view, cam.proj ) );
 
 		float4 uvBounds = 0.0f; float maxZ = 0.0f;
 		if( ProjectBoundsToScreenSpace( aabbMin, aabbMax, mvp, cam.zNear, uvBounds, maxZ ) )
@@ -149,4 +149,4 @@ visibility_res TestVisibility(
 	return res;
 }
 
-#endif // !__CULLING_H__
+#endif // !__HT_CULLING_H__
