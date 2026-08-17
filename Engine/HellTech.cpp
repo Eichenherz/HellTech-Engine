@@ -136,22 +136,24 @@ struct ht_demo_action_map
 	u16 xrayDraw;
 	u16 instCull;
 	u16 mltCull;
-	u16 toggleLOD;
+	u16 toggleMeshLOD;
+	u16 toggleMltLOD;
 };
 
 constexpr ht_demo_action_map GLOB_ACTION_MAP = {
-	.fwd		= HT_SC_W,
-	.bwd		= HT_SC_S,
-	.left		= HT_SC_A,
-	.right		= HT_SC_D,
-	.up			= HT_SC_SPACE,
-	.down		= HT_SC_C,
-	.slowDown	= HT_SC_LCTRL,
-	.frustumDbg = HT_SC_F,
-	.xrayDraw	= HT_SC_X,
-	.instCull	= HT_SC_I,
-	.mltCull	= HT_SC_M,
-	.toggleLOD	= HT_SC_L
+	.fwd			= HT_SC_W,
+	.bwd			= HT_SC_S,
+	.left			= HT_SC_A,
+	.right			= HT_SC_D,
+	.up				= HT_SC_SPACE,
+	.down			= HT_SC_C,
+	.slowDown		= HT_SC_LCTRL,
+	.frustumDbg 	= HT_SC_F,
+	.xrayDraw		= HT_SC_X,
+	.instCull		= HT_SC_I,
+	.mltCull		= HT_SC_M,
+	.toggleMeshLOD	= HT_SC_L,
+	.toggleMltLOD	= HT_SC_K
 };
 
 struct move_cam_action
@@ -340,13 +342,19 @@ void HTAssembleUI(
 				.type	= imgui_widget_type::CHECKBOX
 			},
 			imgui_widget {
-				.name	= "Press F to freeze MainView\n",
+				.name	= "Press F to freeze MainView",
 				.pData	= nullptr,
 				.Action = nullptr,
 				.type	= imgui_widget_type::TEXT
 			},
 			imgui_widget {
-				.name	= "Press L to toggle LOD\n",
+				.name	= "Press L to toggle mesh LOD",
+				.pData	= nullptr,
+				.Action = nullptr,
+				.type	= imgui_widget_type::TEXT
+			},
+			imgui_widget {
+				.name	= "Press K to toggle meshlet LOD",
 				.pData	= nullptr,
 				.Action = nullptr,
 				.type	= imgui_widget_type::TEXT
@@ -480,9 +488,13 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	{
 		rndDbgFlags.toggleMltCull = !rndDbgFlags.toggleMltCull;
 	}
-	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.toggleLOD ) )
+	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.toggleMeshLOD ) )
 	{
 		rndDbgFlags.toggleMeshLOD = !rndDbgFlags.toggleMeshLOD;
+	}
+	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.toggleMltLOD ) )
+	{
+		rndDbgFlags.toggleMltLOD = !rndDbgFlags.toggleMltLOD;
 	}
 
 

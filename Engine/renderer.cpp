@@ -865,6 +865,14 @@ struct culling_pass_args
 	desc_hndl32			dbgGpuInstCountBuffIdx;
 };
 
+struct culling_dbg_flags
+{
+	bool enableInstCull;
+	bool enableMltCull;
+	bool enableMeshLod;
+	bool enableMltLod;
+};
+
 // TODO: use a list of occluded instances to feed the 2nd pass
 struct culling_pass
 {
@@ -1045,9 +1053,7 @@ struct culling_pass
 		vk_rsc_state_tracker&		rscTracker,
 		const culling_pass_args&	args,
 		bool						latePass,
-		bool						enableInstCull,
-		bool						enableMltCull,
-		bool						enableLod
+		culling_dbg_flags			dbgFlags
 	) {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Cull Pass",{} );
 
@@ -1125,8 +1131,8 @@ struct culling_pass
 				.visibleItemsCountIdx	= visibleInstCounterIdx.slot,
 				.visibleItemsIdx		= visibleInstIdx.slot,
 				.isLatePass				= latePass,
-				.enableCulling			= enableInstCull,
-				.enableLod				= enableLod
+				.enableCulling			= dbgFlags.enableInstCull,
+				.enableLod				= dbgFlags.enableMeshLod
 			};
 			fixed_string<64> regionName = { "Instance Culling {}", latePass ? 1 : 0 };
 			HT_PIPELINE_STATS_QUERY( cmdBuff, ( const char* ) regionName, cmdBuff.DispatchComputeIndirect(
@@ -1179,7 +1185,8 @@ struct culling_pass
 				.drawDataIdx			= drawDataIdx.slot,
 
 				.isLatePass				= latePass,
-				.enableCulling			= enableMltCull
+				.enableCulling			= dbgFlags.enableMltCull,
+				.enableLod				= dbgFlags.enableMltLod
 			};
 
 			fixed_string<64> regionName = { "Meshlet Culling {}", latePass ? 1 : 0 };
@@ -2432,8 +2439,6 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	//float lodTarget = // * float( 1 << debugLodStep ); // 1px
 
-	const renderer_dbg_draw& dbgDrawFlags = frameData.dbgDrawFlags;
-
 	const culling_pass_args cullPassArgs = {
 		.dbgGpuInstBuff			= dbgPass.gpuInstBuff,
 		.dbgGpuInstCountBuff	= dbgPass.gpuInstCountBuff,
@@ -2442,14 +2447,22 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.instBuffIdx			= thisVFrame.instDesc,
 		.meshTableIdx			= thisVFrame.gpuMeshTableDesc,
 		.viewBuffIdx			= thisVFrame.viewDataIdx,
-		.camIdx					= !dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here
+		.camIdx					= !frameData.dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here
 		.hizDesc				= hzbPass.hzbSrv,
 		.samplerDesc			= hzbPass.quadMinSamplerIdx,
 		.dbgGpuInstBuffIdx		= dbgPass.gpuInstBuffIdx,
 		.dbgGpuInstCountBuffIdx = dbgPass.gpuInstCountBuffIdx
 	};
+
+	const culling_dbg_flags cullDbgFlags = {
+		.enableInstCull = frameData.dbgDrawFlags.toggleInstCull,
+		.enableMltCull	= frameData.dbgDrawFlags.toggleMltCull,
+		.enableMeshLod	= frameData.dbgDrawFlags.toggleMeshLOD,
+		.enableMltLod	= frameData.dbgDrawFlags.toggleMltLOD
+	};
+
 	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 1nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
-		cullPassArgs, false, dbgDrawFlags.toggleInstCull, dbgDrawFlags.toggleMltCull, dbgDrawFlags.toggleMeshLOD ) );
+		cullPassArgs, false, cullDbgFlags ) );
 
 	const vbuffer_pass_args vbuffPassArgs = {
 		.depthTarget	= depthTarget,
@@ -2476,20 +2489,20 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.instBuffIdx	= thisVFrame.instDesc,
 		.camIdx			= thisVFrame.viewDataIdx
 	};
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, dbgDrawFlags.drawXRayMode );
+	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
 	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 2nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
-		cullPassArgs, true, dbgDrawFlags.toggleInstCull, dbgDrawFlags.toggleMltCull, dbgDrawFlags.toggleMeshLOD ) );
+		cullPassArgs, true, cullDbgFlags ) );
 
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, dbgDrawFlags.drawXRayMode );
+	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
 	//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, vbuffPassArgs, true );
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
 	[[unlikely]]
-	if( !dbgDrawFlags.vBuffPixelHash )
+	if( !frameData.dbgDrawFlags.vBuffPixelHash )
 	{
 		//vBuffPass.DbgDrawAsLamberitanClay( thisFrameCmdBuffer, rscStateTracker, colorTarget, colorUav,
 		//	thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx );
@@ -2509,8 +2522,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	// TODO: upload the actual aabbs
 	// NOTE: these are conditional
-	dbgPass.AssembleCPUInstanceBuffer( frameData.frustTransf, dbgDrawFlags.dbgDraw,
-		dbgDrawFlags.freezeMainView );
+	dbgPass.AssembleCPUInstanceBuffer( frameData.frustTransf, frameData.dbgDrawFlags.dbgDraw,
+		frameData.dbgDrawFlags.freezeMainView );
 	dbgPass.DbgDrawWireframeCPU( thisFrameCmdBuff, rscStateTracker, colorTarget, thisVFrame.viewDataIdx );
 
 	rscStateTracker.UseImage( colorTarget, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );

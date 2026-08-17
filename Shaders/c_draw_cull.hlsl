@@ -27,13 +27,13 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 	gpu_mesh        currentMesh     = BufferLoad<gpu_mesh>( pushBlock.meshDescIdx, currentInst.meshIdx );
      // NOTE: we use camIdx here bc we'll have a debug camera
     view_data       cam             = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
-    float4x4        toWorld         = f4x3_To_f4x4_Affine( currentInst.toWorld );
 
     bool visible = true;
     if( enableCulling )
     {
         Texture2D<float4>   hizTex  = gTexture2D_float4[ pushBlock.hizTexIdx ];
         SamplerState        quadMin = samplers[ pushBlock.hizSamplerIdx ];
+        float4x4            toWorld = f4x3_To_f4x4_Affine( currentInst.toWorld );
 
         visibility_res instVisRes = TestVisibility( currentMesh.aabbMin, currentMesh.aabbMax, toWorld, cam,
             hizTex, quadMin, isLatePass );
@@ -55,20 +55,16 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
 	if( visible )
 	{
-	    float3  meshCenter  = ( currentMesh.aabbMin + currentMesh.aabbMax ) * 0.5f;
-        float   meshRadius  = length( currentMesh.aabbMax - currentMesh.aabbMin ) * 0.5f;
-        float3  center      = mul( mul( float4( meshCenter, 1.0f ), toWorld ), cam.mainView ).xyz;
-        float   scaleMax    = max( currentInst.scale.x, max( currentInst.scale.y, currentInst.scale.z ) );
-        float   threshold   = max( length( center ) - ( meshRadius * scaleMax ), 0.0f ) * cam.lodTarget / scaleMax;
+        float   distSq    = SqDistCamToAabbInObjSpace( currentInst.toWorld, currentMesh.aabbMin, currentMesh.aabbMax,
+                                                        currentInst.scale, cam.worldPos );
+        float   threshold = distSq * cam.lodTarget * cam.lodTarget;
+        float3  errSqLod3 = currentMesh.lod4Err.yzw * currentMesh.lod4Err.yzw;
+        u32x4   lods4     = UnpackLODMeshletCount( currentMesh );
 
-        // NOTE: bc LOD0.err is always 0.0f and false == 0.0f < 0.0f
-        u32x4   selMask     = u32x4( 1, ( u32x3 ) ( currentMesh.lod4Err.yzw < threshold ) );
-        u32x4   exclMask    = u32x4( selMask.yzw, 0 ); // NOTE: drop the last one basically
-        u32x4   highestPass = selMask - exclMask;
-        u32x4   lods4       = UnpackLODMeshletCount( currentMesh );
+        u32x2   lodOffsetCount = SelectOffsetAndCountFromLod4( errSqLod3, threshold, lods4 );
 
-        u32     lodMltOffst = bool( pushBlock.enableLod ) ? dot( exclMask, lods4 ) : 0;
-        u32     lodMltCount = bool( pushBlock.enableLod ) ? dot( highestPass, lods4 ) : lods4.x;
+        u32     lodMltOffst = bool( pushBlock.enableLod ) ? lodOffsetCount.x : 0;
+        u32     lodMltCount = bool( pushBlock.enableLod ) ? lodOffsetCount.y : lods4.x;
 
 		visible_instance thisInst;
 		thisInst.instId					= instID;

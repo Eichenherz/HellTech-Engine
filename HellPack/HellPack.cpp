@@ -244,7 +244,7 @@ std::vector<__meshopt_lod> MeshoptGenerateLODChain( const raw_mesh& rawMesh, u64
 
 		std::vector<u32> lod( srcIdxCount );
 		float lodError = 0.0f;
-		lod.resize(meshopt_simplifyWithAttributes( &lod[ 0 ], pSrcLodLevel, srcIdxCount,
+		lod.resize( meshopt_simplifyWithAttributes( &lod[ 0 ], pSrcLodLevel, srcIdxCount,
 			&rawMesh.pos[ 0 ].x, vtxCount, sizeof( rawMesh.pos[ 0 ] ),
 			&rawMesh.normals[ 0 ].x, sizeof( rawMesh.normals[ 0 ] ),
 			attrWeights, std::size( attrWeights ), /* vertex_lock= */ &locks[ 0 ],
@@ -297,12 +297,13 @@ struct __hp_meshlet
 };
 
 // TODO: if we get meshlet weirdness we'd prolly need to protect some attrs during simplification
-std::vector<__hp_meshlet> MeshoptMakeHpMeshlets(
+std::vector<__hp_meshlet> MeshoptMakeHpMeshletsWithLod(
 	std::span<const float3> pos,
 	std::span<const float3> norm,
 	std::span<const float4> tan,
 	std::span<const float2> uvs,
 	std::span<const u32>	indices,
+	float					parentMeshLodErr,
 	meshlet_config			cfg
 ) {
 	const u64 indexCount = std::size( indices );
@@ -330,7 +331,6 @@ std::vector<__hp_meshlet> MeshoptMakeHpMeshlets(
 
 	fixed_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempIndices32 = {}; // NOTE: bc we can't have simplify on u8
 	fixed_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempLod = {};
-	mltTempLod.resize( RASTER_MAX_TRIS_PER_MLT * 3 );
 
 	constexpr float normalsWeight = 0.9f;
 	constexpr float attrWeights[] = { normalsWeight, normalsWeight, normalsWeight };
@@ -348,6 +348,7 @@ std::vector<__hp_meshlet> MeshoptMakeHpMeshlets(
 		mlt_idx_vector			localIndices	= std::span{ &mltTris[ m.triangle_offset ], m.triangle_count * 3 };
 		u64						localIdxCount	= std::size( localIndices );
 
+		mltTempLod.resize( RASTER_MAX_TRIS_PER_MLT * 3 );
 		mltTempIndices32 = { std::from_range, localIndices | std::views::transform( HtCastTo<u32> ) };
 		float lodError = 0.0f;
 
@@ -371,8 +372,8 @@ std::vector<__hp_meshlet> MeshoptMakeHpMeshlets(
 			.tan		= GetMeshletLocalAttrStream( tan, mltVtx, m.vertex_offset, m.vertex_count ),
 			.uvs		= MOV( localUVs ),
 			.indices	= MOV( localIndices ),
-			.idxLod		= lodMltIndices,
-			.lodError	= ( std::size( mltTempLod ) < localIdxCount ) ? lodError : FLT_MAX,
+			.idxLod		= MOV( lodMltIndices ),
+			.lodError	= ( std::size( mltTempLod ) < localIdxCount ) ? parentMeshLodErr + lodError : FLT_MAX,
 			.vtxCount	= ( u16 ) m.vertex_count
 		} );
 	}
@@ -727,9 +728,9 @@ i32 main( i32 argc, char** argv  )
 		for( u64 li = 0; li < std::size( meshLods ); li++ )
 		{
 			const __meshopt_lod& lod = meshLods[ li ];
-
-			std::vector<__hp_meshlet> lodMeshlets = MeshoptMakeHpMeshlets( mesh.pos, mesh.normals, mesh.tans,
-				mesh.uvs, lod.indices, {} );
+			// NOTE: the lod errors are "global" per object
+			std::vector<__hp_meshlet> lodMeshlets = MeshoptMakeHpMeshletsWithLod( mesh.pos, mesh.normals, mesh.tans,
+				mesh.uvs, lod.indices, lod.error, {} );
 
 			HT_ASSERT( std::size( lodMeshlets ) < MAX_MESHLETS_PER_MESH );
 			lodMltNum[ li ] = u32( std::size( lodMeshlets ) );

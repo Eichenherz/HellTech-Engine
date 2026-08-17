@@ -74,6 +74,7 @@ struct renderer_dbg_draw
 	bool toggleInstCull = true;
 	bool toggleMltCull	= true;
 	bool toggleMeshLOD	= true;
+	bool toggleMltLOD	= true;
 };
 
 struct frame_data

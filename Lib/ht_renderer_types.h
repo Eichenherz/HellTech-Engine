@@ -142,6 +142,16 @@ struct gpu_meshlet
 	float	lodError;
 };
 
+#ifndef __cplusplus
+u32x3 UnpackMeshletVtxAndLodIdxCount( in gpu_meshlet mlt )
+{
+	u32		packed_8_12x2	= mlt.packed8_12_12_VtxCount_Lod_01_IdxCount;
+	u32x3	unpackShifted	= { packed_8_12x2, packed_8_12x2 >> 8, packed_8_12x2 >> 20 }; // 0, + 8, + 12
+	u32		lodMask			= ( 1u << 12 ) - 1;
+	return unpackShifted & u32x3( 0xff, lodMask, lodMask );
+}
+#endif
+
 STATIC_ASSERT( 48 == sizeof( gpu_meshlet ), "Size mismatch!" );
 STATIC_ASSERT( ( 1ull << 12) == RASTER_MLT_MAX_INDEX, "The max mltidx convention is broken" );
 
@@ -304,6 +314,7 @@ struct meshlet_cull_params
 
 	u32	isLatePass;
 	u32 enableCulling;
+	u32 enableLod;
 };
 
 struct culling_init_params

@@ -28,14 +28,14 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     meshlet_cull_wok_item   mltWorkItem = BufferLoad<meshlet_cull_wok_item>( pushBlock.expandedMltsIdx, mltId );
     gpu_instance            currInst    = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltWorkItem.instId );
     gpu_meshlet             currMlt     = device_ptr<gpu_meshlet>( gGlobData.mltAddr )[ mltWorkItem.globMltId ];
+     // NOTE: we use camIdx here bc we'll have a debug camera
+    view_data               cam         = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
 
     bool visible = true;
     if( enableCulling )
     {
         float4x4 toWorld = f4x3_To_f4x4_Affine( currInst.toWorld );
 
-        // NOTE: we use camIdx here bc we'll have a debug camera
-        view_data           cam     = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
         Texture2D<float4>   hizTex  = gTexture2D_float4[ pushBlock.hizTexIdx ];
         SamplerState        quadMin = samplers[ pushBlock.hizSamplerIdx ];
 
@@ -58,11 +58,22 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     if( visible )
     {
+        float distSq    = SqDistCamToAabbInObjSpace( currInst.toWorld, currMlt.aabbMin, currMlt.aabbMax, currInst.scale,
+                                                        cam.worldPos );
+        float threshold = distSq * cam.lodTarget * cam.lodTarget;
+        float lodErrSqq = currMlt.lodError * currMlt.lodError;
+
+        u32x3 vtxLod01IdxCounts = UnpackMeshletVtxAndLodIdxCount( currMlt );
+
+        bool    lodSwitch       = bool( pushBlock.enableLod ) && ( lodErrSqq < threshold );
+        u32     lodIdxOffset    = lodSwitch ? vtxLod01IdxCounts.y : 0;
+        u32     lodIdxCount     = lodSwitch ? vtxLod01IdxCounts.z : vtxLod01IdxCounts.y;
+
         draw_meshlet_command drawMltCmd = ( draw_meshlet_command ) 0;
 
-        drawMltCmd.indexCount     = ( u32 ) ( ( currMlt.packed8_12_12_VtxCount_Lod_01_IdxCount >> 8 ) & ( ( 1u << 12 ) - 1 ) );
+        drawMltCmd.indexCount     = lodIdxCount;
         drawMltCmd.instanceCount  = 1;
-        drawMltCmd.firstIndex     = currMlt.idxOffset + mltWorkItem.idxOffset;
+        drawMltCmd.firstIndex     = currMlt.idxOffset + mltWorkItem.idxOffset + lodIdxOffset;
         // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,
         // so we need to manually compute it in the shader
         drawMltCmd.vertexOffset   = 0;
