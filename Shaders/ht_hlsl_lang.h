@@ -4,10 +4,13 @@
 
 namespace spv
 {
+	// Caps
     static const u32 CapabilityVulkanMemoryModel            = 5345;
     static const u32 CapabilityVulkanMemoryModelDeviceScope = 5346;
+	// Ops
     static const u32 OpImageRead                            = 98;
     static const u32 OpImageWrite                           = 99;
+	static const u32 OpGroupNonUniformQuadSwap              = 366;
 	static const u32 MakeTexelAvailable 					= 0x100;
 	static const u32 MakeTexelVisible   					= 0x200;
 	static const u32 NonPrivateTexel    					= 0x400;
@@ -17,7 +20,7 @@ namespace spv
 	static const u32 SubgroupId								= 40; // gl_SubgroupID
 	static const u32 NumSubgroups							= 38; // gl_NumSubgroups
 	// KHR ext
-	static const u32 ComputeDerivativeGroupLinearKHR		= 5350;
+
 }
 
 
@@ -56,6 +59,14 @@ void ImageWriteCoherent(
 
 static const u32 SPV_COHERENT_READ_OPERANDS		= spv::NonPrivateTexel | spv::MakeTexelVisible;
 static const u32 SPV_COHERENT_WRITE_OPERANDS	= spv::NonPrivateTexel | spv::MakeTexelAvailable;
+
+// NOTE: DXC doesn't like HLSL intrins
+[[vk::ext_instruction( spv::OpGroupNonUniformQuadSwap )]]
+float SpvQuadSwap( u32 scope, float value, u32 direction );
+
+float HTQuadSwapAcrossX( float value ) { return SpvQuadSwap( vk::SubgroupScope, value, 0 ); }
+float HTQuadSwapAcrossY( float value ) { return SpvQuadSwap( vk::SubgroupScope, value, 1 ); }
+float HTQuadSwapAcrossDiag( float value ) { return SpvQuadSwap( vk::SubgroupScope, value, 2 ); }
 
 #define MAX_DESCRIPTOR_COUNT 0xFFFF
 
@@ -130,27 +141,6 @@ u32 BufferAtomicOr( u32 buffIdx, u32 newValue, u32 idx = 0, u32 offsetInBytes = 
 	return oldValue;
 }
 
-template<typename T>
-T BitCount()
-{
-	return sizeof( T ) * 8;
-}
-
-bool GetBitAtIdx( u32 buffIdx, u32 idx )
-{
-	u32 bucketIdx = idx / BitCount<u32>();
-	u32 dword = BufferLoad<u32>( buffIdx, bucketIdx );
-	u32 bit = 1u << ( idx % BitCount<u32>() );
-	return bool( dword & bit );
-}
-
-u32 SetBitAtIdx( u32 buffIdx, u32 idx )
-{
-	u32 bucketIdx = idx / BitCount<u32>();
-	u32 bit = 1u << ( idx % BitCount<u32>() );
-	return BufferAtomicOr( buffIdx, bit, bucketIdx );
-}
-
 static const global_data gGlobData = BufferLoad<global_data>( GLOB_DATA_BINDING_SLOT );
 
 template<typename T>
@@ -175,22 +165,12 @@ void HTStoreCoherentImageFloat( u32 imgIdx, i32x2 pix, float val )
 		SPV_COHERENT_WRITE_OPERANDS, vk::QueueFamilyScope );
 }
 
-u32x3 FetchTriangleFromMegaBuff( u64 globalIdxInBytes )
-{
-	device_ptr<u32> triBuff = { gGlobData.triAddr };
-	u64 lo = triBuff[ globalIdxInBytes >> 2 ];
-	u64 hi = triBuff[ ( globalIdxInBytes >> 2 ) + 1 ];
-	u64 shift = ( globalIdxInBytes & 3 ) * 8;
-	u64 raw = ( ( hi << 32 ) | lo ) >> shift;
-	return unpack_u8u32( u32( raw & 0xFFFFFF ) ).xyz;
-}
-
 float4 HTQuadBroadcast( float v )
 {
 	float v0 = v;
-	float v1 = QuadReadAcrossX( v );
-	float v2 = QuadReadAcrossY( v );
-	float v3 = QuadReadAcrossDiagonal( v );
+	float v1 = HTQuadSwapAcrossX( v );
+	float v2 = HTQuadSwapAcrossY( v );
+	float v3 = HTQuadSwapAcrossDiag( v );
 
 	return float4( v0, v1, v2, v3 );
 }

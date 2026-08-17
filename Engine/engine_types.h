@@ -11,6 +11,8 @@
 
 #include "ht_math.h"
 
+#include <vector>
+
 // CONVENTIONS -----------------------------------------------------------------
 // -----------------------------------------------------------------------------
 // WORLD BASIS
@@ -36,10 +38,11 @@ enum class upload_t
 
 struct mesh_upload_req
 {
-	byte_view	mltAsBytes;
-	byte_view	vtxAsBytes;
-	byte_view	triAsBytes;
-	HRNDMESH32  hSlot;
+	std::span<const u8>	mltAsBytes;
+	std::span<const u8>	vtxPosAsBytes;
+	std::span<const u8>	vtxAttrsAsBytes;
+	std::span<const u8>	idxAsBytes;
+	HRNDMESH32			hSlot;
 };
 
 struct mesh_upload_resp
@@ -70,6 +73,8 @@ struct renderer_dbg_draw
 	bool drawXRayMode	= false;
 	bool toggleInstCull = true;
 	bool toggleMltCull	= true;
+	bool toggleMeshLOD	= true;
+	bool toggleMltLOD	= true;
 };
 
 struct frame_data

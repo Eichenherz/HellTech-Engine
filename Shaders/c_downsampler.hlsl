@@ -30,6 +30,7 @@
      2  3  6  7 18 19 22 23
      8  9 12 13 24 25 28 29
     10 11 14 15 26 27 30 31
+
     32 33 36 37 48 49 52 53
     34 35 38 39 50 51 54 55
     40 41 44 45 56 57 60 61
@@ -81,24 +82,37 @@ u32x2 ThreadIndexToQuadCoord16x16( u32 tid )
     return u32x2( x, y) ;
 }
 
-static const u32x2  TILE_SIZE = u32x2( 64, 64 );
 static const u32    MAX_WORKGROUP_COUNT = HT_WORKGROUP_COUNT.x * HT_WORKGROUP_COUNT.y;
 
 [[vk::push_constant]]
 downsampler_params  pushBlock;
 
+using lds_ping_pong_t = bool;
+
+static const lds_ping_pong_t PING = false;
+static const lds_ping_pong_t PONG = true;
+
 // NOTE: 16x16 bc first reduction is done within "wave mem".
-groupshared float   ldsTemp[ 16 ][ 16 ];
+// NOTE: we will use 2 arrays and ping pong between them to avoid mem stomping;
+// yes, there are other methods but this is the simplest
+groupshared float   ldsPing[ 16 ][ 16 ];
+groupshared float   ldsPong[ 8 ][ 8 ];
 
 groupshared u32     ldsWorkgrIdx;
 
-float LDSLoadAtQuadID( u32x2 quadID )
+// NOTE: the storage selection should be group uniform
+float LDSLoadAtQuadID( u32x2 quadID, lds_ping_pong_t pingPong )
 {
-    return ldsTemp[ quadID.x ][ quadID.y ];
+    return ( PING == pingPong ) ? ldsPing[ quadID.x ][ quadID.y ] : ldsPong[ quadID.x ][ quadID.y ];
 }
-void LDSStoreAtQuadID( u32x2 quadID, float val )
+void LDSStoreAtQuadID( u32x2 quadID, float val, lds_ping_pong_t pingPong )
 {
-    ldsTemp[ quadID.x ][ quadID.y ] = val;
+    if( PING == pingPong )
+    {
+        ldsPing[ quadID.x ][ quadID.y ] = val;
+        return;
+    }
+    ldsPong[ quadID.x ][ quadID.y ] = val;
 }
 void StoreMipTexel( u32x2 dstTexCoord, float val, u32 mipIdx )
 {
@@ -107,132 +121,186 @@ void StoreMipTexel( u32x2 dstTexCoord, float val, u32 mipIdx )
 
 // NOTE: all reaductions are 2x2 --> 1
 // Min bc we use Reverse Z
-float DownsampleReduce2x2( float4 val )
+float QuadMin( float4 val )
 {
     return min( min( val.x, val.y ), min( val.z, val.w ) );
 }
 
-float4 DownsampleMip0( u32x2 quadID, u32x2 wgID )
+// NOTE: we use a reduction sampler so it taps a quad
+// NOTE: the sampler is also clamped to edge which produces correct results here
+// NOTE: our sampler doesn't use unnormalized coords
+float SampleDownsampleMinQuadMaybeNonPOT(
+    in Texture2D<float> srcTex,
+    in SamplerState     reductionSampler,
+    u32x2               unnormalizedDstUV,
+    u32x2               srcRes,
+    u32x2               dstRes,
+    bool                isMip0FromNonPot // NOTE: should be uniform per dispatch
+) {
+    float minDepth = 1.0f; // max for reverse-Z
+    if( isMip0FromNonPot )
+    {
+        // NOTE: bc it's non pot we have to reduce more
+        u32x2 srcFloor = ( unnormalizedDstUV * srcRes ) / dstRes;
+        u32x2 srcCeil = ( ( unnormalizedDstUV + 1 ) * srcRes + dstRes - 1 ) / dstRes;
+
+        for( u32 sy = srcFloor.y; sy < srcCeil.y; sy += 2 )
+        {
+           for( u32 sx = srcFloor.x; sx < srcCeil.x; sx += 2 )
+           {
+                float2 uv = ( float2( sx, sy ) + 1.0f ) / float2( srcRes ); // + 1 bc we sample at corners
+                minDepth = min( minDepth, srcTex.SampleLevel( reductionSampler, uv, 0 ) );
+           }
+        }
+    }
+    else
+    {
+        float2 uv = ( float2( unnormalizedDstUV ) + 0.5f ) / float2( srcRes );
+        minDepth = srcTex.SampleLevel( reductionSampler, uv, 0 );
+    }
+
+    return minDepth;
+}
+
+float4 DownsampleMip0( u32x2 quadID, u32x2 wgID, u32x2 srcTexRes, u32x2 mip0Res, bool isMip0FromNonPot )
 {
-    SamplerState smp = samplers[ pushBlock.samplerIdx ];
+    SamplerState smp = samplers[ pushBlock.reductionSamplerIdx ];
     Texture2D<float> srcTex = gTexture2D_float[ pushBlock.srcSrvIdx ];
 
-    u32x2 srcTileIdx = wgID * TILE_SIZE;
-    // NOTE: we use a reduction sampler so it taps a quad
-    float q0 = srcTex.SampleLevel( smp, srcTileIdx + u32x2( 2, 2 ) * quadID + u32x2( 0,  0  ), 0 );
-    float q1 = srcTex.SampleLevel( smp, srcTileIdx + u32x2( 2, 2 ) * quadID + u32x2( 32, 0  ), 0 );
-    float q2 = srcTex.SampleLevel( smp, srcTileIdx + u32x2( 2, 2 ) * quadID + u32x2( 0,  32 ), 0 );
-    float q3 = srcTex.SampleLevel( smp, srcTileIdx + u32x2( 2, 2 ) * quadID + u32x2( 32, 32 ), 0 );
+    u32x2 dstTileIdx = wgID * MIP0_TILE_SIZE;
 
-    u32x2 dstTileIdx = wgID * ( TILE_SIZE / 2 );
+    // NOTE: bc our input is most liekly NON POT but our depth pyramid is, we go from mip0 UV into src UV
+    u32x2 dstUV0 = dstTileIdx + quadID + u32x2( 0,  0  );
+    u32x2 dstUV1 = dstTileIdx + quadID + u32x2( 16, 0  );
+    u32x2 dstUV2 = dstTileIdx + quadID + u32x2( 0,  16 );
+    u32x2 dstUV3 = dstTileIdx + quadID + u32x2( 16, 16 );
 
-   StoreMipTexel( dstTileIdx + quadID + u32x2( 0,  0  ), q0, 0 );
-   StoreMipTexel( dstTileIdx + quadID + u32x2( 16, 0  ), q1, 0 );
-   StoreMipTexel( dstTileIdx + quadID + u32x2( 0,  16 ), q2, 0 );
-   StoreMipTexel( dstTileIdx + quadID + u32x2( 16, 16 ), q3, 0 );
+    float q0 = SampleDownsampleMinQuadMaybeNonPOT( srcTex, smp, dstUV0, srcTexRes, mip0Res, isMip0FromNonPot );
+    float q1 = SampleDownsampleMinQuadMaybeNonPOT( srcTex, smp, dstUV1, srcTexRes, mip0Res, isMip0FromNonPot );
+    float q2 = SampleDownsampleMinQuadMaybeNonPOT( srcTex, smp, dstUV2, srcTexRes, mip0Res, isMip0FromNonPot );
+    float q3 = SampleDownsampleMinQuadMaybeNonPOT( srcTex, smp, dstUV3, srcTexRes, mip0Res, isMip0FromNonPot );
+
+   StoreMipTexel( dstUV0, q0, 0 );
+   StoreMipTexel( dstUV1, q1, 0 );
+   StoreMipTexel( dstUV2, q2, 0 );
+   StoreMipTexel( dstUV3, q3, 0 );
 
     return float4( q0, q1, q2, q3 );
 }
 
 void DownsampleMip1( u32x2 quadID, u32x2 wgID, float4 q )
 {
-    float q0 = DownsampleReduce2x2( HTQuadBroadcast( q.x ) );
-    float q1 = DownsampleReduce2x2( HTQuadBroadcast( q.y ) );
-    float q2 = DownsampleReduce2x2( HTQuadBroadcast( q.z ) );
-    float q3 = DownsampleReduce2x2( HTQuadBroadcast( q.w ) );
+    float q0 = QuadMin( HTQuadBroadcast( q.x ) );
+    float q1 = QuadMin( HTQuadBroadcast( q.y ) );
+    float q2 = QuadMin( HTQuadBroadcast( q.z ) );
+    float q3 = QuadMin( HTQuadBroadcast( q.w ) );
 
     if( HTIsQuadLeader( quadID ) )
     {
-        u32x2 dstTileIdx = wgID * ( TILE_SIZE / 4 );
+        u32x2 dstTileIdx = wgID * ( MIP0_TILE_SIZE / 2 );
         u32x2 texIdx0 = quadID / u32x2( 2, 2 ) + u32x2( 0, 0 );
         u32x2 texIdx1 = quadID / u32x2( 2, 2 ) + u32x2( 8, 0 );
         u32x2 texIdx2 = quadID / u32x2( 2, 2 ) + u32x2( 0, 8 );
         u32x2 texIdx3 = quadID / u32x2( 2, 2 ) + u32x2( 8, 8 );
 
-        StoreMipTexel( dstTileIdx + texIdx0, q0, 0 );
-        StoreMipTexel( dstTileIdx + texIdx1, q1, 0 );
-        StoreMipTexel( dstTileIdx + texIdx2, q2, 0 );
-        StoreMipTexel( dstTileIdx + texIdx3, q3, 0 );
+        StoreMipTexel( dstTileIdx + texIdx0, q0, 1 );
+        StoreMipTexel( dstTileIdx + texIdx1, q1, 1 );
+        StoreMipTexel( dstTileIdx + texIdx2, q2, 1 );
+        StoreMipTexel( dstTileIdx + texIdx3, q3, 1 );
 
-        LDSStoreAtQuadID( texIdx0, q0 );
-        LDSStoreAtQuadID( texIdx1, q1 );
-        LDSStoreAtQuadID( texIdx2, q2 );
-        LDSStoreAtQuadID( texIdx3, q3 );
+        LDSStoreAtQuadID( texIdx0, q0, PING );
+        LDSStoreAtQuadID( texIdx1, q1, PING );
+        LDSStoreAtQuadID( texIdx2, q2, PING );
+        LDSStoreAtQuadID( texIdx3, q3, PING );
     }
 }
 
-void DownsampleQuad( u32x2 quadID, u32x2 dstTileIdx, u32 mipIdx )
+void DownsampleQuad( u32x2 quadID, u32x2 dstTileIdx, u32 dstMipIdx, lds_ping_pong_t isPingPong )
 {
-    float q0 = DownsampleReduce2x2( HTQuadBroadcast( LDSLoadAtQuadID( quadID ) ) );
+    float q0 = QuadMin( HTQuadBroadcast( LDSLoadAtQuadID( quadID, isPingPong ) ) );
 
     if( HTIsQuadLeader( quadID ) )
     {
         u32x2 dstQuadID = quadID / u32x2( 2, 2 );
-        StoreMipTexel( dstTileIdx + dstQuadID, q0, mipIdx );
-        LDSStoreAtQuadID( dstQuadID, q0 );
+        StoreMipTexel( dstTileIdx + dstQuadID, q0, dstMipIdx );
+        LDSStoreAtQuadID( dstQuadID, q0, !isPingPong );
     }
 }
 
-void DownsampleTo16x16( u32x2 quadID, u32x2 wgID, u32 mipIdx )
+void DownsampleNextThree( u32x2 quadID, u32x2 wgID, u32 srcMipIdx, lds_ping_pong_t isPingPong, u32 mipCount  )
 {
-    DownsampleQuad( quadID, wgID * ( TILE_SIZE / 8 ), mipIdx );
-}
+    // 16x16 tiles
+    DownsampleQuad( quadID, wgID * ( MIP0_TILE_SIZE / 4 ), srcMipIdx + 1, isPingPong );
 
-void DownsampleTo8x8( u32x2 quadID, u32x2 wgID, u32 mipIdx )
-{
+    if( mipCount <= ( srcMipIdx + 2 ) ) return;
+
+    GroupMemoryBarrierWithGroupSync();
+
+    // 8x8 tiles
     if( all( quadID < 8 ) )
     {
-        DownsampleQuad( quadID, wgID * ( TILE_SIZE / 16 ), mipIdx );
+        DownsampleQuad( quadID, wgID * ( MIP0_TILE_SIZE / 8 ), srcMipIdx + 2, !isPingPong );
     }
-}
 
-void DownsampleTo4x4( u32x2 quadID, u32x2 wgID, u32 mipIdx )
-{
+    if( mipCount <= ( srcMipIdx + 3 ) ) return;
+
+    GroupMemoryBarrierWithGroupSync();
+
+    // 4x4 tiles
     if( all( quadID < 4 ) )
     {
-        DownsampleQuad( quadID, wgID * ( TILE_SIZE / 32 ), mipIdx );
+        DownsampleQuad( quadID, wgID * ( MIP0_TILE_SIZE / 16 ), srcMipIdx + 3, !( !isPingPong ) );
     }
 }
 
-void DownsampleTo2x2Coherent( u32x2 quadID, u32x2 wgID, u32 mipIdx )
+void DownsampleTo2x2Coherent( u32x2 quadID, u32x2 wgID, u32 mipIdx, lds_ping_pong_t isPingPong )
 {
     if( all( quadID < 2 ) )
     {
-        float q0 = DownsampleReduce2x2( HTQuadBroadcast( LDSLoadAtQuadID( quadID ) ) );
+        float q0 = QuadMin( HTQuadBroadcast( LDSLoadAtQuadID( quadID, isPingPong ) ) );
 
         if( HTIsQuadLeader( quadID ) )
         {
-            u32x2 dstTileIdx = wgID * ( TILE_SIZE / 64 ); // 1 essentially
+            u32x2 dstTileIdx = wgID * ( MIP0_TILE_SIZE / 32 ); // 1 essentially
             HTStoreCoherentImageFloat( pushBlock.dstMipsIdx[ mipIdx ], dstTileIdx, q0 );
         }
     }
 }
 
-void DownsampleTo2x2( u32x2 quadID, u32x2 wgID, u32 mipIdx )
+void DownsampleTo2x2( u32x2 quadID, u32x2 wgID, u32 mipIdx, lds_ping_pong_t isPingPong )
 {
     if( all( quadID < 2 ) )
     {
-        float q0 = DownsampleReduce2x2( HTQuadBroadcast( LDSLoadAtQuadID( quadID ) ) );
+        float q0 = QuadMin( HTQuadBroadcast( LDSLoadAtQuadID( quadID, isPingPong ) ) );
 
         if( HTIsQuadLeader( quadID ) )
         {
-            u32x2 dstTileIdx = wgID * ( TILE_SIZE / 64 ); // 1 essentially
+            u32x2 dstTileIdx = wgID * ( MIP0_TILE_SIZE / 32 ); // 1 essentially
             StoreMipTexel( dstTileIdx, q0, mipIdx );
         }
     }
 }
 
-float4 DownsampleMip6( u32x2 quadID )
+// NOTE: there's no coherent sample in SPIR-V, tap manually
+// NOTE: we clamp so our WG work is uniform, Vulkan spec mandates that OOB IMAGE writes are discarded; we're safe
+float4 CoherentLoadQuadSafe( u32 imgIdx, u32x2 topLeftUV, u32x2 srcRes )
 {
-    u32x2 tex0 = quadID * u32x2( 4, 4 ) + u32x2( 0, 0 );
-    u32x2 tex1 = quadID * u32x2( 4, 4 ) + u32x2( 2, 0 );
-    u32x2 tex2 = quadID * u32x2( 4, 4 ) + u32x2( 0, 2 );
-    u32x2 tex3 = quadID * u32x2( 4, 4 ) + u32x2( 2, 2 );
+    return float4(
+        HTLoadCoherentImageFloat( imgIdx, min( topLeftUV + u32x2( 0, 0 ), srcRes - 1 ) ),
+        HTLoadCoherentImageFloat( imgIdx, min( topLeftUV + u32x2( 1, 0 ), srcRes - 1 ) ),
+        HTLoadCoherentImageFloat( imgIdx, min( topLeftUV + u32x2( 0, 1 ), srcRes - 1 ) ),
+        HTLoadCoherentImageFloat( imgIdx, min( topLeftUV + u32x2( 1, 1 ), srcRes - 1 ) )
+    );
+}
 
-    float q0 = HTLoadCoherentImageFloat( pushBlock.dstMipsIdx[ 5 ], tex0 );
-    float q1 = HTLoadCoherentImageFloat( pushBlock.dstMipsIdx[ 5 ], tex1 );
-    float q2 = HTLoadCoherentImageFloat( pushBlock.dstMipsIdx[ 5 ], tex2 );
-    float q3 = HTLoadCoherentImageFloat( pushBlock.dstMipsIdx[ 5 ], tex3 );
+float4 DownsampleMip6( u32x2 quadID, u32x2 mip5Res )
+{
+    u32 mip5Idx = pushBlock.dstMipsIdx[ 5 ];
+
+    float q0 = QuadMin( CoherentLoadQuadSafe( mip5Idx, quadID * u32x2( 4, 4 ) + u32x2( 0, 0 ), mip5Res ) );
+    float q1 = QuadMin( CoherentLoadQuadSafe( mip5Idx, quadID * u32x2( 4, 4 ) + u32x2( 2, 0 ), mip5Res ) );
+    float q2 = QuadMin( CoherentLoadQuadSafe( mip5Idx, quadID * u32x2( 4, 4 ) + u32x2( 0, 2 ), mip5Res ) );
+    float q3 = QuadMin( CoherentLoadQuadSafe( mip5Idx, quadID * u32x2( 4, 4 ) + u32x2( 2, 2 ), mip5Res ) );
 
     StoreMipTexel( quadID * u32x2( 2, 2 ) + u32x2( 0, 0 ), q0, 6 );
     StoreMipTexel( quadID * u32x2( 2, 2 ) + u32x2( 1, 0 ), q1, 6 );
@@ -244,63 +312,31 @@ float4 DownsampleMip6( u32x2 quadID )
 
 void DownsampleMip7( u32x2 quadID, float4 q )
 {
-    float q0 = DownsampleReduce2x2( q );
+    float q0 = QuadMin( q );
     StoreMipTexel( quadID, q0, 7 );
-    LDSStoreAtQuadID( quadID, q0 );
+    LDSStoreAtQuadID( quadID, q0, PING );
 }
 
-/*
-OVERVIEW:
-
-MIP 0 SRC 64x64 (dst wgID*64)      |    MIP 1 DST 32x32 (dst wgID*32)       |    MIP 2 DST 16x16 (dst wgID*16)
-    0        32       64           |        0   16   32                     |        0    8   16
-  0 +--------+--------+            |      0 +----+----+                     |      0 +----+----+
-    | q0     | q1     |            |        | q0 | q1 |                     |        | q0 | q1 |
-    | 32x32  | +32 X  |            |        |16x | +16|                     |        |    | +8 |
-    | 16x16  |        |            |        |str1|  X |                     |        |    |  X |
-    | str 2  |        |            |     16 +----+----+                     |      8 +----+----+              -------
- 32 +--------+--------+            |        | q2 | q3 |                     |        | q2 | q3 |                    |
-    | q2     | q3     |            |        |+16 |+16 |                     |        | +8 | +8 |                    |
-    | +32 Y  | +32 X,Y|            |        |  Y | X,Y|                     |        | Y  | X,Y|                    |
-    |        |        |            |     32 +----+----+                     |     16 +----+----+                    |
-    |        |        |            |   ReduceQuad -> filter (qid&1)==0 ->   |   ReduceQuad -> 16 leaders ->         |
- 64 +--------+--------+            |     64 leaders -> 4 stores each        |    1 store each from here on          |
-sample2x2 -> 4 dst writes/thread                                                                                    |
-                                                                                                                    |
-            ---------------------------------------------------------------------------------------------------------
-            |
-            V
-
-MIP 3 DST 8x8 (dst wgID*8)         |    MIP 4 DST 4x4 (dst wgID*4)         |    MIP 5 DST 2x2 (dst wgID*2)
-    0    4    8                    |        0    2    4                    |        0    1    2
-  0 +----+                         |      0 +----+                         |      0 +----+
-    | q  |   ( only top-left;      |        | q  |                         |        | q  |                   -------
-    |4x4 |   no sub-tile fanout)   |        |2x2 |                         |        |1x1 |                         |
-    |str1|                         |      2 +----+                         |      1 +----+                         |
-  4 +----+                         |      active threads: tid < 4          |      active threads: tid < 2          |
-  active threads: tid < 8          |      stores at: wgID*4 + tid/2        |      stores at: wgID*2 + tid/2        |
-  stores at: wgID*8 + tid/2        |      (range 0..1)                     |      (range 0..0)                     |
-  (range 0..3)                                                                                                     |
-                                                                                                                   |
-                                                                                                                   |
-                ----------------------------------------------------------------------------------------------------
-                |
-                V
-
-  MIP 6 DST 1x1 (dst wgID)  <-- globallycoherent boundary
-    active: tid == (0,0) only
-    stores 1 texel per WG at wgID
-    (every WG writes here -> last WG reads this back for mip 7+)
-*/
-[[vk::ext_capability( spv::ComputeDerivativeGroupLinearKHR )]]
-[[vk::ext_extension( "SPV_KHR_compute_shader_derivatives" )]]
+// NOTE: think of this as AMD's SPD BUT, since we're gonna mostly use it on non POT, we basically DROP SPD_MIP0,
+// and start at SPD_MIP1 and also use that as our dispatch size and cap
+// NOTE:
+// 256 threads = 16x16 lanes
+//    32x32 mip0   (4 texels/thread, registers)
+//    16x16 mip1   quad ops
+//      ___________
+//     8x8  mip2   |
+//     4x4  mip3   | - LDS
+//     2x2  mip4   |
+//     1x1  mip5   |   <- 6 levels per WG
 [shader( "compute" )]
 [numthreads( 256, 1, 1 )]
 void DownsamplerCsMain( u32 localLinearID : SV_GroupIndex, u32x3 workgroupID : SV_GroupID )
 {
     u32x2 quadID = ThreadIndexToQuadCoord16x16( localLinearID );
 
-    float4 q = DownsampleMip0( quadID, workgroupID.xy );
+    float4 q = DownsampleMip0( quadID, workgroupID.xy, pushBlock.srcResolution,
+        pushBlock.mip0Resolution, bool( pushBlock.isMip0FromNonPot ) );
+
     if( pushBlock.mipCount <= 1 ) return;
 
     DownsampleMip1( quadID, workgroupID.xy, q );
@@ -308,24 +344,17 @@ void DownsamplerCsMain( u32 localLinearID : SV_GroupIndex, u32x3 workgroupID : S
 
     GroupMemoryBarrierWithGroupSync();
 
-    DownsampleTo16x16( quadID, workgroupID.xy, 2 );
-    if( pushBlock.mipCount <= 3 ) return;
+    DownsampleNextThree( quadID, workgroupID.xy, 1, PING, pushBlock.mipCount );
 
-    GroupMemoryBarrierWithGroupSync();
-
-    DownsampleTo8x8( quadID, workgroupID.xy, 3 );
-    if( pushBlock.mipCount <= 4 ) return;
-
-    GroupMemoryBarrierWithGroupSync();
-
-    DownsampleTo4x4( quadID, workgroupID.xy, 4 );
     if( pushBlock.mipCount <= 5 ) return;
 
     GroupMemoryBarrierWithGroupSync();
 
-    DownsampleTo2x2Coherent( quadID, workgroupID.xy, 5 );
+    DownsampleTo2x2Coherent( quadID, workgroupID.xy, 5, PONG );
     if( pushBlock.mipCount <= 6 ) return;
 
+    // NOTE: need to flush mip5 if we continue
+    DeviceMemoryBarrierWithGroupSync();
 
     // NOTE: here we will let the LAST wg carry on downsampling the remaning mips
     if( 0 == localLinearID )
@@ -336,10 +365,9 @@ void DownsamplerCsMain( u32 localLinearID : SV_GroupIndex, u32x3 workgroupID : S
 
     if( (  MAX_WORKGROUP_COUNT - 1 ) != ldsWorkgrIdx ) return;
 
-    float4 q6 = DownsampleMip6( quadID );
-    // MIP 6 dst 1x1
+    float4 q6 = DownsampleMip6( quadID, pushBlock.mip0Resolution >> 5 );
 
-    // From here on the stages mostly reapeate
+    // From here on the stages mostly reapeat
     if( pushBlock.mipCount <= 7 ) return;
      // no barrier needed, working on values only from the same thread
 
@@ -348,20 +376,11 @@ void DownsamplerCsMain( u32 localLinearID : SV_GroupIndex, u32x3 workgroupID : S
 
     GroupMemoryBarrierWithGroupSync();
 
-    DownsampleTo16x16( quadID, u32x2( 0, 0 ), 8 );
-    if( pushBlock.mipCount <= 9 ) return;
+    DownsampleNextThree( quadID, u32x2( 0, 0 ), 7, PING, pushBlock.mipCount );
 
-    GroupMemoryBarrierWithGroupSync();
-
-    DownsampleTo8x8( quadID, u32x2( 0, 0 ), 9 );
-    if( pushBlock.mipCount <= 10 ) return;
-
-    GroupMemoryBarrierWithGroupSync();
-
-    DownsampleTo4x4( quadID, u32x2( 0, 0 ), 10 );
     if( pushBlock.mipCount <= 11 ) return;
 
     GroupMemoryBarrierWithGroupSync();
 
-    DownsampleTo2x2( quadID, u32x2( 0, 0 ), 11 );
+    DownsampleTo2x2( quadID, u32x2( 0, 0 ), 11, PONG );
 }

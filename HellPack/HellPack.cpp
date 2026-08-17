@@ -22,13 +22,12 @@ namespace fs = std::filesystem;
 
 
 #include "ht_gfx_types.h"
-#include "hell_pack.h"
+#include <hell_pack.h>
+#include <ht_serialization.h>
 #include "ht_math.h"
 
 #include "hp_encoding.h"
 #include "hp_bcn_compression.h"
-#include "hp_serialization.h"
-#include "mikkt_space.h"
 
 #include "gltf_loader.h"
 
@@ -37,21 +36,7 @@ namespace fs = std::filesystem;
 
 #include <ht_macros.h>
 
-template<typename R>
-concept CONTIGUOUS_RANGE_T = std::ranges::contiguous_range<R>;
-
-template<typename R, typename T>
-concept CONTIGUOUS_TYPED_RANGE_T = CONTIGUOUS_RANGE_T<R> && std::same_as<std::ranges::range_value_t<R>, T>;
-
-template<TRIVIAL_T T, CONTIGUOUS_TYPED_RANGE_T<T> R, typename Set, typename KeyFn = std::identity>
-inline bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
-{
-	for( const T& elem : range )
-	{
-		if( !seenElems.insert( std::invoke( keyFn, elem ) ).second ) return true;
-	}
-	return false;
-}
+#include <range_utils.h>
 
 constexpr u32x3 CanonicallySortTriangleIndices( u32x3 t )
 {
@@ -111,43 +96,6 @@ inline std::vector<Idx> BuildVertexRemapFromPermutedIndices( const std::vector<I
 	return remap;
 }
 
-// TODO: dedup geometry
-//void DeduplicateTriangles( raw_mesh& rawMesh )
-//{
-//	auto canonicalize = [&]( u32x3 tri ) -> triangle_pos {
-//		triangle_pos p = { rawMesh.pos[ tri.x ], rawMesh.pos[ tri.y ], rawMesh.pos[ tri.z ] };
-//
-//		if( LexicalLessThan( p.v1, p.v0 ) && LexicalLessThan( p.v1, p.v2 ) )
-//		{
-//			return { p.v1, p.v2, p.v0 };
-//		}
-//		if( LexicalLessThan( p.v2, p.v0 ) && LexicalLessThan( p.v2, p.v1 ) )
-//		{
-//			return { p.v2, p.v0, p.v1 };
-//		}
-//		return p;
-//	};
-//
-//	ankerl::unordered_dense::set<triangle_pos, ankerl_hash_as_bytes<triangle_pos>> seen;
-//	seen.reserve( std::size( rawMesh.indices ) / 3 );
-//
-//	std::vector<u32> out;
-//	out.reserve( std::size( rawMesh.indices ) );
-//
-//	for( u64 i = 0; i + 2 < std::size( rawMesh.indices ); i += 3 )
-//	{
-//		u32x3 tri = { rawMesh.indices[ i ], rawMesh.indices[ i + 1 ], rawMesh.indices[ i + 2 ] };
-//		if( seen.insert( canonicalize( tri ) ).second )
-//		{
-//			out.push_back( tri.x );
-//			out.push_back( tri.y );
-//			out.push_back( tri.z );
-//		}
-//	}
-//
-//	rawMesh.indices = std::move( out );
-//}
-
 void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 {
 	HT_ASSERT( std::size( rawMesh.pos ) > 0 );
@@ -159,28 +107,35 @@ void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
 
 	if( std::size( rawMesh.tans ) == 0 )
 	{
-		rawMesh.tans = ComputeMikkTSpaceTangentsInplace( rawMesh );
+		// NOTE: this only works because we reindex later on
+		std::vector<float4> tangents( std::size( rawMesh.indices ) );
+		meshopt_generateTangents( &tangents[ 0 ].x, &rawMesh.indices[ 0 ], std::size( rawMesh.indices ),
+			&rawMesh.pos[ 0 ].x, std::size( rawMesh.pos ), sizeof( rawMesh.pos[ 0 ] ),
+			&rawMesh.normals[ 0 ].x, sizeof( rawMesh.normals[ 0 ] ),
+			&rawMesh.uvs[ 0 ].x, sizeof( rawMesh.uvs[ 0 ] ) );
+		rawMesh.tans = MOV( tangents );
+		// TODO: fix tan dedupe or smth
 	}
 
 	HT_ASSERT( ( std::size( rawMesh.pos ) == std::size( rawMesh.normals ) )
-		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.tans ) )
+		//&& ( std::size( rawMesh.pos ) == std::size( rawMesh.tans ) )
 		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.uvs ) )
 	);
+
+	aabb_t<float3> meshAabb = ComputeAabb( rawMesh.pos );
+
+	float3 ext = meshAabb.max - meshAabb.min;
+	HT_ASSERT( std::isfinite( ext.x ) && std::isfinite( ext.y ) && std::isfinite( ext.z ) );
+	HT_ASSERT( std::max( { ext.x, ext.y, ext.z } ) > 0.0f );
+
+	rawMesh.aabb = meshAabb;
 }
 
 struct meshlet_config
 {
 	float   coneWeight		= 0.8f;
-	u16		maxVertices		= 64;
-	u16		maxTriangles	= 128;
-};
-
-struct rt_cluster_config
-{
-	float   fillWeight		= 0.5f;
-	u16		maxVertices		= 64;
-	u16		minTriangles	= 16;
-	u16		maxTriangles	= 64;
+	u16		maxVertices		= RASTER_MAX_VTX_PER_MLT;
+	u16		maxTriangles	= RASTER_MAX_TRIS_PER_MLT;
 };
 
 template<CONTIGUOUS_RANGE_T R>
@@ -203,6 +158,9 @@ inline void MeshoptRemapAttributeBufferInplace( R& attrRange, u64 attrElemCount,
 }
 
 // TODO: no inplace remap !
+// NOTE: no cache optimization, buildMeshlets doesn't need it ( only buildMeshletsScan does )
+// NOTE: no fetch optimization meshlets emit their own contiguous vertex slices into the global VB,
+// which already gives optimal fetch locality
 void MeshoptReindexAndOptimizeMesh( raw_mesh& rawMesh )
 {
 	meshopt_Stream attrStreams[] = {
@@ -217,7 +175,7 @@ void MeshoptReindexAndOptimizeMesh( raw_mesh& rawMesh )
 	const u64 idxCount = std::size( indices );
 
 	std::vector<u32> remap( vtxCount );
-	u64 newVtxCount = meshopt_generateVertexRemapMulti(std::data( remap ), std::data( indices ),
+	u64 newVtxCount = meshopt_generateVertexRemapMulti( std::data( remap ), std::data( indices ),
 		idxCount, vtxCount, attrStreams, std::size( attrStreams ) );
 
 	HT_ASSERT( newVtxCount <= vtxCount );
@@ -228,53 +186,126 @@ void MeshoptReindexAndOptimizeMesh( raw_mesh& rawMesh )
 	MeshoptRemapAttributeBufferInplace( rawMesh.normals, vtxCount, remap );
 	MeshoptRemapAttributeBufferInplace( rawMesh.tans, vtxCount, remap );
 	MeshoptRemapAttributeBufferInplace( rawMesh.uvs, vtxCount, remap );
-
-	meshopt_optimizeVertexCache( std::data( indices ), std::data( indices ),
-		idxCount, newVtxCount );
-
-	std::vector<u32> fetchRemap( newVtxCount );
-	meshopt_optimizeVertexFetchRemap( std::data( fetchRemap ), std::data( indices ),
-		idxCount, newVtxCount );
-
-	meshopt_remapIndexBuffer( std::data( indices ), std::data( indices ), idxCount,
-		std::data( fetchRemap ) );
-
-	MeshoptRemapAttributeBufferInplace( rawMesh.pos, newVtxCount, fetchRemap );
-	MeshoptRemapAttributeBufferInplace( rawMesh.normals, newVtxCount, fetchRemap );
-	MeshoptRemapAttributeBufferInplace( rawMesh.tans, newVtxCount, fetchRemap );
-	MeshoptRemapAttributeBufferInplace( rawMesh.uvs, newVtxCount, fetchRemap );
-
-	// NOTE: sanity checks
-	std::span<const u32x3> triRange = { ( const u32x3* ) std::data( rawMesh.indices ),
-		std::size( rawMesh.indices ) / 3 };
-
-	//ankerl::unordered_dense::set<u32x3, ankerl_hash_as_bytes<u32x3>, u32x3_eq> triSet;
-	//HT_ASSERT( !RangeHasDuplicates<u32x3>( triRange, triSet, CanonicallySortTriangleIndices ) );
-
-	//ankerl::unordered_dense::set<triangle_pos, ankerl_hash_as_bytes<triangle_pos>> posTriSet;
-	//HT_ASSERT( !RangeHasDuplicates<u32x3>( triRange, posTriSet, [&]( u32x3 tri ) {
-	//	triangle_pos p = { rawMesh.pos[ tri.x ], rawMesh.pos[ tri.y ], rawMesh.pos[ tri.z ] };
-//
-	//	if( LexicalLessThan( p.v1, p.v0 ) ) std::swap( p.v0, p.v1 );
-	//	if( LexicalLessThan( p.v2, p.v1 ) ) std::swap( p.v1, p.v2 );
-	//	if( LexicalLessThan( p.v1, p.v0 ) ) std::swap( p.v0, p.v1 );
-//
-	//	return p;
-	//} ) );
 }
 
-struct __meshopt_meshlets
+struct __meshopt_lod
 {
-	std::vector<meshopt_Meshlet>	info;
-	std::vector<u32> 				vertices;
-	std::vector<u8>					triIndices;
+	std::vector<u32>	indices;
+	float				error;
 };
 
-__meshopt_meshlets MeshoptMakeClusters( 
+inline std::vector<u8> MeshoptGenerateVtxUVLocksFromSimplification(
+	u32						vtxCount,
+	std::span<const u32>	remap,
+	std::span<const float2> texCoords
+) {
+	HT_ASSERT( ( vtxCount <= std::size( remap ) ) && ( vtxCount <= std::size( texCoords ) ) );
+
+	std::vector<u8> locks( vtxCount, 0 );
+	for( u32 i = 0; i < vtxCount; ++i )
+	{
+		u32 r = remap[ i ];
+
+		if( r != i && ( ( texCoords[ r ].x != texCoords[ i ].x ) || ( texCoords[ r ].y != texCoords[ i ].y ) ) )
+		{
+			locks[ i ] |= meshopt_SimplifyVertex_Protect;
+		}
+	}
+
+	return locks;
+}
+
+std::vector<__meshopt_lod> MeshoptGenerateLODChain( const raw_mesh& rawMesh, u64 howManySimplifications )
+{
+	std::vector<__meshopt_lod> lodChain = {};
+	lodChain.emplace_back( rawMesh.indices, 0.0f ); // NOTE: src is lod0 and has 0 error
+
+	const u64 vtxCount = std::size( rawMesh.pos );
+
+	std::vector<u32> remap( vtxCount );
+	meshopt_generatePositionRemap( &remap[ 0 ], &rawMesh.pos[ 0 ].x, vtxCount, sizeof( rawMesh.pos[ 0 ] ) );
+
+	// NOTE: protect from UV seams
+	std::vector<u8> locks = MeshoptGenerateVtxUVLocksFromSimplification( ( u32 ) vtxCount, remap, rawMesh.uvs );
+
+	constexpr float normalsWeight = 0.9f;
+	constexpr float attrWeights[] = { normalsWeight, normalsWeight, normalsWeight };
+	constexpr u32	options = meshopt_SimplifyErrorAbsolute | meshopt_SimplifyPermissive | meshopt_SimplifyPrune;
+
+	float cumulativeErr = 0.0f;
+
+	for( u64 li = 0; li < howManySimplifications; ++li )
+	{
+		const u32* pSrcLodLevel = &lodChain.back().indices[ 0 ];
+		u64 srcIdxCount = std::size( lodChain.back().indices );
+
+		float simplificationTarget = ( 0 == li ) ? ( 1.0f / 1.4f ) : 0.5f;
+		u64 targetIdxCount = u64( simplificationTarget * ( float ) srcIdxCount );
+
+		std::vector<u32> lod( srcIdxCount );
+		float lodError = 0.0f;
+		lod.resize( meshopt_simplifyWithAttributes( &lod[ 0 ], pSrcLodLevel, srcIdxCount,
+			&rawMesh.pos[ 0 ].x, vtxCount, sizeof( rawMesh.pos[ 0 ] ),
+			&rawMesh.normals[ 0 ].x, sizeof( rawMesh.normals[ 0 ] ),
+			attrWeights, std::size( attrWeights ), /* vertex_lock= */ &locks[ 0 ],
+			targetIdxCount, FLT_MAX, options, &lodError ) );
+
+		if( ( std::size( lod ) >= srcIdxCount ) || ( 0 == std::size( lod ) ) ) break;
+
+		cumulativeErr += lodError;
+
+		lodChain.emplace_back( MOV( lod ), cumulativeErr );
+	}
+
+	return lodChain;
+}
+
+template<TRIVIAL_T T>
+using mlt_attr_vector = fixed_vector<T, RASTER_MAX_VTX_PER_MLT>;
+
+using mlt_idx_vector = fixed_vector<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
+
+template<TRIVIAL_T T>
+inline mlt_attr_vector<T> GetMeshletLocalAttrStream(
+	std::span<const T>		meshAttrStream,
+	std::span<const u32>	mltVtx,
+	u64						mltVtxOffset,
+	u64						mltVtxCount
+){
+	mlt_attr_vector<T> localStream;
+	localStream.resize( mltVtxCount );
+
+	for( u64 vi = 0; vi < std::size( localStream ); ++vi )
+	{
+		localStream[ vi ] = meshAttrStream[ mltVtx[ vi + mltVtxOffset ] ];
+	}
+
+	return localStream;
+}
+
+struct __hp_meshlet
+{
+	mlt_attr_vector<float3>	pos		= {};
+	mlt_attr_vector<float3>	norm	= {};
+	mlt_attr_vector<float4>	tan 	= {};
+	mlt_attr_vector<float2>	uvs 	= {};
+	mlt_idx_vector			indices	= {};
+	mlt_idx_vector			idxLod	= {};
+
+	float					lodError;
+	u16 					vtxCount;
+};
+
+// TODO: if we get meshlet weirdness we'd prolly need to protect some attrs during simplification
+std::vector<__hp_meshlet> MeshoptMakeHpMeshletsWithLod(
 	std::span<const float3> pos,
+	std::span<const float3> norm,
+	std::span<const float4> tan,
+	std::span<const float2> uvs,
 	std::span<const u32>	indices,
+	float					parentMeshLodErr,
 	meshlet_config			cfg
-) { 
+) {
 	const u64 indexCount = std::size( indices );
 	
 	const u64 maxMeshletCount = meshopt_buildMeshletsBound( indexCount, cfg.maxVertices, cfg.maxTriangles );
@@ -286,165 +317,219 @@ __meshopt_meshlets MeshoptMakeClusters(
 		std::size( indices ), &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ),
 		cfg.maxVertices, cfg.maxTriangles, cfg.coneWeight );
 
+	HT_ASSERT( meshletCount < MAX_MESHLETS_PER_MESH );
+
 	const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
 
 	meshlets.resize( meshletCount );
 	mltVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
 	mltTris.resize( ( u64 ) last.triangle_offset + ( u64 ) last.triangle_count * 3 );
 
-	for( const meshopt_Meshlet& m : meshlets )
+
+	std::vector<__hp_meshlet> outMlts = {};
+	outMlts.reserve( std::size( meshlets ) );
+
+	fixed_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempIndices32 = {}; // NOTE: bc we can't have simplify on u8
+	fixed_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempLod = {};
+
+	constexpr float normalsWeight = 0.9f;
+	constexpr float attrWeights[] = { normalsWeight, normalsWeight, normalsWeight };
+
+	for( u64 mi = 0; mi < std::size( meshlets ); ++mi )
 	{
+		const meshopt_Meshlet& m = meshlets[ mi ];
+		HT_ASSERT( ( m.vertex_count <= u32( RASTER_MAX_VTX_PER_MLT ) ) && ( m.triangle_count <= u32( RASTER_MAX_TRIS_PER_MLT ) ) );
+
 		meshopt_optimizeMeshlet( &mltVtx[ m.vertex_offset ], &mltTris[ m.triangle_offset ], m.triangle_count, m.vertex_count );
-	}
 
-	return {  .info = MOV( meshlets ), .vertices = MOV( mltVtx ), .triIndices = MOV( mltTris ) };
-}
+		mlt_attr_vector<float3>	localPos		= GetMeshletLocalAttrStream( pos, mltVtx, m.vertex_offset, m.vertex_count );
+		mlt_attr_vector<float3>	localNorm		= GetMeshletLocalAttrStream( norm, mltVtx, m.vertex_offset, m.vertex_count );
+		mlt_attr_vector<float2>	localUVs		= GetMeshletLocalAttrStream( uvs, mltVtx, m.vertex_offset, m.vertex_count );
+		mlt_idx_vector			localIndices	= std::span{ &mltTris[ m.triangle_offset ], m.triangle_count * 3 };
+		u64						localIdxCount	= std::size( localIndices );
 
-__meshopt_meshlets MeshoptMakeClusters( 
-	std::span<const float3> pos, 
-	std::span<const u32>	indices,
-	rt_cluster_config		cfg
-) { 
-	const u64 indexCount = std::size( indices );
+		mltTempLod.resize( RASTER_MAX_TRIS_PER_MLT * 3 );
+		mltTempIndices32 = { std::from_range, localIndices | std::views::transform( HtCastTo<u32> ) };
+		float lodError = 0.0f;
 
-	// NOTE( meshoptimizer ): use minTriangles to compute worst case bound
-	const u64 maxMeshletCount = meshopt_buildMeshletsBound( indexCount, cfg.maxVertices, cfg.minTriangles );
-	std::vector<meshopt_Meshlet> meshlets( maxMeshletCount );
-	std::vector<u32> mletVtx( indexCount );
-	std::vector<u8> mletTris( indexCount );
+		constexpr u32 simplifierOptions = meshopt_SimplifyLockBorder | meshopt_SimplifyErrorAbsolute | meshopt_SimplifyPermissive;
+		// NOTE: for mesh-shaders it might be worth it to reorder LOD1's vertices/ triangles to come first in the buffer
+		mltTempLod.resize( meshopt_simplifyWithAttributes( &mltTempLod[ 0 ], &mltTempIndices32[ 0 ], localIdxCount,
+			&localPos[ 0 ].x, std::size( localPos ), sizeof( localPos[ 0 ] ),
+			&localNorm[ 0 ].x, sizeof( localNorm[ 0 ] ), attrWeights,
+			std::size( attrWeights ), nullptr,
+			u64( ( float ) localIdxCount * 0.5f ), FLT_MAX, simplifierOptions, &lodError ) );
 
-	u64 meshletCount = meshopt_buildMeshletsSpatial( &meshlets[ 0 ], &mletVtx[ 0 ], &mletTris[ 0 ], &indices[ 0 ],
-		std::size( indices ), &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ),
-		cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles, cfg.fillWeight );
-
-	const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
-
-	meshlets.resize( meshletCount );
-	mletVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
-	mletTris.resize( ( u64 ) last.triangle_offset + ( ( ( u64 ) last.triangle_count * 3 + 3 ) & ~3 ) );
-
-	for( const meshopt_Meshlet& m : meshlets )
-	{
-		meshopt_optimizeMeshlet( &mletVtx[ m.vertex_offset ], &mletTris[ m.triangle_offset ], m.triangle_count,
-			m.vertex_count );
-	}
-
-	return {
-		.info		= MOV( meshlets ),
-		.vertices	= MOV( mletVtx ),
-		.triIndices	= MOV( mletTris )
-	};
-}
-
-template<TRIVIAL_T T>
-inline std::vector<T> GetMeshletLocalAttrStream(
-	std::span<const T>		meshAttrStream,
-	std::span<const u32>	mltVtx,
-	u64						mltVtxOffset,
-	u64						mltVtxCount
-){
-	std::vector<T> localStream( mltVtxCount );
-	for( u64 vi = 0; vi < std::size( localStream ); ++vi )
-	{
-		localStream[ vi ] = meshAttrStream[ mltVtx[ vi + mltVtxOffset ] ];
-	}
-
-	return localStream;
-}
-
-mesh_asset HpkMakeMeshAssetFromMeshlets( const raw_mesh& rawMesh )
-{
-	meshlet_config mltCfg = {};
-	__meshopt_meshlets meshoptMeshlets = MeshoptMakeClusters( rawMesh.pos, rawMesh.indices, mltCfg );
-
-	std::span<const float3> pos		= rawMesh.pos;
-	std::span<const float3> norm	= rawMesh.normals;
-	std::span<const float4> tan		= rawMesh.tans;
-	std::span<const float2> uvs		= rawMesh.uvs;
-
-	std::vector<packed_vtx>		vertices;
-	std::vector<u8>				triIndices;
-	std::vector<gpu_meshlet>	meshlets;
-
-	vertices.reserve( std::size( meshoptMeshlets.vertices ) );
-	triIndices.reserve( std::size( meshoptMeshlets.triIndices ) );
-	meshlets.reserve( std::size( meshoptMeshlets.info ) );
-
-	for( const meshopt_Meshlet& m : meshoptMeshlets.info )
-	{
-		HT_ASSERT( ( m.vertex_count <= u32( mltCfg.maxVertices ) ) && ( m.triangle_count <= u32( mltCfg.maxTriangles ) ) );
-
-		std::vector<float3> mltPosStream = GetMeshletLocalAttrStream( pos, meshoptMeshlets.vertices, m.vertex_offset,
-			m.vertex_count );
-
-		std::vector<float3> mltNormStream = GetMeshletLocalAttrStream( norm, meshoptMeshlets.vertices, m.vertex_offset,
-			m.vertex_count );
-		std::vector<float4> mltTanStream = GetMeshletLocalAttrStream( tan, meshoptMeshlets.vertices, m.vertex_offset,
-			m.vertex_count );
-		std::vector<float2> mltUvStream = GetMeshletLocalAttrStream( uvs, meshoptMeshlets.vertices, m.vertex_offset,
-			m.vertex_count );
-
-		const aabb_t<float3> aabb = ComputeAabb( mltPosStream );
-
-		std::vector<packed_vtx> packedVtx( std::size( mltPosStream ) );
-		for( u64 vi = 0; vi < m.vertex_count; ++vi )
+		mlt_idx_vector lodMltIndices = {};
+		if( std::size( mltTempLod ) < localIdxCount )
 		{
-			float3 p	= mltPosStream[ vi ];
-			float3 n	= mltNormStream[ vi ];
-			float4 t	= mltTanStream[ vi ];
-			float2 uv	= mltUvStream[ vi ];
-			float2 octNormal = OctaNormalEncode( n );
-			float tanAngle = EncodeTanToAngle( n, { t.x,t.y,t.z } );
-			u8 tanSign = ( -1.0f == t.w ) ? 1 : 0;
-
-			packedVtx[ vi ] = {
-				.px 		= p.x,
-				.py 		= p.y,
-				.pz 		= p.z,
-				.tu 		= uv.x,
-				.tv 		= uv.y,
-				.octNX		= octNormal.x,
-				.octNY		= octNormal.y,
-				.tanAngle	= tanAngle,
-				.tanSign	= tanSign
-			};
+			lodMltIndices = { std::from_range, mltTempLod | std::views::transform( HtCastTo<u8> ) };
 		}
 
-		gpu_meshlet outMeshlet = {
-			.minAabb	= aabb.min,
-			.maxAabb	= aabb.max,
-			.vtxOffset	= ( u32 ) std::size( vertices ),
-			.triOffset	= ( u32 ) std::size( triIndices ),
-			.vtxCount	= ( u16 ) m.vertex_count,
-			.triCount	= ( u16 ) m.triangle_count
-		};
-		meshlets.push_back( outMeshlet );
-
-		std::span<const u8> mltTriIndices = { std::data( meshoptMeshlets.triIndices ) + m.triangle_offset,
-			m.triangle_count * 3 };
-
-		vertices.append_range( packedVtx );
-		triIndices.append_range( mltTriIndices );
+		outMlts.push_back( {
+			.pos		= MOV( localPos ),
+			.norm		= MOV( localNorm ),
+			.tan		= GetMeshletLocalAttrStream( tan, mltVtx, m.vertex_offset, m.vertex_count ),
+			.uvs		= MOV( localUVs ),
+			.indices	= MOV( localIndices ),
+			.idxLod		= MOV( lodMltIndices ),
+			.lodError	= ( std::size( mltTempLod ) < localIdxCount ) ? parentMeshLodErr + lodError : FLT_MAX,
+			.vtxCount	= ( u16 ) m.vertex_count
+		} );
 	}
 
-	auto aabbView = meshlets | std::views::transform( [] ( const gpu_meshlet& m )
+	return outMlts;
+}
+
+std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const __hp_meshlet& mlt )
+{
+	std::vector<packed_vtx_attr> packedVtxAttrs( mlt.vtxCount );
+	for( u64 vai = 0; vai < mlt.vtxCount; ++vai )
 	{
-		return aabb_t<float3>{ .min = m.minAabb, .max = m.maxAabb };
-	} );
+		float3 n	= mlt.norm[ vai ];
+		float4 t	= mlt.tan[ vai ];
+		float2 uv	= mlt.uvs[ vai ];
 
-	aabb_t<float3> aabb = MergeAabbs( aabbView );
+		packedVtxAttrs[ vai ] = {
+			.encodedTBN = EncodeTanFrame( n, { t.x, t.y, t.z }, t.w ),
+			.encodedUVs = { meshopt_quantizeHalf( uv.x ), meshopt_quantizeHalf( uv.y ) }
+		};
+	}
 
-#ifdef _DEBUG
-	ankerl::unordered_dense::set<gpu_meshlet, ankerl_hash_as_bytes<gpu_meshlet>, gpu_meshlet_eq> mltSet;
-	HT_ASSERT( !RangeHasDuplicates<gpu_meshlet>( meshlets, mltSet ) );
-#endif
+	return packedVtxAttrs;
+}
+
+struct mlt_quantized_grid
+{
+	static constexpr u32	gridResolutionInBits	= 21;
+	static constexpr u32	gridStep				= 1u << gridResolutionInBits;
+	static constexpr float	meshGridQuantMaxErr		= 0.5f / gridStep; // NOTE: 1/2 bc we round !
+
+	float3	quantAabbMin;
+	float3	quantAabbMax;
+	u32x3	bitDepthPerAxis;
+	i32x3	anchor;
+};
+
+mlt_quantized_grid HpkMakeMltQuantizedGrid( aabb_t<float3> meshletAabb )
+{
+	constexpr u32 gridStep = mlt_quantized_grid::gridStep;
+
+	i32 minMltX = ( i32 ) std::floor( meshletAabb.min.x * gridStep );
+	i32 minMltY = ( i32 ) std::floor( meshletAabb.min.y * gridStep );
+	i32 minMltZ = ( i32 ) std::floor( meshletAabb.min.z * gridStep );
+
+	i32 maxMltX = ( i32 ) std::ceil( meshletAabb.max.x * gridStep );
+	i32 maxMltY = ( i32 ) std::ceil( meshletAabb.max.y * gridStep );
+	i32 maxMltZ = ( i32 ) std::ceil( meshletAabb.max.z * gridStep );
+
+	u32x3 mltBitDepthPerAxis = {
+		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltX - minMltX ) ),
+		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltY - minMltY ) ),
+		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( maxMltZ - minMltZ ) )
+	};
+	HT_ASSERT( u32x3{} != mltBitDepthPerAxis );
 
 	return {
-		.vertices	= MOV( vertices ),
-		.triIndices	= MOV( triIndices ),
-		.meshlets	= MOV( meshlets ),
-		.aabb		= { aabb.min, aabb.max }
+		.quantAabbMin		= { float( minMltX ) / gridStep, float( minMltY ) / gridStep, float( minMltZ ) / gridStep },
+		.quantAabbMax		= { float( maxMltX ) / gridStep, float( maxMltY ) / gridStep, float( maxMltZ ) / gridStep },
+		.bitDepthPerAxis	= mltBitDepthPerAxis,
+		.anchor				= { minMltX, minMltY, minMltZ }
 	};
+}
+
+u32x3 HpkEncodeMltVertexPosition( const mlt_quantized_grid& grid, float3 p )
+{
+	return {
+		QuantizeVertexPosCompWithAnchor( p.x, grid.anchor.x, grid.gridResolutionInBits ),
+		QuantizeVertexPosCompWithAnchor( p.y, grid.anchor.y, grid.gridResolutionInBits ),
+		QuantizeVertexPosCompWithAnchor( p.z, grid.anchor.z, grid.gridResolutionInBits )
+	};
+}
+
+bool HpkDecodeVerifyQuantized( float3 pos, u32x3 encPos, const mlt_quantized_grid& grid )
+{
+	float decX = DecodeVertexPosCompWithAnchor( encPos.x, grid.gridStep, grid.anchor.x, grid.bitDepthPerAxis.x );
+	float decY = DecodeVertexPosCompWithAnchor( encPos.y, grid.gridStep, grid.anchor.y, grid.bitDepthPerAxis.y );
+	float decZ = DecodeVertexPosCompWithAnchor( encPos.z, grid.gridStep, grid.anchor.z, grid.bitDepthPerAxis.z );
+
+	float3 quantErr = { std::fabsf( pos.x - decX ), std::fabsf( pos.y - decY ), std::fabsf( pos.z - decZ ) };
+	float3 maxQuantErr = { grid.meshGridQuantMaxErr, grid.meshGridQuantMaxErr, grid.meshGridQuantMaxErr };
+
+	return quantErr <= maxQuantErr;
+}
+
+constexpr bool validatePosEncoding = true;
+
+constexpr u64 LODS_PER_MESHLET = 2;
+
+// NOTE: vtx quant from https://daniilvinn.github.io/2024/05/04/omniforce-vertex-quantization.html
+void HpkQuantizeAndAppendLODLevel(
+	const std::vector<__hp_meshlet>&	meshoptMeshlets,
+	bit_stream&							vtxPosBitstream,
+	std::vector<packed_vtx_attr>&		verticesAttrs,
+	std::vector<u8>&					indices,
+	std::vector<gpu_meshlet>&			meshlets
+) {
+	const u64 mltCount = std::size( meshoptMeshlets );
+	// NOTE: reserve max cap
+	verticesAttrs.reserve( std::size( verticesAttrs ) + mltCount * RASTER_MAX_VTX_PER_MLT );
+	indices.reserve( std::size( indices ) + mltCount * RASTER_MLT_MAX_INDEX * LODS_PER_MESHLET );
+	meshlets.reserve( std::size( meshlets ) + mltCount );
+
+	for( u64 mi = 0; mi < mltCount; ++mi )
+	{
+		const __hp_meshlet& m = meshoptMeshlets[ mi ];
+		const aabb_t<float3> meshletAabb = ComputeAabb( m.pos );
+
+		mlt_quantized_grid mltEncodingGrid = HpkMakeMltQuantizedGrid( meshletAabb );
+
+		u32 packed8888_XYZ_Grid_BitDepth = mltEncodingGrid.bitDepthPerAxis.x
+			| ( mltEncodingGrid.bitDepthPerAxis.y << 8 )
+			| ( mltEncodingGrid.bitDepthPerAxis.z << 16 )
+			| ( mltEncodingGrid.gridResolutionInBits << 24 );
+
+		u32 packed8_12_12_VtxCount_Lod_01_IdxCount = u32( m.vtxCount )
+			| ( u32( std::size( m.indices ) ) << 8 )
+			| ( u32( std::size( m.idxLod ) ) << 20 );
+
+		HT_ASSERT( (  m.vtxCount < 256 ) &&
+			( std::size( m.idxLod ) < RASTER_MLT_MAX_INDEX ) &&
+			( std::size( m.indices ) < RASTER_MLT_MAX_INDEX ) );
+
+		meshlets.push_back( {
+			.aabbMin								= mltEncodingGrid.quantAabbMin,
+			.aabbMax								= mltEncodingGrid.quantAabbMax,
+			.vtxPosOffsetBits						= ( u32 ) vtxPosBitstream.cursorInBits,
+			.vtxAttrsOffset							= ( u32 ) std::size( verticesAttrs ),
+			.idxOffset								= ( u32 ) std::size( indices ),
+			.packed8888_XYZ_Grid_BitDepth			= packed8888_XYZ_Grid_BitDepth,
+			.packed8_12_12_VtxCount_Lod_01_IdxCount	= packed8_12_12_VtxCount_Lod_01_IdxCount,
+			.lodError								= m.lodError
+		} );
+
+		for( float3 p : m.pos )
+		{
+			u32x3 enc = HpkEncodeMltVertexPosition( mltEncodingGrid, p );
+
+			vtxPosBitstream.AppendBits( enc.x, mltEncodingGrid.bitDepthPerAxis.x );
+			vtxPosBitstream.AppendBits( enc.y, mltEncodingGrid.bitDepthPerAxis.y );
+			vtxPosBitstream.AppendBits( enc.z, mltEncodingGrid.bitDepthPerAxis.z );
+
+			if constexpr( validatePosEncoding )
+			{
+				HT_ASSERT( HpkDecodeVerifyQuantized( p, enc, mltEncodingGrid ) );
+			}
+		}
+
+		verticesAttrs.append_range( HpkMeshletPackVtxAttributes( m ) );
+		indices.append_range( m.indices );
+		if( std::size( m.idxLod ) )
+		{
+			indices.append_range( m.idxLod );
+		}
+
+	}
 }
 
 using position_t = float3;
@@ -610,7 +695,7 @@ i32 main( i32 argc, char** argv  )
 	//	{
 	//		u32 currentJobIdx = taskCounter.fetch_add( 1 );
 	//		if( currentJobIdx >= std::size( texCmpJobs ) ) return;
-//
+	//
 	//		texCmpJobs[ currentJobIdx ].Execute();
 	//	}
 	//};
@@ -619,9 +704,7 @@ i32 main( i32 argc, char** argv  )
 
 	//for( u64 ti = 0; ti < std::thread::hardware_concurrency(); ++ti ) tasks.emplace_back( WorkerLoop );
 
-	std::vector<world_node> worldNodes;
-
-	ankerl::unordered_dense::map<vfs_path, mesh_asset> meshAssetMap;
+	ankerl::unordered_dense::map<vfs_path, hpk_mesh_asset> meshAssetMap;
 
 	std::cout << "Processing meshes\n";
 	for( raw_mesh& mesh : rawMeshes )
@@ -631,9 +714,56 @@ i32 main( i32 argc, char** argv  )
 
 		ValidateAndNormalizeRawMesh( mesh );
 		MeshoptReindexAndOptimizeMesh( mesh );
-		mesh_asset meshAsset = HpkMakeMeshAssetFromMeshlets( mesh );
+
+		std::vector<__meshopt_lod> meshLods = MeshoptGenerateLODChain( mesh, MAX_LOD_LEVELS_COUNT - 1 );
+
+		float lodErr[ MAX_LOD_LEVELS_COUNT ] = { FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX };
+		u32 lodMltNum[ MAX_LOD_LEVELS_COUNT ] = {};
+
+		bit_stream							vtxPosBitstream;
+		std::vector<packed_vtx_attr>		verticesAttrs;
+		std::vector<index_t>				indices;
+		std::vector<gpu_meshlet>			meshlets;
+
+		for( u64 li = 0; li < std::size( meshLods ); li++ )
+		{
+			const __meshopt_lod& lod = meshLods[ li ];
+			// NOTE: the lod errors are "global" per object
+			std::vector<__hp_meshlet> lodMeshlets = MeshoptMakeHpMeshletsWithLod( mesh.pos, mesh.normals, mesh.tans,
+				mesh.uvs, lod.indices, lod.error, {} );
+
+			HT_ASSERT( std::size( lodMeshlets ) < MAX_MESHLETS_PER_MESH );
+			lodMltNum[ li ] = u32( std::size( lodMeshlets ) );
+			lodErr[ li ] = lod.error;
+
+			HpkQuantizeAndAppendLODLevel( lodMeshlets, vtxPosBitstream, verticesAttrs, indices, meshlets );
+		}
+
+		HT_ASSERT( ( 0 != std::ranges::size( vtxPosBitstream ) ) &&
+			( 0 != std::ranges::size( verticesAttrs ) ) &&
+			( 0 != std::ranges::size( indices ) ) &&
+			( 0 != std::ranges::size( meshlets ) ) );
+
+		HT_ASSERT( 4 == MAX_LOD_LEVELS_COUNT );
+		hpk_mesh_asset meshAsset = {
+			.vtxPosBitstream			= MOV( vtxPosBitstream ),
+			.vertexAttrs				= MOV( verticesAttrs ),
+			.indices					= MOV( indices ),
+			.meshlets					= MOV( meshlets ),
+			.aabb						= { mesh.aabb.min, mesh.aabb.max },
+			.lodErrors					= { lodErr[ 0 ], lodErr[ 1 ], lodErr[ 2 ], lodErr[ 3 ] },
+			.packed16x4_lodMltCounts	= {
+				lodMltNum[ 0 ] | ( lodMltNum[ 1 ] << 16 ),
+				lodMltNum[ 2 ] | ( lodMltNum[ 3 ] << 16 )
+			}
+		};
+
 		meshAssetMap.emplace( assetPath, std::move( meshAsset ) );
 	}
+
+
+	std::vector<world_node> worldNodes;
+	worldNodes.reserve( std::size( rawNodes ) );
 
 	for( const raw_node& n : rawNodes )
 	{
@@ -650,7 +780,7 @@ i32 main( i32 argc, char** argv  )
 		} );
 	}
 
-	std::cout << "Processing meshes done ! Dumping to file.\n";
+	std::cout << "Processing meshes & nodes done ! Dumping to file.\n";
 
 	{
 		zip_writer zipArchive = { hpkFilePath.c_str() };
@@ -658,21 +788,19 @@ i32 main( i32 argc, char** argv  )
 		HT_ASSERT( fs::exists( hpkFilePath ) );
 
 		{
-			hellpack_serializble_buffer buffs[] = { worldNodes };//, materialTable };
-			std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::LEVEL );
+			hpk_level_asset level = { .nodes = MOV( worldNodes ) };//, .materials = MOV( materialTable ) };
+			std::vector<u8> bytes = HpkSerializeAsset( level );
 			zipArchive.WriteBytesToFile( { "world.lvl" }, bytes );
 		}
 		{
 			for( auto& [ filePath, meshAsset ] : meshAssetMap )
 			{
-				hellpack_serializble_buffer buffs[] = { meshAsset.vertices, meshAsset.triIndices,
-					meshAsset.meshlets, meshAsset.aabb };
-				std::vector<u8> bytes = HpkMakeBinaryBlob( buffs, hellpack_entry_t::MESH );
+				std::vector<u8> bytes = HpkSerializeAsset( meshAsset );
 				zipArchive.WriteBytesToFile( filePath, bytes );
 			}
 		}
 		//WaitThreadPoolDone( tasks );
-//
+		//
 		//std::cout << "Processing materials done ! Dumping to file.\n";
 		//for( const compression_job& cmp : texCmpJobs )
 		//{

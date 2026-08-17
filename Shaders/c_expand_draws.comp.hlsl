@@ -40,7 +40,7 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
 	GroupMemoryBarrierWithGroupSync();
 
 	u32 workItems = BufferLoad<u32>( pushBlock.workCounterIdxConst, 0 );
-	visible_instance thisVisInstance = { 0, 0, 0, 0, 0 };
+	visible_instance thisVisInstance = ( visible_instance ) 0;
     if( globalDispatchID.x < workItems )
 	{
 		thisVisInstance = BufferLoad<visible_instance>( pushBlock.srcBufferIdx, globalDispatchID.x );
@@ -81,28 +81,23 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
     ldsWgThreadMltOffset[ groupFlatIdx ] = ldsWavePrefix[ groupFlatIdx / WaveGetLaneCount() ] + waveMltOffset;
     GroupMemoryBarrierWithGroupSync();
 
-	device_ptr<gpu_meshlet> pMlts = { gGlobData.mltAddr };
 	// NOTE: coop write
 	for( u32 perWgMltId = groupFlatIdx; perWgMltId < ldsWgMltTotalCount; perWgMltId += WG_SIZE )
 	{
-	    u32 srcThreadId  = FindSrcLane( ldsWgThreadMltOffset, perWgMltId );
+	    u32 srcThreadId = FindSrcLane( ldsWgThreadMltOffset, perWgMltId );
 	    u32 localMlt = perWgMltId - ldsWgThreadMltOffset[ srcThreadId ];
 
         visible_instance visInst = ldsWgVisInst[ srcThreadId ];
         u32 globalMltId = visInst.meshletOffset + localMlt;
-        gpu_meshlet mlt = pMlts[ globalMltId ];
 
-        visible_meshlet visMlt = {
-            mlt.minAabb,
-            mlt.maxAabb,
-            visInst.instId,
-            globalMltId,
-            mlt.triCount,
-            mlt.vtxOffset + visInst.vtxOffset,
-            mlt.triOffset + visInst.triOffset
-        };
+        meshlet_cull_wok_item mltWorkItem = ( meshlet_cull_wok_item ) 0;
+        mltWorkItem.instId              = visInst.instId;
+        mltWorkItem.globMltId           = globalMltId;
+        mltWorkItem.vtxPosOffsetInBytes = visInst.vtxPosOffsetInBytes;
+        mltWorkItem.vtxAttrsOffset      = visInst.vtxAttrsOffset;
+        mltWorkItem.idxOffset           = visInst.idxOffset;
 
         u32 writeSlotIdx = ldsWgOffset + perWgMltId;
-        BufferStore<visible_meshlet>( pushBlock.expandedItemsBuffIdx, visMlt, writeSlotIdx );
+        BufferStore<meshlet_cull_wok_item>( pushBlock.expandedItemsBuffIdx, mltWorkItem, writeSlotIdx );
 	}
 }

@@ -1,5 +1,7 @@
-#ifndef __CULLING_H__
-#define __CULLING_H__
+#pragma once
+
+#ifndef __HT_CULLING_H__
+#define __HT_CULLING_H__
 
 #include "ht_hlsl_math.h"
 
@@ -13,13 +15,13 @@ struct frustum_culling_result
 };
 
 // NOTE: Gribb-Hartmann method
-frustum_culling_result FrustumCulling( float3 aabbMin, float3 aabbMax, float4x4 mvp )
+frustum_culling_result FrustumCulling( in float3 aabbMin, in float3 aabbMax, in float4x4 mvp )
 {
-	float4x4 transpMvp = transpose( mvp );
-	float4 xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
-	float4 yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
-	float4 xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
-	float4 yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
+	float4x4	transpMvp = transpose( mvp );
+	float4 		xPlanePos = transpMvp[ 3 ] + transpMvp[ 0 ];
+	float4 		yPlanePos = transpMvp[ 3 ] + transpMvp[ 1 ];
+	float4 		xPlaneNeg = transpMvp[ 3 ] - transpMvp[ 0 ];
+	float4 		yPlaneNeg = transpMvp[ 3 ] - transpMvp[ 1 ];
 
 	static const float3 ZERO = float3( 0.0f, 0.0f, 0.0f );
 
@@ -47,10 +49,10 @@ bool ProjectBoundsToScreenSpace(
 	out float4			outUVBox,
 	out float			outMaxZ
 ) {
-	float3 extent = boundsMax - boundsMin;
-	float4 projExtentX = mul( float4( extent.x, 0.0f, 0.0f, 0.0f ), mvp );
-	float4 projExtentY = mul( float4( 0.0f, extent.y, 0.0f, 0.0f ), mvp );
-	float4 projExtentZ = mul( float4( 0.0f, 0.0f, extent.z, 0.0f ), mvp );
+	float3 extent		= boundsMax - boundsMin;
+	float4 projExtentX 	= mul( float4( extent.x, 0.0f, 0.0f, 0.0f ), mvp );
+	float4 projExtentY 	= mul( float4( 0.0f, extent.y, 0.0f, 0.0f ), mvp );
+	float4 projExtentZ 	= mul( float4( 0.0f, 0.0f, extent.z, 0.0f ), mvp );
 
 	float4 clip0 = mul( float4( boundsMin, 1.0f ), mvp );
 	float4 clip1 = clip0 + projExtentZ;
@@ -116,8 +118,8 @@ visibility_res TestVisibility(
 	if( inFrustum && !intersectsZNear )
 	{
 		// NOTE: 1st pass uses prev instTransform, prevView and prev HZB
-		float4x4 view = isLatePass ? cam.mainView : cam.prevView;
-		float4x4 mvp = mul( toWorld, mul( view, cam.proj ) );
+		float4x4 view	= isLatePass ? cam.mainView : cam.prevView;
+		float4x4 mvp	= mul( toWorld, mul( view, cam.proj ) );
 
 		float4 uvBounds = 0.0f; float maxZ = 0.0f;
 		if( ProjectBoundsToScreenSpace( aabbMin, aabbMax, mvp, cam.zNear, uvBounds, maxZ ) )
@@ -147,4 +149,35 @@ visibility_res TestVisibility(
 	return res;
 }
 
-#endif // !__CULLING_H__
+float SqDistCamToAabbInObjSpace(
+	in float4x3 toWorld,
+	in float3	aabbMin,
+	in float3	aabbMax,
+	in float3	instScale,
+	in float3	camPos
+) {
+	float3x3	rotScale	= ( float3x3 ) toWorld;
+	float3		camPosRel	= camPos - toWorld[ 3 ];
+	float3      invScale	= rcp( instScale );
+
+	float3  aabbCenter = ( ( aabbMin + aabbMax ) * 0.5f );
+	float3  aabbExtent = ( ( aabbMax - aabbMin ) * 0.5f );
+	// NOTE: in HLSL mul( M, v ) == mul( v, transpose( M ) )
+	// NOTE: R is ortho : inv( R ) == transp( R ); transp( S * R ) = tranps( R ) * S
+	float3 camInObjSpace = mul( rotScale, camPosRel ) * invScale * invScale;
+	float3 dist			 = max( abs( camInObjSpace - aabbCenter ) - aabbExtent, 0.0f );
+	return dot( dist, dist );
+}
+
+// NOTE: .x == offset, .y = count
+u32x2 SelectOffsetAndCountFromLod4( in float3 errSqLod3, float threshold, in u32x4 lods4  )
+{
+	// NOTE: bc LOD0.err is always 0.0f and false == 0.0f < 0.0f
+	u32x4   selMask     = u32x4( 1, ( u32x3 ) ( errSqLod3 < threshold ) );
+	u32x4   exclMask    = u32x4( selMask.yzw, 0 ); // NOTE: drop the last one basically
+	u32x4   highestPass = selMask - exclMask;
+	u32x2	offsetCount = { dot( exclMask, lods4 ), dot( highestPass, lods4 ) };
+	return offsetCount;
+}
+
+#endif // !__HT_CULLING_H__

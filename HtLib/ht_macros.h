@@ -30,4 +30,32 @@
 
 #define BYTE_COUNT( buffer ) std::size( buffer ) * sizeof( buffer[ 0 ] )
 
+// defer — block-scoped, immovable, zero-overhead. Runs at end of enclosing scope.
+// Usage: defer { Foo(); };
+template<typename F>
+struct __ht_defer_guard
+{
+    F f;
+
+    explicit __ht_defer_guard( F&& fn ) : f{ MOV( fn ) } {}
+            ~__ht_defer_guard() noexcept { f(); }
+
+            __ht_defer_guard( const __ht_defer_guard& )            = delete;
+            __ht_defer_guard( __ht_defer_guard&& )                 = delete;
+            __ht_defer_guard& operator=( const __ht_defer_guard& ) = delete;
+            __ht_defer_guard& operator=( __ht_defer_guard&& )      = delete;
+};
+
+struct __ht_defer_tag {};
+
+template<typename F>
+__ht_defer_guard<F> operator->*( __ht_defer_tag, F&& f )
+{
+    return __ht_defer_guard<F>( MOV( f ) );
+}
+
+#define HT_CONCAT_( a, b ) a##b
+#define HT_CONCAT( a, b )  HT_CONCAT_( a, b )
+#define defer auto HT_CONCAT( __ht_defer_, __COUNTER__ ) = __ht_defer_tag{} ->* [ & ]() noexcept
+
 #endif // !__HT_MACROS_H__

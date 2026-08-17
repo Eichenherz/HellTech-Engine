@@ -1,7 +1,9 @@
+#pragma once
+
 #ifndef __HP_TYPES_INTERNAL_H__
 #define __HP_TYPES_INTERNAL_H__
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
 
 #include <ankerl/unordered_dense.h>
 #include <vector>
@@ -15,6 +17,7 @@ struct raw_mesh
 	std::vector<float4> tans;
 	std::vector<float2> uvs;
 	std::vector<u32>    indices;
+	aabb_t<float3>		aabb;
 	u32                 materialIdx;
 };
 
@@ -58,14 +61,6 @@ struct raw_image_view
 	image_metadata		metadata;
 };
 
-struct raw_meshlet
-{
-	std::vector<packed_vtx> vertices;
-	std::vector<u8>			triIndices;
-	float3					aabbMin;
-	float3					aabbMax;
-};
-
 struct raw_material_info
 {
 	std::string name;
@@ -84,14 +79,6 @@ struct raw_material_info
 	u16 		samplerIdx;
 
 	alpha_mode	alphaMode;
-};
-
-struct mesh_asset
-{
-	std::vector<packed_vtx>		vertices;
-	std::vector<u8>				triIndices;
-	std::vector<gpu_meshlet>	meshlets;
-	std::array<float3, 2>		aabb; // NOTE: helps with serialization { min, max }
 };
 
 struct packed_trs;
@@ -124,16 +111,6 @@ struct raw_node_eq
 			&& ( at.t.x == bt.t.x ) && ( at.t.y == bt.t.y ) && ( at.t.z == bt.t.z )
 			&& ( at.r.x == bt.r.x ) && ( at.r.y == bt.r.y ) && ( at.r.z == bt.r.z ) && ( at.r.w == bt.r.w )
 			&& ( at.s.x == bt.s.x ) && ( at.s.y == bt.s.y ) && ( at.s.z == bt.s.z );
-	}
-};
-
-struct gpu_meshlet_eq
-{
-	bool operator()( const gpu_meshlet& a, const gpu_meshlet& b ) const
-	{
-		return ( a.minAabb == b.minAabb ) && ( a.maxAabb == b.maxAabb )
-			&& ( a.vtxOffset == b.vtxOffset ) && ( a.triOffset == b.triOffset )
-			&& ( a.vtxCount == b.vtxCount ) && ( a.triCount == b.triCount );
 	}
 };
 

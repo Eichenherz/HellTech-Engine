@@ -10,9 +10,7 @@
 #include <miniz.h>
 
 #include <iostream>
-#include <array>
 #include <span>
-#include <cstdlib>
 
 #include <ankerl/unordered_dense.h>
 
@@ -23,6 +21,9 @@ do{																\
 	HtPrintErrAndDie( "{} failed: {}\n", __func__, strErr );	\
 }while( 0 )                                                       
 
+constexpr u64 ZIP_FILE_ALIGNMENT_IN_BYTES = 64; // NOTE: to allow vectorization
+// NOTE: MZ_ZIP_LOCAL_DIR_HEADER_SIZE lives in miniz.c:3248, not exported by miniz.h
+constexpr u64 ZIP_LOCAL_HDR_SZ = 30;
 
 struct zip_writer
 {
@@ -32,6 +33,7 @@ struct zip_writer
 	zip_writer( const char* physicalPath )
 	{
 		mz_zip_zero_struct( &za );
+		za.m_file_offset_alignment = ZIP_FILE_ALIGNMENT_IN_BYTES;
 
 		if( !mz_zip_writer_init_file( &za, physicalPath, 0 /* reserve_at_beginning */ ) )
 		{
@@ -75,8 +77,21 @@ struct zip_writer
 		HT_ASSERT( !FileExists( filepath ) );
 		files.emplace( filepath );
 
-		// NOTE: miniz flushes the writes immediatley 
-		if( mz_zip_writer_add_mem( &za, std::data( filepath ), std::data( bytes ), std::size( bytes ), MZ_NO_COMPRESSION ) )
+		// NOTE: m_file_offset_alignment only aligns the local hdr; data sits at hdr + 30 + nameLen + extraLen,
+		// NOTE: so stretch the local extra field to push data back onto HPK_ENTRY_ALIGN
+		u64 nameLen = std::strlen( std::data( filepath ) );
+		u32 paddingSz  = u32( ( 0ull - ( ZIP_LOCAL_HDR_SZ + nameLen ) ) & ( ZIP_FILE_ALIGNMENT_IN_BYTES - 1 ) );
+
+		// NOTE: past 4GB miniz prepends its own 12B zip64 local extra (miniz.c:6444) and breaks padLen
+		HT_ASSERT( ( za.m_archive_size < MZ_UINT32_MAX ) && ( std::size( bytes ) < MZ_UINT32_MAX ) );
+
+		constexpr char padding[ ZIP_FILE_ALIGNMENT_IN_BYTES ] = {};
+
+		// NOTE: miniz flushes the writes immediately
+		if( mz_zip_writer_add_mem_ex_v2( &za, std::data( filepath ), std::data( bytes ),
+			std::size( bytes ), nullptr, 0, MZ_NO_COMPRESSION, 0,
+			0, nullptr, padding, paddingSz,
+			nullptr, 0 ) )
 		{
 			return true;
 		}

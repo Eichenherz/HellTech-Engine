@@ -39,7 +39,6 @@ vbuffer_pixel VBufferUnpackPixel( u32x2 packed )
     return pixel;
 }
 
-
 bool VBufferIsValidPixel( u32x2 vbuffPixel )
 {
     return ( ~u32( 0 ) != vbuffPixel.x ) && ( ~u32( 0 ) != vbuffPixel.y );

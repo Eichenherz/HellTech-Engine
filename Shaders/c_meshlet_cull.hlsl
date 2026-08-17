@@ -2,8 +2,9 @@
 
 #include "ht_hlsl_lang.h"
 #include "ht_hlsl_math.h"
+#include "ht_unpacking.h"
+#include "ht_culling.h"
 
-#include "culling.h"
 
 [[vk::push_constant]]
 meshlet_cull_params pushBlock;
@@ -21,55 +22,71 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     	return;
     }
 
-    const bool isLatePass = bool( pushBlock.isLatePass );
-    const bool toggleCulling = bool( pushBlock.toggleCulling );
+    const bool isLatePass       = bool( pushBlock.isLatePass );
+    const bool enableCulling    = bool( pushBlock.enableCulling );
 
-    visible_meshlet mltToTest = BufferLoad<visible_meshlet>( pushBlock.expandedMltsIdx, mltId );
-    gpu_instance currentInst = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltToTest.instId );
+    meshlet_cull_wok_item   mltWorkItem = BufferLoad<meshlet_cull_wok_item>( pushBlock.expandedMltsIdx, mltId );
+    gpu_instance            currInst    = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltWorkItem.instId );
+    gpu_meshlet             currMlt     = device_ptr<gpu_meshlet>( gGlobData.mltAddr )[ mltWorkItem.globMltId ];
+     // NOTE: we use camIdx here bc we'll have a debug camera
+    view_data               cam         = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
 
     bool visible = true;
-    if( toggleCulling )
+    if( enableCulling )
     {
-        float4x4 toWorld = float4x4(
-            float4( currentInst.toWorld[ 0 ], 0.0f ),
-            float4( currentInst.toWorld[ 1 ], 0.0f ),
-            float4( currentInst.toWorld[ 2 ], 0.0f ),
-            float4( currentInst.toWorld[ 3 ], 1.0f )
-        );
+        float4x4 toWorld = f4x3_To_f4x4_Affine( currInst.toWorld );
 
-        // NOTE: we use camIdx here bc we'll have a debug camera
-        view_data cam = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
-        Texture2D<float4> hizTex = gTexture2D_float4[ pushBlock.hizTexIdx ];
-        SamplerState quadMin = samplers[ pushBlock.hizSamplerIdx ];
+        Texture2D<float4>   hizTex  = gTexture2D_float4[ pushBlock.hizTexIdx ];
+        SamplerState        quadMin = samplers[ pushBlock.hizSamplerIdx ];
 
-        visibility_res mltVisRes = TestVisibility( mltToTest.minAabb, mltToTest.maxAabb, toWorld, cam,
-            hizTex, quadMin, isLatePass );
+        visibility_res mltVisRes = TestVisibility( currMlt.aabbMin, currMlt.aabbMax, toWorld, cam, hizTex, quadMin, isLatePass );
 
         if( !isLatePass )
         {
-            bool mltIsOccluded = !mltVisRes.notOccluded;
-            u32 occSlotIdx = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
+            bool mltIsOccluded  = !mltVisRes.notOccluded;
+            u32 occSlotIdx      = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
             if( mltIsOccluded )
             {
-                BufferStore<visible_meshlet>( pushBlock.occludedMltBuffIdx, mltToTest, occSlotIdx );
+                BufferStore<meshlet_cull_wok_item>( pushBlock.occludedMltBuffIdx, mltWorkItem, occSlotIdx );
             }
         }
 
         visible = mltVisRes.inFrustum && mltVisRes.notOccluded;
     }
+
     u32 slotIdx = HTWaveReserveGlobalSlot( visible, pushBlock.drawCountIdx );
 
     if( visible )
     {
-        draw_meshlet_command drawMltCmd = {
-            mltToTest.instId,
-            mltToTest.globMltId,
-            mltToTest.triCount * 3, // NOTE: * 3 bc it's an idx count
-            1,
-            mltToTest.globTriOffset,
-            mltToTest.globVtxOffset,
-            0
-        };
+        float distSq    = SqDistCamToAabbInObjSpace( currInst.toWorld, currMlt.aabbMin, currMlt.aabbMax, currInst.scale,
+                                                        cam.worldPos );
+        float threshold = distSq * cam.lodTarget * cam.lodTarget;
+        float lodErrSqq = currMlt.lodError * currMlt.lodError;
+
+        u32x3 vtxLod01IdxCounts = UnpackMeshletVtxAndLodIdxCount( currMlt );
+
+        bool    lodSwitch       = bool( pushBlock.enableLod ) && ( lodErrSqq < threshold );
+        u32     lodIdxOffset    = lodSwitch ? vtxLod01IdxCounts.y : 0;
+        u32     lodIdxCount     = lodSwitch ? vtxLod01IdxCounts.z : vtxLod01IdxCounts.y;
+
+        draw_meshlet_command drawMltCmd = ( draw_meshlet_command ) 0;
+
+        drawMltCmd.indexCount     = lodIdxCount;
+        drawMltCmd.instanceCount  = 1;
+        drawMltCmd.firstIndex     = currMlt.idxOffset + mltWorkItem.idxOffset + lodIdxOffset;
+        // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,
+        // so we need to manually compute it in the shader
+        drawMltCmd.vertexOffset   = 0;
+        drawMltCmd.firstInstance  = 0;
+
+        draw_meshlet_cmd_data drawMltData = ( draw_meshlet_cmd_data ) 0;
+
+        drawMltData.globalInstId        = mltWorkItem.instId;
+        drawMltData.globalMltId         = mltWorkItem.globMltId;
+        drawMltData.vtxAttrOffset       = mltWorkItem.vtxAttrsOffset;
+        drawMltData.vtxPosOffsetInBits  = mltWorkItem.vtxPosOffsetInBytes * 8u;
+
     	BufferStore<draw_meshlet_command>( pushBlock.drawCmsIdx, drawMltCmd, slotIdx );
+    	BufferStore<draw_meshlet_cmd_data>( pushBlock.drawDataIdx, drawMltData, slotIdx );
     }
 }

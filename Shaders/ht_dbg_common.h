@@ -5,7 +5,7 @@
 
 struct meshlet_vs_out
 {
-    float4          pos     : SV_Position;
+    precise float4  pos     : SV_Position;
     float3          n       : NORMAL;
     float3          t       : TANGENT;
     float3          wrldPos : TEXCOORD1;

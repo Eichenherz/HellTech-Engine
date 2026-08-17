@@ -10,6 +10,8 @@
 
 #include "engine_types.h"
 
+#include <ht_serialization.h>
+
 #include "im_gui.h"
 
 #include <System/sys_file.h>
@@ -39,13 +41,14 @@ struct virtual_camera
 	float4x4			prevView	= {};
 	float3				worldPos	= { 0.0f, 0.0f, 0.0f };
 	float3				camViewDir	= {};
+	float2				viewportDim	= {};
 	PFN_XMLookAtCoord	LookAt		= nullptr;
 	float				zNear		= NAN;
-	// NOTE: pitch must be in [-pi/2,pi/2]
+	// NOTE: pitch must be in [ -pi/2, pi/2 ]
 	float				pitch		= 0.0f;
 	float				yaw			= 0.0f;
 
-	inline void XM_CALLCONV Move( float3 camMove, float2 dRot )
+	void XM_CALLCONV Move( float3 camMove, float2 dRot )
 	{
 		using namespace DirectX;
 
@@ -66,7 +69,7 @@ struct virtual_camera
 		camViewDir = DX_XMStoreFloat3( XMVectorNegate( camLookAt ) );
 	}
 
-	inline view_data GetViewData() const
+	view_data GetViewData() const
 	{
 		using namespace DirectX;
 
@@ -74,8 +77,10 @@ struct virtual_camera
 		XMMATRIX xmView = XMLoadFloat4x4A( &view );
 		XMMATRIX xmPrevView = XMLoadFloat4x4A( &prevView );
 
+		float4x4 proj = DX_XMStoreFloat4x4A( xmProj );
+
 		return {
-			.proj			= DX_XMStoreFloat4x4A( xmProj ),
+			.proj			= proj,
 			.mainView		= view,
 			.prevView		= prevView,
 			.mainViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( xmView, xmProj ) ),
@@ -83,28 +88,33 @@ struct virtual_camera
 			.worldPos		= worldPos,
 			.zNear			= zNear,
 			// NOTE: this must not be negative for LH coords
-			.camViewDir		= camViewDir
+			.camViewDir		= camViewDir,
+			.lodTarget		= ( 2.0f / proj( 1, 1 ) ) * ( 1.0f / float( viewportDim.y ) )
 		};
 	}
 };
 
 template<bool IS_RH>
-virtual_camera MakeVirtualCamera( float radsYFov, float aspectRatioWH, float zNear )
+virtual_camera MakeVirtualCamera( float2 viewportDim, float radsYFov, float zNear )
 {
+	float aspectRatioWH = viewportDim.x / viewportDim.y;
+
 	if constexpr( IS_RH )
 	{
 		return {
-			.proj	= PerspRevZInfFarFromFovAndAspectRatioRH( radsYFov, aspectRatioWH, zNear ),
-			.LookAt = DirectX::XMMatrixLookAtRH,
-			.zNear	= zNear
+			.proj			= PerspRevZInfFarFromFovAndAspectRatioRH( radsYFov, aspectRatioWH, zNear ),
+			.viewportDim	= viewportDim,
+			.LookAt			= DirectX::XMMatrixLookAtRH,
+			.zNear			= zNear
 		};
 	}
 	else
 	{
 		return {
-			.proj	= PerspRevZInfFarFromFovAndAspectRatioLH( radsYFov, aspectRatioWH, zNear ),
-			.LookAt = DirectX::XMMatrixLookAtLH,
-			.zNear	= zNear
+			.proj			= PerspRevZInfFarFromFovAndAspectRatioLH( radsYFov, aspectRatioWH, zNear ),
+			.viewportDim	= viewportDim,
+			.LookAt			= DirectX::XMMatrixLookAtLH,
+			.zNear			= zNear
 		};
 	}
 }
@@ -126,20 +136,24 @@ struct ht_demo_action_map
 	u16 xrayDraw;
 	u16 instCull;
 	u16 mltCull;
+	u16 toggleMeshLOD;
+	u16 toggleMltLOD;
 };
 
 constexpr ht_demo_action_map GLOB_ACTION_MAP = {
-	.fwd		= HT_SC_W,
-	.bwd		= HT_SC_S,
-	.left		= HT_SC_A,
-	.right		= HT_SC_D,
-	.up			= HT_SC_SPACE,
-	.down		= HT_SC_C,
-	.slowDown	= HT_SC_LCTRL,
-	.frustumDbg = HT_SC_F,
-	.xrayDraw	= HT_SC_X,
-	.instCull	= HT_SC_I,
-	.mltCull	= HT_SC_M
+	.fwd			= HT_SC_W,
+	.bwd			= HT_SC_S,
+	.left			= HT_SC_A,
+	.right			= HT_SC_D,
+	.up				= HT_SC_SPACE,
+	.down			= HT_SC_C,
+	.slowDown		= HT_SC_LCTRL,
+	.frustumDbg 	= HT_SC_F,
+	.xrayDraw		= HT_SC_X,
+	.instCull		= HT_SC_I,
+	.mltCull		= HT_SC_M,
+	.toggleMeshLOD	= HT_SC_L,
+	.toggleMltLOD	= HT_SC_K
 };
 
 struct move_cam_action
@@ -333,6 +347,18 @@ void HTAssembleUI(
 				.Action = nullptr,
 				.type	= imgui_widget_type::TEXT
 			},
+			imgui_widget {
+				.name	= "Press L to toggle mesh LOD",
+				.pData	= nullptr,
+				.Action = nullptr,
+				.type	= imgui_widget_type::TEXT
+			},
+			imgui_widget {
+				.name	= "Press K to toggle meshlet LOD",
+				.pData	= nullptr,
+				.Action = nullptr,
+				.type	= imgui_widget_type::TEXT
+			},
 		},
 		.name	= "Renderer Dbg Modes",
 		.flags	= ImGuiWindowFlags_NoScrollbar
@@ -345,12 +371,10 @@ void HTAssembleUI(
 void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height )
 {
 	constexpr float fovRads = DirectX::XMConvertToRadians( 70.0f );
-	constexpr float zNear = 0.5f;
+	constexpr float zNear	= 0.5f;
 
-	float aspecRatioWH = float( width ) / float( height );
-
-	mainActiveCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
-	debugCam = MakeVirtualCamera<IS_WORLD_RH>( fovRads, aspecRatioWH, zNear );
+	mainActiveCam	= MakeVirtualCamera<IS_WORLD_RH>( { float( width ), float( height ) }, fovRads, zNear );
+	debugCam		= MakeVirtualCamera<IS_WORLD_RH>( { float( width ), float( height ) }, fovRads, zNear );
 
 	pRenderer = MakeRenderer();
 
@@ -360,7 +384,6 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 
 	// TODO: vfs
 	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_futuristic_pub_ambience_asset.hpk";
-	//constexpr char	assetFile[] = "D:/3d models/Nightclub Futuristic/nightclub_no_flicker_group_question_mark.hpk";
 	constexpr char assetFile[] = "D:/3d models/bistro.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/cyberbaron/cyberbaron.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
@@ -396,15 +419,16 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 		if( std::cend( meshIdMap ) != meshIdMap.find( pathHash ) ) continue;
 
 		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
-		hellpack_mesh_asset mesh = HpkReadBinaryBlob<hellpack_mesh_asset>( rawBytes );
+		hpk_mesh_view mesh = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
 
 		HRNDMESH32 hMesh = pRenderer->AllocMeshComponent( mesh );
 
 		uploads.push_back( {
-			.mltAsBytes = AsBytes( mesh.meshlets ),
-			.vtxAsBytes = AsBytes( mesh.vertices ),
-			.triAsBytes = AsBytes( mesh.triangles ),
-			.hSlot		= hMesh
+			.mltAsBytes			= AsBytes( mesh.meshlets ),
+			.vtxPosAsBytes		= AsBytes( mesh.vtxPosBitstream ),
+			.vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs ),
+			.idxAsBytes			= AsBytes( mesh.indices ),
+			.hSlot				= hMesh
 		} );
 
 		meshIdMap.emplace( pathHash, hMesh );
@@ -424,7 +448,7 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 	for( const vfs_path& vpath : levelFiles )
 	{
 		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
-		hellpack_level lvl = HpkReadBinaryBlob<hellpack_level>( rawBytes );
+		hpk_level_view lvl = HpkDeserializeAsset<hpk_level_asset>( rawBytes );
 
 		entities.reserve( std::size( entities ) + std::size( lvl.nodes ) );
 		for( const world_node& node : lvl.nodes )
@@ -453,8 +477,8 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	auto[ camMove, dRot ] = GetMoveCamAction( inputState, ( float ) elapsedTime, moveSpeed, mouseSensitivity );
 
-	rndDbgFlags.freezeMainView = inputState.IsButtonHeld( GLOB_ACTION_MAP.frustumDbg );
-	rndDbgFlags.drawXRayMode = inputState.IsButtonHeld( GLOB_ACTION_MAP.xrayDraw );
+	rndDbgFlags.freezeMainView	= inputState.IsButtonHeld( GLOB_ACTION_MAP.frustumDbg );
+	rndDbgFlags.drawXRayMode	= inputState.IsButtonHeld( GLOB_ACTION_MAP.xrayDraw );
 
 	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.instCull ) )
 	{
@@ -464,6 +488,15 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	{
 		rndDbgFlags.toggleMltCull = !rndDbgFlags.toggleMltCull;
 	}
+	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.toggleMeshLOD ) )
+	{
+		rndDbgFlags.toggleMeshLOD = !rndDbgFlags.toggleMeshLOD;
+	}
+	if( inputState.IsButtonPressed( GLOB_ACTION_MAP.toggleMltLOD ) )
+	{
+		rndDbgFlags.toggleMltLOD = !rndDbgFlags.toggleMltLOD;
+	}
+
 
 	mainActiveCam.Move( camMove, dRot );
 	[[likely]]
@@ -496,7 +529,21 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		}
 	}
 
-	// here we must the drawables instances
+	// DBG
+	//static u64 drawablesCount = 0;
+	//drawablesCount += inputState.IsButtonPressed( HT_SC_J );
+	//drawablesCount -= inputState.IsButtonPressed( HT_SC_K );
+	//
+	//std::vector<instance_desc> drw;
+	//// here we must the drawables instances
+	//if( std::size( drawables ) >= drawablesCount )
+	//{
+	//	for( u64 i = 0; i < drawablesCount; i++ )
+	//	{
+	//		drw.push_back( drawables[ i ] );
+	//	}
+	//}
+	// !DBG
 
 	timedZones.push_back( { .name = "CPU FrameMs: ", .timeMs = ( float )( elapsedTime * 1000.0 ) } );
 

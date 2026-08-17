@@ -120,7 +120,6 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/unordered_dense/include
     ${THIRD_PARTY}/miniz
     ${THIRD_PARTY}/bc7enc_rdo
-    ${THIRD_PARTY}/MikkTSpace
     ${THIRD_PARTY}/meshoptimizer/src
     ${THIRD_PARTY}/cgltf
     ${THIRD_PARTY}/minunit
@@ -155,8 +154,7 @@ add_custom_target(shaders
 
 # ============================================================================
 # Subdirectories
-# HtLib is an independent sub-project — added before link_libraries so its
-# test targets don't inherit CommonDeps.
+# HtLib is added before link_libraries so its test targets don't inherit CommonDeps.
 # Engine + HellPack come after and get CommonDeps automatically.
 # ============================================================================
 
