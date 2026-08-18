@@ -83,6 +83,9 @@ struct job_system_ctx
     void SubmitJob( job_t job );
 };
 
+extern thread_local virtual_arena*  pThisThreadArena;
+extern              job_system_ctx* pJobSys;
+
 struct renderer_interface
 {
     virtual void		    InitBackend( u64 hInst, u64 hWnd ) = 0;
@@ -101,11 +104,11 @@ constexpr char	WINDOW_TITLE[] = "HellTech Engine";
 struct helltech_interface
 {
     // TODO: maybe place somewhere else
-    virtual void Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height ) = 0;
+    virtual void Init( u64 hInst, u64 hWnd, u16 width, u16 height ) = 0;
     virtual void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const ht_input_state& inputState ) = 0;
 };
 
-helltech_interface* MakeHelltech( virtual_arena& arena );
+helltech_interface* MakeHelltech();
 //////////////////////////////////////
 // PLATFORM -> ENGINE
 //////////////////////////////////////

@@ -238,7 +238,6 @@ struct helltech final : helltech_interface
 	// TODO: don't use unique ptr
 	std::unique_ptr<renderer_interface> pRenderer		= {};
 
-	job_system_ctx*						pJobSys			= nullptr;
 	// TODO: no vector
 	std::vector<upload_job_payload*>	jobCache		= {};
 
@@ -248,7 +247,7 @@ struct helltech final : helltech_interface
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
 
-	void Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height ) override;
+	void Init( u64 hInst, u64 hWnd, u16 width, u16 height ) override;
 	void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const ht_input_state& inputState ) override;
 
 	// TODO: must use own memory
@@ -303,7 +302,7 @@ void ImGuiPrintPipelineStats( const void* pData )
 
 // TODO: no vector
 void HTAssembleUI(
-	renderer_dbg_draw						rndDbgFlags,
+	renderer_dbg_draw&						rndDbgFlags,
 	const std::vector<ht_timed_zone>&		timedZones,
 	const std::vector<ht_pipeline_stats>&	pipeStats
 ) {
@@ -368,7 +367,7 @@ void HTAssembleUI(
 }
 
 
-void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 width, u16 height )
+void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 {
 	constexpr float fovRads = DirectX::XMConvertToRadians( 70.0f );
 	constexpr float zNear	= 0.5f;
@@ -389,8 +388,6 @@ void helltech::Init( job_system_ctx* jobSystemCtx, u64 hInst, u64 hWnd, u16 widt
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
 	mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
-
-	pJobSys = jobSystemCtx;
 }
 
 // TODO: revisit this logic
@@ -564,7 +561,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	pRenderer->HostFrames( frameData, scratchArena, gpuData );
 }
 
-helltech_interface* MakeHelltech( virtual_arena& arena )
+helltech_interface* MakeHelltech()
 {
-	return ArenaNew<helltech>( arena );
+	return new helltech{};
 }

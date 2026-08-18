@@ -154,32 +154,30 @@ using sys_physical_path = fixed_string<MAX_PATH>;
 #include "ht_mem_arena.h"
 #include "ht_stretchybuff.h"
 
+// NOTE: global state
+thread_local virtual_arena* pThisThreadArena	= nullptr;
+job_system_ctx*				pJobSys				= nullptr;
 
-
-struct sys_thread_data
-{
-	virtual_arena		arena;
-	job_system_ctx*		jobSysCtx;
-};
+constexpr u64 THREAD_ARENA_MAX_SIZE = 128 * MB;
+//------------------=
 
 struct sys_thread
 {
 	HANDLE				hndl;
-	sys_thread_data*	pData;
 	DWORD				threadId;
 };
 
 DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 {
-	sys_thread_data& threadCtx = *( sys_thread_data* ) lpParam;
+	pThisThreadArena = new virtual_arena{ THREAD_ARENA_MAX_SIZE };
 
 	for( ;; )
 	{
-		SysSemaphoreWait( threadCtx.jobSysCtx->sema, INFINITE );
+		SysSemaphoreWait( pJobSys->sema, INFINITE );
 
-		for( job_t job = {}; threadCtx.jobSysCtx->queue.TryPop( job ); )
+		for( job_t job = {}; pJobSys->queue.TryPop( job ); )
 		{
-			job.PfnJob( job.payload, &threadCtx.arena );
+			job.PfnJob( job.payload, pThisThreadArena );
 		}
 	}
 
@@ -187,33 +185,22 @@ DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 }
 
 
-sys_thread SysCreateThread(
-	u64									stackSize,
-	u64									maxScratchPadSize,
-	const wchar_t*						name,
-	job_system_ctx*						pJobSys,
-	ht_stretchybuff<sys_thread_data>&	threadDataBuff
-) {
+sys_thread SysCreateThread( u64	stackSize, const wchar_t* name )
+{
 	HT_ASSERT( nullptr != pJobSys );
 
-	sys_thread_data* pData = &threadDataBuff.push_back( {
-		.arena		= virtual_arena{ maxScratchPadSize },
-		.jobSysCtx	= pJobSys,
-	} );
-
 	DWORD threadId = 0;
-	HANDLE hThread = CreateThread( NULL, stackSize, Win32ThreadLoop, ( LPVOID ) pData, 0, &threadId );
+	HANDLE hThread = CreateThread( nullptr, stackSize, Win32ThreadLoop,
+		nullptr, 0, &threadId );
 	HT_ASSERT( INVALID_HANDLE_VALUE != hThread );
 
 	SysNameThread( ( u64 ) hThread, name );
 
 	return {
 		.hndl		= hThread,
-		.pData		= pData,
 		.threadId	= threadId
 	};
 }
-
 
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
@@ -276,20 +263,19 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr u64 NUM_CORES = 8;
 
-	// TODO: mem system
-	virtual_arena platformArena = { 10 * MB };
-	virtual_arena scratchArena = { 10 * MB };
+	pThisThreadArena = new virtual_arena{ THREAD_ARENA_MAX_SIZE };
 
-	job_system_ctx* jobSystemCtx = ArenaNew<job_system_ctx>( platformArena );
-	ht_stretchybuff<sys_thread_data> threadDataBuff  = HtNewStretchyBuffFromArena<sys_thread_data>(
-		platformArena, NUM_CORES );
-	ht_stretchybuff<sys_thread> threads = HtNewStretchyBuffFromArena<sys_thread>( platformArena, NUM_CORES );
-	threads.push_back( SysCreateThread( 1 * MB, 1 * GB, L"IO Thread", jobSystemCtx,
-		threadDataBuff ) );
+	// NOTE: init Job System
+	pJobSys = new job_system_ctx{};
+	std::vector<sys_thread> threads;
+	threads.push_back( SysCreateThread( 1 * MB,  L"IO Thread" ) );
+	// ----------------------------------------------------------
 
-	helltech_interface* pHelltech = MakeHelltech( platformArena );
+	HT_ASSERT( nullptr != pJobSys );
 
-	pHelltech->Init( jobSystemCtx, ( u64 ) hInst, ( u64 ) hWnd, SCREEN_WIDTH, SCREEN_HEIGHT );
+	helltech_interface* pHelltech = MakeHelltech();
+
+	pHelltech->Init( ( u64 ) hInst, ( u64 ) hWnd, SCREEN_WIDTH, SCREEN_HEIGHT );
 
 	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
@@ -311,7 +297,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		globalHtInputState = HTReinitInputState( globalHtInputState );
 		isRunning = SysPumpUserInput();
 
-		pHelltech->RunLoop( elapsedTime, isRunning, scratchArena, globalHtInputState );
+		pHelltech->RunLoop( elapsedTime, isRunning, *pThisThreadArena, globalHtInputState );
 	}
 
 	return 0;

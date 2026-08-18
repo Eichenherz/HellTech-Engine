@@ -44,52 +44,30 @@ using offset_alloc_t = OffsetAllocator::Allocation;
 
 struct offset_allocator_t
 {
-	static constexpr u64		ALIGNMENT = alignof( OffsetAllocator::Allocator );
-
-	alignas( ALIGNMENT ) u8		mStorage[ sizeof( OffsetAllocator::Allocator ) ] = {};
-	OffsetAllocator::Allocator*	mAlloc = {};
+	// NOTE: empty state, reset() always eats 1 node so maxAllocs must be >= 2 or the freelist idx underflows
+	OffsetAllocator::Allocator	mAlloc = { 0, 2 };
 
 	offset_allocator_t() = default;
-	offset_allocator_t( u32 size, u32 maxAllocs = 128 * 1024 )
-	{
-		mAlloc = new ( mStorage ) OffsetAllocator::Allocator( size, maxAllocs );
-	}
+	offset_allocator_t( u32 size, u32 maxAllocs = 128 * 1024 ) : mAlloc{ size, maxAllocs } {}
 
-	~offset_allocator_t() { if ( mAlloc ) { mAlloc->~Allocator(); } }
-
-	offset_allocator_t( offset_allocator_t&& o )
-	{
-		if ( o.mAlloc )
-		{
-			mAlloc = new ( mStorage ) OffsetAllocator::Allocator( std::move( *o.mAlloc ) );
-			o.mAlloc->~Allocator();
-			o.mAlloc = {};
-		}
-	}
+	offset_allocator_t( offset_allocator_t&& o ) : mAlloc{ MOV( o.mAlloc ) } {}
 	offset_allocator_t& operator=( offset_allocator_t&& o )
 	{
-		if ( mAlloc )
+		if ( this != &o )
 		{
-			mAlloc->~Allocator();
-			mAlloc = {};
-		}
-
-		if ( o.mAlloc )
-		{
-			mAlloc = new ( mStorage ) OffsetAllocator::Allocator( std::move( *o.mAlloc ) );
-			o.mAlloc->~Allocator();
-			o.mAlloc = {};
+			mAlloc.~Allocator();
+			new ( &mAlloc ) OffsetAllocator::Allocator( MOV( o.mAlloc ) );
 		}
 		return *this;
 	}
 
 	offset_alloc_t		Alloc( u32 size )
 	{
-		OffsetAllocator::Allocation alloc = mAlloc->allocate( size );
+		OffsetAllocator::Allocation alloc = mAlloc.allocate( size );
 		HT_ASSERT( OffsetAllocator::Allocation::NO_SPACE != alloc.offset );
 		return alloc;
 	}
-	void				Free( offset_alloc_t alloc ) { mAlloc->free( alloc ); }
+	void				Free( offset_alloc_t alloc ) { mAlloc.free( alloc ); }
 };
 
 static std::unique_ptr<vk_context> pVkCtx = nullptr;
@@ -1628,7 +1606,7 @@ struct vbuffer_pass
 		else
 		{
 			rscTracker.UseImage( args.depthTarget,
-				{  HT_DEPTH_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT },
+				{  HT_DEPTH_ATTACHMENT_ACCESS_READ_WRITE, HT_FRAGMENT_TESTS_STAGE },
 				VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 		}
 		rscTracker.UseImage( vbuffRG32Target, HT_COLOR_TARGET_OUT_WRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
@@ -2362,8 +2340,8 @@ u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const fr
 
 void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& scratchArena, gpu_data& gpuData )
 {
-	const auto& storageReportVtxAttrs = vtxAttrsAllocator.mAlloc->storageReport();
-	const auto& storageReportVtxPos = vtxPosAllocator.mAlloc->storageReport();
+	const auto& storageReportVtxAttrs = vtxAttrsAllocator.mAlloc.storageReport();
+	const auto& storageReportVtxPos = vtxPosAllocator.mAlloc.storageReport();
 
 	stack_adaptor<virtual_arena> virtualStack = { scratchArena };
 
@@ -2475,7 +2453,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.instBuffIdx	= thisVFrame.instDesc,
 		.camIdx			= thisVFrame.viewDataIdx
 	};
-	//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, vbuffPassArgs, false );
+	vBuffPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, vbuffPassArgs, false );
 
 	const fwd_pass_args fwdPassArgs = {
 		.colorTarget	= colorTarget,
@@ -2489,23 +2467,23 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.instBuffIdx	= thisVFrame.instDesc,
 		.camIdx			= thisVFrame.viewDataIdx
 	};
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
+	//fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
 	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 2nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
 		cullPassArgs, true, cullDbgFlags ) );
 
-	fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
-	//vBuffPass.DrawIndexedIndirect( thisFrameCmdBuffer, rscStateTracker, vbuffPassArgs, true );
+	//fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
+	vBuffPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, vbuffPassArgs, true );
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
 	[[unlikely]]
 	if( !frameData.dbgDrawFlags.vBuffPixelHash )
 	{
-		//vBuffPass.DbgDrawAsLamberitanClay( thisFrameCmdBuffer, rscStateTracker, colorTarget, colorUav,
-		//	thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx );
+		vBuffPass.DbgDrawAsLamberitanClay( thisFrameCmdBuff, rscStateTracker, colorTarget, colorUav,
+			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx );
 
 		//tonemapPass.AverageLuminancePass( thisFrameCmdBuffer, rscStateTracker, vBuffPass.colorTarget, vBuffPass.colSrv,
 		//	frameData.elapsedSeconds );
@@ -2517,7 +2495,7 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 	}
 	else
 	{
-		//vBuffPass.DebugDrawHashedVBuffer( thisFrameCmdBuffer, rscStateTracker, colorTarget, colorUav );
+		vBuffPass.DebugDrawHashedVBuffer( thisFrameCmdBuff, rscStateTracker, colorTarget, colorUav );
 	}
 
 	// TODO: upload the actual aabbs
