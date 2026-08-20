@@ -222,6 +222,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	SYSTEM_INFO sysInfo = {};
 	GetSystemInfo( &sysInfo );
 
+	HT_ASSERT( OS_PAGE_SIZE_IN_BYTES == sysInfo.dwPageSize );
+
 	WNDCLASSEX wc = {
 		.cbSize			= sizeof( WNDCLASSEX ),
 		.lpfnWndProc	= MainWndProc,
@@ -264,7 +266,10 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	constexpr u64 NUM_CORES = 8;
 
 	pThisThreadArena = new virtual_arena{ THREAD_ARENA_MAX_SIZE };
-
+	ht_virtual_allocator* virtAlloc = new ht_virtual_allocator{ 1 * GB };
+	u8* alignedAlloc = virtAlloc->Alloc( 10 * MB, 64 );
+	std::memset( alignedAlloc, 0, 10 * MB );
+	virtAlloc->Free( alignedAlloc );
 	// NOTE: init Job System
 	pJobSys = new job_system_ctx{};
 	std::vector<sys_thread> threads;

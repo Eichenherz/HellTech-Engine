@@ -22,7 +22,7 @@ template<typename T>
 concept INTEGER_T = std::integral<T>;
 
 template<typename T>
-concept UINT_T = INTEGER_T<T> && std::is_unsigned_v<T>;
+concept UINT_T = std::unsigned_integral<T>;
 
 template<INTEGER_T T>
 inline bool IsIndexValid( T idx ) 
@@ -39,5 +39,8 @@ consteval T BitCount()
 {
     return sizeof( T ) * 8;
 }
+
+// TODO: investigate if this is ok on other architectures
+using atomic_u64 = volatile u64;
 
 #endif // !__HT_CORE_TYPES_H__

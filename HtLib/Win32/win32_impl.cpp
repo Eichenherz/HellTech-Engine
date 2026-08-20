@@ -8,59 +8,32 @@
 // ===============================================================================================================
 // ht_mem_arena.h
 // ===============================================================================================================
-virtual_arena::virtual_arena( u64 reservedBytesCount ) : reserved{ reservedBytesCount }
+
+void*	ht_os_virtual_reserve( u64 sizeInBytes )
 {
-    mem = ( u8* ) VirtualAlloc( nullptr, reserved, MEM_RESERVE, PAGE_READWRITE );
-	WIN_CHECK( mem );
+    void* mem = VirtualAlloc( nullptr, sizeInBytes, MEM_RESERVE, PAGE_READWRITE );
+    WIN_CHECK( mem );
+    return mem;
+}
+void	ht_os_virtual_release( void* mem ) { WIN_CHECK( VirtualFree( mem, 0, MEM_RELEASE ) ); }
+void*	ht_os_virtual_commit( void* mem, u64 sizeInBytes )
+{
+    u64 alignedSize = ( ( sizeInBytes + OS_PAGE_SIZE_IN_BYTES - 1 ) / OS_PAGE_SIZE_IN_BYTES ) * OS_PAGE_SIZE_IN_BYTES;
+
+    void* newBase = VirtualAlloc( mem, alignedSize, MEM_COMMIT, PAGE_READWRITE );
+    WIN_CHECK( newBase );
+    return newBase;
+}
+void	ht_os_virtual_decommit( void* mem, u64 sizeInBytes )
+{
+    WIN_CHECK( VirtualFree( mem, sizeInBytes, MEM_DECOMMIT ) );
 }
 
-void VirtualArenaFree( virtual_arena& arena )
+void*   ht_os_virtual_alloc( u64 sizeInBytes )
 {
-    WIN_CHECK( VirtualFree( arena.mem, 0, MEM_RELEASE ) );
-    arena = {};
+    void* mem = VirtualAlloc( nullptr, sizeInBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+    WIN_CHECK( mem );
+    return mem;
 }
 
-void virtual_arena::Rewind( u64 mark ) 
-{
-    HT_ASSERT( mark <= offset && "rewind past current offset" );
-#ifdef _DEBUG
-    std::memset( mem + mark, 0xDE, offset - mark );
-#endif
-    offset = mark;
-}
-
-void virtual_arena::Reset() 
-{
-    if( committed )
-    {
-    #ifdef _DEBUG
-        std::memset( mem, 0xDE, committed );
-    #endif
-		WIN_CHECK( VirtualFree( mem, committed, MEM_DECOMMIT ) );
-    }
-
-    committed = 0;
-    offset = 0;
-}
-
-void* virtual_arena::Alloc( u64 bytes, u64 alignment ) 
-{
-    u64 alignedOffset = FwdAlignPot( offset, alignment );
-    u64 newOffset = alignedOffset + bytes;
-
-    HT_ASSERT( newOffset <= reserved );
-
-    if( newOffset > committed )
-    {
-        u64 newCommitted = ( ( newOffset + PAGE_SIZE - 1 ) / PAGE_SIZE ) * PAGE_SIZE;
-        if( newCommitted > reserved ) newCommitted = reserved;
-		WIN_CHECK( VirtualAlloc( mem + committed, newCommitted - committed, MEM_COMMIT, PAGE_READWRITE ) );
-        committed = newCommitted;
-    }
-
-    void* alignedAddr = ( void* ) ( mem + alignedOffset );
-
-    offset = newOffset;
-    return alignedAddr;
-}
 // ===============================================================================================================

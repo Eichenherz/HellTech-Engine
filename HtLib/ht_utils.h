@@ -2,6 +2,7 @@
 #define __HT_UTILS_H__
 
 #include <new>
+#include <bit>
 
 #include "ht_core_types.h"
 #include "ht_error.h"
@@ -61,6 +62,48 @@ consteval u32 MurmurHash( std::string_view s )
     }
 
     return seed;
+}
+
+constexpr u64 BIT_NPOS = ~u64{ 0 };
+
+constexpr u64 FirstUnsetBitIdx64( u64 mask )
+{
+    u64 firstSet = std::countr_one( mask );
+    return ( 64 != firstSet ) ? firstSet : BIT_NPOS;
+}
+
+constexpr u64 FirstSetBitIdx64( u64 mask )
+{
+    u64 firstSet = std::countr_zero( mask );
+    return ( 64 != firstSet ) ? firstSet : BIT_NPOS;
+}
+
+// NOTE: hacker's delight https://github.com/hcs0/Hackers-Delight/blob/master/ffstr1.c.txt ffstr12
+constexpr u64 FindNBitsFreeRunStartBitIdx( u64 bin, u64 runLen )
+{
+    HT_ASSERT( runLen > 0 && runLen <= 64 );
+
+    // NOTE: log2( bit_width( u64 ) ) == 6
+    [[ unroll ]]
+    for( u64 foldIdx = 0; foldIdx < 6; ++foldIdx ) //while( runLen > 1 )
+    {
+        u64 foldShift = runLen >> 1;
+        bin    &= bin >> foldShift;
+        runLen -= foldShift;
+    }
+    return FirstSetBitIdx64( bin );
+}
+
+template<UINT_T RET_T>
+constexpr RET_T BitCastIrregular( UINT_T auto bin, u64 bitCount )
+{
+    static_assert( sizeof( bin ) <= sizeof( RET_T ) );
+
+    RET_T contentMask = ( RET_T( 1 ) << bitCount ) - 1;
+    RET_T asBits      = bin;
+    // NOTE: preferably don't disable this assert
+    HT_ASSERT( ( asBits & contentMask ) == asBits );
+    return asBits;
 }
 
 #endif // !__HT_UTILS_H__

@@ -58,4 +58,22 @@ __ht_defer_guard<F> operator->*( __ht_defer_tag, F&& f )
 #define HT_CONCAT( a, b )  HT_CONCAT_( a, b )
 #define defer auto HT_CONCAT( __ht_defer_, __COUNTER__ ) = __ht_defer_tag{} ->* [ & ]() noexcept
 
+struct ht_no_copy
+{
+    ht_no_copy() = default;
+    ht_no_copy( const ht_no_copy& ) = delete;
+    ht_no_copy& operator=( const ht_no_copy& ) = delete;
+};
+
+struct ht_no_move
+{
+    ht_no_move() = default;
+    ht_no_move( ht_no_move&& ) = delete;
+    ht_no_move& operator=( ht_no_move&& ) = delete;
+};
+
+// NOTE: use composition to avoid fucking the designated initialization
+#define NO_COPY()  [[no_unique_address]] ht_no_copy _noCopy = {}
+#define NO_MOVE()  [[no_unique_address]] ht_no_move _noMove = {}
+
 #endif // !__HT_MACROS_H__

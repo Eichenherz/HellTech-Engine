@@ -41,6 +41,24 @@ void virtual_arena::Reset()
     offset = 0;
 }
 
+u64 virtual_arena::CommitRange( u64 begOffset, u64 endOffset )
+{
+    if( endOffset > reserved ) endOffset = reserved;
+
+    u64 begPage = ( begOffset / PAGE_SIZE ) * PAGE_SIZE;
+    u64 endPage = ( ( endOffset + PAGE_SIZE - 1 ) / PAGE_SIZE ) * PAGE_SIZE;
+    if( endPage > reserved ) endPage = reserved;
+
+    // NOTE: mprotect REQUIRES a page aligned addr, it returns EINVAL otherwise. Reprotecting live
+    //       pages with the same flags is a no op
+    if( begPage < endPage )
+    {
+        HT_ASSERT( mprotect( mem + begPage, endPage - begPage, PROT_READ | PROT_WRITE ) == 0 );
+    }
+
+    return endPage;
+}
+
 void* virtual_arena::Alloc( u64 bytes, u64 alignment )
 {
     u64 alignedOffset = FwdAlign( offset, alignment );
@@ -50,10 +68,7 @@ void* virtual_arena::Alloc( u64 bytes, u64 alignment )
 
     if( newOffset > committed )
     {
-        u64 newCommitted = ( ( newOffset + PAGE_SIZE - 1 ) / PAGE_SIZE ) * PAGE_SIZE;
-        if( newCommitted > reserved ) newCommitted = reserved;
-        HT_ASSERT( mprotect( mem + committed, newCommitted - committed, PROT_READ | PROT_WRITE ) == 0 );
-        committed = newCommitted;
+        committed = CommitRange( committed, newOffset );
     }
 
     void* alignedAddr = ( void* ) ( mem + alignedOffset );
