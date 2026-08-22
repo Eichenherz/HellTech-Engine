@@ -2,6 +2,8 @@ set(THIRD_PARTY "${CMAKE_SOURCE_DIR}/3rdParty")
 
 file(GLOB MESHOPT_SRCS "${THIRD_PARTY}/meshoptimizer/src/*.cpp")
 
+# NOTE: HtLib's own .cpps are not listed here — they arrive as INTERFACE sources
+#       through CommonDeps -> HtLib and are compiled into this exe.
 add_executable(HellPack
     HellPack.cpp
     # 3rdParty sources — from CommonBuildSheet.props HellPack condition

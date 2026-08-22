@@ -101,14 +101,13 @@ add_compile_definitions(
 )
 
 # ============================================================================
-# Include-only libs  (Lib, HtLib, all 3rdParty dirs from CommonBuildSheet.props)
+# Include-only libs  (Lib, all 3rdParty dirs from CommonBuildSheet.props)
+# HtLib is NOT include-only — it declares its own target in HtLib/CMakeLists.txt
+# and hands consumers its .cpps as well. Added under Subdirectories below.
 # ============================================================================
 
 add_library(Lib INTERFACE)
 target_include_directories(Lib INTERFACE "${CMAKE_SOURCE_DIR}/Lib")
-
-add_library(HtLib INTERFACE)
-target_include_directories(HtLib INTERFACE "${CMAKE_SOURCE_DIR}/HtLib")
 
 set(THIRD_PARTY "${CMAKE_SOURCE_DIR}/3rdParty")
 add_library(ThirdPartyIncludes INTERFACE)
@@ -126,6 +125,10 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/OffsetAllocator
 )
 
+# Declares the HtLib target (includes + its .cpps). Must come before CommonDeps
+# links it, and before link_libraries() so HtLib itself stays dependency-free.
+add_subdirectory(HtLib)
+
 # Single bundle — Engine + HellPack inherit this automatically via link_libraries() below
 add_library(CommonDeps INTERFACE)
 target_link_libraries(CommonDeps INTERFACE Lib HtLib ThirdPartyIncludes)
@@ -142,7 +145,7 @@ add_custom_target(prepare
 )
 
 # ============================================================================
-# shaders — compile HLSL to SPIR-V via run_dxc_compile.bat  (→ bin/SpirV/)
+# shaders — compile HLSL to SPIR-V via run_dxc_compile.bat  ( -> bin/SpirV/)
 # ============================================================================
 
 add_custom_target(shaders
@@ -154,11 +157,12 @@ add_custom_target(shaders
 
 # ============================================================================
 # Subdirectories
-# HtLib is added before link_libraries so its test targets don't inherit CommonDeps.
+# HtLib/Tests is added before link_libraries so its test targets don't inherit
+# CommonDeps — they rebuild HtLib's sources themselves under HT_TESTS.
 # Engine + HellPack come after and get CommonDeps automatically.
 # ============================================================================
 
-add_subdirectory(HtLib)
+add_subdirectory(HtLib/Tests)
 
 link_libraries(CommonDeps)   # everything added after this inherits CommonDeps
 

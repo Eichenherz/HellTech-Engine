@@ -1,6 +1,31 @@
-#include "ht_mem_arena.h"
+#include "ht_memory.h"
 
-#include <Windows.h>
+#include <System/sys_sync.h>
+
+// NOTE: circular list so no branches needed
+inline void HtHugeAllocLinkWithLock( copyable_srwlock& lock, ht_huge_alloc* list, ht_huge_alloc* pNode, u64 szInBytes )
+{
+    std::lock_guard guard{ lock };
+
+    ht_huge_alloc*  pOldHead = list->pNext;
+    pNode->pNext		= pOldHead;
+    pNode->pPrev		= list;
+    pOldHead->pPrev		= pNode;
+    list->pNext			= pNode;
+    pNode->szInBytes	= szInBytes;
+}
+
+inline u64 /* sizeInBytes */ HtHugeAllocUnlinkWithLock( copyable_srwlock& lock, ht_huge_alloc* pNode )
+{
+    std::lock_guard guard{ lock };
+
+    ht_huge_alloc*  pNext = pNode->pNext;
+    ht_huge_alloc*  pPrev = pNode->pPrev;
+    pPrev->pNext = pNext;
+    pNext->pPrev = pPrev;
+
+    return pNode->szInBytes;
+}
 
 template <typename F>
 concept LambdaCasBreak_T = requires( F Lmbd, u64 val ) {
@@ -18,10 +43,7 @@ u64 HtCASLoopReserve( volatile u64* pAddr, Lmbd&& CasReserveMask, const u64 inva
         if( invalidMask == reserveMask ) return invalidMask;
 
         u64 newVal = originalVal ^ reserveMask;
-        const u64 seenVal = ( u64 ) InterlockedCompareExchangeAcquire64(
-            ( volatile __int64* ) pAddr,
-            newVal,
-            originalVal );
+        const u64 seenVal = SysAtomicCas64<sys_split_barrier_t::ACQUIRE>( pAddr, newVal, originalVal );
         if( seenVal == originalVal ) return reserveMask;
 
         originalVal = seenVal;
@@ -48,7 +70,7 @@ ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64
         u64 allocSize = requestSzInBytes + sizeof( ht_huge_alloc );
         void* pRaw = ht_os_virtual_alloc( allocSize );
 
-        HtHugeAllocLink( &circularList, ( ht_huge_alloc* ) pRaw, allocSize );
+        HtHugeAllocLinkWithLock( lock, &circularList, ( ht_huge_alloc* ) pRaw, allocSize );
 
         return { ( u8* ) pRaw + sizeof( ht_huge_alloc ),{ .type = ht_virt_alloc_type::DEDICATED } };
     }
@@ -98,7 +120,7 @@ void ht_virtual_allocator::FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx 
     if( ht_virt_alloc_type::DEDICATED == meta.type )
     {
         ht_huge_alloc* pAllocHeader = ( ht_huge_alloc* ) pAlloc - 1;
-        HtHugeAllocUnlink( pAllocHeader );
+        HtHugeAllocUnlinkWithLock( lock, pAllocHeader );
         return ht_os_virtual_release( pAllocHeader );
     }
     // NOTE: we need to decommit the block THEN free the bin bit ( we still have exclusive write grants on it )
@@ -112,7 +134,7 @@ void ht_virtual_allocator::FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx 
     HT_ASSERT( ( 0 != meta.blockCount ) && ( ( meta.blockCount + bitIdx ) <= 64 ) );
     u64 binCommitedBlocksMask = ( BIT_NPOS >> ( 64 - meta.blockCount ) ) << bitIdx;
     // NOTE: we got exclusive ownership so we don't need to CAS, we just need to push the change
-    InterlockedAnd64Release( ( volatile __int64* )GetBinAt( chunkMap, binIdx ), ~binCommitedBlocksMask );
+    SysAtomicAnd64<sys_split_barrier_t::RELEASE>( GetBinAt( chunkMap, binIdx ), ~binCommitedBlocksMask );
 
     return;
 }

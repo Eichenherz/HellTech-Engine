@@ -14,7 +14,8 @@
 
 #endif
 
-
+// NOTE: we only allow it to be copyable SO we don't have to deal with TOO much bullshit in C++
+// TODO: see if we can make it NON copyable without breaking PODs and trivial types
 struct copyable_srwlock
 {
     mutable void*       osLock;
@@ -36,13 +37,22 @@ enum sys_thread_signal : i64
     SYS_THREAD_SIGNAL_EXIT		= -1
 };
 
-// NOTE: bc Win32 expects LONG64
-#define ht_atomic64 volatile i64
 
-void SysAtomicSignalSingleThread( ht_atomic64& signal, sys_thread_signal val );
+using atomic_u64 = volatile u64;
 
-// TODO: rethink
-i64 SysAtomicWaitOnAddr( ht_atomic64& signal, void* undesiredVal, u32 millisecs );
+enum class sys_split_barrier_t
+{
+    NO_FENCE,
+    ACQUIRE,
+    RELEASE,
+    COUNT
+};
+
+template<sys_split_barrier_t BARRIER>
+u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand );
+template<sys_split_barrier_t BARRIER>
+u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask );
+
 
 struct sys_semaphore
 {

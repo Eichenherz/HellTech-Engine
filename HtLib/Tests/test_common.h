@@ -3,7 +3,7 @@
 #ifndef __TEST_COMMON_H__
 #define __TEST_COMMON_H__
 
-#include "DEFS_WIN32_NO_BS.h"
+#include <System/Win32/DEFS_WIN32_NO_BS.h>
 #include "minunit.h"
 
 #include <ht_error.h>

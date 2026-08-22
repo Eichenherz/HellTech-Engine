@@ -9,9 +9,10 @@ file(GLOB_RECURSE ENGINE_SRC CONFIGURE_DEPENDS
 )
 list(REMOVE_ITEM ENGINE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/r_dx12_backend.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/dxc.cpp" )
 
+# NOTE: HtLib's own .cpps are not listed here — they arrive as INTERFACE sources
+#       through CommonDeps -> HtLib and are compiled into this exe.
 add_executable(Engine WIN32      # WIN32 = Windows subsystem (not console)
     ${ENGINE_SRC}
-    "${CMAKE_SOURCE_DIR}/HtLib/Win32/win32_impl.cpp"   # virtual_arena Win32 impl
     # 3rdParty sources — from CommonBuildSheet.props Engine condition
     ${THIRD_PARTY}/imgui/imgui.cpp
     ${THIRD_PARTY}/imgui/imgui_draw.cpp

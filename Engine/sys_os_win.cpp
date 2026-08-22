@@ -1,4 +1,4 @@
-#include "Win32/DEFS_WIN32_NO_BS.h"
+#include <System/Win32/DEFS_WIN32_NO_BS.h>
 #include <Windows.h>
 #pragma comment( lib, "Synchronization.lib" )
 #include <windowsx.h>
@@ -13,7 +13,7 @@
 
 #include "ht_core_types.h"
 
-#include <Win32/win32_err.h>
+#include <System/Win32/win32_err.h>
 #include <System/sys_sync.h>
 #include <System/sys_thread.h>
 
@@ -151,7 +151,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 using sys_physical_path = fixed_string<MAX_PATH>;
 
 
-#include "ht_mem_arena.h"
+#include "ht_memory.h"
 #include "ht_stretchybuff.h"
 
 // NOTE: global state
@@ -169,7 +169,7 @@ struct sys_thread
 
 DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 {
-	pThisThreadArena = new virtual_arena{ THREAD_ARENA_MAX_SIZE };
+	//pThisThreadArena = new virtual_arena{ THREAD_ARENA_MAX_SIZE };
 
 	for( ;; )
 	{
@@ -223,25 +223,27 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	GetSystemInfo( &sysInfo );
 
 	HT_ASSERT( OS_PAGE_SIZE_IN_BYTES == sysInfo.dwPageSize );
+	// TODO: we only support level 4 paging no LA57
+	HT_ASSERT( OS_USER_MAX_ADDR == ( u64 ) sysInfo.lpMaximumApplicationAddress );
 
 	WNDCLASSEX wc = {
 		.cbSize			= sizeof( WNDCLASSEX ),
 		.lpfnWndProc	= MainWndProc,
 		.hInstance		= hInst,
-		.hCursor		= LoadCursor( 0, IDC_ARROW ),
+		.hCursor		= LoadCursor( NULL, IDC_ARROW ),
 		.lpszClassName	= ENGINE_NAME
 	};
 	WIN_CHECK( RegisterClassExA( &wc ) );
 
-	LONG left = 350;
+	LONG left = 200;
 	LONG top = 100;
 
 	RECT wr = { .left = left, .top = top, .right = ( LONG ) SCREEN_WIDTH + left, .bottom = ( LONG ) SCREEN_HEIGHT + top };
 
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
-	AdjustWindowRect( &wr, windowStyle, 0 );
+	AdjustWindowRect( &wr, windowStyle, FALSE );
 	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left, wr.top,
-		wr.right - wr.left, wr.bottom - wr.top, 0, 0, hInst, 0 );
+		wr.right - wr.left, wr.bottom - wr.top, NULL, NULL, hInst, NULL );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
@@ -265,11 +267,6 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr u64 NUM_CORES = 8;
 
-	pThisThreadArena = new virtual_arena{ THREAD_ARENA_MAX_SIZE };
-	ht_virtual_allocator* virtAlloc = new ht_virtual_allocator{ 1 * GB };
-	u8* alignedAlloc = virtAlloc->Alloc( 10 * MB, 64 );
-	std::memset( alignedAlloc, 0, 10 * MB );
-	virtAlloc->Free( alignedAlloc );
 	// NOTE: init Job System
 	pJobSys = new job_system_ctx{};
 	std::vector<sys_thread> threads;

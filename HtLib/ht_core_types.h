@@ -40,7 +40,4 @@ consteval T BitCount()
     return sizeof( T ) * 8;
 }
 
-// TODO: investigate if this is ok on other architectures
-using atomic_u64 = volatile u64;
-
 #endif // !__HT_CORE_TYPES_H__

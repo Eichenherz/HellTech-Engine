@@ -94,16 +94,4 @@ constexpr u64 FindNBitsFreeRunStartBitIdx( u64 bin, u64 runLen )
     return FirstSetBitIdx64( bin );
 }
 
-template<UINT_T RET_T>
-constexpr RET_T BitCastIrregular( UINT_T auto bin, u64 bitCount )
-{
-    static_assert( sizeof( bin ) <= sizeof( RET_T ) );
-
-    RET_T contentMask = ( RET_T( 1 ) << bitCount ) - 1;
-    RET_T asBits      = bin;
-    // NOTE: preferably don't disable this assert
-    HT_ASSERT( ( asBits & contentMask ) == asBits );
-    return asBits;
-}
-
 #endif // !__HT_UTILS_H__

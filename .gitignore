@@ -19,3 +19,5 @@ imgui.ini
 3rdParty/*
 
 CMakePresets.json.user
+
+.claude/

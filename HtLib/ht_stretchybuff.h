@@ -4,7 +4,7 @@
 #define __HT_STRETCHYBUFF_H__
 
 #include "ht_core_types.h"
-#include "ht_mem_arena.h"
+#include "ht_memory.h"
 
 #include "ht_macros.h"
 
