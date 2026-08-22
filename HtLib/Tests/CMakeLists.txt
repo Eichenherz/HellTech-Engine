@@ -13,8 +13,17 @@ set(HTLIB_TEST_INCLUDES
 # swaps HT_ASSERT for the setjmp trap MU_ASSERT_FIRES needs.
 get_target_property(HTLIB_SRC HtLib INTERFACE_SOURCES)
 
+# INLINED_TU names HtLib .cpp files the test #includes itself to reach the helpers that TU keeps
+# file local. Those have to be dropped here or every symbol in them lands in the exe twice.
 function(add_ht_test TARGET_NAME)
-    add_executable(${TARGET_NAME} ${ARGN} ${HTLIB_SRC})
+    cmake_parse_arguments(HT_TEST "" "" "INLINED_TU" ${ARGN})
+
+    set(TEST_HTLIB_SRC ${HTLIB_SRC})
+    foreach(INLINED_TU IN LISTS HT_TEST_INLINED_TU)
+        list(FILTER TEST_HTLIB_SRC EXCLUDE REGEX "/${INLINED_TU}$")
+    endforeach()
+
+    add_executable(${TARGET_NAME} ${HT_TEST_UNPARSED_ARGUMENTS} ${TEST_HTLIB_SRC})
     target_include_directories(${TARGET_NAME} PRIVATE ${HTLIB_TEST_INCLUDES})
     target_compile_definitions(${TARGET_NAME} PRIVATE HT_TESTS _CONSOLE)
 endfunction()
@@ -25,5 +34,5 @@ endfunction()
 
 #add_ht_test(TestSlotBuffer     test_slot_buffer.cpp)
 #add_ht_test(TestStretchyBuffer test_stretchy_buffer.cpp)
-add_ht_test(TestHtMemory       test_ht_memory.cpp)
+add_ht_test(TestHtMemory       test_ht_memory.cpp INLINED_TU ht_allocator.cpp)
 add_ht_test(TestFixedVector    test_fixed_vector.cpp)

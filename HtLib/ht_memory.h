@@ -59,7 +59,7 @@ struct dynamic_arena
 
 constexpr u64 OS_PAGE_SIZE_IN_BYTES		= 4096;
 // NOTE: on win user takes 0 to this and kernel takes the rest of tha range
-constexpr u64 OS_USER_MAX_ADDR          = 0x7FFFFFFEFFF;
+constexpr u64 OS_USER_MAX_ADDR          = 0x00007ffffffeffff;
 constexpr u64 OS_USER_ADDR_BIT_WIDTH	= std::bit_width( OS_USER_MAX_ADDR );
 
 // NOTE: these crash on failure

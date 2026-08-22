@@ -96,6 +96,14 @@ u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask )
 	return ~0ull;
 }
 
+// NOTE: defined here, so every barrier caller in another TU can ask for has to be instantiated here
+template u64 SysAtomicCas64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64, u64 );
+template u64 SysAtomicCas64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64, u64 );
+template u64 SysAtomicCas64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64, u64 );
+template u64 SysAtomicAnd64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64 );
+template u64 SysAtomicAnd64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64 );
+template u64 SysAtomicAnd64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64 );
+
 sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( NULL, 0, LONG_MAX, NULL ) }
 {
 	WIN_CHECK( NULL != ( HANDLE ) hndl );
