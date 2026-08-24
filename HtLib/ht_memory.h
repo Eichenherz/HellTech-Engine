@@ -109,7 +109,13 @@ protected: // NOTE: std::pmr::memory_resource's API
 	bool	do_is_equal( const std::pmr::memory_resource& other ) const noexcept override { return this == &other; }
 };
 
-constexpr u64 BLOCK_SZ_IN_BYTES	= 4 * MB;
+// NOTE: overridable so the stress harness can run the same logic on a pool it can afford
+#ifndef HT_BLOCK_SZ_IN_BYTES
+#define HT_BLOCK_SZ_IN_BYTES	( 4 * MB )
+#endif
+constexpr u64 BLOCK_SZ_IN_BYTES	= HT_BLOCK_SZ_IN_BYTES;
+// NOTE: pot keeps FwdAlignPot happy, and pot >= page means decommit never straddles a neighbour
+static_assert( IsPowOf2( BLOCK_SZ_IN_BYTES ) && ( OS_PAGE_SIZE_IN_BYTES <= BLOCK_SZ_IN_BYTES ) );
 // NOTE: we capped the max alloc at this because we can only atomically CAS up to u64 bits
 constexpr u64 BLOCKS_PER_BIN	= 64;
 constexpr u64 BINS_PER_CHUNK	= 8;

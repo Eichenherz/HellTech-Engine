@@ -28,11 +28,20 @@ function(add_ht_test TARGET_NAME)
     target_compile_definitions(${TARGET_NAME} PRIVATE HT_TESTS _CONSOLE)
 endfunction()
 
+# Stress exes are not unit tests, so no HT_TESTS: HT_ASSERT has to abort into the debugger instead of
+function(add_ht_stress TARGET_NAME)
+    add_executable(${TARGET_NAME} ${ARGN} ${HTLIB_SRC})
+    target_include_directories(${TARGET_NAME} PRIVATE ${HTLIB_TEST_INCLUDES})
+    target_compile_definitions(${TARGET_NAME} PRIVATE _CONSOLE HT_BLOCK_SZ_IN_BYTES=4096)
+endfunction()
+
 # ============================================================================
 # Test executables  (1 per test file, matching VS projects)
 # ============================================================================
 
-#add_ht_test(TestSlotBuffer     test_slot_buffer.cpp)
-#add_ht_test(TestStretchyBuffer test_stretchy_buffer.cpp)
-add_ht_test(TestHtMemory       test_ht_memory.cpp INLINED_TU ht_allocator.cpp)
-add_ht_test(TestFixedVector    test_fixed_vector.cpp)
+#add_ht_test(TestSlotBuffer             test_slot_buffer.cpp)
+#add_ht_test(TestStretchyBuffer         test_stretchy_buffer.cpp)
+add_ht_test(TestHtMemory                test_ht_memory.cpp INLINED_TU ht_allocator.cpp)
+add_ht_test(TestFixedVector             test_fixed_vector.cpp)
+
+add_ht_stress(StressTestHtAllocator    stress_test_ht_allocator.cpp )

@@ -52,7 +52,12 @@ template<sys_split_barrier_t BARRIER>
 u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand );
 template<sys_split_barrier_t BARRIER>
 u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask );
-
+template<sys_split_barrier_t BARRIER>
+u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value );
+template<sys_split_barrier_t BARRIER>
+u64 SysAtomicRead64( atomic_u64* pAddr );
+template<sys_split_barrier_t BARRIER>
+void SysAtomicWrite64( atomic_u64* pAddr, u64 value );
 
 struct sys_semaphore
 {

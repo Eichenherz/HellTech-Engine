@@ -1,7 +1,7 @@
 #include <System/sys_sync.h>
-#include <ht_memory.h>
+
 #include <System/sys_file.h>
-#include <System/sys_thread.h>
+
 
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
@@ -11,6 +11,7 @@
 // ===============================================================================================================
 // ht_mem_arena.h
 // ===============================================================================================================
+#include <ht_memory.h>
 
 void*	ht_os_virtual_reserve( u64 sizeInBytes )
 {
@@ -96,6 +97,54 @@ u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask )
 	return ~0ull;
 }
 
+template<sys_split_barrier_t BARRIER>
+u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value )
+{
+	// NOTE: exch returns PREV value
+	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	{
+		return ( u64 ) InterlockedExchangeAddNoFence64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+	}
+	else if constexpr( sys_split_barrier_t::ACQUIRE == BARRIER )
+	{
+		return ( u64 ) InterlockedExchangeAddAcquire64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+	}
+	else if constexpr( sys_split_barrier_t::RELEASE == BARRIER )
+	{
+		return ( u64 ) InterlockedExchangeAddRelease64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+	}
+
+	return ~0ull;
+}
+
+template<sys_split_barrier_t BARRIER>
+u64 SysAtomicRead64( atomic_u64* pAddr )
+{
+	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	{
+		return ( u64 ) ReadNoFence64( ( win32_atomic64* ) pAddr );
+	}
+	else if constexpr( sys_split_barrier_t::ACQUIRE == BARRIER )
+	{
+		return ( u64 ) ReadAcquire64( ( win32_atomic64* ) pAddr );
+	}
+
+	return ~0ull;
+}
+
+template<sys_split_barrier_t BARRIER>
+void SysAtomicWrite64( atomic_u64* pAddr, u64 value )
+{
+	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	{
+		WriteNoFence64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+	}
+	else if constexpr( sys_split_barrier_t::RELEASE == BARRIER )
+	{
+		WriteRelease64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+	}
+}
+
 // NOTE: defined here, so every barrier caller in another TU can ask for has to be instantiated here
 template u64 SysAtomicCas64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64, u64 );
 template u64 SysAtomicCas64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64, u64 );
@@ -103,6 +152,13 @@ template u64 SysAtomicCas64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64, u64
 template u64 SysAtomicAnd64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64 );
+template u64 SysAtomicAdd64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64 );
+template u64 SysAtomicAdd64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64 );
+template u64 SysAtomicAdd64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64 );
+template u64 SysAtomicRead64<sys_split_barrier_t::NO_FENCE>( atomic_u64* );
+template u64 SysAtomicRead64<sys_split_barrier_t::ACQUIRE>( atomic_u64* );
+template void SysAtomicWrite64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64 );
+template void SysAtomicWrite64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64 );
 
 sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( NULL, 0, LONG_MAX, NULL ) }
 {
@@ -267,8 +323,49 @@ void SysDestroyMmapFile( mmap_file* mmapFile )
 // ===============================================================================================================
 // sys_thread.h
 // ===============================================================================================================
+#define THREAD_CALLING_CONV WINAPI
+#include <System/sys_thread.h>
+
+sys_thread SysCreateThread( u64	stackSize, PfnSysThreadProc ThreadProc, void* pData, const wchar_t* name )
+{
+	DWORD threadId = 0;
+	HANDLE hThread = CreateThread( nullptr, stackSize, ( LPTHREAD_START_ROUTINE ) ThreadProc,
+		pData, 0, &threadId );
+	HT_ASSERT( INVALID_HANDLE_VALUE != hThread );
+
+	if( name )
+	{
+		SysNameThread( ( u64 ) hThread, name );
+	}
+
+	return {
+		.hndl		= ( u64 ) hThread,
+		.threadId	= threadId
+	};
+}
+
+void SysThreadSleep( u64 milliSecs ) { return Sleep( milliSecs ); }
+
 void SysNameThread( u64 hThread, const wchar_t* name )
 {
 	HT_ASSERT( SUCCEEDED( SetThreadDescription( ( HANDLE ) hThread, name ) ) );
+}
+// ===============================================================================================================
+
+
+// ===============================================================================================================
+// sys_timer.h
+// ===============================================================================================================
+u64 SysGetCpuFreq()
+{
+	LARGE_INTEGER freq;
+	QueryPerformanceFrequency( &freq );
+	return freq.QuadPart;
+}
+u64 SysTicks()
+{
+	LARGE_INTEGER tick;
+	QueryPerformanceCounter( &tick );
+	return tick.QuadPart;
 }
 // ===============================================================================================================

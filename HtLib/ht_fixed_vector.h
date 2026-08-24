@@ -59,7 +59,7 @@ struct fixed_vector
     template<typename... Args>
     reference               emplace_back( Args&&... args );
 
-    void                    pop_back()              { HT_ASSERT( elemCount > 0 ); --elemCount; }
+    value_type              pop_back()              { HT_ASSERT( elemCount > 0 ); return elems[ --elemCount ]; }
     void                    clear()                 { elemCount = 0; }
 
     void                    resize( u64 n, const T& val = T{} );

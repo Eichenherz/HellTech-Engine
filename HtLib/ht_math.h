@@ -1,7 +1,7 @@
 #ifndef __HT_MATH_H__
 #define __HT_MATH_H__
 
-#include "ht_vec_types.h"
+#include "../Lib/ht_vec_types.h"
 #include "ht_core_types.h"
 #include <span>
 #include <math.h>
@@ -399,4 +399,18 @@ inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs )
 	return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s );
 }
 
+constexpr u32 PcgHash( u32 input )
+{
+	u32 state = input * 747796405u + 2891336453u;
+	u32 word = ( ( state >> ( ( state >> 28u ) + 4u ) ) ^ state ) * 277803737u;
+	return ( word >> 22u ) ^ word;
+}
+
+// PMF ~ 1 / k^2 on [ min, max ].  a = 1.0f/ min, ab = a - 1.0f / ( max + 1 )
+constexpr u32 PowDistroCDF( u32 h, float a, float ab, u32 max )
+{
+	float u = float( h >> 8 ) * 0x1p-24f;
+	u32 k = u32( 1.0f / ( a - u * ab ) );
+	return ( k > max ) ? max : k;
+}
 #endif // !__HT_MATH_H__

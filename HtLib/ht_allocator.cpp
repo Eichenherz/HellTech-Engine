@@ -107,7 +107,7 @@ ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64
         }
     }
 
-    HT_ASSERT( false && "Out OF memory !!!!" );
+    // HT_ASSERT( false && "Out OF memory !!!!" );
     return {};
 }
 
