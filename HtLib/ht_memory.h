@@ -100,8 +100,8 @@ struct stack_adaptor : std::pmr::memory_resource
 	Arena&	arena;
 	u64		baseFrameOffset;
 
-	inline	stack_adaptor( Arena& a ) : arena{ a }, baseFrameOffset{ a.offset }{}
-	inline	~stack_adaptor() override { arena.Rewind( baseFrameOffset ); }
+			stack_adaptor( Arena& a ) : arena{ a }, baseFrameOffset{ a.offset }{}
+			~stack_adaptor() override { arena.Rewind( baseFrameOffset ); }
 	u8*		BasePtr() { return arena.mem + baseFrameOffset; }
 protected: // NOTE: std::pmr::memory_resource's API
 	void*   do_allocate( size_t bytes, size_t alignment ) override { return arena.Alloc( bytes, alignment ); }
@@ -109,13 +109,18 @@ protected: // NOTE: std::pmr::memory_resource's API
 	bool	do_is_equal( const std::pmr::memory_resource& other ) const noexcept override { return this == &other; }
 };
 
-// NOTE: overridable so the stress harness can run the same logic on a pool it can afford
 #ifndef HT_BLOCK_SZ_IN_BYTES
 #define HT_BLOCK_SZ_IN_BYTES	( 4 * MB )
 #endif
 constexpr u64 BLOCK_SZ_IN_BYTES	= HT_BLOCK_SZ_IN_BYTES;
-// NOTE: pot keeps FwdAlignPot happy, and pot >= page means decommit never straddles a neighbour
-static_assert( IsPowOf2( BLOCK_SZ_IN_BYTES ) && ( OS_PAGE_SIZE_IN_BYTES <= BLOCK_SZ_IN_BYTES ) );
+
+// NOTE: we will demand every allocation be aligned to this, like that we'll get the low 16 bits for metadata as well
+constexpr u64 HT_INTERNAL_ALIGNMENT = 64 * KB;
+// NOTE: dedicated allocs have a bigger alignment bc it helps reduce the size of the 2 level void* to handle alloc;
+// also note that the handle has no reason to use the adjusted bit count
+constexpr u64 HT_DEDICATED_ALIGNMENT = BLOCK_SZ_IN_BYTES;
+
+static_assert( FwdAlignPot( BLOCK_SZ_IN_BYTES, HT_INTERNAL_ALIGNMENT ) == BLOCK_SZ_IN_BYTES );
 // NOTE: we capped the max alloc at this because we can only atomically CAS up to u64 bits
 constexpr u64 BLOCKS_PER_BIN	= 64;
 constexpr u64 BINS_PER_CHUNK	= 8;
@@ -124,55 +129,49 @@ constexpr u64 BINS_PER_CHUNK	= 8;
 struct alignas( 64 ) ht_virtual_chunk
 {
 	// NOTE: 0 for free, 1 for committed
-	atomic_u64 blockBins[ BINS_PER_CHUNK ];
-};
-
-// NOTE: cache alignment means the payload START is SIMD ready and false sharing free
-// NOTE: the false sharing between the nodes themselves doesn't really matter here
-// as these might not get freed or VERY rarely
-struct alignas( 64 ) ht_huge_alloc
-{
-	ht_huge_alloc*	pNext		= nullptr;
-	ht_huge_alloc*	pPrev		= nullptr;
-	u64				szInBytes	= 0;
+	atomic_u64 blockBitmap[ BINS_PER_CHUNK ];
 };
 
 constexpr u64 CHUNK_SZ_IN_BYTES = BINS_PER_CHUNK * BLOCKS_PER_BIN * BLOCK_SZ_IN_BYTES;
 
-enum ht_virt_alloc_type : u16
+enum ht_virt_alloc_type : u64
 {
 	DEDICATED	= 0,
 	BLOCK		= 1
 };
 
-struct ht_alloc_metadata
-{
-	u16 padding		: 8;
-	u16 type		: 1;
-	u16 blockCount	: 7; // NOTE: we CAN do this because we can alloc up to 64 CONTIGUOUS block
-};
+constexpr u64 HT_OS_ADDR_HIGHER_FREE_BITS_COUNT	= 64 - OS_USER_ADDR_BIT_WIDTH;
+constexpr u64 HT_OS_ADDR_LOWER_FREE_BITS_COUNT	= std::bit_width( HT_INTERNAL_ALIGNMENT ) - 1;
+// NOTE: OS_USER_MAX_ADDR is a max value, not a mask ( it has holes ), the mask is width worth of ones
+constexpr u64 HT_OS_ADDR_MASK					= ( 1ull << OS_USER_ADDR_BIT_WIDTH ) - 1;
 
 struct ht_virt_alloc
 {
-	u64 metadata	: 64 - OS_USER_ADDR_BIT_WIDTH	= 0;
-	u64 address		: OS_USER_ADDR_BIT_WIDTH		= 0;
+	static constexpr u64 HT_META_BIT_COUNT	= HT_OS_ADDR_HIGHER_FREE_BITS_COUNT + HT_OS_ADDR_LOWER_FREE_BITS_COUNT;
+	static constexpr u64 HT_ADDR_BIT_COUNT	= 64 - HT_META_BIT_COUNT;
+
+	u64 address		: HT_ADDR_BIT_COUNT		= 0;
+	u64 metadata	: HT_META_BIT_COUNT - 1 = 0;
+	u64 type		: 1						= 0;
 
 	ht_virt_alloc() = default;
-	ht_virt_alloc( void* ptr, ht_alloc_metadata meta ) : metadata{ std::bit_cast<u16>( meta ) }, address{ ( u64 ) ptr }
+	ht_virt_alloc( void* ptr, u64 payload, ht_virt_alloc_type allocType ) :
+		address	{ ( ( ( u64 ) ptr ) & HT_OS_ADDR_MASK ) >> ( HT_OS_ADDR_LOWER_FREE_BITS_COUNT ) },
+		metadata{ payload },
+		type	{ allocType }
 	{
-		HT_ASSERT( ( ( void* ) address ) == ptr );
+		HT_ASSERT( ( ( address << HT_OS_ADDR_LOWER_FREE_BITS_COUNT ) ) == ( u64 ) ptr );
+		HT_ASSERT( ( payload & ( ( ( 1ull << ( HT_META_BIT_COUNT - 1 ) ) - 1 ) ) ) == payload );
 	}
 
 	// NOTE: C++20 will use this for !=
 	bool operator==( ht_virt_alloc other ) const { return std::bit_cast<u64>( *this ) == std::bit_cast<u64>( other ); }
 };
 
-inline auto HtUnpackVirtualAllocation( ht_virt_alloc alloc )
+inline void* HtGetAllocPtr( ht_virt_alloc alloc )
 {
-	struct retval { void* ptr; ht_alloc_metadata meta; };
-	return retval{ ( void* ) alloc.address, std::bit_cast<ht_alloc_metadata>( ( u16 ) alloc.metadata ) };
+	return ( void* ) ( u64( alloc.address ) << HT_OS_ADDR_LOWER_FREE_BITS_COUNT );
 }
-
 
 static_assert( sizeof( u64 ) == sizeof( ht_virt_alloc ) );
 
@@ -181,11 +180,6 @@ struct ht_virtual_allocator
 	void*						pMemBase		= nullptr; // NOTE: points at the start of the blocks from chunkMap
 	u64							reservedInBytes	= 0;
 	std::span<ht_virtual_chunk>	chunkMap		= {};
-	// NOTE: using a circular doubly linked list we avoid branches
-	// NOTE: the allocator will never be relocated ( we have NO COPY NO MOVE )
-	ht_huge_alloc				circularList	= { .pNext = &circularList, .pPrev = &circularList };
-	// NOTE: atomics are ABSOLUTELY NOT TRIVIAL for linked lists
-	copyable_srwlock			lock			= {};
 
 	ht_virt_alloc	AllocVirtualBlock( u64 requestSzInBytes, u64 threadIndex );
 	void			FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx );
@@ -195,5 +189,28 @@ struct ht_virtual_allocator
 };
 
 ht_virtual_allocator HtMakeAllocator( u64 maxMemCapInBytes );
+
+constexpr u64 THREAD_HEAP_PAGE_SIZE			= 64 * KB;
+constexpr u64 THREAD_HEAP_MIN_SIZE_CLASS	= 1 * KB;
+// NOTE: for simplicity and symmetry of design, we will use u64 bitmaps for the pages;
+// the smallest size class will have the most items which must not exceed the num of bits of u64
+static_assert( 64 == ( THREAD_HEAP_PAGE_SIZE / THREAD_HEAP_MIN_SIZE_CLASS ) );
+
+struct ht_thread_heap_page_descriptor
+{
+	u64	blockBitmap;
+	u8	sizeClass;
+};
+
+struct ht_thread_heap_block
+{
+	using ht_th_page_desc = ht_thread_heap_page_descriptor;
+
+	ht_virt_alloc				hAlloc			= {};
+	u8*							pMemBase		= nullptr;
+	u64							freePagesBitmap = 0;
+	std::span<ht_th_page_desc>	pages			= {};
+};
+
 
 #endif // !__HT_MEMORY_H__

@@ -33,7 +33,7 @@ u32 HwRandSeed32()
 // if pool is too full we're gonna hammer on the OOM recycling path
 // NOTE: we need to draw from a distro bc uniform will have us alloc
 // larger stuff more often which gets us to "TOO FULL"
-constexpr u64 MAX_POOL_SIZE     = 12 * MB;
+constexpr u64 MAX_POOL_SIZE     = 64 * MB;
 constexpr u64 THREAD_WORK_ITEMS = 64;
 
 struct stamp_t
@@ -87,11 +87,12 @@ u32 ThreadMainLoop( void* pData )
             std::swap( allocs[ itemIdx ], allocs[ allocSz - 1 ] );
 
             const tagged_alloc victim = allocs.pop_back();
-            auto[ pMem, meta ] = HtUnpackVirtualAllocation( victim.alloc );
+            HT_ASSERT( ht_virt_alloc_type::BLOCK == victim.alloc.type );
             // NOTE: every block carries the stamp, so a stranger landing anywhere in the run trips
-            for( u64 blockIdx = 0; blockIdx < meta.blockCount; ++blockIdx )
+            for( u64 blockIdx = 0, blockCount = victim.alloc.metadata; blockIdx < blockCount; ++blockIdx )
             {
-                HT_ASSERT( victim.stamp == *( stamp_t* )( ( u8* ) pMem + blockIdx * BLOCK_SZ_IN_BYTES ) );
+                HT_ASSERT( victim.stamp == *( stamp_t* )(
+                    ( u8* ) HtGetAllocPtr( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
             }
             // NOTE: intentionally use thread 0 to force contention
             pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
@@ -108,11 +109,12 @@ u32 ThreadMainLoop( void* pData )
                 if( std::size( allocs ) )
                 {
                     const tagged_alloc victim = allocs.pop_back();
+                    HT_ASSERT( ht_virt_alloc_type::BLOCK == victim.alloc.type );
 
-                    auto[ pMem, meta ] = HtUnpackVirtualAllocation( victim.alloc );
-                    for( u64 blockIdx = 0; blockIdx < meta.blockCount; ++blockIdx )
+                    for( u64 blockIdx = 0, blockCount = victim.alloc.metadata; blockIdx < blockCount; ++blockIdx )
                     {
-                        HT_ASSERT( victim.stamp == *( stamp_t* )( ( u8* ) pMem + blockIdx * BLOCK_SZ_IN_BYTES ) );
+                        HT_ASSERT( victim.stamp == *( stamp_t* )(
+                            ( u8* ) HtGetAllocPtr( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
                     }
                     pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
                     threadStats[ threadIdx ].frees++;
@@ -121,11 +123,11 @@ u32 ThreadMainLoop( void* pData )
                 continue;
             }
 
+            HT_ASSERT( ht_virt_alloc_type::BLOCK == alloc.type );
             stamp_t stamp = { .loopCount = threadStats[ threadIdx ].iters, .threadIdx = threadIdx };
-            auto[ pMem, meta ] = HtUnpackVirtualAllocation( alloc );
-            for( u64 blockIdx = 0; blockIdx < meta.blockCount; ++blockIdx )
+            for( u64 blockIdx = 0, blockCount = alloc.metadata; blockIdx < blockCount; ++blockIdx )
             {
-                *( stamp_t* )( ( u8* ) pMem + blockIdx * BLOCK_SZ_IN_BYTES ) = stamp;
+                *( stamp_t* )( ( u8* ) HtGetAllocPtr( alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) = stamp;
             }
             allocs.push_back( { .alloc = alloc, .stamp = stamp } );
             threadStats[ threadIdx ].allocs++;

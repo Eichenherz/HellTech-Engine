@@ -2,31 +2,6 @@
 
 #include <System/sys_sync.h>
 
-// NOTE: circular list so no branches needed
-inline void HtHugeAllocLinkWithLock( copyable_srwlock& lock, ht_huge_alloc* list, ht_huge_alloc* pNode, u64 szInBytes )
-{
-    std::lock_guard guard{ lock };
-
-    ht_huge_alloc*  pOldHead = list->pNext;
-    pNode->pNext		= pOldHead;
-    pNode->pPrev		= list;
-    pOldHead->pPrev		= pNode;
-    list->pNext			= pNode;
-    pNode->szInBytes	= szInBytes;
-}
-
-inline u64 /* sizeInBytes */ HtHugeAllocUnlinkWithLock( copyable_srwlock& lock, ht_huge_alloc* pNode )
-{
-    std::lock_guard guard{ lock };
-
-    ht_huge_alloc*  pNext = pNode->pNext;
-    ht_huge_alloc*  pPrev = pNode->pPrev;
-    pPrev->pNext = pNext;
-    pNext->pPrev = pPrev;
-
-    return pNode->szInBytes;
-}
-
 template <typename F>
 concept LambdaCasBreak_T = requires( F Lmbd, u64 val ) {
     { Lmbd( val ) } -> std::same_as<u64>;
@@ -56,7 +31,7 @@ inline volatile u64* GetBinAt( std::span<ht_virtual_chunk> chunkMap, u64 binIdx 
 
     u64 whichChunk  = binIdx / BINS_PER_CHUNK;
     u64 whichBin    = binIdx % BINS_PER_CHUNK;
-    return &chunkMap[ whichChunk ].blockBins[ whichBin ];
+    return &chunkMap[ whichChunk ].blockBitmap[ whichBin ];
 }
 
 ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64 threadIdx )
@@ -67,12 +42,9 @@ ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64
     [[ unlikely ]]
     if( ( BLOCKS_PER_BIN * BLOCK_SZ_IN_BYTES ) < requestSzInBytes )
     {
-        u64 allocSize = requestSzInBytes + sizeof( ht_huge_alloc );
-        void* pRaw = ht_os_virtual_alloc( allocSize );
-
-        HtHugeAllocLinkWithLock( lock, &circularList, ( ht_huge_alloc* ) pRaw, allocSize );
-
-        return { ( u8* ) pRaw + sizeof( ht_huge_alloc ),{ .type = ht_virt_alloc_type::DEDICATED } };
+        u64 allocSize = FwdAlignPot( requestSzInBytes, HT_DEDICATED_ALIGNMENT );
+        u64 szInPages = allocSize / HT_DEDICATED_ALIGNMENT;
+        return { ht_os_virtual_alloc( allocSize ), szInPages, ht_virt_alloc_type::DEDICATED };
     }
 
     u64 footprintInBlocks = ( requestSzInBytes + BLOCK_SZ_IN_BYTES - 1 ) / BLOCK_SZ_IN_BYTES;
@@ -103,11 +75,10 @@ ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64
             u64     offInBlocks = threadBinIdx * BLOCKS_PER_BIN + blockIdxWithinBin;
             u64     szInBytes   = footprintInBlocks * BLOCK_SZ_IN_BYTES;
             void*   pRaw        = ht_os_virtual_commit( ( u8* ) pMemBase + BLOCK_SZ_IN_BYTES * offInBlocks, szInBytes );
-            return { pRaw, { .type = ht_virt_alloc_type::BLOCK, .blockCount = ( u16 ) footprintInBlocks } };
+            return { pRaw, footprintInBlocks, ht_virt_alloc_type::BLOCK };
         }
     }
 
-    // HT_ASSERT( false && "Out OF memory !!!!" );
     return {};
 }
 
@@ -115,44 +86,39 @@ void ht_virtual_allocator::FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx 
 {
     if( ht_virt_alloc{} == alloc ) return;
 
-    auto[ pAlloc, meta ] = HtUnpackVirtualAllocation( alloc );
+    void* pAlloc = HtGetAllocPtr( alloc );
     [[ unlikely ]]
-    if( ht_virt_alloc_type::DEDICATED == meta.type )
+    if( ht_virt_alloc_type::DEDICATED == alloc.type )
     {
-        ht_huge_alloc* pAllocHeader = ( ht_huge_alloc* ) pAlloc - 1;
-        HtHugeAllocUnlinkWithLock( lock, pAllocHeader );
-        return ht_os_virtual_release( pAllocHeader );
+        return ht_os_virtual_release( pAlloc );
     }
+    u64 blockCount = alloc.metadata;
     // NOTE: we need to decommit the block THEN free the bin bit ( we still have exclusive write grants on it )
     // otherwise we can race with another thread that basically reallocs the same block and free that
-    ht_os_virtual_decommit( pAlloc, meta.blockCount * BLOCK_SZ_IN_BYTES );
+    ht_os_virtual_decommit( pAlloc, blockCount * BLOCK_SZ_IN_BYTES );
 
     u64 offInBlocks = ( ( u8* ) pAlloc - ( u8* ) pMemBase ) / BLOCK_SZ_IN_BYTES;
     u64 binIdx      = offInBlocks / BLOCKS_PER_BIN;
     u64 bitIdx      = offInBlocks % BLOCKS_PER_BIN;
 
-    HT_ASSERT( ( 0 != meta.blockCount ) && ( ( meta.blockCount + bitIdx ) <= 64 ) );
-    u64 binCommitedBlocksMask = ( BIT_NPOS >> ( 64 - meta.blockCount ) ) << bitIdx;
+    HT_ASSERT( ( 0 != blockCount ) && ( ( blockCount + bitIdx ) <= 64 ) );
+    u64 binCommitedBlocksMask = ( BIT_NPOS >> ( 64 - blockCount ) ) << bitIdx;
     // NOTE: we got exclusive ownership so we don't need to CAS, we just need to push the change
     SysAtomicAnd64<sys_split_barrier_t::RELEASE>( GetBinAt( chunkMap, binIdx ), ~binCommitedBlocksMask );
-
-    return;
 }
 
 ht_virtual_allocator HtMakeAllocator( u64 maxMemInBytes )
 {
     u64 chunksCount             = ( ( maxMemInBytes + CHUNK_SZ_IN_BYTES - 1 ) / CHUNK_SZ_IN_BYTES );
     u64 blockRegionSzInBytes    = chunksCount * CHUNK_SZ_IN_BYTES;
-    u64 chunkMapSzInBytes       = chunksCount * sizeof( ht_virtual_chunk );
-    u64 internalDataSzInBytes   = FwdAlignPot( chunkMapSzInBytes, BLOCK_SZ_IN_BYTES );
+    u64 chunkMapSzInBytes       = FwdAlignPot( chunksCount * sizeof( ht_virtual_chunk ), OS_PAGE_SIZE_IN_BYTES );
 
-    void*   pReserved = ht_os_virtual_reserve( blockRegionSzInBytes + internalDataSzInBytes );
-    void*   pInternal = ht_os_virtual_commit( pReserved, chunkMapSzInBytes );
+    void* pMemBase              = ht_os_virtual_reserve( blockRegionSzInBytes );
+    HT_ASSERT( FwdAlignPot( ( u64 ) pMemBase, HT_INTERNAL_ALIGNMENT ) == ( u64 ) pMemBase );
 
     return {
-        .pMemBase           = ( u8* ) pInternal + internalDataSzInBytes,
-        // NOTE: does not include the internal data bc we never care to release the mem, OS will do that for us
+        .pMemBase           = pMemBase,
         .reservedInBytes    = blockRegionSzInBytes,
-        .chunkMap           = { ( ht_virtual_chunk* ) pInternal, chunksCount }
+        .chunkMap           = { ( ht_virtual_chunk* ) ht_os_virtual_alloc( chunkMapSzInBytes ), chunksCount }
     };
 }

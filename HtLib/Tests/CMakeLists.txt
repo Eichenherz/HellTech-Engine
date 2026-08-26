@@ -32,7 +32,7 @@ endfunction()
 function(add_ht_stress TARGET_NAME)
     add_executable(${TARGET_NAME} ${ARGN} ${HTLIB_SRC})
     target_include_directories(${TARGET_NAME} PRIVATE ${HTLIB_TEST_INCLUDES})
-    target_compile_definitions(${TARGET_NAME} PRIVATE _CONSOLE HT_BLOCK_SZ_IN_BYTES=4096)
+    target_compile_definitions(${TARGET_NAME} PRIVATE _CONSOLE HT_BLOCK_SZ_IN_BYTES=65536)
 endfunction()
 
 # ============================================================================
