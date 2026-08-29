@@ -125,6 +125,32 @@ No `r_data_structs.h` / `r_data_structs2.h` exists for HLSL — `ht_renderer_typ
 
 ---
 
+## HtLib allocator — virtual block layer (`HtLib/ht_allocator.cpp`)
+
+Sizes: block 512 KB (`HT_BLOCK_SZ_IN_BYTES`), 64 blocks/bin = **32 MB bin**, 8 bins/chunk = 256 MB chunk. One `atomic_u64` bitmap per bin (`ht_virtual_chunk::blockBitmap`, 1 bit = 1 block, **1 = allocated**). Reserve is 32–64 GB; **commit/decommit happen at bin granularity**.
+
+**Bin state machine — the whole design rests on this:**
+
+| value | meaning | may be left by |
+|---|---|---|
+| `FREE_AS_A_BIRD` (0) | free **and decommitted** | the commit-lock CAS only |
+| `LOCKED_BIN` (~0) | held by a committer/decommitter, **or a genuinely full bin** | nothing — both read as "skip" |
+| anything else | committed, per-bit ownership | reserve CAS / free's `And` |
+
+Two load-bearing rules:
+- `HtCASLoopReserve` **rejects a 0 bin** (`:33`) — otherwise a thread can CAS `0 → mask` on a bin another thread just decommitted and hand out dead pages. The check must sit where the CAS comparand is chosen; the loop reloads `originalVal = seenVal` and can pick up a 0 mid-flight.
+- `LOCKED_BIN == ~0` aliasing a full bin is intentional and safe **only** because the lock is taken exclusively from 0. Locking a non-empty bin would break it.
+
+Paths (both are read-then-CAS, nobody ever waits — lock-free at system level):
+- **Alloc** (`AllocVirtualBlock`): scan bins from a `threadIdx * BINS_PER_CHUNK` offset. Bin reads 0 → CAS `0 → LOCKED`, commit the 32 MB, publish *your own* mask (not 0) and return. Else `HtCASLoopReserve` claims a run of N free blocks in one CAS.
+- **Free** (`FreeVirtualBlock`): `And( ~mask )` returns the pre-state; if `prev & ~mask == 0` you emptied the bin → CAS `0 → LOCKED` (comparand is **0**, your bits are already gone) → decommit → write 0.
+
+Bugs that were fixed here on the HtAllocator branch and are easy to reintroduce: testing the CAS return against the wrong sentinel (it returns the *previous* value), passing the pre-`And` mask as the CAS comparand, and deciding "am I the last owner" from a read taken **before** the `And` (two racing frees each see the other's bits and both skip the decommit).
+
+`ht_virt_alloc` / `ht_mip_zone_alloc` are 64-bit handles sharing bit 63 as `selfType` (`VIRTUAL`/`MIP_ZONE`), keyed by pointer in a per-thread `ht_fixed_hashset`. **`ht_mip_zone_alloc::zoneIdx` is relative to the owning heap's `mipZoneList`** — freeing one on another thread's heap indexes the wrong zone. Cross-thread free is out of scope by design: one thread owns an allocation for its lifetime, handoff moves ownership.
+
+---
+
 ## Key file locations
 
 | What | Where |
@@ -141,3 +167,7 @@ No `r_data_structs.h` / `r_data_structs2.h` exists for HLSL — `ht_renderer_typ
 | Expand draws shader | `Shaders/c_expand_draws.comp.hlsl` |
 | Shading | `Shaders/c_lambertian_clay.hlsl` |
 | VBuffer pass | `Shaders/v_vbuffer.hlsl` |
+| Virtual block alloc/free + CAS loop | `HtLib/ht_allocator.cpp` |
+| Bin/chunk sizes, handles, mip zone allocator | `HtLib/ht_memory.h:147` (consts), `:199` (`ht_virt_alloc`), `:306` (`ht_mip_zone_alloc`), `:342` (`ht_mip_allocator`) |
+| Atomics + fence enum | `HtLib/System/sys_sync.h:41`, impl `HtLib/System/Win32/win32_impl.cpp:63` |
+| Bit-run search (`FindNBitsFreeRunStartBitIdx`) | `HtLib/ht_utils.h:98` |

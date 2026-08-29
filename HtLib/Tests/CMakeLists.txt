@@ -1,10 +1,14 @@
-set(HTLIB_DIR   "..")
-set(MINUNIT_DIR "../../3rdParty/minunit")
+set(HTLIB_DIR     "..")
+set(MINUNIT_DIR   "../../3rdParty/minunit")
+set(HASH_MAP      "../../3rdParty/unordered_dense/include")
 
-# Shared include dirs for all test exes
+# Shared include dirs for all test exes.
+# The tests do not link HtLib, so its INTERFACE include dirs never reach them —
+# every path HtLib's headers need has to be repeated here.
 set(HTLIB_TEST_INCLUDES
     ${HTLIB_DIR}           # <ht_memory.h>, <System/sys_sync.h>, etc.
     ${MINUNIT_DIR}         # "minunit.h"
+    ${HASH_MAP}            # <ankerl/unordered_dense.h>, pulled in by ht_memory.h
 )
 
 # HtLib's own translation units, read straight off the HtLib target so this can

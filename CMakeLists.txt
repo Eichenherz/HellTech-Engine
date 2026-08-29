@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.30)
+
 project(HellTech LANGUAGES CXX C)
 
 # ============================================================================
@@ -72,19 +73,35 @@ if(MSVC)
         /GR-            # No RTTI
         /EHs-c-         # No exceptions
 
-        # Compiler-level PDB only for Debug  (/Zi; Release/RelWithDebInfo rely on linker PDB)
+        # Compiler-level PDB for Debug. Release/RelWithDebInfo get theirs below.
         $<$<CONFIG:Debug>:/Zi>
 
-        # Release: whole-program opt + function-level linking + intrinsics
-        # (/Ot and /Gy are already implied by /O2 that CMake adds for Release)
-        $<$<CONFIG:Release>:/GL>
+        # ---- Optimized configs: everything MSVC has, short of unsafe ----
+        # Release and RelWithDebInfo generate IDENTICAL code — same flags, same inlining, same
+        # LTCG. RelWithDebInfo only adds the symbols to step through it, so a number measured in
+        # one is valid in the other.
+        # CMake already supplies /O2 (/Ob2 in Release, /Zi /Ob1 in RelWithDebInfo) and /DNDEBUG;
+        # the flags below add to or override that. /Ot and /Gy come free with /O2.
+        $<$<CONFIG:Release,RelWithDebInfo>:/Ob3>       # more aggressive inlining than /Ob2, and it overrides RelWithDebInfo's /Ob1
+        $<$<CONFIG:Release,RelWithDebInfo>:/Oi>        # intrinsics instead of CRT calls
+        $<$<CONFIG:Release,RelWithDebInfo>:/GL>        # whole-program optimization (pairs with /LTCG)
+        $<$<CONFIG:Release,RelWithDebInfo>:/Gw>        # global data COMDATs, so the linker can drop unused ones
+        $<$<CONFIG:Release,RelWithDebInfo>:/Zc:inline> # strip unreferenced COMDATs, smaller I-cache footprint
+        $<$<CONFIG:Release,RelWithDebInfo>:/fp:fast>   # reassociation, FMA contraction, no strict IEEE
+        $<$<CONFIG:Release,RelWithDebInfo>:/sdl->      # must precede /GS-, else the global /sdl silently wins
+        $<$<CONFIG:Release,RelWithDebInfo>:/GS->       # no stack cookies in hot loops
+
+        # Debuggable optimized code: /Zi in Release too, so a crash in a benchmark run is
+        # readable. Symbols live in the PDB, not the exe — zero runtime cost.
+        $<$<CONFIG:Release>:/Zi>
     )
 
     add_link_options(
         /DEBUG                          # Linker PDB — all configs
-        $<$<CONFIG:Release>:/LTCG>
-        $<$<CONFIG:Release>:/OPT:REF>
-        $<$<CONFIG:Release>:/OPT:ICF>
+        $<$<CONFIG:Release,RelWithDebInfo>:/LTCG>
+        $<$<CONFIG:Release,RelWithDebInfo>:/OPT:REF>
+        $<$<CONFIG:Release,RelWithDebInfo>:/OPT:ICF>
+        $<$<CONFIG:Release,RelWithDebInfo>:/INCREMENTAL:NO>   # incremental linking cannot coexist with LTCG
     )
 endif()
 

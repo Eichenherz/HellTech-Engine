@@ -6,6 +6,7 @@
 #include "ht_core_types.h"
 #include "ht_error.h"
 #include <array>
+#include <memory>
 #include <ranges>
 #include <span>
 
@@ -20,15 +21,22 @@ struct fixed_vector
     using const_reference        = const T&;
     using pointer                = T*;
     using const_pointer          = const T*;
-    using iterator               = typename std::array<T,N>::iterator;
-    using const_iterator         = typename std::array<T,N>::const_iterator;
-    using reverse_iterator       = typename std::array<T,N>::reverse_iterator;
-    using const_reverse_iterator = typename std::array<T,N>::const_reverse_iterator;
+    // NOTE: raw pointer bc we get nicer syntax
+    using iterator               = T*;
+    using const_iterator         = const T*;
+    using reverse_iterator       = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+    // NOTE: the storage is inline so nothing ever allocates. This is here only because containers
+    // that take an allocator aware container ( ankerl's map ) name the typedef unconditionally
+    using allocator_type         = std::allocator<T>;
 
     std::array<T, N>        elems;
     u64                     elemCount = 0;
 
                             fixed_vector() = default;
+
+                            // NOTE: ignored, see allocator_type
+                            fixed_vector( const allocator_type& ) {}
 
                             fixed_vector( std::initializer_list<T> il );
 
@@ -53,6 +61,12 @@ struct fixed_vector
 
     u64                     size()        const { return elemCount; }
     constexpr u64           capacity()    const { return N; }
+    bool                    empty()       const { return 0 == elemCount; }
+    allocator_type          get_allocator() const { return {}; }
+    void                    shrink_to_fit()     { /* no-op, the storage is inline */ }
+
+    reference               back()              { HT_ASSERT( elemCount > 0 ); return elems[ elemCount - 1 ]; }
+    const_reference         back()        const { HT_ASSERT( elemCount > 0 ); return elems[ elemCount - 1 ]; }
 
     reference               push_back( const T& v );
 
@@ -70,13 +84,13 @@ struct fixed_vector
     T*                      data()       { return std::data( elems ); }
     const T*                data() const { return std::data( elems ); }
 
-    iterator                begin()        { return std::begin( elems ); }
-    const_iterator          begin()  const { return std::cbegin( elems ); }
-    const_iterator          cbegin() const { return std::cbegin( elems ); }
+    iterator                begin()        { return data(); }
+    const_iterator          begin()  const { return data(); }
+    const_iterator          cbegin() const { return data(); }
 
-    iterator                end()          { return std::begin( elems ) + elemCount; }
-    const_iterator          end()    const { return std::cbegin( elems ) + elemCount; }
-    const_iterator          cend()   const { return std::cbegin( elems ) + elemCount; }
+    iterator                end()          { return data() + elemCount; }
+    const_iterator          end()    const { return data() + elemCount; }
+    const_iterator          cend()   const { return data() + elemCount; }
 
     reverse_iterator        rbegin()        { return reverse_iterator( end() ); }
     const_reverse_iterator  rbegin()  const { return const_reverse_iterator( end() ); }

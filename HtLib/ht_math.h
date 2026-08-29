@@ -1,8 +1,16 @@
+#pragma once
+
 #ifndef __HT_MATH_H__
 #define __HT_MATH_H__
 
 #include "../Lib/ht_vec_types.h"
+#include "../Lib/ht_gfx_types.h"
+
 #include "ht_core_types.h"
+#include <ht_error.h>
+
+
+#include <bit>
 #include <span>
 #include <math.h>
 
@@ -399,11 +407,25 @@ inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs )
 	return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s );
 }
 
-constexpr u32 PcgHash( u32 input )
+constexpr u32 PcgHash32( u32 input )
 {
 	u32 state = input * 747796405u + 2891336453u;
 	u32 word = ( ( state >> ( ( state >> 28u ) + 4u ) ) ^ state ) * 277803737u;
 	return ( word >> 22u ) ^ word;
+}
+
+constexpr u64 SplitmixHash64( u64 input )
+{
+	input = ( input ^ ( input >> 30 ) ) * 0xBF58476D1CE4E5B9ull;
+	input = ( input ^ ( input >> 27 ) ) * 0x94D049BB133111EBull;
+	return input ^ ( input >> 31 );
+}
+// NOTE: doesn't produce good hash patterns, it's a great remap tho
+constexpr u64 FibRemap( u64 input, u64 bitWidthOfDstRangePow2 )
+{
+	// NOTE: 0x9E3779B97F4A7C15 == 2 ^ 64 / fibGoldenRatio
+	// NOTE: almost like a modulo + we take as many bits as needed for out range
+	return ( input * 0x9E3779B97F4A7C15ull ) >> ( 64 - bitWidthOfDstRangePow2 );
 }
 
 // PMF ~ 1 / k^2 on [ min, max ].  a = 1.0f/ min, ab = a - 1.0f / ( max + 1 )
@@ -413,4 +435,5 @@ constexpr u32 PowDistroCDF( u32 h, float a, float ab, u32 max )
 	u32 k = u32( 1.0f / ( a - u * ab ) );
 	return ( k > max ) ? max : k;
 }
+
 #endif // !__HT_MATH_H__

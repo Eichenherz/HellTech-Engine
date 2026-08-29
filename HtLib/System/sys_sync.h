@@ -40,23 +40,23 @@ enum sys_thread_signal : i64
 
 using atomic_u64 = volatile u64;
 
-enum class sys_split_barrier_t
+enum class sys_fence_t
 {
-    NO_FENCE,
-    ACQUIRE,
-    RELEASE,
+    NONE,
+    ACQ,
+    REL,
     COUNT
 };
 
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand );
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask );
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value );
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicRead64( atomic_u64* pAddr );
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 void SysAtomicWrite64( atomic_u64* pAddr, u64 value );
 
 struct sys_semaphore

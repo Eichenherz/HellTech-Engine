@@ -59,18 +59,18 @@ void copyable_srwlock::unlock() const { ReleaseSRWLockExclusive( ( SRWLOCK* ) ( 
 
 using win32_atomic64 = volatile __int64;
 
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand )
 {
-	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	if constexpr( sys_fence_t::NONE == BARRIER )
 	{
 		return ( u64 ) InterlockedCompareExchangeNoFence64( ( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
 	}
-	else if constexpr( sys_split_barrier_t::ACQUIRE == BARRIER )
+	else if constexpr( sys_fence_t::ACQ == BARRIER )
 	{
 		return ( u64 ) InterlockedCompareExchangeAcquire64( ( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
 	}
-	else if constexpr( sys_split_barrier_t::RELEASE == BARRIER )
+	else if constexpr( sys_fence_t::REL == BARRIER )
 	{
 		return ( u64 ) InterlockedCompareExchangeRelease64( ( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
 	}
@@ -78,18 +78,18 @@ u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand )
 	return ~0ull;
 }
 
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask )
 {
-	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	if constexpr( sys_fence_t::NONE == BARRIER )
 	{
 		return ( u64 ) InterlockedAnd64NoFence( ( win32_atomic64* ) pAddr, ( LONG64 ) mask );
 	}
-	else if constexpr( sys_split_barrier_t::ACQUIRE == BARRIER )
+	else if constexpr( sys_fence_t::ACQ == BARRIER )
 	{
 		return ( u64 ) InterlockedAnd64Acquire( ( win32_atomic64* ) pAddr, ( LONG64 ) mask );
 	}
-	else if constexpr( sys_split_barrier_t::RELEASE == BARRIER )
+	else if constexpr( sys_fence_t::REL == BARRIER )
 	{
 		return ( u64 ) InterlockedAnd64Release( ( win32_atomic64* ) pAddr, ( LONG64 ) mask );
 	}
@@ -97,19 +97,19 @@ u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask )
 	return ~0ull;
 }
 
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value )
 {
 	// NOTE: exch returns PREV value
-	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	if constexpr( sys_fence_t::NONE == BARRIER )
 	{
 		return ( u64 ) InterlockedExchangeAddNoFence64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
 	}
-	else if constexpr( sys_split_barrier_t::ACQUIRE == BARRIER )
+	else if constexpr( sys_fence_t::ACQ == BARRIER )
 	{
 		return ( u64 ) InterlockedExchangeAddAcquire64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
 	}
-	else if constexpr( sys_split_barrier_t::RELEASE == BARRIER )
+	else if constexpr( sys_fence_t::REL == BARRIER )
 	{
 		return ( u64 ) InterlockedExchangeAddRelease64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
 	}
@@ -117,14 +117,14 @@ u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value )
 	return ~0ull;
 }
 
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 u64 SysAtomicRead64( atomic_u64* pAddr )
 {
-	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	if constexpr( sys_fence_t::NONE == BARRIER )
 	{
 		return ( u64 ) ReadNoFence64( ( win32_atomic64* ) pAddr );
 	}
-	else if constexpr( sys_split_barrier_t::ACQUIRE == BARRIER )
+	else if constexpr( sys_fence_t::ACQ == BARRIER )
 	{
 		return ( u64 ) ReadAcquire64( ( win32_atomic64* ) pAddr );
 	}
@@ -132,33 +132,33 @@ u64 SysAtomicRead64( atomic_u64* pAddr )
 	return ~0ull;
 }
 
-template<sys_split_barrier_t BARRIER>
+template<sys_fence_t BARRIER>
 void SysAtomicWrite64( atomic_u64* pAddr, u64 value )
 {
-	if constexpr( sys_split_barrier_t::NO_FENCE == BARRIER )
+	if constexpr( sys_fence_t::NONE == BARRIER )
 	{
 		WriteNoFence64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
 	}
-	else if constexpr( sys_split_barrier_t::RELEASE == BARRIER )
+	else if constexpr( sys_fence_t::REL == BARRIER )
 	{
 		WriteRelease64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
 	}
 }
 
 // NOTE: defined here, so every barrier caller in another TU can ask for has to be instantiated here
-template u64 SysAtomicCas64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64, u64 );
-template u64 SysAtomicCas64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64, u64 );
-template u64 SysAtomicCas64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64, u64 );
-template u64 SysAtomicAnd64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64 );
-template u64 SysAtomicAnd64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64 );
-template u64 SysAtomicAnd64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64 );
-template u64 SysAtomicAdd64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64 );
-template u64 SysAtomicAdd64<sys_split_barrier_t::ACQUIRE>( atomic_u64*, u64 );
-template u64 SysAtomicAdd64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64 );
-template u64 SysAtomicRead64<sys_split_barrier_t::NO_FENCE>( atomic_u64* );
-template u64 SysAtomicRead64<sys_split_barrier_t::ACQUIRE>( atomic_u64* );
-template void SysAtomicWrite64<sys_split_barrier_t::NO_FENCE>( atomic_u64*, u64 );
-template void SysAtomicWrite64<sys_split_barrier_t::RELEASE>( atomic_u64*, u64 );
+template u64 SysAtomicCas64<sys_fence_t::NONE>( atomic_u64*, u64, u64 );
+template u64 SysAtomicCas64<sys_fence_t::ACQ>( atomic_u64*, u64, u64 );
+template u64 SysAtomicCas64<sys_fence_t::REL>( atomic_u64*, u64, u64 );
+template u64 SysAtomicAnd64<sys_fence_t::NONE>( atomic_u64*, u64 );
+template u64 SysAtomicAnd64<sys_fence_t::ACQ>( atomic_u64*, u64 );
+template u64 SysAtomicAnd64<sys_fence_t::REL>( atomic_u64*, u64 );
+template u64 SysAtomicAdd64<sys_fence_t::NONE>( atomic_u64*, u64 );
+template u64 SysAtomicAdd64<sys_fence_t::ACQ>( atomic_u64*, u64 );
+template u64 SysAtomicAdd64<sys_fence_t::REL>( atomic_u64*, u64 );
+template u64 SysAtomicRead64<sys_fence_t::NONE>( atomic_u64* );
+template u64 SysAtomicRead64<sys_fence_t::ACQ>( atomic_u64* );
+template void SysAtomicWrite64<sys_fence_t::NONE>( atomic_u64*, u64 );
+template void SysAtomicWrite64<sys_fence_t::REL>( atomic_u64*, u64 );
 
 sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( NULL, 0, LONG_MAX, NULL ) }
 {
@@ -344,7 +344,7 @@ sys_thread SysCreateThread( u64	stackSize, PfnSysThreadProc ThreadProc, void* pD
 	};
 }
 
-void SysThreadSleep( u64 milliSecs ) { return Sleep( milliSecs ); }
+void SysThreadSleep( u32 milliSecs ) { return Sleep( milliSecs ); }
 
 void SysNameThread( u64 hThread, const wchar_t* name )
 {

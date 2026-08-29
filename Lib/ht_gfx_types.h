@@ -6,7 +6,12 @@
 #include "ht_core_types.h"
 #include "ht_vec_types.h"
 
-#include "ht_renderer_types.h"
+struct packed_trs
+{
+	float3	t;
+	float4	r;
+	float3	s;
+};
 
 struct vertex_attrs
 {

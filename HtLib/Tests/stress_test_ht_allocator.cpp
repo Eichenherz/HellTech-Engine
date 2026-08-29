@@ -1,12 +1,12 @@
 #include <ht_core_types.h>
+
+#include <ht_math.h>
 #include <ht_utils.h>
+
 #include <ht_error.h>
 #include <System/sys_thread.h>
 #include <System/sys_timer.h>
-// NOTE: we included this just bc we wanna not deal with shit rn
-#include "../Lib/ht_renderer_types.h"
-#include <ht_math.h>
-#include <immintrin.h>
+
 #include <ht_memory.h>
 
 #include <ht_fixed_vector.h>
@@ -16,16 +16,6 @@ constexpr u64 THREAD_IDX_BIT_WIDTH  = std::bit_width( NUM_THREADS );
 
 static ht_virtual_allocator* pHtAllocator = nullptr;
 
-u32 HwRandSeed32()
-{
-    u32 seed = 0;
-    for( u64 tryIdx = 0; tryIdx < 4; ++tryIdx )
-    {
-        if( 1 == _rdseed32_step( &seed ) ) break;
-    }
-    return seed;
-}
-
 // NOTE: we need to size it as
 // liveBlocks = NUM_THREADS * THREAD_WORK_ITEMS * meanFootprintInBlocks
 // poolBlocks = chunkCount * BINS_PER_CHUNK * BLOCKS_PER_BIN
@@ -33,8 +23,16 @@ u32 HwRandSeed32()
 // if pool is too full we're gonna hammer on the OOM recycling path
 // NOTE: we need to draw from a distro bc uniform will have us alloc
 // larger stuff more often which gets us to "TOO FULL"
+// NOTE: 1 / k^2 over [ 1, 4 ] means a mean footprint of ~1.46 blocks, so
+// 8 * 64 * 1.46 = ~749 live blocks against a 1024 block pool, ~73% full
 constexpr u64 MAX_POOL_SIZE     = 64 * MB;
 constexpr u64 THREAD_WORK_ITEMS = 64;
+
+// NOTE: the block path caps out here, anything past it comes straight from the OS as a dedicated
+// alloc and takes no bits, which is not what this test is hammering
+constexpr u64   MAX_FOOTPRINT_IN_BLOCKS = MAX_BIN_ALLOC_SZ_IN_BLOCKS;
+constexpr float POW_DISTRO_A            = 1.0f;
+constexpr float POW_DISTRO_AB           = 1.0f - 1.0f / ( MAX_FOOTPRINT_IN_BLOCKS + 1.0f );
 
 struct stamp_t
 {
@@ -77,10 +75,10 @@ u32 ThreadMainLoop( void* pData )
 
     for( ;; )
     {
-        if( EXIT_SIGNAL == SysAtomicRead64<sys_split_barrier_t::NO_FENCE>( &exitSignal ) ) break;
+        if( EXIT_SIGNAL == SysAtomicRead64<sys_fence_t::NONE>( &exitSignal ) ) break;
         threadStats[ threadIdx ].iters++;
 
-        randSeq = PcgHash( randSeq );
+        randSeq = PcgHash32( randSeq );
         if( u64 allocSz = std::size( allocs ); THREAD_WORK_ITEMS == allocSz )
         {
             u32          itemIdx = randSeq % allocSz;
@@ -100,7 +98,8 @@ u32 ThreadMainLoop( void* pData )
         }
         else
         {
-            u64 footprint = PowDistroCDF( randSeq, 1.0f, 1.0f - 1.0f / 65.0f, 64 ) * BLOCK_SZ_IN_BYTES;
+            u64 footprint = PowDistroCDF(
+                randSeq, POW_DISTRO_A, POW_DISTRO_AB, MAX_FOOTPRINT_IN_BLOCKS ) * BLOCK_SZ_IN_BYTES;
             // NOTE: intentionally use thread 0 to force contention
             ht_virt_alloc alloc = pHtAllocator->AllocVirtualBlock( footprint, 0 );
 
@@ -134,7 +133,7 @@ u32 ThreadMainLoop( void* pData )
         }
     }
 
-    SysAtomicAdd64<sys_split_barrier_t::NO_FENCE>( &threadCounter, 1 );
+    SysAtomicAdd64<sys_fence_t::NONE>( &threadCounter, 1 );
     return 0;
 }
 
@@ -142,7 +141,7 @@ constexpr u64 RUNTIME_SECS = 100;
 
 i32 main()
 {
-    ht_virtual_allocator htAllocator = HtMakeAllocator( MAX_POOL_SIZE );
+    ht_virtual_allocator htAllocator = HtMakeVirtualAllocator( MAX_POOL_SIZE );
     pHtAllocator = &htAllocator;
 
     sys_thread threadPool[ NUM_THREADS ] = {};
@@ -160,13 +159,13 @@ i32 main()
         {
             if( RUNTIME_SECS <= ( SysTicks() - startTime ) * cpuPeriod )
             {
-                SysAtomicWrite64<sys_split_barrier_t::NO_FENCE>( &exitSignal, EXIT_SIGNAL );
+                SysAtomicWrite64<sys_fence_t::NONE>( &exitSignal, EXIT_SIGNAL );
                 switchWait = true;
             }
         }
         else
         {
-            if( NUM_THREADS == SysAtomicRead64<sys_split_barrier_t::NO_FENCE>( &threadCounter ) ) break;
+            if( NUM_THREADS == SysAtomicRead64<sys_fence_t::NONE>( &threadCounter ) ) break;
         }
 
         SysThreadSleep( 16 );

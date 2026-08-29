@@ -7,7 +7,10 @@
 
 add_library(HtLib INTERFACE)
 
-target_include_directories(HtLib INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
+target_include_directories(HtLib INTERFACE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${CMAKE_SOURCE_DIR}/3rdParty/unordered_dense/include"
+)
 
 # Sources are globbed, never listed by name — drop a .cpp in HtLib/ and it is
 # picked up. CONFIGURE_DEPENDS re-globs at build time, so no manual reconfigure.

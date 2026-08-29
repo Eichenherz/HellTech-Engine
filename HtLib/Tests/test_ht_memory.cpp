@@ -297,6 +297,9 @@ MU_TEST_SUITE( ST_SuitePlatformGate )
 static void* const   gPackDummy               = ( void* ) HT_INTERNAL_ALIGNMENT;
 // NOTE: the top user address rounded down to an address the packed word can actually hold
 static constexpr u64 OS_USER_MAX_ALIGNED_ADDR = OS_USER_MAX_ADDR & ~( HT_INTERNAL_ALIGNMENT - 1 );
+// NOTE: what is left of the meta bits once the type and the self type have taken theirs
+static constexpr u64 PACK_PAYLOAD_BIT_COUNT   = HT_META_BIT_COUNT - 2;
+static constexpr u64 PACK_MAX_PAYLOAD         = ( 1ull << PACK_PAYLOAD_BIT_COUNT ) - 1;
 
 MU_TEST( ST_PackBlockRoundTrip )
 {
@@ -318,12 +321,12 @@ MU_TEST( ST_PackDedicatedRoundTrip )
 
 MU_TEST( ST_PackHoldsTheWholePayload )
 {
-    // NOTE: the payload field is a full 32 bits wide, nothing of it may fall off
-    ht_virt_alloc alloc = { gPackDummy, 0xFFFFFFFF, ht_virt_alloc_type::DEDICATED };
+    // NOTE: the payload field is the whole rest of the word, nothing of it may fall off
+    ht_virt_alloc alloc = { gPackDummy, PACK_MAX_PAYLOAD, ht_virt_alloc_type::DEDICATED };
 
     mu_check( gPackDummy == HtGetAllocPtr( alloc ) );
     mu_check( ht_virt_alloc_type::DEDICATED == alloc.type );
-    mu_check( 0xFFFFFFFF == alloc.metadata );
+    mu_check( PACK_MAX_PAYLOAD == alloc.metadata );
 }
 
 MU_TEST( ST_PackHoldsTheTopUserAddress )
@@ -385,9 +388,9 @@ MU_TEST( ST_PackUnalignedAddressFires )
 
 MU_TEST( ST_PackPayloadPastItsFieldFires )
 {
-    // NOTE: only 32 bits ride along, anything above them would eat into the address
+    // NOTE: only the payload bits ride along, anything above them would eat into the address
     ht_virt_alloc probe = {};
-    MU_ASSERT_FIRES( probe = ht_virt_alloc( gPackDummy, 1ull << 32, ht_virt_alloc_type::BLOCK ) );
+    MU_ASSERT_FIRES( probe = ht_virt_alloc( gPackDummy, 1ull << PACK_PAYLOAD_BIT_COUNT, ht_virt_alloc_type::BLOCK ) );
 }
 
 MU_TEST_SUITE( ST_SuiteVirtAllocPacking )
@@ -410,7 +413,7 @@ MU_TEST_SUITE( ST_SuiteVirtAllocPacking )
 
 // NOTE: 2 chunks is the smallest pool where the thread start offset is observable. A reserve is
 // address space only, the tests hand every block they commit back.
-static ht_virtual_allocator htAllocator = HtMakeAllocator( 2 * CHUNK_SZ_IN_BYTES );
+static ht_virtual_allocator htAllocator = HtMakeVirtualAllocator( 2 * CHUNK_SZ_IN_BYTES );
 
 static void ScrubPool()
 {
@@ -439,7 +442,7 @@ MU_TEST( ST_GetBinAtPastTheMapFires )
 MU_TEST( ST_CasLoopReserveFlipsTheMaskIn )
 {
     atomic_u64 bin = 0b0011ull;
-    u64 reserved = HtCASLoopReserve( &bin, []( u64 ) { return 0b1100ull; }, 0 );
+    u64 reserved = HtCASLoopReserve( &bin, []( u64 ) { return 0b1100ull; } );
 
     mu_check( 0b1100ull == reserved );
     mu_check( 0b1111ull == bin );
@@ -449,7 +452,7 @@ MU_TEST( ST_CasLoopReserveFeedsTheLiveBinToTheLambda )
 {
     atomic_u64 bin = 0b0110ull;
     u64 seenByLambda = 0;
-    u64 reserved = HtCASLoopReserve( &bin, [ &seenByLambda ]( u64 binVal ) { seenByLambda = binVal; return 0b1ull; }, 0 );
+    u64 reserved = HtCASLoopReserve( &bin, [ &seenByLambda ]( u64 binVal ) { seenByLambda = binVal; return 0b1ull; } );
 
     mu_check( 0b0110ull == seenByLambda );
     mu_check( 0b1ull == reserved );
@@ -459,7 +462,7 @@ MU_TEST( ST_CasLoopReserveFeedsTheLiveBinToTheLambda )
 MU_TEST( ST_CasLoopReserveBailsOnTheInvalidMask )
 {
     atomic_u64 bin = 0b1010ull;
-    u64 reserved = HtCASLoopReserve( &bin, []( u64 ) { return 0ull; }, 0 );
+    u64 reserved = HtCASLoopReserve( &bin, []( u64 ) { return 0ull; } );
 
     mu_check( 0 == reserved );
     mu_check( 0b1010ull == bin );
@@ -480,9 +483,9 @@ MU_TEST_SUITE( ST_SuiteChunkMap )
 
 MU_TEST( ST_MakeRoundsUpToWholeChunks )
 {
-    ht_virtual_allocator oneByte = HtMakeAllocator( 1 );
-    ht_virtual_allocator oneChunk = HtMakeAllocator( CHUNK_SZ_IN_BYTES );
-    ht_virtual_allocator onePastAChunk = HtMakeAllocator( CHUNK_SZ_IN_BYTES + 1 );
+    ht_virtual_allocator oneByte = HtMakeVirtualAllocator( 1 );
+    ht_virtual_allocator oneChunk = HtMakeVirtualAllocator( CHUNK_SZ_IN_BYTES );
+    ht_virtual_allocator onePastAChunk = HtMakeVirtualAllocator( CHUNK_SZ_IN_BYTES + 1 );
 
     mu_check( 1 == std::size( oneByte.chunkMap ) );
     mu_check( CHUNK_SZ_IN_BYTES == oneByte.reservedInBytes );
@@ -494,7 +497,7 @@ MU_TEST( ST_MakeRoundsUpToWholeChunks )
 
 MU_TEST( ST_MakeHandsBackAnEmptyAllocator )
 {
-    ht_virtual_allocator fresh = HtMakeAllocator( CHUNK_SZ_IN_BYTES );
+    ht_virtual_allocator fresh = HtMakeVirtualAllocator( CHUNK_SZ_IN_BYTES );
     u64 binCount = std::size( fresh.chunkMap ) * BINS_PER_CHUNK;
     for( u64 binIdx = 0; binIdx < binCount; ++binIdx )
     {
@@ -505,7 +508,7 @@ MU_TEST( ST_MakeHandsBackAnEmptyAllocator )
 MU_TEST( ST_MakeKeepsTheChunkMapOutOfTheBlockRegion )
 {
     // NOTE: the map is its own OS allocation now, it must not eat into the reserve
-    ht_virtual_allocator fresh = HtMakeAllocator( CHUNK_SZ_IN_BYTES );
+    ht_virtual_allocator fresh = HtMakeVirtualAllocator( CHUNK_SZ_IN_BYTES );
     u8* pMapBase = ( u8* ) std::data( fresh.chunkMap );
     u8* pBlockBase = ( u8* ) fresh.pMemBase;
 
@@ -518,7 +521,7 @@ MU_TEST( ST_MakeKeepsTheChunkMapOutOfTheBlockRegion )
 MU_TEST( ST_MakeAlignsEveryBlockStart )
 {
     // NOTE: base on the OS granularity plus a block sized stride is what puts every block on 64k
-    ht_virtual_allocator fresh = HtMakeAllocator( CHUNK_SZ_IN_BYTES );
+    ht_virtual_allocator fresh = HtMakeVirtualAllocator( CHUNK_SZ_IN_BYTES );
     u64 blockCount = std::size( fresh.chunkMap ) * BINS_PER_CHUNK * BLOCKS_PER_BIN;
 
     mu_check( 0 == ( ( u64 ) fresh.pMemBase % HT_INTERNAL_ALIGNMENT ) );
@@ -586,16 +589,16 @@ MU_TEST( ST_AllocMultiBlockRoundsPartialsUp )
     htAllocator.FreeVirtualBlock( oneShortOfThree, 0 );
 }
 
-MU_TEST( ST_AllocMultiBlockTakesAWholeBin )
+MU_TEST( ST_AllocMaxRunTakesTheTopOfTheBlockPath )
 {
-    // NOTE: the biggest request the block path still serves
+    // NOTE: the biggest request the block path still serves, one block past this is dedicated
     u8* pBase = ( u8* ) htAllocator.pMemBase;
 
-    ht_virt_alloc alloc = htAllocator.AllocVirtualBlock( BLOCKS_PER_BIN * BLOCK_SZ_IN_BYTES, 0 );
+    ht_virt_alloc alloc = htAllocator.AllocVirtualBlock( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES, 0 );
     mu_check( ht_virt_alloc_type::BLOCK == alloc.type );
-    mu_check( BLOCKS_PER_BIN == alloc.metadata );
+    mu_check( MAX_BIN_ALLOC_SZ_IN_BLOCKS == alloc.metadata );
     mu_check( pBase == ( u8* ) HtGetAllocPtr( alloc ) );
-    mu_check( BIT_NPOS == *GetBinAt( htAllocator.chunkMap, 0 ) );
+    mu_check( ( BIT_NPOS >> ( 64 - MAX_BIN_ALLOC_SZ_IN_BLOCKS ) ) == *GetBinAt( htAllocator.chunkMap, 0 ) );
     mu_check( 0 == *GetBinAt( htAllocator.chunkMap, 1 ) );
 
     htAllocator.FreeVirtualBlock( alloc, 0 );
@@ -604,15 +607,17 @@ MU_TEST( ST_AllocMultiBlockTakesAWholeBin )
 
 MU_TEST( ST_AllocMultiBlockRunsNeverCrossABin )
 {
-    // NOTE: a bin is one atomic word, bin 0 has 4 free at the top so a 5 run has to go to bin 1
+    // NOTE: a bin is one atomic word, bin 0 is one short of a max run at the top so it has to go to bin 1
     u8* pBase = ( u8* ) htAllocator.pMemBase;
-    *GetBinAt( htAllocator.chunkMap, 0 ) = ~( 0xFull << 60 );
+    const u64 shortTailMask = ( BIT_NPOS >> ( 64 - ( MAX_BIN_ALLOC_SZ_IN_BLOCKS - 1 ) ) )
+        << ( BLOCKS_PER_BIN - ( MAX_BIN_ALLOC_SZ_IN_BLOCKS - 1 ) );
+    *GetBinAt( htAllocator.chunkMap, 0 ) = ~shortTailMask;
 
-    ht_virt_alloc alloc = htAllocator.AllocVirtualBlock( 5 * BLOCK_SZ_IN_BYTES, 0 );
+    ht_virt_alloc alloc = htAllocator.AllocVirtualBlock( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES, 0 );
 
     mu_check( ( pBase + BLOCKS_PER_BIN * BLOCK_SZ_IN_BYTES ) == ( u8* ) HtGetAllocPtr( alloc ) );
-    mu_check( ~( 0xFull << 60 ) == *GetBinAt( htAllocator.chunkMap, 0 ) );
-    mu_check( 0b11111ull == *GetBinAt( htAllocator.chunkMap, 1 ) );
+    mu_check( ~shortTailMask == *GetBinAt( htAllocator.chunkMap, 0 ) );
+    mu_check( ( BIT_NPOS >> ( 64 - MAX_BIN_ALLOC_SZ_IN_BLOCKS ) ) == *GetBinAt( htAllocator.chunkMap, 1 ) );
 
     htAllocator.FreeVirtualBlock( alloc, 0 );
 }
@@ -703,17 +708,23 @@ MU_TEST( ST_AllocSkipsFullBins )
 
 MU_TEST( ST_AllocReachesTheLastBlockOfTheReserve )
 {
+    // NOTE: only the bins we never touch are marked full by hand. A bin is committed when it is
+    // claimed from free, so the last one is filled block by block through the allocator instead
     u8* pBase = ( u8* ) htAllocator.pMemBase;
     u64 binCount = std::size( htAllocator.chunkMap ) * BINS_PER_CHUNK;
-    for( u64 binIdx = 0; binIdx < binCount; ++binIdx )
+    for( u64 binIdx = 0; binIdx < binCount - 1; ++binIdx )
     {
         *GetBinAt( htAllocator.chunkMap, binIdx ) = BIT_NPOS;
     }
-    *GetBinAt( htAllocator.chunkMap, binCount - 1 ) = ~( 1ull << 63 );
 
-    ht_virt_alloc alloc = htAllocator.AllocVirtualBlock( BLOCK_SZ_IN_BYTES, 0 );
+    ht_virt_alloc alloc = {};
+    for( u64 blockIdx = 0; blockIdx < BLOCKS_PER_BIN; ++blockIdx )
+    {
+        alloc = htAllocator.AllocVirtualBlock( BLOCK_SZ_IN_BYTES, 0 );
+    }
     u8* pBlock = ( u8* ) HtGetAllocPtr( alloc );
 
+    mu_check( BIT_NPOS == *GetBinAt( htAllocator.chunkMap, binCount - 1 ) );
     // NOTE: the last block has to end exactly on the end of the reserve
     mu_check( ( pBase + ( binCount * BLOCKS_PER_BIN - 1 ) * BLOCK_SZ_IN_BYTES ) == pBlock );
     mu_check( ( pBlock + BLOCK_SZ_IN_BYTES ) == ( pBase + htAllocator.reservedInBytes ) );
@@ -831,7 +842,7 @@ MU_TEST_SUITE( ST_SuiteAllocVirtualBlock )
     MU_RUN_TEST( ST_AllocSingleBlockTakesTheFirstBit );
     MU_RUN_TEST( ST_AllocSingleBlocksAreContiguous );
     MU_RUN_TEST( ST_AllocMultiBlockRoundsPartialsUp );
-    MU_RUN_TEST( ST_AllocMultiBlockTakesAWholeBin );
+    MU_RUN_TEST( ST_AllocMaxRunTakesTheTopOfTheBlockPath );
     MU_RUN_TEST( ST_AllocMultiBlockRunsNeverCrossABin );
     MU_RUN_TEST( ST_AllocMixesSingleAndMultiBlockRuns );
     MU_RUN_TEST( ST_AllocTakesTheLowestFittingHole );
@@ -941,11 +952,11 @@ MU_TEST_SUITE( ST_SuiteFreeVirtualBlock )
 // ============================================================================
 
 // NOTE: the smallest request that walks off the block path, freed the moment it checks out
-static constexpr u64 DEDICATED_SZ_IN_BYTES = BLOCKS_PER_BIN * BLOCK_SZ_IN_BYTES + 1;
+static constexpr u64 DEDICATED_SZ_IN_BYTES = MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES + 1;
 static constexpr u64 DEDICATED_SZ_IN_PAGES =
-    ( DEDICATED_SZ_IN_BYTES + HT_DEDICATED_ALIGNMENT - 1 ) / HT_DEDICATED_ALIGNMENT;
+    ( DEDICATED_SZ_IN_BYTES + HT_INTERNAL_ALIGNMENT - 1 ) / HT_INTERNAL_ALIGNMENT;
 
-MU_TEST( ST_DedicatedStartsOneBytePastAWholeBin )
+MU_TEST( ST_DedicatedStartsOneBytePastTheBiggestBinRun )
 {
     u8* pBase = ( u8* ) htAllocator.pMemBase;
 
@@ -964,9 +975,8 @@ MU_TEST( ST_DedicatedCarriesItsSizeInPages )
     ht_virt_alloc alloc = htAllocator.AllocVirtualBlock( DEDICATED_SZ_IN_BYTES, 0 );
     u8* pBytes = ( u8* ) HtGetAllocPtr( alloc );
 
-    // NOTE: the request is rounded up to whole dedicated pages, that count is the whole payload
+    // NOTE: the request is rounded up to whole internal pages, that count is the whole payload
     mu_check( DEDICATED_SZ_IN_PAGES == alloc.metadata );
-    // NOTE: only the packing alignment is checked, the OS only promises granularity on its own
     mu_check( 0 == ( ( u64 ) pBytes % HT_INTERNAL_ALIGNMENT ) );
 
     pBytes[ 0 ] = 0x12;
@@ -1003,7 +1013,7 @@ MU_TEST_SUITE( ST_SuiteDedicatedAlloc )
 {
     MU_SUITE_CONFIGURE( &ScrubPool, nullptr );
 
-    MU_RUN_TEST( ST_DedicatedStartsOneBytePastAWholeBin );
+    MU_RUN_TEST( ST_DedicatedStartsOneBytePastTheBiggestBinRun );
     MU_RUN_TEST( ST_DedicatedCarriesItsSizeInPages );
     MU_RUN_TEST( ST_DedicatedAndBlocksLiveSideBySide );
 }
