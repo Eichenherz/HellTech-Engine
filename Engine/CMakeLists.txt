@@ -36,7 +36,6 @@ target_link_libraries(Engine PRIVATE
     "$ENV{VULKAN_SDK}/Lib/dxcompiler.lib"
 )
 
-target_compile_definitions(Engine PRIVATE _CONSOLE)
 
 # No incremental linking for Debug  (LinkIncremental=false in Engine.vcxproj Debug)
 if(MSVC)

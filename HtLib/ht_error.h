@@ -3,8 +3,9 @@
 #ifndef __HT_ERROR_H__
 #define __HT_ERROR_H__
 
-#include "ht_core_types.h"
-#include "ht_macros.h"
+#include <ht_core_types.h>
+#include <System/sys_std_streams.h>
+#include <ht_macros.h>
 
 #include <format>
 #include <cstdlib>
@@ -29,34 +30,11 @@ extern i32      gHtAssertFired;
 
 #else // !HT_TESTS
 
-#if defined(_WIN32) && !defined(_CONSOLE)
-
-void SysErrMsgBox( const char* str );
-
-#elif defined(__linux__)
-
-#include <unistd.h>
-#include <cstring>
-HT_FORCEINLINE void SysErrMsgBox( const char* str )
-{
-	write( STDERR_FILENO, str, strlen( str ) );
-}
-
-#else
-
-#include <iostream>
-HT_FORCEINLINE void SysErrMsgBox( const char* str )
-{
-	std::cout << str << "\n";
-}
-
-#endif
-
 template<u64 BUFFER_SIZE = HT_LOG_BUFFER_SIZE, typename... Args>
 HT_FORCEINLINE void HtPrintErrAndDie( std::format_string<Args...> fmt, Args&&... args )
 {
 	char dbgStr[ BUFFER_SIZE ] = {};
-	std::format_to_n( dbgStr, std::size( dbgStr ) - 1, fmt, std::forward<Args>( args )... );
+	std::format_to_n( dbgStr, std::size( dbgStr ) - 1, fmt, FWD( args )... );
 	SysErrMsgBox( dbgStr );
 	std::abort();
 }

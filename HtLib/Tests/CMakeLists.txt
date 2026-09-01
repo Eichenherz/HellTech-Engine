@@ -44,7 +44,6 @@ endfunction()
 # ============================================================================
 
 #add_ht_test(TestSlotBuffer             test_slot_buffer.cpp)
-#add_ht_test(TestStretchyBuffer         test_stretchy_buffer.cpp)
 add_ht_test(TestHtMemory                test_ht_memory.cpp INLINED_TU ht_allocator.cpp)
 add_ht_test(TestFixedVector             test_fixed_vector.cpp)
 

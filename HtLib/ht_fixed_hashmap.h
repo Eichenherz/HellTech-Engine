@@ -4,7 +4,7 @@
 #define __HT_FIXED_HASHMAP_H__
 
 #include <ht_core_types.h>
-#include <ht_fixed_vector.h>
+#include <ht_arena_vector.h>
 
 #include <ankerl/unordered_dense.h>
 
@@ -30,6 +30,16 @@ using ht_fixed_hashset = ankerl::unordered_dense::set<
     HASH_T,
     CMP_T,
     fixed_vector<T, SLOT_COUNT>,
+    ankerl::unordered_dense::bucket_type::standard,
+    fixed_vector<ankerl::unordered_dense::bucket_type::standard, HtHashBucketCount( SLOT_COUNT )>>;
+
+template<typename KEY_T, typename VAL_T, typename HASH_T, typename CMP_T, u64 SLOT_COUNT>
+using ht_fixed_hashmap = ankerl::unordered_dense::map<
+    KEY_T,
+    VAL_T,
+    HASH_T,
+    CMP_T,
+    fixed_vector<std::pair<KEY_T, VAL_T>, SLOT_COUNT>,
     ankerl::unordered_dense::bucket_type::standard,
     fixed_vector<ankerl::unordered_dense::bucket_type::standard, HtHashBucketCount( SLOT_COUNT )>>;
 

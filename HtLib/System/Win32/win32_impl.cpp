@@ -1,18 +1,11 @@
-#include <System/sys_sync.h>
-
-#include <System/sys_file.h>
-
-
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
 
 #include "win32_err.h"
 
-// ===============================================================================================================
-// ht_mem_arena.h
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
 #include <ht_memory.h>
-
+// ---------------------------------------------------------------------------------------------------------------
 void*	ht_os_virtual_reserve( u64 sizeInBytes )
 {
 	void* mem = VirtualAlloc( nullptr, sizeInBytes, MEM_RESERVE, PAGE_READWRITE );
@@ -32,19 +25,17 @@ void	ht_os_virtual_decommit( void* mem, u64 sizeInBytes )
 {
 	WIN_CHECK( VirtualFree( mem, sizeInBytes, MEM_DECOMMIT ) );
 }
-
 void*   ht_os_virtual_alloc( u64 sizeInBytes )
 {
 	void* mem = VirtualAlloc( nullptr, sizeInBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
 	WIN_CHECK( mem );
 	return mem;
 }
+// ---------------------------------------------------------------------------------------------------------------
 
-// ===============================================================================================================
-
-// ===============================================================================================================
-// sys_sync.h
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
+#include <System/sys_sync.h>
+// ---------------------------------------------------------------------------------------------------------------
 static_assert( sizeof( SRWLOCK ) == sizeof( void* ), "SRWLOCK storage size mismatch" );
 
 copyable_srwlock::copyable_srwlock()                             { *( SRWLOCK* )( &osLock ) = SRWLOCK_INIT; };
@@ -64,15 +55,18 @@ u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand )
 {
 	if constexpr( sys_fence_t::NONE == BARRIER )
 	{
-		return ( u64 ) InterlockedCompareExchangeNoFence64( ( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
+		return ( u64 ) InterlockedCompareExchangeNoFence64(
+			( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
 	}
 	else if constexpr( sys_fence_t::ACQ == BARRIER )
 	{
-		return ( u64 ) InterlockedCompareExchangeAcquire64( ( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
+		return ( u64 ) InterlockedCompareExchangeAcquire64(
+			( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
 	}
 	else if constexpr( sys_fence_t::REL == BARRIER )
 	{
-		return ( u64 ) InterlockedCompareExchangeRelease64( ( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
+		return ( u64 ) InterlockedCompareExchangeRelease64(
+			( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
 	}
 
 	return ~0ull;
@@ -176,12 +170,11 @@ void SysSemaphoreWait( sys_semaphore sema, u32 millisecs )
 	// TODO: might wanna do more stuff based on retval
 	WIN_CHECK( WAIT_FAILED != WaitForSingleObject( ( HANDLE ) sema.hndl, millisecs ) );
 }
+// ---------------------------------------------------------------------------------------------------------------
 
-// ===============================================================================================================
-
-// ===============================================================================================================
-// sys_file.h
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
+#include <System/sys_file.h>
+// ---------------------------------------------------------------------------------------------------------------
 constexpr DWORD MakeGenericAccessFlags( file_permissions_flags openFlags )
 {
 	DWORD access = 0;
@@ -209,14 +202,8 @@ constexpr DWORD MakeFileMappingFlags( file_permissions_flags openFlags )
 	{
 		return PAGE_READWRITE;
 	}
-	else if( openFlags & file_permissions_bits::READ )
-	{
-		return PAGE_READONLY;
-	}
-	else if( openFlags & file_permissions_bits::WRITE )
-	{
-		return PAGE_WRITECOPY;
-	}
+	if( openFlags & file_permissions_bits::READ ) return PAGE_READONLY;
+	if( openFlags & file_permissions_bits::WRITE ) return PAGE_WRITECOPY;
 
 	return 0;
 }
@@ -226,14 +213,8 @@ constexpr DWORD MakeMapViewFlags( file_permissions_flags openFlags )
 	{
 		return FILE_MAP_ALL_ACCESS;
 	}
-	else if( openFlags & file_permissions_bits::READ )
-	{
-		return FILE_MAP_READ;
-	}
-	else if( openFlags & file_permissions_bits::WRITE )
-	{
-		return FILE_MAP_WRITE;
-	}
+	if( openFlags & file_permissions_bits::READ ) return FILE_MAP_READ;
+	if( openFlags & file_permissions_bits::WRITE ) return FILE_MAP_WRITE;
 
 	return 0;
 }
@@ -266,7 +247,8 @@ constexpr DWORD MakeAccessFlags( file_access_flags accessFlags )
 u64 mmap_file::Timestamp()
 {
 	FILETIME fileTime = {};
-	WIN_CHECK( !GetFileTime( ( HANDLE ) hFile, 0, 0, &fileTime ) );
+	WIN_CHECK( SUCCEEDED( GetFileTime( ( HANDLE ) hFile,
+		0, 0, &fileTime ) ) );
 
 	ULARGE_INTEGER timestamp = {};
 	timestamp.LowPart = fileTime.dwLowDateTime;
@@ -287,18 +269,21 @@ mmap_file SysCreateMmapFile(
 	DWORD dwFileMappingAccess	= MakeFileMappingFlags( permissionFlags );
 	DWORD dwDataViewAccess		= MakeMapViewFlags( permissionFlags );
 
-	HANDLE hFile = CreateFileA( path, dwPermissionFlags, FILE_SHARE_READ, 0, dwCreateFlags, dwAccessFlags, NULL );
+	HANDLE hFile		= CreateFileA( path, dwPermissionFlags, FILE_SHARE_READ,
+		0, dwCreateFlags, dwAccessFlags, NULL );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
 
-	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFileMappingAccess, 0, 0, 0 );
+	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFileMappingAccess,
+		0, 0, 0 );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hFileMapping );
 
-	DWORD dwFileSizeHigh;
-	u64 qwFileSize = GetFileSize( hFile, &dwFileSizeHigh );
-	qwFileSize += u64( dwFileSizeHigh ) << 32;
+	DWORD	dwFileSizeHigh;
+	u64		qwFileSize	= GetFileSize( hFile, &dwFileSizeHigh );
+	qwFileSize			+= u64( dwFileSizeHigh ) << 32;
 	WIN_CHECK( 0 != qwFileSize );
 
-	u8* pData = ( u8* ) MapViewOfFile( hFileMapping, dwDataViewAccess, 0, 0, qwFileSize );
+	u8* pData			= ( u8* ) MapViewOfFile( hFileMapping, dwDataViewAccess, 0,
+		0, qwFileSize );
 	WIN_CHECK( 0 != pData );
 
 	return {
@@ -318,20 +303,18 @@ void SysDestroyMmapFile( mmap_file* mmapFile )
 		mmapFile = nullptr;
 	}
 }
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
 
-// ===============================================================================================================
-// sys_thread.h
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
 #define THREAD_CALLING_CONV WINAPI
 #include <System/sys_thread.h>
-
+// ---------------------------------------------------------------------------------------------------------------
 sys_thread SysCreateThread( u64	stackSize, PfnSysThreadProc ThreadProc, void* pData, const wchar_t* name )
 {
 	DWORD threadId = 0;
 	HANDLE hThread = CreateThread( nullptr, stackSize, ( LPTHREAD_START_ROUTINE ) ThreadProc,
 		pData, 0, &threadId );
-	HT_ASSERT( INVALID_HANDLE_VALUE != hThread );
+	WIN_CHECK( INVALID_HANDLE_VALUE != hThread );
 
 	if( name )
 	{
@@ -348,14 +331,14 @@ void SysThreadSleep( u32 milliSecs ) { return Sleep( milliSecs ); }
 
 void SysNameThread( u64 hThread, const wchar_t* name )
 {
-	HT_ASSERT( SUCCEEDED( SetThreadDescription( ( HANDLE ) hThread, name ) ) );
+	WIN_CHECK( SUCCEEDED( SetThreadDescription( ( HANDLE ) hThread, name ) ) );
 }
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
 
 
-// ===============================================================================================================
-// sys_timer.h
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
+#include <System/sys_timer.h>
+// ---------------------------------------------------------------------------------------------------------------
 u64 SysGetCpuFreq()
 {
 	LARGE_INTEGER freq;
@@ -368,4 +351,22 @@ u64 SysTicks()
 	QueryPerformanceCounter( &tick );
 	return tick.QuadPart;
 }
-// ===============================================================================================================
+// ---------------------------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------------------------
+#include <System/sys_std_streams.h>
+// ---------------------------------------------------------------------------------------------------------------
+void SysWriteToStdStream( const char* str, sys_stream_t streamType )
+{
+	HANDLE hStream = INVALID_HANDLE_VALUE;
+	if( sys_stream_t::OUTPUT == streamType )	hStream = GetStdHandle( STD_OUTPUT_HANDLE );
+	else if( sys_stream_t::ERR == streamType )	hStream = GetStdHandle( STD_ERROR_HANDLE );
+	DWORD lpNumberOfBytesWritten;
+	WriteFile( hStream, str, strlen( str ), &lpNumberOfBytesWritten, NULL );
+}
+void SysErrMsgBox( const char* str )
+{
+	MessageBoxA( nullptr, ( LPCTSTR ) str, TEXT( "Error" ),
+		MB_OK | MB_ICONERROR | MB_APPLMODAL );
+}
+// ---------------------------------------------------------------------------------------------------------------

@@ -130,7 +130,6 @@ constexpr u64 FindNBitRunMask64( u64 mask, u64 runLen )
     u64 folded  = mask;
     u64 foldLen = runLen;
     // NOTE: log2( bit_width( u64 ) ) == 6
-    [[ unroll ]]
     for( u64 foldIdx = 0; foldIdx < 6; ++foldIdx ) //while( foldLen > 1 )
     {
         u64 foldShift   = foldLen >> 1;

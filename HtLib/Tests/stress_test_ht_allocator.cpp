@@ -9,7 +9,7 @@
 
 #include <ht_memory.h>
 
-#include <ht_fixed_vector.h>
+#include <ht_arena_vector.h>
 
 constexpr u64 NUM_THREADS           = 8;
 constexpr u64 THREAD_IDX_BIT_WIDTH  = std::bit_width( NUM_THREADS );

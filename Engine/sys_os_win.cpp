@@ -4,57 +4,35 @@
 #include <windowsx.h>
 #include <hidusage.h>
 
-#include <iostream>
 #include <algorithm>
 
-#include <ranges>
 #include <vector>
-#include <string>
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
 
 #include <System/Win32/win32_err.h>
 #include <System/sys_sync.h>
 #include <System/sys_thread.h>
+#include <System/sys_timer.h>
+#include <System/sys_std_streams.h>
 
 #include "engine_platform_common.h"
-#include "System/Win32/win32_kbd_scancodes.h"
+#include <System/Win32/win32_kbd_scancodes.h>
 
-static inline void SysOsCreateConsole()
+static void SysOsCreateConsole()
 {
 	WIN_CHECK( AllocConsole() );
 	// NOTE: https://alexanderhoughton.co.uk/blog/redirect-all-stdout-stderr-to-console/
 	//WIN_CHECK( !AttachConsole( GetCurrentProcessId() ) );
-	HANDLE hConOut = CreateFileA(
-		"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr );
+	HANDLE hConOut = CreateFileA( "CONOUT$", GENERIC_WRITE,
+		FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+		0, nullptr );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hConOut );
 	WIN_CHECK( SetStdHandle( STD_OUTPUT_HANDLE, hConOut ) );
 	WIN_CHECK( SetStdHandle( STD_ERROR_HANDLE, hConOut ) );
-
-	WIN_CHECK( nullptr != freopen( "CONOUT$", "w", stdout ) );
-	WIN_CHECK( nullptr != freopen( "CONOUT$", "w", stderr ) );
-
-	std::ios::sync_with_stdio( true );
-	std::cout.clear();
-	std::cerr.clear();
-	std::wcout.clear();
-	std::wcerr.clear();
 }
 
-static inline u64 SysGetCpuFreq()
-{
-	LARGE_INTEGER freq;
-	QueryPerformanceFrequency( &freq );
-	return freq.QuadPart;
-}
-static inline u64 SysTicks()
-{
-	LARGE_INTEGER tick;
-	QueryPerformanceCounter( &tick );
-	return tick.QuadPart;
-}
-
-static inline bool SysPumpUserInput()
+static bool SysPumpUserInput()
 {
 	MSG msg;
 	while( PeekMessage( &msg, 0, 0, 0, PM_REMOVE ) )
@@ -101,7 +79,7 @@ static void Win32ProcessRawInput( const RAWINPUT& ri, ht_input_state& inputState
 	}
 }
 
-// TODO: add memory, interp mouse pos wrt frameTime
+// TODO: interp mouse pos wrt frameTime
 static ht_input_state globalHtInputState = {};
 
 LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
@@ -142,7 +120,6 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 			break;
 		}
-		default : break;
 	}
 	return DefWindowProc( hwnd, uMsg, wParam, lParam );
 }
@@ -151,25 +128,19 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 using sys_physical_path = fixed_string<MAX_PATH>;
 
 
-#include "ht_memory.h"
-#include "ht_stretchybuff.h"
+#include <ht_memory.h>
+
 
 // NOTE: global state
-thread_local virtual_arena* pThisThreadArena	= nullptr;
-job_system_ctx*				pJobSys				= nullptr;
-
-constexpr u64 THREAD_ARENA_MAX_SIZE = 128 * MB;
+static job_system_ctx*				pJobSys		= nullptr;
+static thread_local dynamic_arena	threadArena	= {};
 //------------------=
 
-struct sys_thread
-{
-	HANDLE				hndl;
-	DWORD				threadId;
-};
 
-DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
+UINT WINAPI Win32ThreadLoop( LPVOID lpParam )
 {
-	//pThisThreadArena = new virtual_arena{ THREAD_ARENA_MAX_SIZE };
+	g_pThisThreadHeap	= HtGetThreadHeap( ( u64 ) lpParam );
+	threadArena		= g_pThisThreadHeap->Allocate( 1 * MB );
 
 	for( ;; )
 	{
@@ -177,44 +148,25 @@ DWORD WINAPI Win32ThreadLoop( LPVOID lpParam )
 
 		for( job_t job = {}; pJobSys->queue.TryPop( job ); )
 		{
-			job.PfnJob( job.payload, pThisThreadArena );
+			job.PfnJob( job.payload, &threadArena );
 		}
 	}
 
 	return 0;
 }
 
-
-sys_thread SysCreateThread( u64	stackSize, const wchar_t* name )
-{
-	HT_ASSERT( nullptr != pJobSys );
-
-	DWORD threadId = 0;
-	HANDLE hThread = CreateThread( nullptr, stackSize, Win32ThreadLoop,
-		nullptr, 0, &threadId );
-	HT_ASSERT( INVALID_HANDLE_VALUE != hThread );
-
-	SysNameThread( ( u64 ) hThread, name );
-
-	return {
-		.hndl		= hThread,
-		.threadId	= threadId
-	};
-}
-
 INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
-	using namespace DirectX;
-
 	SysOsCreateConsole();
 
 	SysNameThread( ( u64 ) GetCurrentThread(), L"Main Thread" );
+
 #ifdef  _DEBUG
 	// TODO: fix sys_path whatever to work with this !
 	char workingDir[ MAX_PATH ] = {};
 	WIN_CHECK( 0 != GetCurrentDirectoryA( std::size( workingDir ), workingDir ) );
-	fixed_string<512> workingDirMsg = {"WorkingDir: {}\n", workingDir };
-	std::cout << ( const char* ) workingDirMsg;
+	fixed_string<512> workingDirMsg = { "WorkingDir: {}\n", workingDir };
+	SysWriteToStdStream( ( const char* ) workingDirMsg, sys_stream_t::OUTPUT );
 #endif //_DEBUG
 
 	WIN_CHECK( DirectX::XMVerifyCPUSupport() );
@@ -223,7 +175,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	GetSystemInfo( &sysInfo );
 
 	HT_ASSERT( OS_PAGE_SIZE_IN_BYTES == sysInfo.dwPageSize );
-	// TODO: we only support level 4 paging no LA57
+	// NOTE: we only support level 4 paging no LA57
 	HT_ASSERT( OS_USER_MAX_ADDR == ( u64 ) sysInfo.lpMaximumApplicationAddress );
 
 	WNDCLASSEX wc = {
@@ -235,10 +187,14 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	};
 	WIN_CHECK( RegisterClassExA( &wc ) );
 
-	LONG left = 200;
-	LONG top = 100;
-
-	RECT wr = { .left = left, .top = top, .right = ( LONG ) SCREEN_WIDTH + left, .bottom = ( LONG ) SCREEN_HEIGHT + top };
+	LONG left	= 200;
+	LONG top	= 100;
+	RECT wr		= {
+		.left	= left,
+		.top	= top,
+		.right	= ( LONG ) SCREEN_WIDTH + left,
+		.bottom = ( LONG ) SCREEN_HEIGHT + top
+	};
 
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, FALSE );
@@ -267,39 +223,47 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr u64 NUM_CORES = 8;
 
+	HtMakeAllocator( 32 * GB, NUM_CORES );
+	g_pThisThreadHeap	= HtGetThreadHeap( 0 );
+	threadArena			= g_pThisThreadHeap->Allocate( 1 * MB );
+
 	// NOTE: init Job System
-	pJobSys = new job_system_ctx{};
-	std::vector<sys_thread> threads;
-	threads.push_back( SysCreateThread( 1 * MB,  L"IO Thread" ) );
+	pJobSys = ArenaNew<job_system_ctx>( threadArena );
+	fixed_vector<sys_thread, NUM_CORES> threads;
+	for( u64 ti = 0; ti < NUM_CORES - 1; ti++ )
+	{
+		fixed_wstring<16> name = { L"Thread #{}", ti + 1 };
+		threads.push_back( SysCreateThread(
+			1 * MB, Win32ThreadLoop, ( void* ) ( ti + 1 ), ( const wchar_t* ) name ) );
+	}
 	// ----------------------------------------------------------
 
 	HT_ASSERT( nullptr != pJobSys );
 
-	helltech_interface* pHelltech = MakeHelltech();
+	helltech_interface* pHelltech = MakeHelltech( threadArena );
 
 	pHelltech->Init( ( u64 ) hInst, ( u64 ) hWnd, SCREEN_WIDTH, SCREEN_HEIGHT );
 
-	// NOTE: time is a double of seconds
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
-	bool			isRunning = true;
-	const double	cpuPeriod = 1.0 / double( SysGetCpuFreq() );
+	bool			isRunning		= true;
+	const double	ticksPerSecond  = 1.0 / double( SysGetCpuFreq() );
 	//constexpr double	dt = 0.01;
 	//double				t = double( UINT64( 1ULL << 32 ) );
 	//double				accumulator = 0;
-	u64				currentTicks = SysTicks();
+	u64				currentTicks	= SysTicks();
 
 	while( isRunning )
 	{
-		const u64 newTicks = SysTicks();
-		const double elapsedTime = double( newTicks - currentTicks ) * cpuPeriod;
-		currentTicks = newTicks;
+		const u64		newTicks	= SysTicks();
+		const double	elapsedTime = double( newTicks - currentTicks ) * ticksPerSecond;
+		currentTicks				= newTicks;
 		//accumulator += elapsedTime;
 
-		globalHtInputState = HTReinitInputState( globalHtInputState );
-		isRunning = SysPumpUserInput();
+		globalHtInputState			= HTReinitInputState( globalHtInputState );
+		isRunning					= SysPumpUserInput();
 
-		pHelltech->RunLoop( elapsedTime, isRunning, *pThisThreadArena, globalHtInputState );
+		pHelltech->RunLoop( elapsedTime, isRunning, threadArena, globalHtInputState );
 	}
 
 	return 0;

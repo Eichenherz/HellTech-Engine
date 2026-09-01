@@ -3,7 +3,7 @@
 #ifndef __VK_ERROR_H__
 #define __VK_ERROR_H__
 
-#include "Win32/DEFS_WIN32_NO_BS.h"
+#include <System/Win32/DEFS_WIN32_NO_BS.h>
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
@@ -14,14 +14,14 @@
 #include <format>
 #include <string>
 #include <type_traits>
-#include <iostream>
 #include <string_view>
 
-#include "ht_error.h"
+#include <ht_core_types.h>
+#include <ht_error.h>
+#include <ht_fixed_string.h>
+#include <System/sys_std_streams.h>
 
-#include "ht_core_types.h"
 
-// TODO: gen from VkResult ?
 inline std::string_view VkResErrorString( VkResult errorCode )
 {
 	switch( errorCode )			{
@@ -113,7 +113,7 @@ constexpr VkObjectType VkGetObjTypeFromHandle()
 }
 
 template<typename VKH>
-inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
+void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
 {
 	static_assert( sizeof( vkHandle ) == sizeof( u64 ) );
 	VkDebugUtilsObjectNameInfoEXT nameInfo = { 
@@ -126,13 +126,27 @@ inline void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
 	VK_CHECK( vkSetDebugUtilsObjectNameEXT( vkDevice, &nameInfo ) );
 }
 
+constexpr const char* VkSeverityTagStr( VkDebugUtilsMessageSeverityFlagBitsEXT severity )
+{
+	switch( severity )
+	{
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: return "VK_VERB";
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    return "VK_INFO";
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: return "VK_WARN";
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   return "VK_ERR";
+	}
+	return "NONE";
+}
+
 inline VKAPI_ATTR VkBool32 VKAPI_CALL
 VkDbgUtilsMsgCallback(
 	VkDebugUtilsMessageSeverityFlagBitsEXT		msgSeverity,
 	VkDebugUtilsMessageTypeFlagsEXT				msgType,
 	const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
-	void* userData
+	void*										userData
 ) {
+	constexpr u64 VK_DBG_BUFF_SIZE = 8 << 10;
+
 	// NOTE: validation layer bug
 	if( 0xe8616bf2 == callbackData->messageIdNumber ) return VK_FALSE;
 
@@ -142,29 +156,26 @@ VkDbgUtilsMsgCallback(
 	};
 
 	if( std::ranges::find( IGNORE_MESSAGE_IDS, callbackData->messageIdNumber )
-		!= std::ranges::end( IGNORE_MESSAGE_IDS ) )
+		!= std::ranges::end( IGNORE_MESSAGE_IDS ) ) return VK_FALSE;
+
+	u64			msgSz		= std::strlen( callbackData->pMessage );
+	const char* severityStr = VkSeverityTagStr( msgSeverity );
+
+	if( msgSz >= VK_DBG_BUFF_SIZE )
 	{
-		return VK_FALSE;
+		fixed_string<VK_DBG_BUFF_SIZE> msgBuffer = { "[{}] {}\n{}\nMsg body truncated. Look it in VK spec",
+			severityStr, callbackData->messageIdNumber, callbackData->pMessageIdName };
+		SysWriteToStdStream( ( const char* ) msgBuffer, sys_stream_t::OUTPUT );
+	}
+	else
+	{
+		fixed_string<VK_DBG_BUFF_SIZE> msgBuffer = { "[{}] {}\n{}\n{}\n", severityStr,
+			callbackData->messageIdNumber, callbackData->pMessageIdName, callbackData->pMessage };
+		SysWriteToStdStream( ( const char* ) msgBuffer, sys_stream_t::OUTPUT );
 	}
 
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT )
-	{
-		std::string_view msgView = { callbackData->pMessage };
-		std::cout << msgView.substr( msgView.rfind( "| " ) + 2 ) << "\n";
-
-		return VK_FALSE;
-	}
-
-	std::string formattedMsg = std::format( "{}\n{}\n{}\n",
-		callbackData->messageIdNumber, callbackData->pMessageIdName, callbackData->pMessage );
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT )
-	{
-		std::cout << ">>> VK_WARNING <<<\n" << formattedMsg << "\n";
-	}
 	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT )
 	{
-		//const char* pVkObjName = callbackData->pObjects ? callbackData->pObjects[ 0 ].pObjectName : "";
-		std::cout << ">>> VK_ERROR <<<\n" << formattedMsg << "\n";// << pVkObjName << "\n";
 		std::abort();
 	} 
 

@@ -3,7 +3,6 @@
 #ifndef __HT_MEMORY_H__
 #define __HT_MEMORY_H__
 
-#include <memory_resource>
 #include <span>
 
 #include <System/sys_sync.h>
@@ -12,51 +11,6 @@
 #include <ht_error.h>
 #include <ht_utils.h>
 #include <ht_math.h>
-
-template<u64 SZ_IN_BYTES>
-struct static_arena
-{
-	alignas( 8 ) u8 mem[ SZ_IN_BYTES ] = {};
-	u64             offset = 0;
-
-	void	Rewind( u64 mark ) { offset = ( mark <= SZ_IN_BYTES ) ? mark : SZ_IN_BYTES; }
-	void	Reset() { offset = 0; }
-	void*	Alloc( u64 bytes, u64 alignment )
-	{
-		u64 base		= ( u64 ) mem;
-		u64 alignedAddr = FwdAlignPot( base + offset, alignment );
-		u64 newOffset	= ( alignedAddr - base ) + bytes;
-
-		HT_ASSERT( newOffset <= SZ_IN_BYTES );
-
-		offset = newOffset;
-		return ( void* ) alignedAddr;
-	}
-};
-
-struct dynamic_arena
-{
-	u8*     mem    = nullptr;
-	u64     offset = 0;
-	u64     size   = 0;
-
-	        dynamic_arena() = default;
-	        dynamic_arena( u8* mem, u64 size ) : mem{ mem }, size{ size } {}
-
-	void	Rewind( u64 mark ) { offset = ( mark <= size ) ? mark : size; }
-	void	Reset() { offset = 0; }
-	void*	Alloc( u64 bytes, u64 alignment )
-	{
-		u64 base		= ( u64 ) mem;
-		u64 alignedAddr = FwdAlignPot( base + offset, alignment );
-		u64 newOffset	= ( alignedAddr - base ) + bytes;
-
-		HT_ASSERT( newOffset <= size );
-
-		offset = newOffset;
-		return ( void* ) alignedAddr;
-	}
-};
 
 constexpr u64 OS_PAGE_SIZE_IN_BYTES		= 4096;
 // NOTE: on win user takes 0 to this and kernel takes the rest of tha range
@@ -71,80 +25,6 @@ void*	ht_os_virtual_commit( void* mem, u64 sizeInBytes );
 void	ht_os_virtual_decommit( void* mem, u64 sizeInBytes );
 void*   ht_os_virtual_alloc( u64 sizeInBytes );
 
-
-template<typename T>
-concept arena_t = requires( T a, u64 bytes, u64 alignment, u64 mark )
-{
-	{ a.mem }						-> std::convertible_to<u8*>;
-	{ a.offset }					-> std::convertible_to<u64>;
-
-	{ a.Alloc( bytes, alignment ) } -> std::same_as<void*>;
-	{ a.Rewind( mark ) }            -> std::same_as<void>;
-	{ a.Reset() }					-> std::same_as<void>;
-};
-
-template<typename T, arena_t Arena>
-T* ArenaNew( Arena& arena )
-{
-	return new ( arena.Alloc( sizeof( T ), alignof( T ) ) ) T;
-}
-
-template<typename T, arena_t Arena>
-T* ArenaNewArray( Arena& arena, u64 count )
-{
-	// NOTE: otherwise C++ adds 8 bytes top of our alloc
-	static_assert( std::is_trivially_destructible<T>::value );
-	return new ( arena.Alloc( sizeof( T ) * count, alignof( T ) ) ) T[ count ];
-}
-
-template<arena_t Arena>
-struct stack_adaptor : std::pmr::memory_resource
-{
-	Arena&	arena;
-	u64		baseFrameOffset;
-
-			stack_adaptor( Arena& a ) : arena{ a }, baseFrameOffset{ a.offset }{}
-			~stack_adaptor() override { arena.Rewind( baseFrameOffset ); }
-	u8*		BasePtr() { return arena.mem + baseFrameOffset; }
-protected: // NOTE: std::pmr::memory_resource's API
-	void*   do_allocate( size_t bytes, size_t alignment ) override { return arena.Alloc( bytes, alignment ); }
-	void	do_deallocate( void*, size_t, size_t ) override { /* no-op */ }
-	bool	do_is_equal( const std::pmr::memory_resource& other ) const noexcept override { return this == &other; }
-};
-
-
-template<typename T, arena_t Arena>
-struct arena_allocator
-{
-	using value_type = T;
-
-	// NOTE: the arena is shared state so assignment must carry it over. Without POCMA a move assign
-	// degrades from stealing the pointers to moving every element one by one.
-	using propagate_on_container_copy_assignment	= std::true_type;
-	using propagate_on_container_move_assignment	= std::true_type;
-	using propagate_on_container_swap				= std::true_type;
-
-	// NOTE: containers default construct their allocator ( it's a default arg on their ctors ), so
-	// this has to survive being null until one with an arena is assigned over it
-	Arena*	pArena = nullptr;
-
-			arena_allocator() = default;
-			arena_allocator( Arena& arena ) : pArena{ &arena } {}
-	// NOTE: rebind ctor, containers need it to allocate their internal bucket / node types
-	template<typename U>
-			arena_allocator( const arena_allocator<U, Arena>& other ) : pArena{ other.pArena } {}
-
-	T*		allocate( u64 count )
-	{
-		HT_ASSERT( pArena );
-		return ( T* ) pArena->Alloc( count * sizeof( T ), alignof( T ) );
-	}
-	void	deallocate( T*, u64 ) { /* no-op, the arena frees in bulk */ }
-
-	// NOTE: allocators are interchangeable only if one can free what the other handed out
-	template<typename U>
-	bool	operator==( const arena_allocator<U, Arena>& other ) const { return pArena == other.pArena; }
-};
 
 #ifndef HT_BLOCK_SZ_IN_BYTES
 #define HT_BLOCK_SZ_IN_BYTES	( 64 * KB )
@@ -316,7 +196,6 @@ struct alignas( 64 ) ht_szcls_zone_desc
   };
 static_assert( 64 == sizeof( ht_szcls_zone_desc ) );
 
-#include <ht_fixed_vector.h>
 #include <ht_fixed_hashmap.h>
 
 constexpr u64 HT_THEAP_ZONE_CAP				= 8;
@@ -369,8 +248,9 @@ struct alignas( 64 ) ht_thread_heap
 };
 
 // NOTE: public allocator api
-ht_thread_heap *const GetThreadHeap( u64 threadIdx );
+ht_thread_heap *const HtGetThreadHeap( u64 threadIdx );
 void HtMakeAllocator( u64 maxMemSz, u64 threadCount );
 
+extern thread_local ht_thread_heap* g_pThisThreadHeap;
 
 #endif // !__HT_MEMORY_H__

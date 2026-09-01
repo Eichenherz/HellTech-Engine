@@ -245,4 +245,6 @@ void HtMakeAllocator( u64 maxMemSz, u64 threadCount )
     g_htThreadHeaps         = HtMakeThreadHeaps( threadCount );
 }
 
-ht_thread_heap *const GetThreadHeap( u64 threadIdx ) { return &g_htThreadHeaps[ threadIdx ]; }
+ht_thread_heap *const HtGetThreadHeap( u64 threadIdx ) { return &g_htThreadHeaps[ threadIdx ]; }
+
+static thread_local ht_thread_heap* g_pThisThreadHeap = nullptr;
