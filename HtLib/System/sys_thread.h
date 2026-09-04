@@ -3,12 +3,12 @@
 #ifndef __HELLTECH_SYS_THREAD_H__
 #define __HELLTECH_SYS_THREAD_H__
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
 
 struct sys_thread
 {
-    u64				hndl;
-    u32				threadId;
+    u64	hndl;
+    u32	threadId;
 };
 
 #ifndef THREAD_CALLING_CONV

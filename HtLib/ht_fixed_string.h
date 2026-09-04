@@ -5,66 +5,73 @@
 
 #include <ht_core_types.h>
 #include <ht_error.h>
-#include <ht_arena_vector.h>
+#include <ht_macros.h>
 
+#include <algorithm>
+#include <array>
+#include <cstring>
 #include <format>
 #include <string_view>
 
+// NOTE: + 1 for the null terminator
 template<typename T, u64 N>
-struct fixed_string_base : fixed_vector<T, N>
+struct fixed_string_base
 {
-    using base_t = fixed_vector<T, N>;
-    using view_t = std::basic_string_view<T>;
-    using base_t::data;
-    using base_t::elemCount;
+    static_assert( N > 0, "fixed_str can't be 0 in sz !!!!" );
 
-                    fixed_string_base() = default;
+    using value_type = T;
+    using view_t     = std::basic_string_view<T>;
 
-                    fixed_string_base( const T* s );
-                    fixed_string_base( view_t sv );
+    std::array<T, N + 1>    elems;
+    u64                     sizeInElems;
+
+                    fixed_string_base() : sizeInElems{ 0 } { elems[ 0 ] = T{}; }
+
+                    fixed_string_base( const T* s ) : fixed_string_base{ view_t( s ) } {}
+                    fixed_string_base( view_t sv ) { *this = sv; }
 
                     template<typename... Args>
                     fixed_string_base( std::basic_format_string<T, std::type_identity_t<Args>...> fmt, Args&&... args );
 
-                    fixed_string_base( const fixed_string_base& )            = default;
-                    fixed_string_base& operator=( const fixed_string_base& ) = default;
-                    fixed_string_base( fixed_string_base&& )                 = default;
-                    fixed_string_base& operator=( fixed_string_base&& )      = default;
+                    auto& operator=( const T* s ) { return *this = view_t( s ); }
+                    auto& operator=( view_t sv );
 
-                    fixed_string_base& operator=( const T* s ) { return *this = fixed_string_base( s ); }
-                    fixed_string_base& operator=( view_t sv )  { return *this = fixed_string_base( sv ); }
+    constexpr u64   capacity()  const { return N; }
 
-    constexpr u64   capacity()  const { return N - 1; }
+    u64             size( this const fixed_string_base& self )   { return self.sizeInElems; }
+    bool            empty( this const fixed_string_base& self )  { return 0 == self.sizeInElems; }
 
-    void            push_back( T v );
-    template<typename... Args>
-    T&              emplace_back( Args&&... args );
-    void            pop_back();
-    void            resize( u64 n, T val = T{} );
+    auto*           data( this auto&& self )    { return std::data( self.elems ); }
 
+    auto            begin( this auto&& self )   { return std::data( self.elems ); }
+    auto            end( this auto&& self )     { return std::data( self.elems ) + self.sizeInElems; }
 
-    operator view_t()  const { return { base_t::data(), base_t::size() }; }
-    explicit operator const T*() const { return base_t::data(); }
+    auto&           operator[]( this auto&& self, u64 i )   { HT_ASSERT( i < self.sizeInElems ); return std::data( self.elems )[ i ]; }
+    auto&           back( this auto&& self )                { HT_ASSERT( self.sizeInElems > 0 ); return std::data( self.elems )[ self.sizeInElems - 1 ]; }
+
+    void            clear( this fixed_string_base& self )   { self.sizeInElems = 0; self.elems[ 0 ] = T{}; }
+
+    auto&           push_back( this fixed_string_base& self, T v ) { return self.emplace_back( v ); }
+    auto&           emplace_back( this fixed_string_base& self, T v );
+    auto            pop_back( this fixed_string_base& self );
+    void            resize( this fixed_string_base& self, u64 n, T val = T{} );
+
+    operator view_t()  const { return { std::data( elems ), sizeInElems }; }
+    explicit operator const T*() const { return std::data( elems ); }
+
+     bool operator==( const fixed_string_base& other ) const { return view_t( *this ) == view_t( other ); }
+
 };
 
 template<typename T, u64 N>
-fixed_string_base<T, N>::fixed_string_base( const T* s )
-{
-    u64 len = std::size( view_t( s ) );
-    HT_ASSERT( len < N );
-    std::memcpy( base_t::data(), s, len * sizeof( T ) );
-    elemCount      = len;
-    data()[ len ]  = T{};
-}
-
-template<typename T, u64 N>
-fixed_string_base<T, N>::fixed_string_base( view_t sv )
+auto& fixed_string_base<T, N>::operator=( view_t sv )
 {
     const u64 strSz = std::size( sv );
-    HT_ASSERT( strSz < N );
-    std::memcpy( base_t::data(), std::data( sv ), strSz * sizeof( T ) );
-    elemCount       = strSz;
-    data()[ strSz ] = T{};
+    HT_ASSERT( strSz <= N );
+    std::memcpy( std::data( elems ), std::data( sv ), strSz * sizeof( T ) );
+    sizeInElems         = strSz;
+    elems[ sizeInElems ] = T{};
+    return *this;
 }
 
 template<typename T, u64 N>
@@ -72,81 +79,52 @@ template<typename... Args>
 fixed_string_base<T, N>::fixed_string_base(
     std::basic_format_string<T, std::type_identity_t<Args>...> fmt, Args&&... args )
 {
-    static_assert( N > 1, "fixed_string buffer too small" );
-    auto res    = std::format_to_n( data(), N - 1, fmt, std::forward<Args>( args )... );
-    HT_ASSERT( res.size < N );
-    elemCount   = res.size;
-    data()[ res.size ] = T{};
+    auto res = std::format_to_n( std::data( elems ), N, fmt, FWD( args )... );
+    // NOTE: res.size is what it WOULD have written, so a truncated one points past the buffer
+    HT_ASSERT( ( u64 ) res.size <= N );
+    sizeInElems          = ( ( u64 ) res.size < N ) ? ( u64 ) res.size : N;
+    elems[ sizeInElems ] = T{};
 }
 
 template<typename T, u64 N>
-void fixed_string_base<T, N>::push_back( T v )
+auto& fixed_string_base<T, N>::emplace_back( this fixed_string_base& self, T v )
 {
-    HT_ASSERT( elemCount < N - 1 );
-    data()[ elemCount++ ] = v;
-    data()[ elemCount ]   = T{};
-}
-
-template<typename T, u64 N>
-template<typename... Args>
-T& fixed_string_base<T, N>::emplace_back( Args&&... args )
-{
-    HT_ASSERT( elemCount < N - 1 );
-    T& c                = data()[ elemCount++ ] = T{ std::forward<Args>( args )... };
-    data()[ elemCount ] = T{};
+    HT_ASSERT( self.sizeInElems < N );
+    T& c = self.elems[ self.sizeInElems++ ] = v;
+    self.elems[ self.sizeInElems ] = T{};
     return c;
 }
 
 template<typename T, u64 N>
-void fixed_string_base<T, N>::pop_back()
+auto fixed_string_base<T, N>::pop_back( this fixed_string_base& self )
 {
-    HT_ASSERT( elemCount > 0 );
-    data()[ --elemCount ] = T{};
+    HT_ASSERT( self.sizeInElems > 0 );
+    T v = self.elems[ --self.sizeInElems ];
+    self.elems[ self.sizeInElems ] = T{};
+    return v;
 }
 
 template<typename T, u64 N>
-void fixed_string_base<T, N>::resize( u64 n, T val )
+void fixed_string_base<T, N>::resize( this fixed_string_base& self, u64 n, T val )
 {
-    HT_ASSERT( n < N );
-    for ( u64 i = elemCount; i < n; ++i ) data()[ i ] = val;
-    elemCount     = n;
-    data()[ n ]   = T{};
-}
-
-template<typename T, u64 N>
-inline bool operator==( const fixed_string_base<T, N>& a, const fixed_string_base<T, N>& b )
-{
-    return ( std::size( a ) == std::size( b ) ) &&
-        ( std::memcmp( std::data( a ), std::data( b ), std::size( a ) * sizeof( T ) ) == 0 );
+    HT_ASSERT( n <= N );
+    if( n > self.sizeInElems ) std::fill( std::data( self.elems ) + self.sizeInElems, std::data( self.elems ) + n, val );
+    self.sizeInElems = n;
+    self.elems[ n ]  = T{};
 }
 
 template<typename T, u64 N>
 struct std::hash<fixed_string_base<T, N>>
 {
-    u64 operator()( const fixed_string_base<T, N>& s ) const
-    {
-        constexpr u64 kOffset = 14695981039346656037ull;
-        constexpr u64 kPrime  = 1099511628211ull;
-
-        u64 h = kOffset;
-        std::span<const u8> bytes = { ( const u8* ) std::data( s ), std::size( s ) * sizeof( T ) };
-        for( u8 c : bytes )
-        {
-            h ^= ( u64 ) c;
-            h *= kPrime;
-        }
-        return h;
-    }
+    u64 operator()( const fixed_string_base<T, N>& s ) const { return std::hash<std::basic_string_view<T>>{}( s ); }
 };
 
 template<typename T, u64 N>
 struct std::formatter<fixed_string_base<T, N>, T> : std::formatter<std::basic_string_view<T>, T>
 {
-    template<typename CTX_T>
-    auto format( const fixed_string_base<T, N>& s, CTX_T& ctx ) const
-    {
-        return std::formatter<std::basic_string_view<T>, T>::format( std::basic_string_view<T>( s ), ctx );
-    }
+    using base_t = std::formatter<std::basic_string_view<T>, T>;
+
+    auto format( const fixed_string_base<T, N>& s, auto& ctx ) const { return base_t::format( s, ctx ); }
 };
 
 template<u64 N>
