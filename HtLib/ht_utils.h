@@ -44,6 +44,11 @@ constexpr u64 FwdAlignGeneric( u64 addr, u64 alignment )
 {
     return ( ( addr + alignment - 1 ) / alignment ) * alignment;
 }
+constexpr bool IsMultipleOfPow2( u64 num, u64 div )
+{
+    HT_ASSERT( IsPowOf2( div ) );
+    return 0 == ( num & ( div - 1 ) );
+}
 
 constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 

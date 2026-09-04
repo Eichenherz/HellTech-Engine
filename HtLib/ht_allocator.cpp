@@ -7,8 +7,8 @@
 #include <System/sys_sync.h>
 
 //============================GLOBALS=============================//
-static ht_virtual_allocator         g_htVirtualAllocator    = {};
-static std::span<ht_thread_heap>    g_htThreadHeaps         = {};
+static              ht_virtual_allocator    g_htVirtualAllocator    = {};
+static thread_local ht_virtual_allocator*   g_pVirtualAllocator     = nullptr;
 //================================================================//
 
 //============================CONSTS==============================//
@@ -18,9 +18,7 @@ constexpr u64 INVALID_RUN_MASK  = 0;
 //================================================================//
 
 template <typename F>
-concept LambdaCasBreak_T = requires( F Lmbd, u64 val ) {
-    { Lmbd( val ) } -> std::same_as<u64>;
-};
+concept LambdaCasBreak_T = requires( F Lmbd, u64 val ) { { Lmbd( val ) } -> std::same_as<u64>; };
 
 template<LambdaCasBreak_T Lmbd>
 u64 HtCASLoopReserve( atomic_u64* pAddr, Lmbd&& CasReserveMask )
@@ -28,8 +26,8 @@ u64 HtCASLoopReserve( atomic_u64* pAddr, Lmbd&& CasReserveMask )
     u64 originalVal = SysAtomicRead64<sys_fence_t::NONE>( pAddr );
     for( ;; )
     {
-        // NOTE: We intentionally skip this state. If we get it means a free decommit just happened
-        // and we missed our chance to commit it. Will move to the next bin
+        // NOTE: We intentionally skip this state. If we get it means a free decommit
+        // just happened and we missed our chance to commit it. Will move to the next bin.
         if( FREE_AS_A_BIRD == originalVal ) return INVALID_RUN_MASK;
 
         // NOTE: this mask will tell us the start len in a bin
@@ -59,13 +57,12 @@ ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64
     HT_ASSERT( BLOCK_SZ_IN_BYTES <= requestSzInBytes );
 
     [[ unlikely ]]
-    // NOTE: we only allow [1, 4] contiguous blocks to be a single allocation from the chunkMap;
-    // otherwise we're taking the dedicated path
     if( ( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES ) < requestSzInBytes )
     {
         u64 allocSize = FwdAlignPot( requestSzInBytes, HT_INTERNAL_ALIGNMENT );
-        u64 szInPages = allocSize / HT_INTERNAL_ALIGNMENT;
-        return { ht_os_virtual_alloc( allocSize ), szInPages, ht_virt_alloc_type::DEDICATED };
+        u64 absOffset = SysAtomicAdd64<sys_fence_t::REL>( &dedicatedAllocOffset, allocSize );
+        SysAtomicAdd64<sys_fence_t::NONE>( &committedInBytes, allocSize );
+        return { ( u8* ) ht_os_virtual_commit( pMemBase + absOffset, allocSize ), allocSize };
     }
 
     u64 footprintInBlocks = ( requestSzInBytes + BLOCK_SZ_IN_BYTES - 1 ) / BLOCK_SZ_IN_BYTES;
@@ -95,44 +92,56 @@ ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64
         if( ( FREE_AS_A_BIRD == SysAtomicRead64<sys_fence_t::NONE>( pBin ) ) &&
             ( FREE_AS_A_BIRD == SysAtomicCas64<sys_fence_t::ACQ>( pBin, LOCKED_BIN, FREE_AS_A_BIRD ) ) )
         {
-            void* ptr = ht_os_virtual_commit( ( u8* ) pMemBase + threadBinIdx * BIN_SZ_IN_BYTES, BIN_SZ_IN_BYTES );
+            // NOTE: update before the lock is gone
+            SysAtomicAdd64<sys_fence_t::NONE>( &committedInBytes, BIN_SZ_IN_BYTES );
+            // NOTE: bc we use a full bin ( 64 slots ) our fresh and recently cleared states
+            // are represented by the same value, 0. This forces us to do another OS commit which
+            // is cheaper than a full commit but still an OS call. If this proves problematic,
+            // one solution is to take the highest bit and set it after fresh so we skip
+            // the re-commit if no decommit happened.
+            void* ptr = ht_os_virtual_commit( pMemBase + threadBinIdx * BIN_SZ_IN_BYTES, BIN_SZ_IN_BYTES );
             SysAtomicWrite64<sys_fence_t::REL>( pBin, BIT_NPOS >> ( 64 - footprintInBlocks ) );
-            return { ptr, footprintInBlocks, ht_virt_alloc_type::BLOCK };
+
+            return { ( u8* ) ptr, footprintInBlocks * BLOCK_SZ_IN_BYTES };
         }
 
         u64 blockStartAndLenWithinBinMask = HtCASLoopReserve( pBin, LmbdGetReservedMaskCas );
         if( INVALID_RUN_MASK != blockStartAndLenWithinBinMask )
         {
-            u64     blockIdxWithinBin   = std::countr_zero( blockStartAndLenWithinBinMask );
-            u64     offInBlocks         = threadBinIdx * BLOCKS_PER_BIN + blockIdxWithinBin;
-            void*   pRaw                = ( u8* ) pMemBase + BLOCK_SZ_IN_BYTES * offInBlocks;
-
-            return { pRaw, footprintInBlocks, ht_virt_alloc_type::BLOCK };
+            u64   blockIdxWithinBin = std::countr_zero( blockStartAndLenWithinBinMask );
+            u64   offInBlocks       = threadBinIdx * BLOCKS_PER_BIN + blockIdxWithinBin;
+            u8*   pRaw              = pMemBase + BLOCK_SZ_IN_BYTES * offInBlocks;
+            return { pRaw, footprintInBlocks * BLOCK_SZ_IN_BYTES };
         }
     }
 
-    return {};
+    return INVALID_HALLOC;
 }
 
 void ht_virtual_allocator::FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx )
 {
-    if( ht_virt_alloc{} == alloc ) return;
+    if( std::bit_cast<u32x4>( INVALID_HALLOC ) == std::bit_cast<u32x4>( alloc ) ) return;
 
-    void* pAlloc = HtGetAllocPtr( alloc );
+    u8*     pAlloc          = std::data( alloc );
+    u64     allocSzBytes    = std::size( alloc );
+    bool    isDedicated     = ( pAlloc - pMemBase ) >= CHUNK_REGION_CAP_IN_BYTES;
     [[ unlikely ]]
-    if( ht_virt_alloc_type::DEDICATED == alloc.type )
+    if( isDedicated )
     {
-        return ht_os_virtual_release( pAlloc );
+        SysAtomicAdd64<sys_fence_t::NONE>( &committedInBytes, -( i64 ) allocSzBytes );
+        return ht_os_virtual_decommit( std::data( alloc ), allocSzBytes );
     }
-    u64 blockCount = alloc.metadata;
-    u64 offInBlocks = ( ( u8* ) pAlloc - ( u8* ) pMemBase ) / BLOCK_SZ_IN_BYTES;
+
+    HT_ASSERT( IsMultipleOfPow2( allocSzBytes, BLOCK_SZ_IN_BYTES ) );
+    u64 blockCount  = allocSzBytes / BLOCK_SZ_IN_BYTES;
+    u64 offInBlocks = ( pAlloc - pMemBase ) / BLOCK_SZ_IN_BYTES;
     u64 binIdx      = offInBlocks / BLOCKS_PER_BIN;
     u64 bitIdx      = offInBlocks % BLOCKS_PER_BIN;
 
     HT_ASSERT( ( 0 != blockCount ) && ( ( blockCount + bitIdx ) <= 64 ) );
     const u64 binCommittedBlocksMask = ( BIT_NPOS >> ( 64 - blockCount ) ) << bitIdx;
 
-    atomic_u64* pBin            = GetBinAt( chunkMap, binIdx );
+    atomic_u64* pBin = GetBinAt( chunkMap, binIdx );
     // NOTE: we got exclusive ownership of the bit so we don't need to CAS, we just need to push the change
     u64 prevBinState = SysAtomicAnd64<sys_fence_t::REL>( pBin, ~binCommittedBlocksMask );
 
@@ -140,111 +149,29 @@ void ht_virtual_allocator::FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx 
     // decommit symmetrically, ie when all is free. We proceed by checking IF we basically cleared the bin. If we did,
     // we try to CAS claim the block and decommit it then mark the bin as free again before returning.
     // Else other thread got to claim some slots so exit.
-    if( ( FREE_AS_A_BIRD == ( prevBinState & ~binCommittedBlocksMask ) ) && ( FREE_AS_A_BIRD ==
-            SysAtomicCas64<sys_fence_t::ACQ>( pBin, LOCKED_BIN, FREE_AS_A_BIRD ) ) )
+    if( FREE_AS_A_BIRD != ( prevBinState & ~binCommittedBlocksMask ) ) return;
+
+    // NOTE: decrement here to avoid losing this state and having alloc count the commit again
+    SysAtomicAdd64<sys_fence_t::NONE>( &committedInBytes, -( i64 ) BIN_SZ_IN_BYTES );
+    if( FREE_AS_A_BIRD == SysAtomicCas64<sys_fence_t::ACQ>( pBin, LOCKED_BIN, FREE_AS_A_BIRD ) )
     {
         ht_os_virtual_decommit( ( u8* ) pMemBase + binIdx * BIN_SZ_IN_BYTES, BIN_SZ_IN_BYTES );
         SysAtomicWrite64<sys_fence_t::REL>( pBin, FREE_AS_A_BIRD );
     }
 }
 
-ht_virtual_allocator HtMakeVirtualAllocator( u64 maxMemInBytes )
+ht_virtual_allocator HtMakeVirtualAllocator()
 {
-    u64 chunksCount             = ( ( maxMemInBytes + CHUNK_SZ_IN_BYTES - 1 ) / CHUNK_SZ_IN_BYTES );
-    u64 blockRegionSzInBytes    = chunksCount * CHUNK_SZ_IN_BYTES;
-    u64 chunkMapSzInBytes       = FwdAlignPot( chunksCount * sizeof( ht_virtual_chunk ), OS_PAGE_SIZE_IN_BYTES );
-
-    void* pMemBase              = ht_os_virtual_reserve( blockRegionSzInBytes );
+    u64     chunkMapSzInBytes   = FwdAlignPot( CHUNK_REGION_ELEM_COUNT * sizeof( ht_virtual_chunk ),
+        OS_COMMIT_PAGE_SIZE_IN_BYTES );
+    u64     reservedInBytes      = CHUNK_REGION_CAP_IN_BYTES + DEDICATED_REGION_CAP_IN_BYTES;
+    void*   pMemBase             = ht_os_virtual_reserve( reservedInBytes );
     HT_ASSERT( FwdAlignPot( ( u64 ) pMemBase, HT_INTERNAL_ALIGNMENT ) == ( u64 ) pMemBase );
 
     return {
-        .pMemBase           = pMemBase,
-        .reservedInBytes    = blockRegionSzInBytes,
-        .chunkMap           = { ( ht_virtual_chunk* ) ht_os_virtual_alloc( chunkMapSzInBytes ), chunksCount }
+        .pMemBase           = ( u8* ) pMemBase,
+        .reservedInBytes    = reservedInBytes,
+        .chunkMap           = { ( ht_virtual_chunk* ) ht_os_virtual_alloc( chunkMapSzInBytes ),
+                            CHUNK_REGION_ELEM_COUNT }
     };
 }
-
-
-u64 ht_thread_heap::OwningThreadIdx() const { return this - std::data( g_htThreadHeaps ); }
-
-std::span<u8> ht_thread_heap::Allocate( u64 szInBytes )
-{
-    if( szInBytes < HT_THEAP_MIN_ALLOC_SZ_IN_BYTES )
-    {
-        HT_ASSERT( false && "Unimplemented path !");
-        //ht_mip_allocator* pMipZone = std::ranges::find_if( mipZoneList, [ szInBytes ]( auto& alloc )
-        //{
-        //    return alloc.HasSpaceForAlloc( szInBytes );
-        //} );
-//
-        //if( std::end( mipZoneList ) == pMipZone )
-        //{
-        //    // NOTE: this alloc will be kept in the mip allocator and freed WHEN IT is freed,
-        //    // else we'd have dup keys of the first mip alloc
-        //    ht_virt_alloc hZoneAlloc = g_htVirtualAllocator.AllocVirtualBlock( BLOCK_SZ_IN_BYTES, OwningThreadIdx() );
-        //    HT_ASSERT( hZoneAlloc );
-        //    pMipZone = &mipZoneList.push_back( { hZoneAlloc, std::size( mipZoneList ) } );
-        //}
-//
-        //ht_zone_alloc hAlloc = pMipZone->AllocNode( szInBytes );
-        //HT_ASSERT( hAlloc );
-        //allocMap.insert( std::bit_cast<ht_halloc>( hAlloc ) );
-//
-        //return { ( u8* ) HtGetAllocPtr( hAlloc ), HtGetAllocSize( hAlloc ) };
-    }
-    // TODO: do we serve exactly the request or round to nearest pow2 ?
-    u64 dedicatedTheapAllocSzInBytes = std::max( szInBytes, BLOCK_SZ_IN_BYTES );
-
-    ht_virt_alloc hAlloc = g_htVirtualAllocator.AllocVirtualBlock( dedicatedTheapAllocSzInBytes, OwningThreadIdx() );
-    HT_ASSERT( hAlloc );
-    allocMap.insert( std::bit_cast<ht_halloc>( hAlloc ) );
-
-    return { ( u8* ) HtGetAllocPtr( hAlloc ), dedicatedTheapAllocSzInBytes };
-}
-
-void ht_thread_heap::Free( void* ptr )
-{
-    const ht_halloc* pHandle = allocMap.find( ptr );
-    if( std::end( allocMap ) == pHandle ) return;
-
-    ht_halloc hAlloc = *pHandle;
-    allocMap.erase( pHandle );
-
-    u64 selfType = std::bit_cast<u64>( hAlloc ) >> 63;
-    if( ht_halloc_self_type::VIRTUAL == selfType )
-    {
-       return g_htVirtualAllocator.FreeVirtualBlock( std::bit_cast<ht_virt_alloc>( hAlloc ), OwningThreadIdx() );
-    }
-
-    if( ht_halloc_self_type::MIP_ZONE == selfType )
-    {
-        HT_ASSERT( false && "Unimplemented path !");
-        //ht_zone_alloc hZoneAlloc = std::bit_cast<ht_zone_alloc>( hAlloc );
-        //ht_mip_allocator& mipZone = mipZoneList[ hZoneAlloc.zoneIdx ];
-        //mipZone.FreeNode( hZoneAlloc );
-        //if( mipZone.IsEmpty() ) g_htVirtualAllocator.FreeVirtualBlock( mipZone.hVirtAlloc, OwningThreadIdx() );
-        //mipZone = {};
-        //return;
-    }
-
-    HT_ASSERT( false && "Wrong data has infiltrated the allocator !!!!" );
-}
-
-inline std::span<ht_thread_heap> HtMakeThreadHeaps( u64 threadCount )
-{
-    // NOTE: otherwise C++ adds 8 bytes top of our alloc
-    static_assert( std::is_trivially_destructible<ht_thread_heap>::value );
-    void* mem = ht_os_virtual_alloc( sizeof( ht_thread_heap ) * threadCount );
-    return { new ( mem ) ht_thread_heap[ threadCount ], threadCount };
-}
-
-
-void HtMakeAllocator( u64 maxMemSz, u64 threadCount )
-{
-    g_htVirtualAllocator    = HtMakeVirtualAllocator( maxMemSz );
-    g_htThreadHeaps         = HtMakeThreadHeaps( threadCount );
-}
-
-ht_thread_heap *const HtGetThreadHeap( u64 threadIdx ) { return &g_htThreadHeaps[ threadIdx ]; }
-
-static thread_local ht_thread_heap* g_pThisThreadHeap = nullptr;

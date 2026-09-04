@@ -43,56 +43,37 @@ using float4x4 	= DirectX::XMFLOAT4X4A;
 
 constexpr bool operator==( const u32x2& a, const u32x2& b )
 {
-	return a.x == b.x && a.y == b.y;
+	return ( a.x == b.x ) && ( a.y == b.y );
 }
-constexpr bool operator!=( const u32x2& a, const u32x2& b )
-{
-	return !( a == b );
-}
-
 constexpr bool operator==( const u32x3& a, const u32x3& b )
 {
-	return a.x == b.x && a.y == b.y && a.z == b.z;
+	return ( a.x == b.x ) && ( a.y == b.y ) && ( a.z == b.z );
 }
-constexpr bool operator!=( const u32x3& a, const u32x3& b )
+constexpr bool operator==( const u32x4& a, const u32x4& b )
 {
-	return !( a == b );
+    return ( a.x == b.x ) && ( a.y == b.y ) && ( a.z == b.z ) && ( a.w == b.w );
 }
-
 constexpr bool operator==( const float2& a, const float2& b )
 {
-	return a.x == b.x && a.y == b.y;
+	return ( a.x == b.x ) && ( a.y == b.y );
 }
-constexpr bool operator!=( const float2& a, const float2& b )
-{
-	return !( a == b );
-}
-
 constexpr bool operator==( const float3& a, const float3& b )
 {
-	return a.x == b.x && a.y == b.y && a.z == b.z;
-}
-constexpr bool operator!=( const float3& a, const float3& b )
-{
-	return !( a == b );
+	return ( a.x == b.x ) && ( a.y == b.y ) && ( a.z == b.z );
 }
 constexpr bool operator>=( const float3& a, const float3& b )
 {
-	return a.x >= b.x && a.y >= b.y && a.z >= b.z;
+	return ( a.x >= b.x ) && ( a.y >= b.y ) && ( a.z >= b.z );
 }
 
 constexpr bool operator<=( const float3& a, const float3& b )
 {
-	return a.x <= b.x && a.y <= b.y && a.z <= b.z;
+	return ( a.x <= b.x ) && ( a.y <= b.y ) && ( a.z <= b.z );
 }
 
 constexpr bool operator==( const float4& a, const float4& b )
 {
-	return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
-}
-constexpr bool operator!=( const float4& a, const float4& b )
-{
-	return !( a == b );
+	return ( a.x == b.x ) && ( a.y == b.y ) && ( a.z == b.z ) && ( a.w == b.w );
 }
 
 constexpr float2 operator-( float2 v )

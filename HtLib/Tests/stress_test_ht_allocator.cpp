@@ -9,7 +9,8 @@
 
 #include <ht_memory.h>
 
-#include <ht_arena_vector.h>
+#include <array>
+#include <iostream>
 
 constexpr u64 NUM_THREADS           = 8;
 constexpr u64 THREAD_IDX_BIT_WIDTH  = std::bit_width( NUM_THREADS );
@@ -27,6 +28,14 @@ static ht_virtual_allocator* pHtAllocator = nullptr;
 // 8 * 64 * 1.46 = ~749 live blocks against a 1024 block pool, ~73% full
 constexpr u64 MAX_POOL_SIZE     = 64 * MB;
 constexpr u64 THREAD_WORK_ITEMS = 64;
+
+// NOTE: the chunk map is ours, not the one HtMakeVirtualAllocator hands out. Its 8 GB of bins
+// would leave the pool at a fraction of a percent full and nothing would ever contend.
+constexpr u64 STRESS_CHUNK_COUNT = MAX_POOL_SIZE / CHUNK_SZ_IN_BYTES;
+static_assert( 0 != STRESS_CHUNK_COUNT );
+static_assert( ( STRESS_CHUNK_COUNT * CHUNK_SZ_IN_BYTES ) == MAX_POOL_SIZE );
+
+static std::array<ht_virtual_chunk, STRESS_CHUNK_COUNT> stressChunkMap = {};
 
 // NOTE: the block path caps out here, anything past it comes straight from the OS as a dedicated
 // alloc and takes no bits, which is not what this test is hammering
@@ -63,6 +72,11 @@ alignas( 64 ) static atomic_u64 exitSignal      = 0;
 
 constexpr u64 EXIT_SIGNAL = 1;
 
+static bool IsNullAlloc( ht_virt_alloc alloc )
+{
+    return ( nullptr == std::data( alloc ) ) && ( 0 == std::size( alloc ) );
+}
+
 u32 ThreadMainLoop( void* pData )
 {
     HT_ASSERT( pHtAllocator );
@@ -71,7 +85,8 @@ u32 ThreadMainLoop( void* pData )
 
     u32 randSeq = HwRandSeed32();
 
-    fixed_vector<tagged_alloc, THREAD_WORK_ITEMS> allocs = {};
+    std::array<tagged_alloc, THREAD_WORK_ITEMS> allocs = {};
+    u64                                         allocCount = 0;
 
     for( ;; )
     {
@@ -79,18 +94,19 @@ u32 ThreadMainLoop( void* pData )
         threadStats[ threadIdx ].iters++;
 
         randSeq = PcgHash32( randSeq );
-        if( u64 allocSz = std::size( allocs ); THREAD_WORK_ITEMS == allocSz )
+        if( THREAD_WORK_ITEMS == allocCount )
         {
-            u32          itemIdx = randSeq % allocSz;
-            std::swap( allocs[ itemIdx ], allocs[ allocSz - 1 ] );
+            u32          itemIdx = randSeq % allocCount;
+            std::swap( allocs[ itemIdx ], allocs[ allocCount - 1 ] );
 
-            const tagged_alloc victim = allocs.pop_back();
-            HT_ASSERT( ht_virt_alloc_type::BLOCK == victim.alloc.type );
+            const tagged_alloc victim = allocs[ --allocCount ];
+            HT_ASSERT( std::size( victim.alloc ) <= ( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES ) );
             // NOTE: every block carries the stamp, so a stranger landing anywhere in the run trips
-            for( u64 blockIdx = 0, blockCount = victim.alloc.metadata; blockIdx < blockCount; ++blockIdx )
+            for( u64 blockIdx = 0, blockCount = std::size( victim.alloc ) / BLOCK_SZ_IN_BYTES;
+                blockIdx < blockCount; ++blockIdx )
             {
                 HT_ASSERT( victim.stamp == *( stamp_t* )(
-                    ( u8* ) HtGetAllocPtr( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
+                    std::data( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
             }
             // NOTE: intentionally use thread 0 to force contention
             pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
@@ -103,17 +119,18 @@ u32 ThreadMainLoop( void* pData )
             // NOTE: intentionally use thread 0 to force contention
             ht_virt_alloc alloc = pHtAllocator->AllocVirtualBlock( footprint, 0 );
 
-            if( ht_virt_alloc{} == alloc )
+            if( IsNullAlloc( alloc ) )
             {
-                if( std::size( allocs ) )
+                if( 0 != allocCount )
                 {
-                    const tagged_alloc victim = allocs.pop_back();
-                    HT_ASSERT( ht_virt_alloc_type::BLOCK == victim.alloc.type );
+                    const tagged_alloc victim = allocs[ --allocCount ];
+                    HT_ASSERT( std::size( victim.alloc ) <= ( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES ) );
 
-                    for( u64 blockIdx = 0, blockCount = victim.alloc.metadata; blockIdx < blockCount; ++blockIdx )
+                    for( u64 blockIdx = 0, blockCount = std::size( victim.alloc ) / BLOCK_SZ_IN_BYTES;
+                        blockIdx < blockCount; ++blockIdx )
                     {
                         HT_ASSERT( victim.stamp == *( stamp_t* )(
-                            ( u8* ) HtGetAllocPtr( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
+                            std::data( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
                     }
                     pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
                     threadStats[ threadIdx ].frees++;
@@ -122,15 +139,27 @@ u32 ThreadMainLoop( void* pData )
                 continue;
             }
 
-            HT_ASSERT( ht_virt_alloc_type::BLOCK == alloc.type );
+            HT_ASSERT( std::size( alloc ) <= ( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES ) );
             stamp_t stamp = { .loopCount = threadStats[ threadIdx ].iters, .threadIdx = threadIdx };
-            for( u64 blockIdx = 0, blockCount = alloc.metadata; blockIdx < blockCount; ++blockIdx )
+            for( u64 blockIdx = 0; blockIdx < ( std::size( alloc ) / BLOCK_SZ_IN_BYTES ); ++blockIdx )
             {
-                *( stamp_t* )( ( u8* ) HtGetAllocPtr( alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) = stamp;
+                *( stamp_t* )( std::data( alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) = stamp;
             }
-            allocs.push_back( { .alloc = alloc, .stamp = stamp } );
+            allocs[ allocCount++ ] = { .alloc = alloc, .stamp = stamp };
             threadStats[ threadIdx ].allocs++;
         }
+    }
+
+    // NOTE: drain the bins we're holding
+    while( 0 != allocCount )
+    {
+        const tagged_alloc victim = allocs[ --allocCount ];
+        for( u64 blockIdx = 0; blockIdx < ( std::size( victim.alloc ) / BLOCK_SZ_IN_BYTES ); ++blockIdx )
+        {
+            HT_ASSERT( victim.stamp == *( stamp_t* )( std::data( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
+        }
+        pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
+        threadStats[ threadIdx ].frees++;
     }
 
     SysAtomicAdd64<sys_fence_t::NONE>( &threadCounter, 1 );
@@ -141,7 +170,11 @@ constexpr u64 RUNTIME_SECS = 100;
 
 i32 main()
 {
-    ht_virtual_allocator htAllocator = HtMakeVirtualAllocator( MAX_POOL_SIZE );
+    ht_virtual_allocator htAllocator = {
+        .pMemBase           = ( u8* ) ht_os_virtual_reserve( MAX_RESERVE_SZ_IN_BYTES ),
+        .reservedInBytes    = MAX_RESERVE_SZ_IN_BYTES,
+        .chunkMap           = stressChunkMap
+    };
     pHtAllocator = &htAllocator;
 
     sys_thread threadPool[ NUM_THREADS ] = {};
@@ -192,6 +225,9 @@ i32 main()
 
     std::cout << std::format( "total  | {:10} | {:10} | {:10} | {:10}\n",
         totalIters, totalAllocs, totalFrees, totalOom );
+
+    std::cout << std::format( "committed: {} bytes, dedicated offset: {}\n",
+        ( u64 ) htAllocator.committedInBytes, ( u64 ) htAllocator.dedicatedAllocOffset );
 
     return 0;
 }

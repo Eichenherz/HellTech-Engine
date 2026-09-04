@@ -15,7 +15,7 @@ void*	ht_os_virtual_reserve( u64 sizeInBytes )
 void	ht_os_virtual_release( void* mem ) { WIN_CHECK( VirtualFree( mem, 0, MEM_RELEASE ) ); }
 void*	ht_os_virtual_commit( void* mem, u64 sizeInBytes )
 {
-	u64 alignedSize = ( ( sizeInBytes + OS_PAGE_SIZE_IN_BYTES - 1 ) / OS_PAGE_SIZE_IN_BYTES ) * OS_PAGE_SIZE_IN_BYTES;
+	u64 alignedSize = ( ( sizeInBytes + OS_COMMIT_PAGE_SIZE_IN_BYTES - 1 ) / OS_COMMIT_PAGE_SIZE_IN_BYTES ) * OS_COMMIT_PAGE_SIZE_IN_BYTES;
 
 	void* newBase = VirtualAlloc( mem, alignedSize, MEM_COMMIT, PAGE_READWRITE );
 	WIN_CHECK( newBase );
@@ -362,7 +362,7 @@ void SysWriteToStdStream( const char* str, sys_stream_t streamType )
 	if( sys_stream_t::OUTPUT == streamType )	hStream = GetStdHandle( STD_OUTPUT_HANDLE );
 	else if( sys_stream_t::ERR == streamType )	hStream = GetStdHandle( STD_ERROR_HANDLE );
 	DWORD lpNumberOfBytesWritten;
-	WriteFile( hStream, str, strlen( str ), &lpNumberOfBytesWritten, NULL );
+	WriteFile( hStream, str, ( DWORD ) strlen( str ), &lpNumberOfBytesWritten, NULL );
 }
 void SysErrMsgBox( const char* str )
 {
