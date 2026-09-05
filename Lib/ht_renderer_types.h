@@ -43,6 +43,7 @@ typedef uint16_t2	u16x2;
 
 #endif
 
+#define MAX_DESCRIPTOR_COUNT ( 1 << 16 )
 
 struct view_data
 {

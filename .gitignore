@@ -21,3 +21,5 @@ imgui.ini
 CMakePresets.json.user
 
 .claude/
+
+CLAUDE.md

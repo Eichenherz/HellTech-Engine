@@ -141,6 +141,11 @@ using sys_physical_path = fixed_string<MAX_PATH>;
 static std::span<thread_ctx>    threadCtxArray  = {};
 static linear_arena             persistentArena = {};
 
+u64 HtCurrentThreadIdx()
+{
+    HT_ASSERT( pThreadCtx && std::size( threadCtxArray ) );
+    return pThreadCtx - std::data( threadCtxArray );
+}
 
 UINT WINAPI Win32ThreadLoop( LPVOID lpParam )
 {
@@ -233,7 +238,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
     HtInitMemorySystem();
 
-    persistentArena  = { g_pVirtualAllocator->AllocVirtualBlock( BLOCK_SZ_IN_BYTES, 0 ) };
+    persistentArena  = { g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ) };
     pPersistentArena    = &persistentArena;
 
     threadCtxArray      = ArenaNewArray<thread_ctx>( persistentArena, NUM_CORES );

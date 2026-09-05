@@ -36,6 +36,8 @@
 #include "vk_command_buffer.h"
 #include "vk_utils.h"
 
+#include "engine_platform_api.h"
+
 constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
 	//VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
@@ -656,7 +658,8 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	std::array<vk_desc_binding, vk_desc_binding_t::COUNT> bindingSlots;
 	for( u64 bi = 0; bi < std::size( poolSizes ); ++bi )
 	{
-		bindingSlots[ bi ] = { poolSizes[ bi ] };
+	    auto[ type, descCount ] = poolSizes[ bi ];
+		bindingSlots[ bi ] = { ArenaNewArray<desc_hndl32>( *pPersistentArena, descCount ), type };
 	}
 
 	constexpr u32 MAX_QUERY_COUNT = 1024;
@@ -963,7 +966,8 @@ VkSemaphore vk_context::CreateBinarySemaphore()
 
 desc_hndl32 vk_context::AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo )
 {
-	std::lock_guard guard{ descUpdatesLock };
+    descUpdatesLock.Acquire();
+    defer{ descUpdatesLock.Release(); };
 
 	vk_desc_binding_t bindingSlot = VkDescTypeToBinding( rscDescInfo.descriptorType );
 	HT_ASSERT( std::size( descBindingSlots ) > bindingSlot );
@@ -976,15 +980,16 @@ desc_hndl32 vk_context::AllocDescriptorIdx( const vk_descriptor_info& rscDescInf
 
 void vk_context::FlushPendingDescriptorUpdates()
 {
-	std::lock_guard guard{ descUpdatesLock };
+    descUpdatesLock.Acquire();
+    defer{ descUpdatesLock.Release(); };
 
 	if( !std::size( descPendingUpdates ) ) return;
 
 	std::vector<VkWriteDescriptorSet> writes;
 	for( const vk_descriptor_write& update : descPendingUpdates )
 	{
-		const VkDescriptorImageInfo*    pImageInfo  = 0;
-		const VkDescriptorBufferInfo*   pBufferInfo = 0;
+		const VkDescriptorImageInfo*    pImageInfo  = nullptr;
+		const VkDescriptorBufferInfo*   pBufferInfo = nullptr;
 
 		if( update.descInfo.rscType == vk_resource_type::BUFFER )
 		{
@@ -1210,7 +1215,8 @@ void vk_context::QueueSubmit(
 	std::span<VkSemaphoreSubmitInfo> signals,
 	VkFence                          vkFence
 ) {
-	std::lock_guard lockGuard{ queue.lock };
+	queue.lock.Acquire();
+    defer{ queue.lock.Release(); };
 
 	inline_vector<VkSemaphoreSubmitInfo, 8> vecSignals = { std::from_range, signals };
 

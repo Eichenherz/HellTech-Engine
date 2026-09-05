@@ -80,7 +80,7 @@ struct vk_swapchain_config
 struct vk_renderer_config
 {
 	static constexpr u64		MAX_FRAMES_IN_FLIGHT_ALLOWED	= 2;
-	static constexpr u64		MAX_DESCRIPTOR_COUNT_PER_TYPE	= u16( -1 );
+	static constexpr u64		MAX_DESCRIPTOR_COUNT_PER_TYPE	= 1 << 16;
 	// TODO: we only need this if we do reverse Z
 	static constexpr VkFormat	DEPTH_FORMAT					= VK_FORMAT_D32_SFLOAT;
 

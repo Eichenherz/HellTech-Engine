@@ -13,7 +13,7 @@
 #include <ht_core_types.h>
 #include <ht_error.h>
 
-#include "ht_ring_buffer.h"
+#include <ht_ring_buffer.h>
 #include <System/sys_sync.h>
 
 #include "vk_error.h"
@@ -25,7 +25,6 @@
 #include <array>
 #include <vector>
 #include <span>
-#include <functional>
 
 struct vk_timeline
 {
@@ -98,8 +97,6 @@ struct vk_desc_deletion
 
 struct vk_resc_deletion
 {
-	//VkSemaphore		timelineSema = VK_NULL_HANDLE;
-	//u64				waitSignal = -1;
 	u64					frameTimelineVal;
 	union
 	{
@@ -109,47 +106,44 @@ struct vk_resc_deletion
 	vk_resource_type	type;
 
 	vk_resc_deletion() = default;
-	vk_resc_deletion( const vk_buffer& b, u64 counter )
-        : buff{ b }, type{ vk_resource_type::BUFFER }, frameTimelineVal{ counter } {}
-	vk_resc_deletion( const vk_image& i, u64 counter )
-		: img{ i }, type{ vk_resource_type::IMAGE }, frameTimelineVal{ counter } {}
+	vk_resc_deletion( const vk_buffer& b, u64 counter ) : buff{ b }, type{ b.TYPE }, frameTimelineVal{ counter } {}
+	vk_resc_deletion( const vk_image& i, u64 counter ) : img{ i }, type{ i.TYPE }, frameTimelineVal{ counter } {}
 };
 
 struct vk_desc_binding
 {
-	ringbuff_w_lock<desc_hndl32>	slots   = {};
-	VkDescriptorType		        type    = {};
+    ringbuff_w_lock<desc_hndl32>	slots   = {};
+    VkDescriptorType		        type    = {};
 
-	vk_desc_binding() = default;
+    vk_desc_binding() = default;
 
-	vk_desc_binding( VkDescriptorPoolSize bindingInfo ) :
-		slots{ bindingInfo.descriptorCount }, type{ bindingInfo.type }
-	{
-		vk_desc_binding_t bindingType = VkDescTypeToBinding( type );
-		for( u64 si = 0; si < bindingInfo.descriptorCount; ++si )
-		{
-			slots.TryPush( desc_hndl32{ .slot = ( u16 ) si, .type = bindingType, .inUse = false } );
-		}
-	}
+    vk_desc_binding( std::span<desc_hndl32> ringBuffMem, VkDescriptorType descType ) :
+        slots{ ringBuffMem }, type{ descType }
+    {
+        vk_desc_binding_t bindingType = VkDescTypeToBinding( type );
+        for( u64 si = 0; si < std::size( slots ); ++si )
+        {
+            slots.TryPush( desc_hndl32{ .slot = ( u16 ) si, .type = bindingType, .inUse = false } );
+        }
+    }
 
-	desc_hndl32 AllocSlot()
-	{
-		HT_ASSERT( 0 != slots.capacity() );
-		desc_hndl32 hDesc = {};
-		while( !slots.TryPop( hDesc ) );
+    desc_hndl32 AllocSlot()
+    {
+        desc_hndl32 hDesc = {};
+        while( !slots.TryPop( hDesc ) );
 
-		hDesc.inUse = true;
-		return hDesc;
-	}
+        hDesc.inUse = true;
+        return hDesc;
+    }
 
-	void FreeSlot( desc_hndl32 hDesc )
-	{
-		HT_ASSERT( hDesc.slot < slots.capacity() );
-		HT_ASSERT( !hDesc.inUse );
+    void FreeSlot( desc_hndl32 hDesc )
+    {
+        HT_ASSERT( hDesc.slot < std::size( slots ) );
+        HT_ASSERT( !hDesc.inUse );
 
-		hDesc.inUse = false;
-		while( !slots.TryPush( hDesc ) );
-	}
+        hDesc.inUse = false;
+        while( !slots.TryPush( hDesc ) );
+    }
 };
 
 struct vk_context

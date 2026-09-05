@@ -26,8 +26,8 @@ struct copyable_srwlock
     copyable_srwlock&   operator=( const copyable_srwlock& );
     copyable_srwlock&   operator=( copyable_srwlock&& );
 
-    ACQ_EXCL_LOCK  void lock()   const;
-    REL_EXCL_LOCK  void unlock() const;
+    ACQ_EXCL_LOCK  void Acquire()   const;
+    REL_EXCL_LOCK  void Release() const;
 };
 
 enum sys_thread_signal : i64

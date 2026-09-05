@@ -21,7 +21,7 @@ struct sys_semaphore;
 #include <array>
 
 // TODO: maybe make ht_engine_systems.h ?
-#include "ht_ring_buffer.h"
+#include <ht_ring_buffer.h>
 
 
 // TODO: must patch shaders to take any resolution
@@ -101,6 +101,8 @@ extern linear_arena*            pPersistentArena;
 // ie usable set ( streaming ) or the level ( if level based )
 extern linear_arena*            pGameArena;
 extern linear_arena*            pDebugArena;
+
+u64 HtCurrentThreadIdx();
 
 struct renderer_interface
 {

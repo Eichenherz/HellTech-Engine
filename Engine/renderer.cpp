@@ -9,7 +9,6 @@
 #include <string_view>
 #include <span>
 #include <format>
-#include <memory>
 
 #include <ht_core_types.h>
 #include <ht_utils.h>
@@ -2405,8 +2404,6 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 
 	dbgPass.ResetDrawCounters( thisFrameCmdBuff, rscStateTracker );
 
-	//float lodTarget = // * float( 1 << debugLodStep ); // 1px
-
 	const culling_pass_args cullPassArgs = {
 		.dbgGpuInstBuff			= dbgPass.gpuInstBuff,
 		.dbgGpuInstCountBuff	= dbgPass.gpuInstCountBuff,
@@ -2415,7 +2412,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 		.instBuffIdx			= thisVFrame.instDesc,
 		.meshTableIdx			= thisVFrame.gpuMeshTableDesc,
 		.viewBuffIdx			= thisVFrame.viewDataIdx,
-		.camIdx					= !frameData.dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here
+		.camIdx					= !frameData.dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here ?
 		.hizDesc				= hzbPass.hzbSrv,
 		.samplerDesc			= hzbPass.quadMinSamplerIdx,
 		.dbgGpuInstBuffIdx		= dbgPass.gpuInstBuffIdx,

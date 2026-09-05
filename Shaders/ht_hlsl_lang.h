@@ -68,8 +68,6 @@ float HTQuadSwapAcrossX( float value ) { return SpvQuadSwap( vk::SubgroupScope, 
 float HTQuadSwapAcrossY( float value ) { return SpvQuadSwap( vk::SubgroupScope, value, 1 ); }
 float HTQuadSwapAcrossDiag( float value ) { return SpvQuadSwap( vk::SubgroupScope, value, 2 ); }
 
-#define MAX_DESCRIPTOR_COUNT 0xFFFF
-
 // NOTE: taken from vulkanised_2023_setting_up_a_bindless_rendering_pipeline
 #define ITERATE_TEXTURE_TYPES( GENERATOR, ... ) \
 	GENERATOR( i32, 	##__VA_ARGS__ ) 		\

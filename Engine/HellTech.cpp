@@ -205,7 +205,8 @@ inline move_cam_action GetMoveCamAction(
 }
 
 // Job system
-job_system_ctx::job_system_ctx() : queue{ 128 } {}
+job_system_ctx::job_system_ctx()
+    : queue{ ArenaNewArray<job_t>( *pPersistentArena, 128 ) } {}
 void job_system_ctx::SubmitJob( job_t job )
 {
 	HT_ASSERT( queue.TryPush( job ) );
@@ -228,10 +229,9 @@ static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, u64 maxInstCap, 
 
     u64 meshSzInBytes       = maxMeshCap * sizeof( mesh_upload_req );
     u64 instSzInBytes       = maxInstCap * sizeof( instance_desc );
-    u64 payloadSzInBytes    = headerSzInBytes + meshSzInBytes + instSzInBytes;
+    u64 requestSzInBytes    = std::max( BLOCK_SZ_IN_BYTES, headerSzInBytes + meshSzInBytes + instSzInBytes );
 
-    std::span<u8> mem       = g_pVirtualAllocator->AllocVirtualBlock(
-        std::max( BLOCK_SZ_IN_BYTES, payloadSzInBytes ), 0 );
+    std::span<u8> mem       = g_pVirtualAllocator->AllocVirtualBlock( requestSzInBytes, HtCurrentThreadIdx() );
     std::span<u8> meshMem   = mem.subspan( headerSzInBytes, meshSzInBytes );
     std::span<u8> instMem   = mem.subspan( headerSzInBytes + meshSzInBytes, instSzInBytes );
 
@@ -343,8 +343,8 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 
 void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 {
-    g_GameArena     = { g_pVirtualAllocator->AllocVirtualBlock( 64 * MB, 0 ) };
-    g_DebugArena    = { g_pVirtualAllocator->AllocVirtualBlock( 4 * MB, 0 ) };
+    g_GameArena     = { g_pVirtualAllocator->AllocVirtualBlock( 64 * MB, HtCurrentThreadIdx() ) };
+    g_DebugArena    = { g_pVirtualAllocator->AllocVirtualBlock( 4 * MB, HtCurrentThreadIdx() ) };
     pGameArena      = &g_GameArena;
     pDebugArena     = &g_DebugArena;
 

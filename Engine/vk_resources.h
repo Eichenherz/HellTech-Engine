@@ -12,6 +12,13 @@
 
 #include <vk_mem_alloc.h>
 
+enum class vk_resource_type : u8
+{
+    INVLAID,
+    BUFFER,
+    IMAGE
+};
+
 constexpr u32 MAX_MIP_LEVELS = 12;
 
 enum class buffer_usage : u8
@@ -44,6 +51,8 @@ struct image_info
 
 struct vk_buffer
 {
+    static constexpr vk_resource_type TYPE = vk_resource_type::BUFFER;
+
 	VmaAllocation		mem;
 	VkBuffer			hndl;
 	u64					sizeInBytes; 
@@ -71,6 +80,8 @@ inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
 
 struct vk_image
 {
+    static constexpr vk_resource_type TYPE = vk_resource_type::IMAGE;
+
 	VmaAllocation		mem;
 	VkImage				hndl;
 	VkImageView			view;
@@ -84,17 +95,7 @@ struct vk_image
 	u32					mipCount	: 8;
 	u32					padding		: 16;
 
-	inline VkExtent3D Extent3D() const
-	{
-		return { width, height, 1 };
-	}
-};
-
-enum class vk_resource_type : u8
-{
-	INVLAID,
-	BUFFER,
-	IMAGE
+	VkExtent3D Extent3D() const { return { width, height, 1 }; }
 };
 
 inline VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
@@ -196,8 +197,10 @@ struct vk_descriptor_info
 	}
 };
 
-// TODO: not here
-static_assert( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE == u64( u16( -1 ) ) );
+// TODO: not here ?
+static_assert( IsPowOf2( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE )
+    && ( ( 1 << 16 ) == vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE ) );
+
 struct desc_hndl32
 {
 	u32 slot	: 16;

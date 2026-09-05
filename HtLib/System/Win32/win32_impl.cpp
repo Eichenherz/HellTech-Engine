@@ -45,8 +45,8 @@ copyable_srwlock::copyable_srwlock( copyable_srwlock&& )         { *( SRWLOCK* )
 copyable_srwlock& copyable_srwlock::operator=( const copyable_srwlock& ) { return *this; }
 copyable_srwlock& copyable_srwlock::operator=( copyable_srwlock&& )      { return *this; }
 
-void copyable_srwlock::lock()   const { AcquireSRWLockExclusive( ( SRWLOCK* ) ( &osLock ) ); }
-void copyable_srwlock::unlock() const { ReleaseSRWLockExclusive( ( SRWLOCK* ) ( &osLock ) ); }
+void copyable_srwlock::Acquire() const { AcquireSRWLockExclusive( ( SRWLOCK* ) ( &osLock ) ); }
+void copyable_srwlock::Release() const { ReleaseSRWLockExclusive( ( SRWLOCK* ) ( &osLock ) ); }
 
 using win32_atomic64 = volatile __int64;
 
