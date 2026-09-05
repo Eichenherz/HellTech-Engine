@@ -1,14 +1,12 @@
-#include "engine_platform_common.h"
-
 #include <ht_core_types.h>
-#include <ht_mem_arena.h>
-#include <ht_stretchybuff.h>
+#include "engine_platform_api.h"
+#include "engine_types.h"
 
-#include "ht_math.h"
+#include <ht_memory.h>
+#include <ht_vector.h>
+#include <ht_math.h>
 
 #include "ht_renderer_types.h"
-
-#include "engine_types.h"
 
 #include <ht_serialization.h>
 
@@ -19,10 +17,20 @@
 
 #include "zip_pack.h"
 
+// TODO: use our own
 #include <ankerl/unordered_dense.h>
 
+//==================CONSTEXPR===================//
 constexpr float YAW_SIGN   = FSignOf( DotProd( CrossProd( WORLD_UP,    WORLD_FWD ), -WORLD_LEFT ) );
 constexpr float PITCH_SIGN = FSignOf( DotProd( CrossProd( -WORLD_LEFT, WORLD_FWD ), -WORLD_UP ) );
+//==============================================//
+
+//===================GLOBALS====================//
+static linear_arena g_GameArena     = {};
+static linear_arena g_DebugArena    = {};
+linear_arena*       pGameArena      = nullptr;
+linear_arena*       pDebugArena     = nullptr;
+//==============================================//
 
 // Virtual camera
 using PFN_XMLookAtCoord = DirectX::XMMATRIX ( XM_CALLCONV * ) (
@@ -52,35 +60,35 @@ struct virtual_camera
 	{
 		using namespace DirectX;
 
-		yaw = XMScalarModAngle( yaw + dRot.x );
-		pitch = std::clamp( pitch + dRot.y, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
+		yaw     = XMScalarModAngle( yaw + dRot.x );
+		pitch   = std::clamp( pitch + dRot.y, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
 
-		XMMATRIX tRotScale = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 );
-		XMVECTOR xmCamMove = XMVector3Transform( XMVector3Normalize( DX_XMLoadFloat3( camMove ) ), tRotScale );
+		XMMATRIX tRotScale  = XMMatrixRotationRollPitchYaw( pitch, yaw, 0 );
+		XMVECTOR xmCamMove  = XMVector3Transform( XMVector3Normalize( DX_XMLoadFloat3( camMove ) ), tRotScale );
 		XMVECTOR xmWorldPos = XMVectorAdd( XMLoadFloat3( &worldPos ), xmCamMove );
-		XMVECTOR camLookAt = XMVector3Transform( DX_XMLoadFloat3( WORLD_FWD ),
+		XMVECTOR camLookAt  = XMVector3Transform( DX_XMLoadFloat3( WORLD_FWD ),
 			XMMatrixRotationRollPitchYaw( pitch, yaw, 0 ) );
-		XMMATRIX xmView = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ),
+		XMMATRIX xmView     = LookAt( xmWorldPos, XMVectorAdd( xmWorldPos, camLookAt ),
 			DX_XMLoadFloat3( WORLD_UP ) );
 
-		prevView = view;
-		view = DX_XMStoreFloat4x4A( xmView );
-		worldPos = DX_XMStoreFloat3( xmWorldPos );
-		camViewDir = DX_XMStoreFloat3( XMVectorNegate( camLookAt ) );
+		prevView    = view;
+		view        = DX_XMStoreFloat4x4A( xmView );
+		worldPos    = DX_XMStoreFloat3( xmWorldPos );
+		camViewDir  = DX_XMStoreFloat3( XMVectorNegate( camLookAt ) );
 	}
 
 	view_data GetViewData() const
 	{
 		using namespace DirectX;
 
-		XMMATRIX xmProj = XMLoadFloat4x4A( &proj );
-		XMMATRIX xmView = XMLoadFloat4x4A( &view );
+		XMMATRIX xmProj     = XMLoadFloat4x4A( &proj );
+		XMMATRIX xmView     = XMLoadFloat4x4A( &view );
 		XMMATRIX xmPrevView = XMLoadFloat4x4A( &prevView );
 
-		float4x4 proj = DX_XMStoreFloat4x4A( xmProj );
+		float4x4 proj4x4    = DX_XMStoreFloat4x4A( xmProj );
 
 		return {
-			.proj			= proj,
+			.proj			= proj4x4,
 			.mainView		= view,
 			.prevView		= prevView,
 			.mainViewProj	= DX_XMStoreFloat4x4A( XMMatrixMultiply( xmView, xmProj ) ),
@@ -171,12 +179,12 @@ inline move_cam_action GetMoveCamAction(
 	using namespace DirectX;
 
 	XMVECTOR camMove = XMVectorSet( 0, 0, 0, 0 );
-	if( inputState.IsButtonDown( GLOB_ACTION_MAP.fwd ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_FWD ) );
-	if( inputState.IsButtonDown( GLOB_ACTION_MAP.left ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_LEFT ) );
-	if( inputState.IsButtonDown( GLOB_ACTION_MAP.bwd ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_FWD ) );
-	if( inputState.IsButtonDown( GLOB_ACTION_MAP.right ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_LEFT ) );
-	if( inputState.IsButtonDown( GLOB_ACTION_MAP.up ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_UP ) );
-	if( inputState.IsButtonDown( GLOB_ACTION_MAP.down ) ) camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_UP ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.fwd ) )    camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_FWD ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.left ) )   camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_LEFT ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.bwd ) )    camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_FWD ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.right ) )  camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_LEFT ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.up ) )     camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( WORLD_UP ) );
+	if( inputState.IsButtonDown( GLOB_ACTION_MAP.down ) )   camMove = XMVectorAdd( camMove, DX_XMLoadFloat3( -WORLD_UP ) );
 
 	float mvSpeed = moveSpeed;
 	if( inputState.IsButtonHeld( GLOB_ACTION_MAP.slowDown ) )
@@ -197,7 +205,7 @@ inline move_cam_action GetMoveCamAction(
 }
 
 // Job system
-job_system_ctx::job_system_ctx() : sema{}, queue{ 128 } {}
+job_system_ctx::job_system_ctx() : queue{ 128 } {}
 void job_system_ctx::SubmitJob( job_t job )
 {
 	HT_ASSERT( queue.TryPush( job ) );
@@ -205,27 +213,50 @@ void job_system_ctx::SubmitJob( job_t job )
 }
 
 // Uploads
-// TODO: use own arenas and allocators
 struct upload_job_payload
 {
-	std::vector<mesh_upload_req>	reqs;
-	std::vector<instance_desc>		entitiesToPromote;
-	renderer_interface*				pRI;
-	HJOBFENCE32						hUpload;
+	borrowed_vector<mesh_upload_req>	meshUploads         = {};
+	borrowed_vector<instance_desc>	    entitiesToPromote   = {};
+	renderer_interface*			        pRI                 = nullptr;
+	HJOBFENCE32					        hUpload             = ~0u;
+    u64                                 allocSzInBytes      = 0; // NOTE: we need this bc we are responsible for the alloc handle
 };
 
-void PfnRendererUploadJob( void* payload, virtual_arena* arena )
+static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, u64 maxInstCap, renderer_interface* pRI )
+{
+    constexpr u64 headerSzInBytes = sizeof( upload_job_payload );
+
+    u64 meshSzInBytes       = maxMeshCap * sizeof( mesh_upload_req );
+    u64 instSzInBytes       = maxInstCap * sizeof( instance_desc );
+    u64 payloadSzInBytes    = headerSzInBytes + meshSzInBytes + instSzInBytes;
+
+    std::span<u8> mem       = g_pVirtualAllocator->AllocVirtualBlock(
+        std::max( BLOCK_SZ_IN_BYTES, payloadSzInBytes ), 0 );
+    std::span<u8> meshMem   = mem.subspan( headerSzInBytes, meshSzInBytes );
+    std::span<u8> instMem   = mem.subspan( headerSzInBytes + meshSzInBytes, instSzInBytes );
+
+    upload_job_payload* pPayload = ( upload_job_payload* ) std::data( mem );
+    *pPayload = {
+        .meshUploads        = { FromBytes<mesh_upload_req>( meshMem ) },
+        .entitiesToPromote  = { FromBytes<instance_desc>( instMem ) },
+        .pRI                = pRI,
+        .hUpload            = pRI->AllocJobFence(),
+        .allocSzInBytes     = std::size( mem )
+    };
+
+    return pPayload;
+}
+
+void PfnRendererUploadJob( void* payload, linear_arena* arena )
 {
 	upload_job_payload* pJob = ( upload_job_payload* ) payload;
-	pJob->pRI->UploadMeshes( pJob->hUpload, pJob->reqs, *arena );
+	pJob->pRI->UploadMeshes( pJob->hUpload, pJob->meshUploads, *arena );
 }
 
 // Engine
 struct helltech final : helltech_interface
 {
-	virtual_arena						persistentArena = { 1 * GB };
-
-	mmap_file							mmappedFile		= {};
+	mmap_file							memMappedFile	= {};
 
     virtual_camera                      mainActiveCam   = {};
     virtual_camera                      debugCam        = {};
@@ -233,45 +264,27 @@ struct helltech final : helltech_interface
 	im_gui_ctx							imGuiCtx		= {};
 
 	renderer_dbg_draw					rndDbgFlags		= {};
-	// TODO: no vector
-	std::vector<instance_desc>			drawables		= {};
-	// TODO: don't use unique ptr
-	std::unique_ptr<renderer_interface> pRenderer		= {};
+	renderer_interface*                 pRenderer		= {};
+    // NOTE: these are hard capped, we don't care to grow free the mem OS will do it for us on program exit
+    borrowed_vector<instance_desc>		drawables		= {};
+	borrowed_vector<upload_job_payload*>jobCache		= {};
 
-	// TODO: no vector
-	std::vector<upload_job_payload*>	jobCache		= {};
-
-	std::vector<ht_timed_zone>			timedZones		= {};
-	std::vector<ht_pipeline_stats>		pipelinesStats	= {};
+	borrowed_vector<ht_timed_zone>		timedZones		= {};
+	borrowed_vector<ht_pipeline_stats>	pipelinesStats	= {};
 
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
 
 	void Init( u64 hInst, u64 hWnd, u16 width, u16 height ) override;
-	void RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const ht_input_state& inputState ) override;
-
-	// TODO: must use own memory
-	inline upload_job_payload* IssueUploadBatch( std::vector<mesh_upload_req>&& uploadReqs, std::vector<instance_desc>&& entities )
-	{
-		// TODO: use own arenas and allocators
-		upload_job_payload* pPayload = new upload_job_payload{
-			.reqs				= MOV( uploadReqs ),
-			.entitiesToPromote	= MOV( entities ),
-			.pRI				= pRenderer.get(),
-			.hUpload			= pRenderer->AllocJobFence()
-		};
-
-		pJobSys->SubmitJob( { .PfnJob = PfnRendererUploadJob, .payload = pPayload } );
-
-		return pPayload;
-	}
-	void UploadAssets( stack_adaptor<virtual_arena>& virtualStack );
+	void RunLoop( double elapsedTime, bool isRunning, linear_arena& scratchArena,
+	    const ht_input_state& inputState ) override;
+	void UploadAssets( linear_arena& virtualStack );
 
 };
 
 void ImGuiPrintTimedZones( const void* pData )
 {
-	const std::vector<ht_timed_zone>& timedZones = *( const std::vector<ht_timed_zone>* ) pData;
+    const borrowed_vector<ht_timed_zone>& timedZones = *( const borrowed_vector<ht_timed_zone>* ) pData;
 	for( const ht_timed_zone& tz : timedZones )
 	{
 		ImGui::Text( "%-20s %.5f ms", ( const char* ) tz.name, tz.timeMs );
@@ -280,8 +293,8 @@ void ImGuiPrintTimedZones( const void* pData )
 
 void ImGuiPrintPipelineStats( const void* pData )
 {
-	const std::vector<ht_pipeline_stats>& pipeStats = *( const std::vector<ht_pipeline_stats>* ) pData;
-	for( const ht_pipeline_stats& ps : pipeStats )
+    const borrowed_vector<ht_pipeline_stats>& htPipelineStats = *( const borrowed_vector<ht_pipeline_stats>* ) pData;
+	for( const ht_pipeline_stats& ps : htPipelineStats )
 	{
 		if( 0 != ps.inputAssemblyVtxNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "IA vertices",
 			ps.inputAssemblyVtxNum );
@@ -300,68 +313,29 @@ void ImGuiPrintPipelineStats( const void* pData )
 	}
 }
 
-// TODO: no vector
-void HTAssembleUI(
-	renderer_dbg_draw&						rndDbgFlags,
-	const std::vector<ht_timed_zone>&		timedZones,
-	const std::vector<ht_pipeline_stats>&	pipeStats
-) {
-	std::vector<imgui_window> imguiWnds;
-	imguiWnds.push_back( {
-		.widgets = {
-			imgui_widget {
-				.name	= "",
-				.pData	= &timedZones, // NOTE: this is a local
-				.Action = ImGuiPrintTimedZones,
-				.type	= imgui_widget_type::TEXT
-			},
-			imgui_widget {
-				.name	= "",
-				.pData	= &pipeStats, // NOTE: this is a local
-				.Action = ImGuiPrintPipelineStats,
-				.type	= imgui_widget_type::TEXT
-			}
-		},
-		.name	= "Engine Stats",
-		.flags	= ImGuiWindowFlags_NoScrollbar
-	} );
-
-	imguiWnds.push_back( {
-		.widgets = {
-			imgui_widget {
-				.name	= " VBuffer PixelHash",
-				.pData	= &rndDbgFlags.vBuffPixelHash,
-				.Action = nullptr,
-				.type	= imgui_widget_type::CHECKBOX
-			},
-			imgui_widget {
-				.name	= " Draw Inst AABBs",
-				.pData	= &rndDbgFlags.dbgDraw,
-				.Action = nullptr,
-				.type	= imgui_widget_type::CHECKBOX
-			},
-			imgui_widget {
-				.name	= "Press F to freeze MainView",
-				.pData	= nullptr,
-				.Action = nullptr,
-				.type	= imgui_widget_type::TEXT
-			},
-			imgui_widget {
-				.name	= "Press L to toggle mesh LOD",
-				.pData	= nullptr,
-				.Action = nullptr,
-				.type	= imgui_widget_type::TEXT
-			},
-			imgui_widget {
-				.name	= "Press K to toggle meshlet LOD",
-				.pData	= nullptr,
-				.Action = nullptr,
-				.type	= imgui_widget_type::TEXT
-			},
-		},
-		.name	= "Renderer Dbg Modes",
-		.flags	= ImGuiWindowFlags_NoScrollbar
-	} );
+void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPipeStats )
+{
+	imgui_window imguiWnds[] = {
+	    imgui_window{
+	        .widgets = {
+	            { .pData = pTimedZones, .Action = ImGuiPrintTimedZones, .type = imgui_widget_type::TEXT },
+                { .pData = pPipeStats, .Action = ImGuiPrintPipelineStats, .type = imgui_widget_type::TEXT }
+	        },
+            .name	= "Engine Stats",
+            .flags	= ImGuiWindowFlags_NoScrollbar
+        },
+        imgui_window{
+            .widgets = {
+                { .name = " VBuffer PixelHash", .pData = &rndDbgFlags.vBuffPixelHash, .type = imgui_widget_type::CHECKBOX },
+                { .name = " Draw Inst AABBs", .pData = &rndDbgFlags.dbgDraw, .type = imgui_widget_type::CHECKBOX },
+                { .name = "Press F to freeze MainView", .type	= imgui_widget_type::TEXT },
+                { .name = "Press L to toggle mesh LOD", .type = imgui_widget_type::TEXT },
+                { .name = "Press K to toggle meshlet LOD", .type = imgui_widget_type::TEXT },
+            },
+            .name	= "Renderer Dbg Modes",
+            .flags	= ImGuiWindowFlags_NoScrollbar
+        }
+	};
 
 	ImGuiRenderUI( imguiWnds );
 }
@@ -369,13 +343,17 @@ void HTAssembleUI(
 
 void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 {
+    g_GameArena     = { g_pVirtualAllocator->AllocVirtualBlock( 64 * MB, 0 ) };
+    g_DebugArena    = { g_pVirtualAllocator->AllocVirtualBlock( 4 * MB, 0 ) };
+    pGameArena      = &g_GameArena;
+    pDebugArena     = &g_DebugArena;
+
 	constexpr float fovRads = DirectX::XMConvertToRadians( 70.0f );
 	constexpr float zNear	= 0.5f;
 
 	mainActiveCam	= MakeVirtualCamera<IS_WORLD_RH>( { float( width ), float( height ) }, fovRads, zNear );
 	debugCam		= MakeVirtualCamera<IS_WORLD_RH>( { float( width ), float( height ) }, fovRads, zNear );
-
-	pRenderer = MakeRenderer();
+	pRenderer       = MakeRenderer( *pPersistentArena );
 
 	pRenderer->InitBackend( hInst, hWnd );
 
@@ -386,41 +364,52 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 	constexpr char assetFile[] = "D:/3d models/bistro.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/cyberbaron/cyberbaron.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
-	mmappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
+	memMappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
+
+    // NOTE: arbitrary sized for now
+    drawables       = { ArenaNewArray<instance_desc>( *pGameArena, 10'000 ) };
+    jobCache        = { ArenaNewArray<upload_job_payload*>( *pGameArena, 1'000 ) };
+    timedZones      = { ArenaNewArray<ht_timed_zone>( *pDebugArena, 256 ) };
+    pipelinesStats  = { ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
 }
 
 // TODO: revisit this logic
-void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
+void helltech::UploadAssets( linear_arena& scratchpadArena )
 {
+	ht_mem_scope memScope = { scratchpadArena };
 	// TODO: vfs
-	vfs_zip_mem	 vfs = { mmappedFile };
+	vfs_zip_mem	 vfs = { memMappedFile };
 
-	auto meshFiles = vfs.files | std::views::keys | std::views::filter(
-	[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".mesh" ) ); } );
+    auto LmbdHasExt = []( std::string_view ext )
+    {
+        return std::views::filter( [ ext ]( std::string_view path ) { return path.ends_with( ext ); } );
+    };
 
-	//auto texFiles = vfs.files | std::views::keys | std::views::filter(
-	//	[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".dds" ) ); } );
+	auto meshFiles  = vfs.files | std::views::keys | LmbdHasExt( ".mesh" );
+	//auto texFiles   = vfs.files | std::views::keys | LmbdHasExt( ".dds" );
+	auto levelFiles = vfs.files | std::views::keys | LmbdHasExt( ".lvl" );
 
-	auto levelFiles = vfs.files | std::views::keys | std::views::filter(
-	[] ( const vfs_path& vpath ) { return ( nullptr != std::strstr( std::data( vpath ), ".lvl" ) ); } );
+    // TODO: use our own
+	ankerl::unordered_dense::map<u64, HRNDMESH32> meshIdMap = {};
+    meshIdMap.reserve( std::ranges::distance( meshFiles ) );
 
-	ankerl::unordered_dense::pmr::map<u64, HRNDMESH32> meshIdMap{ &virtualStack };
-	meshIdMap.reserve( std::ranges::distance( meshFiles ) );
+    u64 totalMeshCount = std::ranges::distance( meshFiles );
+    u64 totalInstCount = 10'000; //std::ranges::distance( vec_of_vecs | std::views::join ); // NOTE: arbitrary size for now
 
-	std::vector<mesh_upload_req> uploads;
+    upload_job_payload* pPayload = HtMakeUploadPayload( totalMeshCount, totalInstCount, pRenderer );
+
 	for( const vfs_path& vpath : meshFiles )
 	{
 		u64 pathHash = std::hash<vfs_path>{}( vpath );
 		// TODO: might wanna check on content hash too
-		if( std::cend( meshIdMap ) != meshIdMap.find( pathHash ) ) continue;
+		if( meshIdMap.contains( pathHash ) ) continue;
 
-		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
-		hpk_mesh_view mesh = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
+		std::span<const u8> rawBytes    = vfs.GetFileByteView( vpath );
+		hpk_mesh_view       mesh        = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
+		HRNDMESH32          hMesh       = pRenderer->AllocMeshComponent( mesh );
 
-		HRNDMESH32 hMesh = pRenderer->AllocMeshComponent( mesh );
-
-		uploads.push_back( {
+		pPayload->meshUploads.push_back( {
 			.mltAsBytes			= AsBytes( mesh.meshlets ),
 			.vtxPosAsBytes		= AsBytes( mesh.vtxPosBitstream ),
 			.vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs ),
@@ -431,44 +420,34 @@ void helltech::UploadAssets( stack_adaptor<virtual_arena>& virtualStack )
 		meshIdMap.emplace( pathHash, hMesh );
 	}
 
-	//ankerl::unordered_dense::map<u64, u32> texIdMap;
-	//for( const vfs_path& vpath : texFiles )
-	//{
-	//	u64 pathHash = std::hash<vfs_path>{}( vpath );
-	//	// TODO: might wanna check on content hash too
-	//	if( std::cend( texIdMap ) != texIdMap.find( pathHash ) ) continue;
-	//}
-
-	std::vector<instance_desc> entities;
-	entities.reserve( std::ranges::distance( levelFiles ) );
-
 	for( const vfs_path& vpath : levelFiles )
 	{
-		std::span<const u8> rawBytes = vfs.GetFileByteView( vpath );
-		hpk_level_view lvl = HpkDeserializeAsset<hpk_level_asset>( rawBytes );
+		std::span<const u8> rawBytes    = vfs.GetFileByteView( vpath );
+		hpk_level_view      lvl         = HpkDeserializeAsset<hpk_level_asset>( rawBytes );
 
-		entities.reserve( std::size( entities ) + std::size( lvl.nodes ) );
 		for( const world_node& node : lvl.nodes )
 		{
 			auto it = meshIdMap.find( node.meshHash );
 			if( std::cend( meshIdMap ) == it ) continue;
-			entities.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
+			pPayload->entitiesToPromote.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
 		}
 	}
 
-	jobCache.push_back( IssueUploadBatch( MOV( uploads ), MOV( entities ) ) );
+    jobCache.push_back( pPayload );
+
+    pJobSys->SubmitJob( { .PfnJob = PfnRendererUploadJob, .payload = jobCache.back() } );
 }
 
-void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scratchArena, const ht_input_state& inputState )
+void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratchArena, const ht_input_state& inputState )
 {
 	using namespace DirectX;
 
-	stack_adaptor<virtual_arena> virtualStack = { scratchArena };
+	ht_mem_scope scope = { scratchArena };
 
 	static bool vfsMounted = false;
 	if( !vfsMounted )
 	{
-		UploadAssets( virtualStack );
+		UploadAssets( scratchArena );
 		vfsMounted = true;
 	}
 
@@ -494,7 +473,6 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		rndDbgFlags.toggleMltLOD = !rndDbgFlags.toggleMltLOD;
 	}
 
-
 	mainActiveCam.Move( camMove, dRot );
 	[[likely]]
 	if( !rndDbgFlags.freezeMainView )
@@ -502,13 +480,11 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		debugCam = mainActiveCam;
 	}
 
-	std::pmr::vector<view_data> views{ &virtualStack };
-	views.push_back( mainActiveCam.GetViewData() );
+	view_data dbgViewData   = debugCam.GetViewData();
+	view_data views[]       = { mainActiveCam.GetViewData(), dbgViewData };
 
-	view_data dbgViewData = debugCam.GetViewData();
-	views.push_back( dbgViewData );
-
-	float4x4 frustumMat = DX_XMStoreFloat4x4A( FrustumMatrixFromViewProj( XMLoadFloat4x4A( &dbgViewData.mainViewProj ) ) );
+	float4x4 frustumMat     = DX_XMStoreFloat4x4A(
+	    FrustumMatrixFromViewProj( XMLoadFloat4x4A( &dbgViewData.mainViewProj ) ) );
 
 	imGuiCtx.UpdateTimeAndInputState( ( float ) elapsedTime, inputState );
 
@@ -518,11 +494,10 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 		upload_job_payload* pPayload = jobCache[ 0 ];
 		if( pRenderer->PollJobFenceAndRemoveOnCompletion( pPayload->hUpload, 100'000 ) )
 		{
-			drawables.reserve( std::size( drawables ) + std::size( pPayload->entitiesToPromote ) );
 			drawables.append_range( pPayload->entitiesToPromote );
-			// TODO: use own arenas and allocators
-			delete pPayload;
-			jobCache.pop_back();
+		    jobCache.pop_back();
+
+		    g_pVirtualAllocator->FreeVirtualBlock( { ( u8* ) pPayload, pPayload->allocSzInBytes }, 0 );
 		}
 	}
 
@@ -544,7 +519,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 
 	timedZones.push_back( { .name = "CPU FrameMs: ", .timeMs = ( float )( elapsedTime * 1000.0 ) } );
 
-	HTAssembleUI( rndDbgFlags, timedZones, pipelinesStats );
+	HTAssembleUI( rndDbgFlags, &timedZones, &pipelinesStats );
 
 	timedZones.resize( 0 );
 	pipelinesStats.resize( 0 );
@@ -561,7 +536,4 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, virtual_arena& scrat
 	pRenderer->HostFrames( frameData, scratchArena, gpuData );
 }
 
-helltech_interface* MakeHelltech()
-{
-	return new helltech{};
-}
+helltech_interface* MakeHelltech( linear_arena& arena ) { return ( helltech_interface* ) ArenaNew<helltech>( arena ); }

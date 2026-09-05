@@ -3,9 +3,8 @@
 #ifndef __HT_SLOT_VECTOR_H__
 #define __HT_SLOT_VECTOR_H__
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
 
-#include "ht_stretchybuff.h"
 
 // NOTE: this is capped at MAX_ENTRIES_RESERVED
 

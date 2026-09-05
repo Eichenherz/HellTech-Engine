@@ -1,7 +1,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
 
-#include "Win32/DEFS_WIN32_NO_BS.h"
+#include <System/Win32/DEFS_WIN32_NO_BS.h>
 #include <vulkan.h>
 
 #define VOLK_IMPLEMENTATION 
@@ -24,9 +24,11 @@
 
 #include <vk_mem_alloc.h>
 
-#include "ht_core_types.h"
-#include "ht_vec_types.h"
-#include "ht_error.h"
+#include <ht_core_types.h>
+#include <ht_vec_types.h>
+#include <ht_error.h>
+#include <ht_vector.h>
+
 #include "vk_error.h"
 #include "vk_context.h"
 #include "vk_types.h"
@@ -42,7 +44,7 @@ constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
 
-inline static VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
+static VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
 {
 	VkSemaphoreTypeCreateInfo timelineInfo = { 
 		.sType			= VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
@@ -60,7 +62,7 @@ inline static VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u
 	return timelineSema;
 }
 
-inline static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex ) 
+static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 {
 	VkQueue	hndl;
 	vkGetDeviceQueue( vkDevice, queueFamilyIndex, 0, &hndl );
@@ -441,19 +443,22 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 
 	queueCreateInfos.push_back( {
 		.sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex	= VkGetQueueFamilyIndex( queueFamProps, VK_QUEUE_GRAPHICS_BIT, VK_TRUE, gpu, vkSurf ),
+		.queueFamilyIndex	= VkGetQueueFamilyIndex(
+		    queueFamProps, VK_QUEUE_GRAPHICS_BIT, VK_TRUE, gpu, vkSurf ),
 		.queueCount			= 1,
 		.pQueuePriorities	= &queuePriorities
 	} );
 	queueCreateInfos.push_back( {
 		.sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex	= VkGetQueueFamilyIndex( queueFamProps, VK_QUEUE_COMPUTE_BIT, VK_TRUE, gpu, vkSurf ),
+		.queueFamilyIndex	= VkGetQueueFamilyIndex(
+		    queueFamProps, VK_QUEUE_COMPUTE_BIT, VK_TRUE, gpu, vkSurf ),
 		.queueCount			= 1,
 		.pQueuePriorities	= &queuePriorities
 	} );
 	queueCreateInfos.push_back( {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex	= VkGetQueueFamilyIndex( queueFamProps, VK_QUEUE_TRANSFER_BIT, VK_FALSE, gpu, vkSurf ),
+		.queueFamilyIndex	= VkGetQueueFamilyIndex(
+		    queueFamProps, VK_QUEUE_TRANSFER_BIT, VK_FALSE, gpu, vkSurf ),
 		.queueCount			= 1,
 		.pQueuePriorities	= &queuePriorities
 	} );
@@ -489,7 +494,6 @@ struct vk_swapchain
 	std::vector<vk_swapchain_image>  imgs;
 	VkSwapchainKHR		             swapchain;
 };
-
 
 struct vk_surface_info
 {
@@ -530,7 +534,8 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 		u32 formatCount = 0;
 		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, 0 ) );
 		std::vector<VkSurfaceFormatKHR> formats( formatCount );
-		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, std::data( formats ) ) );
+		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount,
+		    std::data( formats ) ) );
 
 		for( u64 i = 0; i < formatCount; ++i )
 		{
@@ -626,19 +631,23 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	std::array<VkDescriptorPoolSize, vk_desc_binding_t::COUNT> poolSizes = {
 		VkDescriptorPoolSize { 
 			.type = VkDescBindingToType( vk_desc_binding_t::SAMPLER ), 
-			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetSamplers ) 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
+			    vkGpuLimits.maxDescriptorSetSamplers )
 		},
 		VkDescriptorPoolSize { 
 			.type = VkDescBindingToType( vk_desc_binding_t::STORAGE_BUFFER ), 
-			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetStorageBuffers ) 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
+			    vkGpuLimits.maxDescriptorSetStorageBuffers )
 		},
 		VkDescriptorPoolSize { 
 			.type = VkDescBindingToType( vk_desc_binding_t::STORAGE_IMAGE ), 
-			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetStorageImages ) 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
+			    vkGpuLimits.maxDescriptorSetStorageImages )
 		},
 		VkDescriptorPoolSize { 
 			.type = VkDescBindingToType( vk_desc_binding_t::SAMPLED_IMAGE ), 
-			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE, vkGpuLimits.maxDescriptorSetSampledImages ) 
+			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
+			    vkGpuLimits.maxDescriptorSetSampledImages )
 		}
 	};
 
@@ -658,7 +667,10 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		.copyQueue				= VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx ),
 		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_TIMESTAMP ),
 		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
-		.gpuFrameTimeline		= { .sema = VkMakeSemaphore( vkDevice.logical, true, 0 ), .submitsIssuedCount = 0 },
+		.gpuFrameTimeline		= {
+		    .sema               = VkMakeSemaphore( vkDevice.logical, true, 0 ),
+		    .submitsIssuedCount = 0
+		},
 		.allocator				= MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
 		.descPool				= descPool,
 		.descSetLayout			= descSetLayout,
@@ -702,9 +714,9 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 		//.requiredFlags = memPropFlags,
 	};
 
-	VkBuffer vkBuffer;
-	VmaAllocation mem;
-	VmaAllocationInfo allocInfo;
+	VkBuffer            vkBuffer;
+	VmaAllocation       mem;
+	VmaAllocationInfo   allocInfo;
 	VK_CHECK( vmaCreateBuffer( allocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &mem, &allocInfo ) );
 
 	if( buffInfo.name )
@@ -716,7 +728,7 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT )
 	{
 		VkBufferDeviceAddressInfo deviceAddrInfo = {
-			.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+			.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
 			.buffer = vkBuffer
 		};
 		devicePointer = vkGetBufferDeviceAddress( device, &deviceAddrInfo );
@@ -753,9 +765,9 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 	};
 
 	VmaAllocationCreateInfo allocCreateInfo = { .usage = VMA_MEMORY_USAGE_AUTO };
-	VkImage img;
-	VmaAllocation mem;
-	VmaAllocationInfo allocInfo;
+	VkImage                 img;
+	VmaAllocation           mem;
+	VmaAllocationInfo       allocInfo;
 	VK_CHECK( vmaCreateImage( allocator, &imageInfo, &allocCreateInfo, &img, &mem, &allocInfo ) );
 
 	if( imgInfo.name )
@@ -812,8 +824,7 @@ vk_shader vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 VkPipeline vk_context::CreateGfxPipeline( 
 	std::span<const vk_gfx_shader_stage>	shaderStages,
 	std::span<const VkDynamicState>			dynamicStates,
-	const VkFormat*							pColorAttachmentFormats,
-	u32										colorAttachmentCount,
+	std::span<const VkFormat>				colorAttachmentFormats,
 	VkFormat								depthAttachmentFormat,
 	const vk_gfx_pso_config&				psoConfig,
 	VkPipelineLayout						vkPipelineLayout
@@ -881,8 +892,8 @@ VkPipeline vk_context::CreateGfxPipeline(
 
 	VkPipelineRenderingCreateInfo renderingInfo = { 
 		.sType						= VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-		.colorAttachmentCount		= colorAttachmentCount,
-		.pColorAttachmentFormats	= pColorAttachmentFormats,
+		.colorAttachmentCount		= ( u32 ) std::size( colorAttachmentFormats ),
+		.pColorAttachmentFormats	= std::data( colorAttachmentFormats ),
 		.depthAttachmentFormat		= depthAttachmentFormat,
 	};
 
@@ -907,7 +918,8 @@ VkPipeline vk_context::CreateGfxPipeline(
 	};
 
 	VkPipeline vkGfxPipeline;
-	VK_CHECK( vkCreateGraphicsPipelines( device, 0, 1, &pipelineInfo, 0, &vkGfxPipeline ) );
+	VK_CHECK( vkCreateGraphicsPipelines( device, nullptr, 1,
+	    &pipelineInfo, nullptr, &vkGfxPipeline ) );
 
 	return vkGfxPipeline;
 }
@@ -971,8 +983,8 @@ void vk_context::FlushPendingDescriptorUpdates()
 	std::vector<VkWriteDescriptorSet> writes;
 	for( const vk_descriptor_write& update : descPendingUpdates )
 	{
-		const VkDescriptorImageInfo* pImageInfo = 0;
-		const VkDescriptorBufferInfo* pBufferInfo = 0;
+		const VkDescriptorImageInfo*    pImageInfo  = 0;
+		const VkDescriptorBufferInfo*   pBufferInfo = 0;
 
 		if( update.descInfo.rscType == vk_resource_type::BUFFER )
 		{
@@ -997,7 +1009,8 @@ void vk_context::FlushPendingDescriptorUpdates()
 		writes.push_back( writeEntryInfo );
 	}
 
-	vkUpdateDescriptorSets( device, ( u32 ) std::size( writes ), std::data( writes ), 0, 0 );
+	vkUpdateDescriptorSets( device, ( u32 ) std::size( writes ),
+	    std::data( writes ), 0, 0 );
 	descPendingUpdates.resize( 0 );
 }
 
@@ -1036,7 +1049,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		{
 			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.mem );
 		}
-		else if( vk_resource_type::IMAGE ==  rsc.type )
+		else if( vk_resource_type::IMAGE == rsc.type )
 		{
 			vkDestroyImageView( device, rsc.img.view, 0 );
 			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.mem );
@@ -1106,7 +1119,8 @@ void vk_context::CreateSwapchain()
 		fixed_string<64> name = { "Img_Swapchain{}", scii };
 		VkDbgNameObj( img, device, std::data( name ) );
 
-		VkImageView view = VkMakeImgView( device, img, scInfo.imageFormat, 0, 1, VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
+		VkImageView view = VkMakeImgView( device, img, scInfo.imageFormat, 0, 1,
+		    VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
 
 		scImgs.push_back( {
 			.canPresentSema = VkMakeSemaphore( device, false, -1 ),
@@ -1158,11 +1172,11 @@ inline vk_queue* VkContextGetQueueByType( vk_context& ctx, vk_queue_t queueType 
 {
 	switch( queueType )
 	{
-		case vk_queue_t::GFX: return &ctx.gfxQueue;
-		case vk_queue_t::COPY: return &ctx.copyQueue;
-		default: HT_ASSERT( 0 && "Invalid queue type !" );
+		case vk_queue_t::GFX:   return &ctx.gfxQueue;
+		case vk_queue_t::COPY:  return &ctx.copyQueue;
 	}
 
+    HT_ASSERT( 0 && "Invalid queue type !" );
 	return nullptr;
 }
 
@@ -1173,8 +1187,8 @@ vk_command_buffer vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 	vk_cmd_pool_buff cb = {};
 	if( !cbPool.free.TryPop( cb ) )
 	{
-		const vk_queue* vkQ = VkContextGetQueueByType( *this, queueType );
-		VkCommandPool cmdPool = VkMakeCmdPool( device, vkQ->familyIdx );
+		const vk_queue* vkQ     = VkContextGetQueueByType( *this, queueType );
+		VkCommandPool cmdPool   = VkMakeCmdPool( device, vkQ->familyIdx );
 		cb = { .pool = cmdPool, .buff = VkMakeCmdBuff( device, cmdPool ), .parentQueueFamType = queueType };
 	}
 
@@ -1198,9 +1212,7 @@ void vk_context::QueueSubmit(
 ) {
 	std::lock_guard lockGuard{ queue.lock };
 
-	stack_adaptor memScope = { scratchArena };
-	std::pmr::vector<VkSemaphoreSubmitInfo> vecSignals{ &memScope };
-	vecSignals.insert( std::end( vecSignals ), std::cbegin( signals ), std::cend( signals ) );
+	inline_vector<VkSemaphoreSubmitInfo, 8> vecSignals = { std::from_range, signals };
 
 	// NOTE: always signal ourselves
 	queue.submitionCount++;
@@ -1228,15 +1240,11 @@ void vk_context::QueueSubmit(
 	VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, vkFence ) );
 
 	// NOTE: we always defer delete the cbs wrt to our timeline
-	vk_cb_pool& cbPool = cbPools[ ( u64 ) cb.parentQueueFamType ];
-	vk_cb_deletion cbDel = {
+	vk_cb_pool&     cbPool  = cbPools[ ( u64 ) cb.parentQueueFamType ];
+	vk_cb_deletion  cbDel   = {
 		.sema		= queue.timelineSema,
 		.waitVal	= queue.submitionCount,
-		.hndl		= {
-			.pool				= cb.cmdPool,
-			.buff				= cb.hndl,
-			.parentQueueFamType = cb.parentQueueFamType
-		}
+		.hndl		= { .pool = cb.cmdPool, .buff = cb.hndl, .parentQueueFamType = cb.parentQueueFamType }
 	};
 	HT_ASSERT( cbPool.pending.TryPush( cbDel ) );
 }

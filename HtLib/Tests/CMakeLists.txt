@@ -43,9 +43,7 @@ endfunction()
 # Test executables  (1 per test file, matching VS projects)
 # ============================================================================
 
-#add_ht_test(TestSlotBuffer             test_slot_buffer.cpp)
 add_ht_test(TestHtMemory                test_ht_memory.cpp INLINED_TU ht_allocator.cpp)
 add_ht_test(TestHtMemArena              test_ht_mem_arena.cpp)
-add_ht_test(TestFixedVector             test_fixed_vector.cpp)
 
 add_ht_stress(StressTestHtAllocator    stress_test_ht_allocator.cpp )

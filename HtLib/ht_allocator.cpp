@@ -7,8 +7,8 @@
 #include <System/sys_sync.h>
 
 //============================GLOBALS=============================//
-static              ht_virtual_allocator    g_htVirtualAllocator    = {};
-static thread_local ht_virtual_allocator*   g_pVirtualAllocator     = nullptr;
+static ht_virtual_allocator     g_htVirtualAllocator    = {};
+ht_virtual_allocator*           g_pVirtualAllocator     = nullptr;
 //================================================================//
 
 //============================CONSTS==============================//
@@ -174,4 +174,14 @@ ht_virtual_allocator HtMakeVirtualAllocator()
         .chunkMap           = { ( ht_virtual_chunk* ) ht_os_virtual_alloc( chunkMapSzInBytes ),
                             CHUNK_REGION_ELEM_COUNT }
     };
+}
+
+void HtInitMemorySystem()
+{
+    static bool notInit = true;
+    HT_ASSERT( ( nullptr == g_pVirtualAllocator ) && notInit ); // TODO: this assert must always be there
+
+    g_htVirtualAllocator = HtMakeVirtualAllocator();
+    g_pVirtualAllocator = &g_htVirtualAllocator;
+    notInit = false;
 }

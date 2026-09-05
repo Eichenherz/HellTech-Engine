@@ -4,7 +4,7 @@
 #define __HT_RING_BUFFER_H__
 
 #include <ht_core_types.h>
-#include "System/sys_sync.h"
+#include <System/sys_sync.h>
 
 #include <array>
 #include <mutex>

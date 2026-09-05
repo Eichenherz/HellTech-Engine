@@ -1,11 +1,12 @@
 #ifndef __HELL_PACK_H__
 #define __HELL_PACK_H__
 
-#include "ht_core_types.h"
-#include "ht_error.h"
-#include "ht_utils.h"
+#include <ht_core_types.h>
+#include <ht_error.h>
 #include "ht_gfx_types.h"
-#include "ht_math.h"
+#include <ht_math.h>
+
+#include "ht_renderer_types.h"
 
 #include <span>
 #include <vector>
@@ -23,12 +24,12 @@ struct bit_stream
 	void AppendBits( u32 inBitStream, u32 bitDepth )
 	{
 		HT_ASSERT( bitDepth < 64 );
-		u64 bitStream = u64( inBitStream ) & ( ( 1ull << bitDepth ) - 1 );
+		u64     bitStream           = u64( inBitStream ) & ( ( 1ull << bitDepth ) - 1 );
 
-		u64 qwBucket = cursorInBits >> 6;
-		u32 bitOffset = cursorInBits & 63;
-		u32 howManyBitWillFit = 64 - bitOffset;
-		bool carryOver = bitDepth > howManyBitWillFit;
+		u64     qwBucket            = cursorInBits >> 6;
+		u32     bitOffset           = cursorInBits & 63;
+		u32     howManyBitWillFit   = 64 - bitOffset;
+		bool    carryOver           = bitDepth > howManyBitWillFit;
 
 		if( u64 sz = std::size( qwords ); sz <= ( qwBucket + u64( carryOver ) ) )
 		{
@@ -36,10 +37,10 @@ struct bit_stream
 		}
 
 		qwords[ qwBucket ] |= bitStream << bitOffset;
-		if( carryOver )
-		{
-			qwords[ qwBucket + 1 ] |= bitStream >> howManyBitWillFit;
-		}
+	    if( carryOver )
+	    {
+	        qwords[ qwBucket + 1 ] |= ( bitStream >> howManyBitWillFit );
+	    }
 
 		cursorInBits += bitDepth;
 	}

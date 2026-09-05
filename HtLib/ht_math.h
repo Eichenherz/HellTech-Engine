@@ -3,10 +3,10 @@
 #ifndef __HT_MATH_H__
 #define __HT_MATH_H__
 
-#include "../Lib/ht_vec_types.h"
+#include <ht_vec_types.h>
 #include "../Lib/ht_gfx_types.h"
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
 #include <ht_error.h>
 
 
@@ -64,7 +64,7 @@ inline float4 fmaxf( float4 a, float4 b )
 	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ), fmaxf( a.w,b.w ) };
 }
 
-inline constexpr float3 CrossProd( float3 a, float3 b )
+constexpr float3 CrossProd( float3 a, float3 b )
 {
 	return  { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y  *b.x };
 }
@@ -164,7 +164,7 @@ inline aabb_t<float3> MergeAabbPair( const aabb_t<float3>& a, const aabb_t<float
 	};
 }
 
-inline aabb_t<float3> MergeAabbsMultiple( const std::ranges::forward_range auto& aabbs )
+aabb_t<float3> MergeAabbsMultiple( const std::ranges::forward_range auto& aabbs )
 {
 	aabb_t<float3> out = {
 		.min = { FLT_MAX, FLT_MAX, FLT_MAX },
@@ -179,7 +179,7 @@ inline aabb_t<float3> MergeAabbsMultiple( const std::ranges::forward_range auto&
 	return out;
 }
 
-inline aabb_t<float3> MergeAabbs( const std::ranges::forward_range auto& aabbs )
+aabb_t<float3> MergeAabbs( const std::ranges::forward_range auto& aabbs )
 {
 	const u64 meshletCount = std::size( aabbs );
 
@@ -416,10 +416,20 @@ constexpr u32 PcgHash32( u32 input )
 
 constexpr u64 SplitmixHash64( u64 input )
 {
-	input = ( input ^ ( input >> 30 ) ) * 0xBF58476D1CE4E5B9ull;
-	input = ( input ^ ( input >> 27 ) ) * 0x94D049BB133111EBull;
+	input = ( input ^ ( input >> 30 ) ) * 0xbf58476d1ce4e5b9ull;
+	input = ( input ^ ( input >> 27 ) ) * 0x94d049bb133111ebull;
 	return input ^ ( input >> 31 );
 }
+
+// NOTE: from https://github.com/bryc/code/blob/master/jshash/PRNGs.md#splitmix32
+constexpr u32 SplitmixHash32( u32 input )
+{
+    input += 0x9e3779b9;
+    input = ( input ^ ( input >> 16 ) ) * 0x85ebca6b;
+    input = ( input ^ ( input >> 13 ) ) * 0xc2b2ae35;
+    return input ^ ( input >> 16 );
+}
+
 // NOTE: doesn't produce good hash patterns, it's a great remap tho
 constexpr u64 FibRemap( u64 input, u64 bitWidthOfDstRangePow2 )
 {

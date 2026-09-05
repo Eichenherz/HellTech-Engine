@@ -2,7 +2,7 @@
 #ifndef __HT_SERIALIZATION_H__
 #define __HT_SERIALIZATION_H__
 
-#include <ht_fixed_vector.h>
+#include <ht_vector.h>
 #include <vector>
 #include <span>
 
@@ -46,6 +46,21 @@ template<typename T> constexpr bool hpk_is_rel_ref<hpk_relative_ref<T>> = true;
 
 template<typename T> concept HPK_REL_REF_T = hpk_is_rel_ref<std::remove_cvref_t<T>>;
 
+template<typename T> struct hpk_elem_of { using type = T; };
+template<CONTIGUOUS_RANGE_T R> struct hpk_elem_of<R> { using type = std::ranges::range_value_t<R>; };
+
+template<typename T>
+consteval u32 HpkHashEntryNameSzAlignment( std::string_view fieldName )
+{
+    using elem_t = hpk_elem_of<T>::type;
+
+    u32 fieldNameHash   = MurmurHash32( fieldName );
+    u32 szAlignHash     = SplitmixHash32( ( u32( sizeof( elem_t ) ) << 16 ) | u32( alignof( elem_t ) ) );
+    return fieldNameHash ^ szAlignHash;
+}
+
+#define HPK_X_LAYOUT_HASH( T, n ) ^ HpkHashEntryNameSzAlignment<T>( #T "|" #n "|" )
+
 struct hpk_mesh_relative_view
 {
 #define X( T, n ) hpk_rel_view_of<T>::type n;
@@ -69,11 +84,7 @@ struct hpk_asset_traits<hpk_mesh_asset>
     using rel_view_t    = hpk_mesh_relative_view;
 
     static constexpr hpk_entry_t ENTRY_TYPE  = hpk_entry_t::MESH;
-    static constexpr u32         LAYOUT_HASH = MurmurHash(
-    #define X( T, n ) #T "|" #n "|"
-        HPK_MESH_ASSET( X )
-    #undef X
-        );
+    static constexpr u32         LAYOUT_HASH = 0 HPK_MESH_ASSET( HPK_X_LAYOUT_HASH );
 };
 
 template<>
@@ -83,15 +94,11 @@ struct hpk_asset_traits<hpk_level_asset>
     using rel_view_t    = hpk_level_relative_view;
 
     static constexpr hpk_entry_t ENTRY_TYPE  = hpk_entry_t::LEVEL;
-    static constexpr u32         LAYOUT_HASH = MurmurHash(
-    #define X( T, n ) #T "|" #n "|"
-        HPK_LEVEL_ASSET( X )
-    #undef X
-        );
+    static constexpr u32         LAYOUT_HASH = 0 HPK_LEVEL_ASSET( HPK_X_LAYOUT_HASH );
 };
 
 template<typename T>
-inline std::span<const T> HpkGetAbsSpan( hpk_relative_ref<T> ref, const u8* base )
+std::span<const T> HpkGetAbsSpan( hpk_relative_ref<T> ref, const u8* base )
 {
     HT_ASSERT( 0 == ( ( u64( base ) + ref.offsetInBytes ) % alignof( T ) ) );
     HT_ASSERT( 0 == ( ref.sizeInBytes % sizeof( T ) ) );
@@ -131,7 +138,7 @@ inline hellpack_blob HpkSerializeAsset<HPK_ASSET_T>( const HPK_ASSET_T& a )
     constexpr u64 viewOffset = FwdAlignPot( sizeof( hellpack_file_header ), alignof( hpk_rel_view ) );
     constexpr u32 blobCount  = 0 HPK_STRUCT_MACRO( HPK_X_BLOB_COUNT );
 
-    fixed_vector<hpk_placed_blob, blobCount> blobs;
+    inline_vector<hpk_placed_blob, blobCount> blobs = {};
     u64 cursor = viewOffset + sizeof( hpk_rel_view );
 
     auto Place = [ & ]<typename T>( const T& src ) -> typename hpk_rel_view_of<T>::type
@@ -184,9 +191,9 @@ inline hellpack_blob HpkSerializeAsset<HPK_ASSET_T>( const HPK_ASSET_T& a )
 template<>
 inline HPK_ASSET_T::view_t HpkDeserializeAsset<HPK_ASSET_T>( std::span<const u8> fileBlob )
 {
-    using hpk_traits = hpk_asset_traits<HPK_ASSET_T>;
-    using hpk_rel_view = hpk_asset_traits<HPK_ASSET_T>::rel_view_t;
-    using hpk_view_t = hpk_asset_traits<HPK_ASSET_T>::view_t;
+    using hpk_traits    = hpk_asset_traits<HPK_ASSET_T>;
+    using hpk_rel_view  = hpk_asset_traits<HPK_ASSET_T>::rel_view_t;
+    using hpk_view_t    = hpk_asset_traits<HPK_ASSET_T>::view_t;
 
     constexpr u64 viewOffset = FwdAlignPot( sizeof( hellpack_file_header ), alignof( hpk_rel_view ) );
 

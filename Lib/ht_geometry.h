@@ -4,8 +4,8 @@
 #define __HT_GEOMETRY_H__
 
 #include "ht_core_types.h"
-#include "ht_vec_types.h"
-#include "ht_math.h"
+#include "../HtLib/ht_vec_types.h"
+#include <ht_math.h>
 
 #include <array>
 

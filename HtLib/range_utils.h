@@ -29,39 +29,46 @@ struct typed_view
 using byte_view = typed_view<u8>;
 
 template<typename T>
-inline byte_view AsBytes( typed_view<T> v )
+byte_view AsBytes( typed_view<T> v )
 {
 	static_assert( std::is_trivially_copyable_v<T> );
 	return { ( const u8* ) std::data( v ), ( u32 ) std::size( v ) * sizeof( T ) };
 }
 
 template<typename T, u64 Extent>
-inline std::span<const u8> AsBytes( std::span<T, Extent> s )
+std::span<const u8> AsBytes( std::span<T, Extent> s )
 {
 	return { ( const u8* ) std::data( s ), std::size( s ) * sizeof( T ) };
 }
 
 template<typename T, u64 Extent>
-inline std::span<u8> AsBytesWritable( std::span<T, Extent> s )
+std::span<u8> AsBytesWritable( std::span<T, Extent> s )
 {
 	static_assert( !std::is_const_v<T> );
 	return { ( u8* ) std::data( s ), std::size( s ) * sizeof( T ) };
 }
 
+template<TRIVIAL_T T, u64 Extent>
+std::span<T> FromBytes( std::span<u8, Extent> s )
+{
+    HT_ASSERT( 0 == ( ( u64 ) std::data( s ) % alignof( T ) ) );
+    return { ( T* ) std::data( s ), std::size( s ) / sizeof( T ) };
+}
+
 template<typename T>
-inline typed_view<T> MakeTypedView( std::span<const T> s )
+typed_view<T> MakeTypedView( std::span<const T> s )
 {
 	return { std::data( s ), ( u32 ) std::size( s ) };
 }
 
 template<typename T>
-inline typed_view<T> MakeTypedView( const u8* pData, u64 sizeInBytes )
+typed_view<T> MakeTypedView( const u8* pData, u64 sizeInBytes )
 {
 	return { ( const T* ) pData, sizeInBytes / sizeof( T ) };
 }
 
 template<std::ranges::contiguous_range R>
-inline byte_view MakeByteView( const R& r )
+byte_view MakeByteView( const R& r )
 {
 	using T = std::ranges::range_value_t<R>;
 
@@ -74,7 +81,7 @@ inline byte_view MakeByteView( const u8* pData, u64 sizeInBytes )
 	return { pData, sizeInBytes };
 }
 
-inline auto PermutedView( 
+auto PermutedView(
 	const std::ranges::random_access_range auto& src,
 	const std::ranges::random_access_range auto& remap 
 ) {
@@ -94,7 +101,7 @@ template<typename R, typename T>
 concept CONTIGUOUS_TYPED_RANGE_T = CONTIGUOUS_RANGE_T<R> && std::same_as<std::ranges::range_value_t<R>, T>;
 
 template<TRIVIAL_T T, CONTIGUOUS_TYPED_RANGE_T<T> R, typename Set, typename KeyFn = std::identity>
-inline bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
+bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
 {
 	for( const T& elem : range )
 	{

@@ -15,7 +15,7 @@
 
 #include "ht_core_types.h"
 #include "ht_error.h"
-#include "ht_math.h"
+#include "../HtLib/ht_math.h"
 
 
 #include "hp_types_internal.h"

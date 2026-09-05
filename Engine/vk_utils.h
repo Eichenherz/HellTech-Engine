@@ -6,11 +6,11 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
+#include <ht_error.h>
 
 #include "vk_types.h"
 #include "vk_resources.h"
-#include "ht_error.h"
 
 #include <dds.h>
 
@@ -155,7 +155,7 @@ inline VkBufferCopy2 MakeVkBufferCopy2( VkDeviceSize srcOffset, VkDeviceSize dst
 }
 
 // TODO: enforce some clearOp ---> clearVals params correctness ?
-inline static VkRenderingAttachmentInfo VkMakeAttachmentInfo(
+inline VkRenderingAttachmentInfo VkMakeAttachmentInfo(
 	VkImageView				view,
 	VkAttachmentLoadOp      loadOp,
 	VkAttachmentStoreOp     storeOp,

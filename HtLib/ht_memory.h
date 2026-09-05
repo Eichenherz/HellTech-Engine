@@ -84,8 +84,7 @@ struct ht_virtual_allocator
 	void			FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx );
 };
 
-ht_virtual_allocator HtMakeVirtualAllocator( u64 maxMemCapInBytes );
-
-extern thread_local ht_virtual_allocator* g_pVirtualAllocator;
+void HtInitMemorySystem();
+extern ht_virtual_allocator* g_pVirtualAllocator;
 
 #endif // !__HT_MEMORY_H__

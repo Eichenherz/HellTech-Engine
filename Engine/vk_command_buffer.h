@@ -139,10 +139,7 @@ struct vk_command_buffer
 		VK_CHECK( vkEndCommandBuffer( hndl ) );
 	}
 
-	inline vk_scoped_label CmdIssueScopedLabel( const char* labelName, float4 col = {} )
-	{
-		return { hndl, labelName, col };
-	}
+	vk_scoped_label CmdIssueScopedLabel( const char* labelName, float4 col = {} ) { return { hndl, labelName, col }; }
 
 	vk_scoped_renderpass CmdIssueScopedRenderPass(
 		const vk_rendering_info&	renderingInfo,
@@ -181,7 +178,8 @@ struct vk_command_buffer
 	{
 		if( bindPoint != currentBindPoint )
 		{
-			vkCmdBindDescriptorSets( hndl, bindPoint, bindlessPipelineLayout, 0, 1, &bindlessDescriptorSet, 0, 0 );
+			vkCmdBindDescriptorSets( hndl, bindPoint, bindlessPipelineLayout, 0,
+			    1, &bindlessDescriptorSet, 0, nullptr );
 			currentBindPoint = bindPoint;
 		}
 		vkCmdBindPipeline( hndl, bindPoint, pipeline );
@@ -260,7 +258,7 @@ struct vk_command_buffer
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
 
-	inline void CmdCopyBuffer( const vk_buffer& src, const vk_buffer& dst, std::span<const VkBufferCopy2> copyRegions )
+	void CmdCopyBuffer( const vk_buffer& src, const vk_buffer& dst, std::span<const VkBufferCopy2> copyRegions )
 	{
 		VkCopyBufferInfo2 cpyInfo = {
 			.sType			= VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
@@ -272,7 +270,7 @@ struct vk_command_buffer
 		vkCmdCopyBuffer2( hndl, &cpyInfo );
 	}
 	// TODO: this is pretty specific
-	inline void CmdCopyImageSameProps( const vk_image& src, const vk_image& dst )
+	void CmdCopyImageSameProps( const vk_image& src, const vk_image& dst )
 	{
 		HT_ASSERT( ( src.width == dst.width ) && ( src.height == dst.height ) );
 

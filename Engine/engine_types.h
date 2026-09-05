@@ -3,15 +3,15 @@
 #ifndef __ENGINE_TYPES_H__
 #define __ENGINE_TYPES_H__
 
-#include "ht_core_types.h"
-#include "ht_vec_types.h"
+#include <ht_core_types.h>
+#include <ht_vec_types.h>
 #include "hell_pack.h"
 #include "ht_renderer_types.h"
-#include "ht_fixed_string.h"
 
-#include "ht_math.h"
+#include <ht_fixed_string.h>
+#include <ht_vector.h>
 
-#include <vector>
+#include <ht_math.h>
 
 // CONVENTIONS -----------------------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -26,9 +26,8 @@ static_assert( IS_WORLD_RH, "Current convention is RH !!! But basis doesn't matc
 // -----------------------------------------------------------------------------
 
 // TODO: these must be strong typed
-using HRNDMESH32 = u32;
-
-using HJOBFENCE32 = u32;
+using HRNDMESH32    = u32;
+using HJOBFENCE32   = u32;
 
 enum class upload_t
 {
@@ -66,15 +65,15 @@ struct instance_desc
 
 struct renderer_dbg_draw
 {
-	bool vBuffPixelHash	= false;
-	bool vBuffMeshletId	= false;
+	bool vBuffPixelHash = false;
+	bool vBuffMeshletId = false;
 	bool freezeMainView = false;
-	bool dbgDraw		= false;
-	bool drawXRayMode	= false;
+	bool dbgDraw        = false;
+	bool drawXRayMode   = false;
 	bool toggleInstCull = true;
-	bool toggleMltCull	= true;
-	bool toggleMeshLOD	= true;
-	bool toggleMltLOD	= true;
+	bool toggleMltCull  = true;
+	bool toggleMeshLOD  = true;
+	bool toggleMltLOD   = true;
 };
 
 struct frame_data
@@ -107,15 +106,14 @@ struct ht_pipeline_stats
 
 struct ht_timed_zone
 {
-	fixed_string<64>	name;
-	float				timeMs;
+	fixed_string<64>	name    = {};
+	float				timeMs  = 0.0f;
 };
-
 
 struct gpu_data
 {
-	std::vector<ht_timed_zone>&		timedZones;
-	std::vector<ht_pipeline_stats>& pipelinesStats;
+	borrowed_vector<ht_timed_zone>&		timedZones;
+	borrowed_vector<ht_pipeline_stats>& pipelinesStats;
 };
 
 #endif // !__ENGINE_TYPES_H__

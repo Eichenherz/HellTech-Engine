@@ -6,15 +6,11 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
+#include <ht_core_types.h>
 #include "vk_error.h"
 #include "vk_types.h"
-#include "ht_core_types.h"
-
-#include "ht_utils.h"
 
 #include <vk_mem_alloc.h>
-
-#include "ht_stretchybuff.h"
 
 constexpr u32 MAX_MIP_LEVELS = 12;
 
@@ -57,10 +53,14 @@ struct vk_buffer
 };
 
 template<typename T>
+std::span<T> VkBufferHostView( vk_buffer& vkBuff )
+{
+	return { ( T* ) vkBuff.hostVisible, vkBuff.sizeInBytes / sizeof( T ) };
+}
+
+template<typename T>
 std::span<const T> VkBufferHostView( const vk_buffer& vkBuff )
 {
-	// NOTE: this saves us nothing really
-	HT_ASSERT( 0 == ( vkBuff.sizeInBytes % sizeof( T ) ) );
 	return { ( const T* ) vkBuff.hostVisible, vkBuff.sizeInBytes / sizeof( T ) };
 }
 

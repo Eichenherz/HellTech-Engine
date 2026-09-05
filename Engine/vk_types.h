@@ -6,7 +6,7 @@
 
 #include <ht_core_types.h>
 #include <ht_fixed_string.h>
-#include "ht_utils.h"
+
 
 struct vk_shader
 {
@@ -24,7 +24,7 @@ struct vk_compute_pipeline
 
 struct vk_gfx_shader_stage : VkPipelineShaderStageCreateInfo
 {
-	inline vk_gfx_shader_stage( const vk_shader& shader ) : VkPipelineShaderStageCreateInfo{}
+	vk_gfx_shader_stage( const vk_shader& shader ) : VkPipelineShaderStageCreateInfo{}
 	{
 		this->sType		= VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		this->stage		= shader.stage;
@@ -86,7 +86,8 @@ struct vk_renderer_config
 
 	vk_swapchain_config		scConfig			= {};
 
-	VkFormat				desiredColorFormat	= VK_FORMAT_B8G8R8A8_UNORM; // NOTE: for now use same as SC //VK_FORMAT_R16G16B16A16_SFLOAT;
+    // NOTE: for now use same as SC //VK_FORMAT_R16G16B16A16_SFLOAT;
+	VkFormat				desiredColorFormat	= VK_FORMAT_B8G8R8A8_UNORM;
 	VkFormat				desiredHiZFormat	= VK_FORMAT_R32_SFLOAT;
 	u16             		renderWidth;
 	u16             		renderHeight;
@@ -117,7 +118,7 @@ struct vk_query_pool
 	u32				queryStrideInSlots;
 	u32				queryCount;
 
-	inline u64 GetSizeInSlots() const { return queryCount * queryStrideInSlots; }
+	u64 GetSizeInSlots() const { return queryCount * queryStrideInSlots; }
 };
 
 #endif // !__VK_TYPES_H__

@@ -6,7 +6,7 @@
 #ifdef __cplusplus
 
 #include "ht_core_types.h"
-#include "ht_vec_types.h"
+#include "../HtLib/ht_vec_types.h"
 
 #define ALIGNAS( x ) alignas( x )
 
@@ -56,17 +56,6 @@ struct view_data
 	float3		camViewDir;
 	float		lodTarget;
 };
-
-struct packed_trs
-{
-	float3	t;
-	float	pad0;
-	float4	r;
-	float3	s;
-	float	pad1;
-};
-
-STATIC_ASSERT( 48 == sizeof( packed_trs ), "Size mismatch!" );
 
 CONSTEXPR u32 BIT_DEPTH_OCT_N = 11;
 CONSTEXPR u32 BIT_DEPTH_TAN_A = 9;

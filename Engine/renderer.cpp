@@ -11,9 +11,9 @@
 #include <format>
 #include <memory>
 
-#include "ht_core_types.h"
-#include "ht_utils.h"
-#include "engine_platform_common.h"
+#include <ht_core_types.h>
+#include <ht_utils.h>
+#include "engine_platform_api.h"
 
 #include "vk_error.h"
 #include "vk_resources.h"
@@ -21,18 +21,17 @@
 
 #include "vk_context.h"
 
-#include "ht_fixed_vector.h"
-#include "ht_fixed_string.h"
+#include <ht_vector.h>
+#include <ht_fixed_string.h>
 #include "ht_slot_vector.h"
 
 #include "engine_types.h"
 
 #include "ht_geometry.h"
-#include "ht_math.h"
+#include <ht_math.h>
 #include <imgui.h>
 
-// TODO: move sys_file to HtLib too ?
-#include "ht_file.h"
+#include <ht_file.h>
 
 #include <DirectXPackedVector.h>
 
@@ -70,7 +69,7 @@ struct offset_allocator_t
 	void				Free( offset_alloc_t alloc ) { mAlloc.free( alloc ); }
 };
 
-static std::unique_ptr<vk_context> pVkCtx = nullptr;
+static vk_context* pVkCtx = nullptr;
 
 //====================CONSTS====================//
 constexpr u64 				MAX_FIF					= vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
@@ -90,33 +89,30 @@ constexpr VkFrontFace		HT_FRONT_FACE			= IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLO
 
 //==============================================//
 
-enum class ht_query_type
+struct timestamp_query
 {
-	TIMESTAMP,
-	PIPELINE_STATS
+	fixed_string<64>	name        = {};
+	u32 				begIdx : 16 = {};
+	u32 				endIdx : 16 = {};
 };
 
-template<ht_query_type QUERY_T>
-struct gpu_query_handle
+struct pipestats_query
 {
-	fixed_string<64>	name;
-	u32 				begIdx : 16;
-	u32 				endIdx : 16;
+	fixed_string<64>	name        = {};
+	u32 				begIdx : 16 = 0;
+	u32 				endIdx : 16 = 0;
 };
-
-using timestamp_query = gpu_query_handle<ht_query_type::TIMESTAMP>;
-using pipestats_query = gpu_query_handle<ht_query_type::PIPELINE_STATS>;
 
 struct ht_gpu_frame_profiler
 {
-	std::vector<timestamp_query>	timedZonesQueries; // NOTE: these are 2 per query so we need std::size * 2
-	std::vector<pipestats_query>	pipelineStatsQueries;
-	vk_buffer						timestampQueryBuff;
-	vk_buffer						pipelineStatsQueryBuff;
+    // NOTE: these are 2 per query so we need std::size * 2
+	borrowed_vector<timestamp_query>    timedZonesQueries       = {};
+	borrowed_vector<pipestats_query>    pipelineStatsQueries    = {};
+	vk_buffer						    timestampQueryBuff      = {};
+	vk_buffer						    pipelineStatsQueryBuff  = {};
 
-	void ReadbackQueries( std::vector<ht_timed_zone>& timedGpuZones, std::vector<ht_pipeline_stats>& pipelinesStats )
+	void ReadbackQueries( borrowed_vector<ht_timed_zone>& timedGpuZones, borrowed_vector<ht_pipeline_stats>& pipelinesStats )
 	{
-		// TODO: fuck C++
 		timedGpuZones.append_range( timedZonesQueries | std::views::transform( [ this ]( const auto& q )
 		{
 			return ResolveTimestampQuery( q );
@@ -143,10 +139,10 @@ struct ht_gpu_frame_profiler
 
 	ht_timed_zone ResolveTimestampQuery( const timestamp_query& hQuery ) const
 	{
-		u32 startIdx = hQuery.begIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
-		u32 endIdx = hQuery.endIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
-		u64 endTs = VkBufferHostView<u64>( timestampQueryBuff )[ endIdx ];
-		u64 startTs = VkBufferHostView<u64>( timestampQueryBuff )[ startIdx ];
+		u32 startIdx	= hQuery.begIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
+		u32 endIdx		= hQuery.endIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
+		u64 endTs		= VkBufferHostView<u64>( timestampQueryBuff )[ endIdx ];
+		u64 startTs		= VkBufferHostView<u64>( timestampQueryBuff )[ startIdx ];
 		return {
 			.name	= hQuery.name,
 			.timeMs = float( endTs - startTs ) * pVkCtx->timestampPeriod * NS_TO_MS
@@ -171,8 +167,9 @@ struct ht_gpu_frame_profiler
 
 	timestamp_query BeginTimedZone( vk_command_buffer& cmdBuff, const char* name )
 	{
-		u16 currOffset = ( u16 ) std::size( timedZonesQueries ) * 2; // NOTE: these are 2 per query so we need std::size * 2
-		timestamp_query hQuery = { .name = name, .begIdx = currOffset, .endIdx = currOffset + 1u };
+		// NOTE: these are 2 per query so we need std::size * 2
+		u16				currOffset	= ( u16 ) std::size( timedZonesQueries ) * 2;
+		timestamp_query hQuery		= { .name = name, .begIdx = currOffset, .endIdx = currOffset + 1u };
 		cmdBuff.CmdWriteTimestamp( pVkCtx->timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.begIdx );
 		timedZonesQueries.push_back( hQuery );
 		return hQuery;
@@ -185,7 +182,11 @@ struct ht_gpu_frame_profiler
 
 	pipestats_query BeginStatsQuery( vk_command_buffer& cmdBuff, const char* name )
 	{
-		pipestats_query hQuery = { .name = name, .begIdx = ( u16 ) std::size( pipelineStatsQueries ), .endIdx	= u16( -1 ) };
+		pipestats_query hQuery = {
+			.name	= name,
+			.begIdx = ( u16 ) std::size( pipelineStatsQueries ),
+			.endIdx = u16( -1 )
+		};
 		cmdBuff.CmdQueryBegin( pVkCtx->pplnStatsQueryPool, hQuery.begIdx );
 		pipelineStatsQueries.push_back( hQuery );
 		return hQuery;
@@ -197,10 +198,12 @@ struct ht_gpu_frame_profiler
 	}
 };
 
-inline ht_gpu_frame_profiler HtMakeGpuFrameProfiler()
+static ht_gpu_frame_profiler HtMakeGpuFrameProfiler()
 {
 	return {
-		.timestampQueryBuff = pVkCtx->CreateBuffer( {
+	    .timedZonesQueries      = { ArenaNewArray<timestamp_query>( *pDebugArena, 1000 ) },
+	    .pipelineStatsQueries   = { ArenaNewArray<pipestats_query>( *pDebugArena, 128 ) },
+		.timestampQueryBuff     = pVkCtx->CreateBuffer( {
 			.name			= "Buff_ReadbackTimestampQueries",
 			.usageFlags		= VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes	= pVkCtx->timestampQueryPool.GetSizeInSlots() * sizeof( u64 ),
@@ -215,10 +218,10 @@ inline ht_gpu_frame_profiler HtMakeGpuFrameProfiler()
 	};
 }
 
-static u32 globalCurrentFifIdx = 0;
-static std::array<ht_gpu_frame_profiler, MAX_FIF> globalHtGpuFrameProfiler = {};
+static u32                                          globalCurrentFifIdx         = 0;
+static std::array<ht_gpu_frame_profiler, MAX_FIF>   globalHtGpuFrameProfiler    = {};
 
-HT_FORCEINLINE ht_gpu_frame_profiler* const HtGetGpuFrameProfiler()
+HT_FORCEINLINE ht_gpu_frame_profiler *const HtGetGpuFrameProfiler()
 {
 	return &globalHtGpuFrameProfiler[ globalCurrentFifIdx ];
 }
@@ -262,20 +265,21 @@ struct imgui_pass
 
 	static constexpr u64					DEFAULT_BUFF_SIZE = 16 * KB;
 
-	fixed_vector<vk_buffer, MAX_FIF>		vtx;
-	fixed_vector<vk_buffer, MAX_FIF>		idx;
-	vk_image								fontAtlasImg;
-	VkSampler								fontSampler;
+	std::array<vk_buffer, MAX_FIF>		vtx = {};
+	std::array<vk_buffer, MAX_FIF>		idx = {};
+	vk_image							fontAtlasImg;
+	VkSampler							fontSampler;
 
-	VkDescriptorSetLayout					descSetLayout;
-	VkPipelineLayout						pipelineLayout;
-	VkDescriptorUpdateTemplate				descTemplate;
-	VkPipeline								pipeline;
+	VkDescriptorSetLayout				descSetLayout;
+	VkPipelineLayout					pipelineLayout;
+	VkDescriptorUpdateTemplate			descTemplate;
+	VkPipeline							pipeline;
 
 	void CreateUploadFontAtlasSync( vk_command_buffer& cmdBuff, u64 frameIdx )
 	{
-		u8* pixels = 0;
-		i32 width = 0, height = 0;
+		u8* pixels  = nullptr;
+		i32 width   = 0;
+	    i32 height  = 0;
 		ImGui::GetIO().Fonts->GetTexDataAsRGBA32( &pixels, &width, &height );
 
 		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -320,8 +324,7 @@ struct imgui_pass
 		u64				frameIdx,
 		u64				frameInFlightIdx
 	) {
-		HT_ASSERT( frameInFlightIdx < vtx.capacity() );
-		HT_ASSERT( frameInFlightIdx < idx.capacity() );
+		HT_ASSERT( ( frameInFlightIdx < std::size( vtx ) ) && ( frameInFlightIdx < std::size( idx ) ) );
 
 		const ImDrawData* drawData = ImGui::GetDrawData();
 
@@ -331,10 +334,6 @@ struct imgui_pass
 		if( fbWidth <= 0.0f || fbHeight <= 0.0f ) return;
 
 		// Textures
-
-		// NOTE: lazy init
-		[[unlikely]] if( std::size( vtx ) <= frameInFlightIdx ) vtx.push_back( {} );
-		[[unlikely]] if( std::size( idx ) <= frameInFlightIdx ) idx.push_back( {} );
 
 		if( drawData->TotalVtxCount <= 0 ) return;
 		
@@ -347,15 +346,21 @@ struct imgui_pass
 		if( refVtxBuff.sizeInBytes < vtxTotalSizeInBytes )
 		{
 			if( VK_NULL_HANDLE != refVtxBuff.hndl ) pVkCtx->EnqueueResourceFree( vk_resc_deletion{ refVtxBuff, frameIdx } );
-			refVtxBuff = pVkCtx->CreateBuffer( { .usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-				.sizeInBytes = vtxTotalSizeInBytes, .usage = buffer_usage::HOST_VISIBLE } );
+			refVtxBuff = pVkCtx->CreateBuffer( {
+			    .usageFlags     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+				.sizeInBytes    = vtxTotalSizeInBytes,
+			    .usage          = buffer_usage::HOST_VISIBLE
+			} );
 		}
 
 		if( refIdxBuff.sizeInBytes < idxTotalSizeInBytes )
 		{
 			if( VK_NULL_HANDLE != refIdxBuff.hndl ) pVkCtx->EnqueueResourceFree( vk_resc_deletion{ refIdxBuff, frameIdx } );
-			refIdxBuff = pVkCtx->CreateBuffer( { .usageFlags = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				.sizeInBytes = idxTotalSizeInBytes, .usage = buffer_usage::HOST_VISIBLE } );
+			refIdxBuff = pVkCtx->CreateBuffer( {
+			    .usageFlags     = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+				.sizeInBytes    = idxTotalSizeInBytes,
+			    .usage          = buffer_usage::HOST_VISIBLE
+			} );
 		}
 
 		const vk_buffer& vtxBuff = refVtxBuff;
@@ -401,9 +406,9 @@ struct imgui_pass
 		vkCmdPushConstants( cmdBuff, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( pushConst ), &pushConst );
 		vkCmdBindIndexBuffer( cmdBuff, idxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
 
-		// (0,0) unless using multi-viewports
+		// ( 0, 0 ) unless using multi-viewports
 		float2 clipOff = { drawData->DisplayPos.x, drawData->DisplayPos.y };
-		// (1,1) unless using retina display which are often (2,2)
+		// ( 1, 1 ) unless using retina display which are often (2,2)
 		float2 clipScale = { drawData->FramebufferScale.x, drawData->FramebufferScale.y };
 
 		u32 vtxOffset = 0, idxOffset = 0;
@@ -542,8 +547,8 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 	vk_gfx_shader_stage shaderStages[] = { vtx, frag };
 	VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-	VkPipeline pipeline = pVkCtx->CreateGfxPipeline(
-		shaderStages, dynamicStates, &colDstFormat, 1, VK_FORMAT_UNDEFINED, guiState, pipelineLayout );
+	VkPipeline pipeline = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, std::array{ colDstFormat },
+	    VK_FORMAT_UNDEFINED, guiState, pipelineLayout );
 
 	return {
 		.fontSampler	= fontSampler,
@@ -562,7 +567,7 @@ struct debug_draw_passes
 	static constexpr box_wireframe_indices	lineVtxBuff = GenerateBoxWireframeIndices();
 	//constexpr box_triangle_indices trisVtxBuff = BoxVerticesAsTriangles( unitCube );
 
-	ht_stretchybuff<dbg_aabb_instance>		cpuInstView = {};
+	borrowed_vector<dbg_aabb_instance>		cpuInstView = {};
 
 	vk_buffer			vtxBuff 			= {};
 	vk_buffer			idxBuff 			= {};
@@ -606,8 +611,8 @@ struct debug_draw_passes
 				.blendCol			= false,
 			};
 
-			drawAsLines = pVkCtx->CreateGfxPipeline( gfxStages, dynamicStates, &rndCfg.desiredColorFormat,
-				1, VK_FORMAT_UNDEFINED, lineDrawPipelineState );
+			drawAsLines = pVkCtx->CreateGfxPipeline( gfxStages, dynamicStates, std::array{ rndCfg.desiredColorFormat },
+			    VK_FORMAT_UNDEFINED, lineDrawPipelineState );
 		}
 
 		//vk_gfx_pso_config triDrawPipelineState = {
@@ -666,7 +671,7 @@ struct debug_draw_passes
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
 			.usage			= buffer_usage::HOST_VISIBLE
 		} );
-		cpuInstView = HtNewStretchyBuffFromMem<dbg_aabb_instance>( cpuInstBuff.hostVisible, cpuInstBuff.sizeInBytes );
+		cpuInstView = { VkBufferHostView<dbg_aabb_instance>( cpuInstBuff ) };
 	}
 
 	void InitAndUploadDebugGeometry()
@@ -1574,8 +1579,8 @@ struct vbuffer_pass
 		vk_gfx_shader_stage shaderStages[] = { vtx, frag };
 		VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-		gfxVBuffPipeline = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, &VBUFF_FORMAT,
-			1, depthFormat, vbuffState, pVkCtx->globalPipelineLayout );
+		gfxVBuffPipeline = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, std::array{ VBUFF_FORMAT },
+		    depthFormat, vbuffState, pVkCtx->globalPipelineLayout );
 
 		vk_shader comp = pVkCtx->CreateShaderFromSpirv(
 				ReadFileBinary( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv" ) );
@@ -1745,8 +1750,8 @@ struct fwd_pass
 		vk_gfx_shader_stage shaderStagesDepth[] = { vtxDepth };
 		VkDynamicState dynamicStatesDepth[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-		gfxDepthPrepass = pVkCtx->CreateGfxPipeline( shaderStagesDepth, dynamicStatesDepth, 0,
-			0, depthFormat, depthPrepassState, pVkCtx->globalPipelineLayout );
+		gfxDepthPrepass = pVkCtx->CreateGfxPipeline( shaderStagesDepth, dynamicStatesDepth, {},
+		    depthFormat, depthPrepassState, pVkCtx->globalPipelineLayout );
 
 		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
 				"bin/SpirV/vertex_MeshletPassVsMain.spirv" ) );
@@ -1775,8 +1780,8 @@ struct fwd_pass
 			VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT
 		};
 
-		gfxLambertianClay = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, &colorFormat,
-			1, depthFormat, gfxState, pVkCtx->globalPipelineLayout );
+		gfxLambertianClay = pVkCtx->CreateGfxPipeline( shaderStages, dynamicStates, std::array{ colorFormat },
+		    depthFormat, gfxState, pVkCtx->globalPipelineLayout );
 
 		defer {
 			pVkCtx->DestroyShaderModule( vtxDepth.module );
@@ -1973,7 +1978,7 @@ struct renderer_context final : renderer_interface
 
 	slot_vector<VkFence>					jobFences;
 
-	fixed_vector<virtual_frame, MAX_FIF>	vrtFrames;
+	std::array<virtual_frame, MAX_FIF>	    vrtFrames;
 
 	vk_buffer                               stagingBuff;
 
@@ -2006,30 +2011,23 @@ struct renderer_context final : renderer_interface
 	const u32								framesInFlight = MAX_FIF;
 
 
-	void InitBackend( u64 hInst, u64 hWnd ) override;
+	void        InitBackend( u64 hInst, u64 hWnd ) override;
 
-	HRNDMESH32 AllocMeshComponent( const hpk_mesh_view& mesh ) override;
-
-	inline HJOBFENCE32 AllocJobFence() override
+	HRNDMESH32  AllocMeshComponent( const hpk_mesh_view& mesh ) override;
+	HJOBFENCE32 AllocJobFence() override
 	{
 		return std::bit_cast<HJOBFENCE32>( jobFences.PushEntry( pVkCtx->AllocFence() ) );
 	}
-	inline bool PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) override
+	bool        PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) override
 	{
-		VkFence fence = jobFences[ ( fence_hndl32 ) hJobFence ];
-		return pVkCtx->FenceWaitAndResetOnDone( fence, timeoutNanosecs );
+		return pVkCtx->FenceWaitAndResetOnDone( jobFences[ ( fence_hndl32 ) hJobFence ], timeoutNanosecs );
 	}
-	void UploadMeshes(
-		HJOBFENCE32							hRndUpload,
-		std::span<const mesh_upload_req>	meshAssets,
-		virtual_arena&						arena
-	) override;
+	void        UploadMeshes( HJOBFENCE32 hRndUpload, std::span<const mesh_upload_req>	meshAssets, linear_arena& arena ) override;
 
-	void HostFrames( const frame_data& frameData, virtual_arena& scratchArena, gpu_data& gpuData ) override;
+	void        HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData ) override;
 
-	u32 /* numValidInstances */ UpdateSceneData( const virtual_frame& thisVFrame, const frame_data& frameData );
-
-	inline void CreateGlobalTargets( u16 width, u16 height )
+	u32         UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData ); /* numValidInstances */
+	void        CreateGlobalTargets( u16 width, u16 height )
 	{
 		depthTarget = pVkCtx->CreateImage( {
 			.name		= "Img_DepthTarget",
@@ -2063,16 +2061,13 @@ struct renderer_context final : renderer_interface
 	}
 };
 
-std::unique_ptr<renderer_interface> MakeRenderer()
-{
-	return std::make_unique<renderer_context>();
-}
+renderer_interface* MakeRenderer( linear_arena& arena ) { return ( renderer_interface* ) ArenaNew<renderer_context>( arena ); }
 
 void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 {
 	config = { .renderWidth = SCREEN_WIDTH, .renderHeight = SCREEN_HEIGHT };
 
-	pVkCtx = std::make_unique<vk_context>( VkMakeContext( hInst, hWnd, config ) );
+	pVkCtx = ArenaMake<vk_context>( *pPersistentArena, VkMakeContext( hInst, hWnd, config ) );
 
 	globalData = pVkCtx->CreateBuffer( {
 		.usageFlags		= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -2130,10 +2125,10 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	} );
 	HT_ASSERT( FwdAlignPot( megaGpuIdxBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuIdxBuff.sizeInBytes );
 
-	meshletAllocator= { ( u32 ) megaGpuMeshletBuff.sizeInBytes };
-	vtxPosAllocator = { ( u32 ) megaGpuVtxPosBuff.sizeInBytes };
-	vtxAttrsAllocator = { ( u32 ) megaGpuVtxAttrsBuff.sizeInBytes };
-	idxAllocator	= { ( u32 ) megaGpuIdxBuff.sizeInBytes };
+	meshletAllocator    = { ( u32 ) megaGpuMeshletBuff.sizeInBytes };
+	vtxPosAllocator     = { ( u32 ) megaGpuVtxPosBuff.sizeInBytes };
+	vtxAttrsAllocator   = { ( u32 ) megaGpuVtxAttrsBuff.sizeInBytes };
+	idxAllocator	    = { ( u32 ) megaGpuIdxBuff.sizeInBytes };
 
 	// TODO: move
 	VkSamplerCreateInfo samplerCreateInfo = {
@@ -2156,8 +2151,8 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 	for( u32 fifIdx = 0; fifIdx < MAX_FIF; ++fifIdx )
 	{
-		vrtFrames.push_back( MakeVirtualFrame( 4 * sizeof( view_data ), fifIdx ) );
-		globalHtGpuFrameProfiler[ fifIdx ] = HtMakeGpuFrameProfiler();
+		vrtFrames[ fifIdx ]                 = MakeVirtualFrame( 4 * sizeof( view_data ), fifIdx );
+		globalHtGpuFrameProfiler[ fifIdx ]  = HtMakeGpuFrameProfiler();
 	}
 }
 
@@ -2206,35 +2201,35 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 void renderer_context::UploadMeshes(
 	HJOBFENCE32							hRndUpload,
 	std::span<const mesh_upload_req>	meshUploadReqs,
-	virtual_arena&						arena
+	linear_arena&						arena
 ) {
-	stack_adaptor<virtual_arena> vaStack = { arena };
+	ht_mem_scope memScope = { arena };
 
-	ht_stretchybuff<u8> stagingScratch = HtNewStretchyBuffFromMem<u8>( stagingBuff.hostVisible, stagingBuff.sizeInBytes );
+	borrowed_vector<u8> stagingScratch = { VkBufferHostView<u8>( stagingBuff ) };
 
 	u64 barrierCount = std::size( meshUploadReqs ) * 4;
 	u64 copyCmdCount = std::size( meshUploadReqs );
 
-	std::pmr::vector<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &vaStack };
+	arena_vector<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &arena };
 	buffInitCpyBarriers.reserve( barrierCount );
 
-	std::pmr::vector<VkBufferCopy2> mltRegionCopies{ &vaStack };
+	arena_vector<VkBufferCopy2> mltRegionCopies{ &arena };
 	mltRegionCopies.reserve( copyCmdCount );
-	std::pmr::vector<VkBufferCopy2> vtxPosRegionCopies{ &vaStack };
+	arena_vector<VkBufferCopy2> vtxPosRegionCopies{ &arena };
 	vtxPosRegionCopies.reserve( copyCmdCount );
-	std::pmr::vector<VkBufferCopy2> vtxAttrsRegionCopies{ &vaStack };
+	arena_vector<VkBufferCopy2> vtxAttrsRegionCopies{ &arena };
 	vtxAttrsRegionCopies.reserve( copyCmdCount );
-	std::pmr::vector<VkBufferCopy2> idxRegionCopies{ &vaStack };
+	arena_vector<VkBufferCopy2> idxRegionCopies{ &arena };
 	idxRegionCopies.reserve( copyCmdCount );
 
-	std::pmr::vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &vaStack };
+	arena_vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &arena };
 	buffEndCpyBarriers.reserve( barrierCount );
 
 	auto CopyScaffoldingLambda = [ & ] (
-		const vk_buffer&					dstBuff,
-		std::pmr::vector<VkBufferCopy2>&	regionCopies,
-		std::span<const u8>					bytesSrc,
-		u32									dstOffsetInBytes
+		const vk_buffer&			dstBuff,
+		arena_vector<VkBufferCopy2>&regionCopies,
+		std::span<const u8>			bytesSrc,
+		u32							dstOffsetInBytes
 	){
 		u64 srcOffsetInBytes = std::size( stagingScratch );
 		stagingScratch.append_range( bytesSrc );
@@ -2282,7 +2277,7 @@ void renderer_context::UploadMeshes(
 
 	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 
-	std::pmr::vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &vaStack };
+	arena_vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &arena };
 	buffTransferOwnershipBarriers.reserve( barrierCount );
 
 	for( const VkBufferMemoryBarrier2& barr : buffEndCpyBarriers )
@@ -2306,13 +2301,12 @@ void renderer_context::UploadMeshes(
 	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCmdBuff, waitCpyDone, {}, jobFences[ ( fence_hndl32 ) hRndUpload ] );
 }
 
-u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const frame_data& frameData )
+u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )
 {
 	HT_ASSERT( BYTE_COUNT( frameData.views ) <= thisVFrame.viewData.sizeInBytes );
 	std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	ht_stretchybuff<gpu_mesh> gpuMeshTable = HtNewStretchyBuffFromMem<gpu_mesh>(
-		thisVFrame.gpuMeshTable.hostVisible, thisVFrame.gpuMeshTable.sizeInBytes );
+	borrowed_vector<gpu_mesh> gpuMeshTable = { VkBufferHostView<gpu_mesh>( thisVFrame.gpuMeshTable ) };
 	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accessed anyways
 	HT_ASSERT( std::size( rendererComponents ) <= gpuMeshTable.capacity() );
 
@@ -2321,8 +2315,7 @@ u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const fr
 		gpuMeshTable.push_back( component.desc );
 	}
 
-	ht_stretchybuff<gpu_instance> gpuInstList = HtNewStretchyBuffFromMem<gpu_instance>(
-		thisVFrame.gpuInstances.hostVisible, thisVFrame.gpuInstances.sizeInBytes );
+	borrowed_vector<gpu_instance> gpuInstList = { VkBufferHostView<gpu_instance>( thisVFrame.gpuInstances ) };
 	HT_ASSERT( std::size( frameData.instances ) <= gpuInstList.capacity() );
 
 	for( const instance_desc& sceneNode : frameData.instances )
@@ -2338,27 +2331,24 @@ u32 renderer_context::UpdateSceneData( const virtual_frame& thisVFrame, const fr
 	return ( u32 ) std::size( gpuInstList );
 }
 
-void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& scratchArena, gpu_data& gpuData )
+void renderer_context::HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData )
 {
-	const auto& storageReportVtxAttrs = vtxAttrsAllocator.mAlloc.storageReport();
-	const auto& storageReportVtxPos = vtxPosAllocator.mAlloc.storageReport();
-
-	stack_adaptor<virtual_arena> virtualStack = { scratchArena };
+	ht_mem_scope memScope               = { scratchArena };
 
 	const u64 currentFrameIdx			= vFrameIdx++;
 	const u32 currentFrameInFlightIdx	= currentFrameIdx % framesInFlight;
 
-	globalCurrentFifIdx = currentFrameInFlightIdx;
+	globalCurrentFifIdx                 = currentFrameInFlightIdx;
 
-	VkResult timelineWaitResult = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight,
-		UINT64_MAX );
+	VkResult timelineWaitResult         = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline,
+	    framesInFlight, UINT64_MAX );
 	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
 
 	HtGetGpuFrameProfiler()->ReadbackQueries( gpuData.timedZones, gpuData.pipelinesStats );
 
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
 
-	const virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
+	virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
 	u32 instCount = UpdateSceneData( thisVFrame, frameData );
 
@@ -2439,8 +2429,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 		.enableMltLod	= frameData.dbgDrawFlags.toggleMltLOD
 	};
 
-	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 1nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
-		cullPassArgs, false, cullDbgFlags ) );
+	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 1nd Pass", cullingPass.Execute(
+	    thisFrameCmdBuff, rscStateTracker, cullPassArgs, false, cullDbgFlags ) );
 
 	const vbuffer_pass_args vbuffPassArgs = {
 		.depthTarget	= depthTarget,
@@ -2471,8 +2461,8 @@ void renderer_context::HostFrames( const frame_data& frameData, virtual_arena& s
 
 	hzbPass.Execute( thisFrameCmdBuff, rscStateTracker, depthTarget, depthSrv );
 
-	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 2nd Pass", cullingPass.Execute( thisFrameCmdBuff, rscStateTracker,
-		cullPassArgs, true, cullDbgFlags ) );
+	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 2nd Pass", cullingPass.Execute(
+	    thisFrameCmdBuff, rscStateTracker, cullPassArgs, true, cullDbgFlags ) );
 
 	//fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
 	vBuffPass.DrawIndexedIndirect( thisFrameCmdBuff, rscStateTracker, vbuffPassArgs, true );

@@ -10,7 +10,7 @@
 
 #include <System/Win32/win32_kbd_scancodes.h>
 
-#include <vector>
+#include <ht_vector.h>
 
 struct im_gui_ctx
 {
@@ -30,7 +30,7 @@ struct im_gui_ctx
 		io->Fonts->Build();
 	}
 
-	inline void UpdateTimeAndInputState( float elapsedSecs, const ht_input_state& inputState )
+	void UpdateTimeAndInputState( float elapsedSecs, const ht_input_state& inputState )
 	{
 		io->DeltaTime = elapsedSecs;
 		io->MousePos = { inputState.mousePos.x, inputState.mousePos.y };
@@ -78,17 +78,19 @@ using PFN_ImGuiWidgetAction = void( * )( const void* );
 
 struct imgui_widget
 {
-	imgui_widget_name		name;
-	const void*				pData;
-	PFN_ImGuiWidgetAction	Action;
-	imgui_widget_type		type;
+	imgui_widget_name		name    = {};
+	const void*				pData   = nullptr;
+	PFN_ImGuiWidgetAction	Action  = nullptr;
+	imgui_widget_type		type    = imgui_widget_type::COUNT;
 };
+
+constexpr u64 IMGUI_MAX_WIDGETS_PER_WINDOW = 8;
 
 struct imgui_window
 {
-	std::vector<imgui_widget>	widgets;
-	imgui_window_name			name;
-	ImGuiWindowFlags			flags;
+	inline_vector<imgui_widget, IMGUI_MAX_WIDGETS_PER_WINDOW>	widgets;
+	imgui_window_name			                                name;
+	ImGuiWindowFlags			                                flags;
 };
 
 inline void ImGuiHandleWidget( const imgui_widget& widget )
@@ -135,7 +137,7 @@ inline void ImGuiPrintFloatAction( const void* pData )
 	ImGui::Text( "%.2f", *( const float* ) pData );
 }
 
-inline void ImGuiRenderUI( const std::vector<imgui_window>& imguiWnds )
+inline void ImGuiRenderUI( std::span<const imgui_window> imguiWnds )
 {
 	static bool initialPosSet = false;
 

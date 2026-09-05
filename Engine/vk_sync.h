@@ -6,11 +6,12 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
 
-#include "ht_core_types.h"
+#include <ht_core_types.h>
+
 #include "vk_resources.h"
 #include "vk_command_buffer.h"
 
-#include "ht_fixed_vector.h"
+#include <ht_vector.h>
 #include <ankerl/unordered_dense.h>
 
 constexpr VkAccessFlags2 HT_SHADER_ACCESS_READ_WRITE = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
@@ -251,8 +252,8 @@ struct vk_rsc_state_tracker
 	using unordered_dense = ankerl::unordered_dense::map<Key, T>;
 
 	unordered_dense<vk_rsc_hndl64, vk_rsc_sync_state>	resourceStateTracker;
-	fixed_vector<VkBufferMemoryBarrier2, 16>			buffBarrierCache;
-	fixed_vector<VkImageMemoryBarrier2, 16>				imgBarrierCache;
+	inline_vector<VkBufferMemoryBarrier2, 16>			buffBarrierCache;
+	inline_vector<VkImageMemoryBarrier2, 16>			imgBarrierCache;
 
 	// NOTE: buffers will always be in VK_IMAGE_LAYOUT_MAX_ENUM aka INVALID
 	void UseBuffer( 
@@ -306,7 +307,7 @@ struct vk_rsc_state_tracker
 		}
 	}
 
-	inline void UseImage( const vk_image& rsc, const vk_access_stage_masks& dstMasks, VkImageLayout dstLayout )
+	void UseImage( const vk_image& rsc, const vk_access_stage_masks& dstMasks, VkImageLayout dstLayout )
 	{
 		VkImageSubresourceRange subResource = VkFullResource( rsc );
 		UseImage( rsc, dstMasks, dstLayout, subResource );
@@ -376,12 +377,12 @@ struct vk_rsc_state_tracker
 		}
 	}
 
-	inline void StopTrackingResource( vk_rsc_hndl64 hndl )
+	void StopTrackingResource( vk_rsc_hndl64 hndl )
 	{
 		resourceStateTracker.erase( hndl );
 	}
 
-	inline void FlushBarriers( const vk_command_buffer& cmdBuff )
+	void FlushBarriers( const vk_command_buffer& cmdBuff )
 	{
 		if( !std::size( buffBarrierCache ) && !std::size( imgBarrierCache ) ) return;
 		cmdBuff.CmdPipelineBarriers( buffBarrierCache, imgBarrierCache );

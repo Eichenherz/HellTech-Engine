@@ -4,10 +4,6 @@
 #include <windowsx.h>
 #include <hidusage.h>
 
-#include <algorithm>
-
-#include <vector>
-
 #include <ht_core_types.h>
 
 #include <System/Win32/win32_err.h>
@@ -16,8 +12,20 @@
 #include <System/sys_timer.h>
 #include <System/sys_std_streams.h>
 
-#include "engine_platform_common.h"
+#include "engine_platform_api.h"
+#include <ht_memory.h>
+#include <ht_mem_arena.h>
+
 #include <System/Win32/win32_kbd_scancodes.h>
+
+
+//===================GLOBALS====================//
+job_system_ctx*			pJobSys	            = nullptr;
+thread_local thread_ctx* pThreadCtx          = nullptr;
+linear_arena*            pPersistentArena    = nullptr;
+//==============================================//
+
+
 
 static void SysOsCreateConsole()
 {
@@ -52,9 +60,9 @@ static void Win32ProcessRawInput( const RAWINPUT& ri, ht_input_state& inputState
 		const RAWKEYBOARD& kb = ri.data.keyboard;
 		if( KEYBOARD_OVERRUN_MAKE_CODE == kb.MakeCode ) return;
 
-		bool isE0 = kb.Flags & RI_KEY_E0;
-		u16 keyIndex = ( u16 ) ( kb.MakeCode | ( isE0 ? 0x100 : 0 ) );
-		bool isPressed = !( kb.Flags & RI_KEY_BREAK );
+		bool    isE0        = kb.Flags & RI_KEY_E0;
+		u16     keyIndex    = ( u16 ) ( kb.MakeCode | ( isE0 ? 0x100 : 0 ) );
+		bool    isPressed   = !( kb.Flags & RI_KEY_BREAK );
 		inputState.UpdateButtonState( keyIndex, isPressed );
 	}
 	if( RIM_TYPEMOUSE == ri.header.dwType )
@@ -90,7 +98,10 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); break;
 		case WM_MOUSEMOVE:
 		{
-			globalHtInputState.mousePos = { ( float ) GET_X_LPARAM( lParam ), ( float ) GET_Y_LPARAM( lParam ) };
+			globalHtInputState.mousePos = {
+			    ( float ) GET_X_LPARAM( lParam ),
+			    ( float ) GET_Y_LPARAM( lParam )
+			};
 			break;
 		}
 		
@@ -98,19 +109,19 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		{
 			HRAWINPUT hri = ( HRAWINPUT ) lParam;
 
-			// TODO: self supply this
-			thread_local std::vector<u8> scratchPad;
+		    constexpr UINT cbHeaderSz   = sizeof( RAWINPUTHEADER );
 
 			UINT size = 0;
-			if( GetRawInputData( hri, RID_INPUT, nullptr, &size,
-				sizeof( RAWINPUTHEADER ) ) == UINT( -1 ) || !size  )
+			if( ( -1 == GetRawInputData( hri, RID_INPUT, nullptr, &size, cbHeaderSz ) ) || !size )
 			{
 				break;
 			}
 
-			scratchPad.resize( size );
-			if( GetRawInputData( hri, RID_INPUT, std::data( scratchPad ), &size,
-				sizeof( RAWINPUTHEADER ) ) == UINT( -1 ) )
+		    std::span scratchPad = {
+			    ( u8* ) pThreadCtx->scratchArenas[ 1 ].Alloc( size, alignof( RAWINPUT ) ), size
+			};
+
+			if( -1 == GetRawInputData( hri, RID_INPUT, std::data( scratchPad ), &size, cbHeaderSz ) )
 			{
 				break;
 			}
@@ -127,20 +138,14 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 
 using sys_physical_path = fixed_string<MAX_PATH>;
 
-
-#include <ht_memory.h>
-
-
-// NOTE: global state
-static job_system_ctx*				pJobSys		= nullptr;
-static thread_local dynamic_arena	threadArena	= {};
-//------------------=
+static std::span<thread_ctx>    threadCtxArray  = {};
+static linear_arena             persistentArena = {};
 
 
 UINT WINAPI Win32ThreadLoop( LPVOID lpParam )
 {
-	g_pThisThreadHeap	= HtGetThreadHeap( ( u64 ) lpParam );
-	threadArena		= g_pThisThreadHeap->Allocate( 1 * MB );
+    u64 threadIdx   = ( u64 ) lpParam;
+    pThreadCtx      = &threadCtxArray[ threadIdx ];
 
 	for( ;; )
 	{
@@ -148,7 +153,8 @@ UINT WINAPI Win32ThreadLoop( LPVOID lpParam )
 
 		for( job_t job = {}; pJobSys->queue.TryPop( job ); )
 		{
-			job.PfnJob( job.payload, &threadArena );
+		    ht_mem_scope jobScope = { pThreadCtx->scratchArenas[ 0 ] };
+			job.PfnJob( job.payload, &pThreadCtx->scratchArenas[ 0 ] );
 		}
 	}
 
@@ -162,11 +168,13 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	SysNameThread( ( u64 ) GetCurrentThread(), L"Main Thread" );
 
 #ifdef  _DEBUG
-	// TODO: fix sys_path whatever to work with this !
-	char workingDir[ MAX_PATH ] = {};
-	WIN_CHECK( 0 != GetCurrentDirectoryA( std::size( workingDir ), workingDir ) );
-	fixed_string<512> workingDirMsg = { "WorkingDir: {}\n", workingDir };
-	SysWriteToStdStream( ( const char* ) workingDirMsg, sys_stream_t::OUTPUT );
+	{
+	    char workingDir[ MAX_PATH ] = {};
+	    WIN_CHECK( 0 != GetCurrentDirectoryA( std::size( workingDir ), workingDir ) );
+
+	    fixed_string<512> workingDirMsg = { "WorkingDir: {}\n", workingDir };
+	    SysWriteToStdStream( ( const char* ) workingDirMsg, sys_stream_t::OUTPUT );
+	}
 #endif //_DEBUG
 
 	WIN_CHECK( DirectX::XMVerifyCPUSupport() );
@@ -174,7 +182,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	SYSTEM_INFO sysInfo = {};
 	GetSystemInfo( &sysInfo );
 
-	HT_ASSERT( OS_PAGE_SIZE_IN_BYTES == sysInfo.dwPageSize );
+	HT_ASSERT( OS_COMMIT_PAGE_SIZE_IN_BYTES == sysInfo.dwPageSize );
 	// NOTE: we only support level 4 paging no LA57
 	HT_ASSERT( OS_USER_MAX_ADDR == ( u64 ) sysInfo.lpMaximumApplicationAddress );
 
@@ -205,7 +213,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
 	// NOTE: don't use RIDEV_INPUTSINK in order to only receive when in focus
-	RAWINPUTDEVICE hid[ 2 ] = {
+	RAWINPUTDEVICE hid[] = {
 		RAWINPUTDEVICE{
 			.usUsagePage	= HID_USAGE_PAGE_GENERIC,
 			.usUsage		= HID_USAGE_GENERIC_MOUSE,
@@ -223,24 +231,33 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr u64 NUM_CORES = 8;
 
-	HtMakeAllocator( 32 * GB, NUM_CORES );
-	g_pThisThreadHeap	= HtGetThreadHeap( 0 );
-	threadArena			= g_pThisThreadHeap->Allocate( 1 * MB );
+    HtInitMemorySystem();
 
-	// NOTE: init Job System
-	pJobSys = ArenaNew<job_system_ctx>( threadArena );
-	fixed_vector<sys_thread, NUM_CORES> threads;
-	for( u64 ti = 0; ti < NUM_CORES - 1; ti++ )
-	{
-		fixed_wstring<16> name = { L"Thread #{}", ti + 1 };
-		threads.push_back( SysCreateThread(
-			1 * MB, Win32ThreadLoop, ( void* ) ( ti + 1 ), ( const wchar_t* ) name ) );
-	}
-	// ----------------------------------------------------------
+    persistentArena  = { g_pVirtualAllocator->AllocVirtualBlock( BLOCK_SZ_IN_BYTES, 0 ) };
+    pPersistentArena    = &persistentArena;
 
-	HT_ASSERT( nullptr != pJobSys );
+    threadCtxArray      = ArenaNewArray<thread_ctx>( persistentArena, NUM_CORES );
+    for( thread_ctx& tctx : threadCtxArray )
+    {
+        tctx.scratchArenas = {
+            g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ),
+            g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 )
+        };
+    }
+    pThreadCtx	        = &threadCtxArray[ 0 ];
 
-	helltech_interface* pHelltech = MakeHelltech( threadArena );
+    // Init Job System
+    pJobSys             = ArenaNew<job_system_ctx>( persistentArena );
+    HT_ASSERT( nullptr != pJobSys );
+
+    std::span threads   = ArenaNewArray<sys_thread>( persistentArena, NUM_CORES );
+    for( u64 ti = 1; ti < std::size( threads ); ++ti )
+    {
+        fixed_wstring<16> name = { L"Thread #{}", ti };
+        threads[ ti ] = SysCreateThread( 1 * MB, Win32ThreadLoop, ( void* ) ti, ( const wchar_t* ) name );
+    }
+
+	helltech_interface* pHelltech = MakeHelltech( persistentArena );
 
 	pHelltech->Init( ( u64 ) hInst, ( u64 ) hWnd, SCREEN_WIDTH, SCREEN_HEIGHT );
 
@@ -255,6 +272,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	while( isRunning )
 	{
+	    ht_mem_scope    memScope    = { pThreadCtx->scratchArenas[ 0 ] };
+
 		const u64		newTicks	= SysTicks();
 		const double	elapsedTime = double( newTicks - currentTicks ) * ticksPerSecond;
 		currentTicks				= newTicks;
@@ -263,7 +282,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		globalHtInputState			= HTReinitInputState( globalHtInputState );
 		isRunning					= SysPumpUserInput();
 
-		pHelltech->RunLoop( elapsedTime, isRunning, threadArena, globalHtInputState );
+		pHelltech->RunLoop( elapsedTime, isRunning, pThreadCtx->scratchArenas[ 0 ], globalHtInputState );
 	}
 
 	return 0;

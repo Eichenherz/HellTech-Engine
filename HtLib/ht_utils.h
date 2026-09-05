@@ -54,7 +54,7 @@ constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 
 #define CACHE_ALIGN alignas( CACHE_LINE_SZ )
 
-consteval u32 MurmurHash( std::string_view s )
+consteval u32 MurmurHash32( std::string_view s )
 {
     u32 seed = 0x9E3779B9u;
 

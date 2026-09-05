@@ -24,7 +24,7 @@ namespace fs = std::filesystem;
 #include "ht_gfx_types.h"
 #include <hell_pack.h>
 #include <ht_serialization.h>
-#include "ht_math.h"
+#include "../HtLib/ht_math.h"
 
 #include "hp_encoding.h"
 #include "hp_bcn_compression.h"
@@ -32,11 +32,11 @@ namespace fs = std::filesystem;
 #include "gltf_loader.h"
 
 #include "hp_types_internal.h"
-#include "ht_vec_types.h"
+#include "../HtLib/ht_vec_types.h"
 
 #include <ht_macros.h>
 
-#include <range_utils.h>
+#include <../HtLib/range_utils.h>
 
 constexpr u32x3 CanonicallySortTriangleIndices( u32x3 t )
 {
@@ -261,9 +261,9 @@ std::vector<__meshopt_lod> MeshoptGenerateLODChain( const raw_mesh& rawMesh, u64
 }
 
 template<TRIVIAL_T T>
-using mlt_attr_vector = fixed_vector<T, RASTER_MAX_VTX_PER_MLT>;
+using mlt_attr_vector = inline_vector<T, RASTER_MAX_VTX_PER_MLT>;
 
-using mlt_idx_vector = fixed_vector<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
+using mlt_idx_vector = inline_vector<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
 
 template<TRIVIAL_T T>
 inline mlt_attr_vector<T> GetMeshletLocalAttrStream(
@@ -329,8 +329,8 @@ std::vector<__hp_meshlet> MeshoptMakeHpMeshletsWithLod(
 	std::vector<__hp_meshlet> outMlts = {};
 	outMlts.reserve( std::size( meshlets ) );
 
-	fixed_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempIndices32 = {}; // NOTE: bc we can't have simplify on u8
-	fixed_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempLod = {};
+	inline_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempIndices32 = {}; // NOTE: bc we can't have simplify on u8
+	inline_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempLod = {};
 
 	constexpr float normalsWeight = 0.9f;
 	constexpr float attrWeights[] = { normalsWeight, normalsWeight, normalsWeight };
@@ -774,7 +774,7 @@ i32 main( i32 argc, char** argv  )
 		vfs_path assetPath = { "{}{}.mesh", HELLPACK_MESH_DIR, std::data( mesh.name ) };
 
 		worldNodes.push_back( {
-			.toWorld		= { .t = n.toWorld.t, .pad0 = 0, .r = n.toWorld.r, .s = n.toWorld.s, .pad1 = 0 },
+			.toWorld		= { .t = n.toWorld.t, .r = n.toWorld.r, .s = n.toWorld.s },
 			.meshHash		= std::hash<vfs_path>{}( assetPath ),
 			.materialIdx	= ( u16 ) mesh.materialIdx // NOTE: these should match 1:1 with ours
 		} );
