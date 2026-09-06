@@ -2272,7 +2272,7 @@ void renderer_context::UploadMeshes(
 
 	copyCmdBuff.CmdEndCmdBuffer();
 
-	pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff );
+	u64 copyDoneWaitVal = pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff );
 
 	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
 
@@ -2293,7 +2293,7 @@ void renderer_context::UploadMeshes(
 	VkSemaphoreSubmitInfo waitCpyDone[] = { {
 		.sType		= VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 		.semaphore	= pVkCtx->copyQueue.timelineSema,
-		.value		= pVkCtx->copyQueue.submitionCount,
+		.value		= copyDoneWaitVal,
 		.stageMask	= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 

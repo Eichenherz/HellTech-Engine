@@ -62,10 +62,10 @@ struct vk_swapchain_image
 
 struct vk_queue
 {
-	copyable_srwlock    lock;
+	copyable_srwlock    submitLock; // NOTE: as mandated by the vulkan spec
 	VkQueue				hndl;
 	VkSemaphore			timelineSema;
-	mutable u64			submitionCount;
+	u64			        submitCount;
 	u32					familyIdx;
 };
 
@@ -252,12 +252,12 @@ struct vk_context
 	vk_command_buffer   AllocateCmdPoolAndBuff( vk_queue_t queueType );
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
-	void                QueueSubmit(
-		const vk_queue&                  queue,
-		const vk_command_buffer&         cb,
-		std::span<VkSemaphoreSubmitInfo> waits   = {},
-		std::span<VkSemaphoreSubmitInfo> signals = {},
-		VkFence                          vkFence = VK_NULL_HANDLE
+	u64                 QueueSubmit(
+		vk_queue&                           queue,
+		const vk_command_buffer&            cb,
+		std::span<VkSemaphoreSubmitInfo>    waits   = {},
+		std::span<VkSemaphoreSubmitInfo>    signals = {},
+		VkFence                             vkFence = VK_NULL_HANDLE
 	);
 	void                QueuePresent( const vk_queue& queue, u32 imgIdx );
 };

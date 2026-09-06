@@ -46,24 +46,6 @@ constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
 
-static VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
-{
-	VkSemaphoreTypeCreateInfo timelineInfo = { 
-		.sType			= VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType	= VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue	= initialTimelineVal,
-	};
-	VkSemaphoreCreateInfo timelineSemaInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
-		.pNext = isTimeline ? &timelineInfo : 0
-	};
-
-	VkSemaphore timelineSema;
-	VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
-
-	return timelineSema;
-}
-
 static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 {
 	VkQueue	hndl;
@@ -73,7 +55,7 @@ static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 	return {
 		.hndl			= hndl,
 		.timelineSema	= VkMakeSemaphore( vkDevice, true, 0 ),
-		.submitionCount = 0,
+		.submitCount = 0,
 		.familyIdx		= queueFamilyIndex,
 	};
 }
@@ -178,30 +160,6 @@ static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const
 	};
 }
 
-static VkPipelineLayout VkMakeGlobalPipelineLayout( 
-	VkDevice							vkDevice,
-	VkDescriptorSetLayout				descSetLayout,
-	const VkPhysicalDeviceProperties&	props
-) {
-	VkPushConstantRange pushConstRange = { 
-		.stageFlags = VK_SHADER_STAGE_ALL, 
-		.offset		= 0,
-		.size		= props.limits.maxPushConstantsSize
-	};
-	VkPipelineLayoutCreateInfo pipeLayoutInfo = { 
-		.sType					= VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount			= 1,
-		.pSetLayouts			= &descSetLayout,
-		.pushConstantRangeCount = 1,
-		.pPushConstantRanges	= &pushConstRange
-	};
-
-	VkPipelineLayout pipelineLayout = {};
-	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &pipelineLayout ) );
-
-	return pipelineLayout;
-}
-
 struct vk_instance
 {
 	VkInstance					hndl;
@@ -264,10 +222,10 @@ static vk_instance VkMakeInstance()
 	}
 
 
-	VkInstance vkInstance = 0;
-	VkDebugUtilsMessengerEXT vkDbgUtilsMsgExt = 0;
+	VkInstance                  vkInstance          = nullptr;
+	VkDebugUtilsMessengerEXT    vkDbgUtilsMsgExt    = nullptr;
 
-	VkApplicationInfo appInfo = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO };
+	VkApplicationInfo           appInfo             = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO };
 	VK_CHECK( vkEnumerateInstanceVersion( &appInfo.apiVersion ) );
 	HT_ASSERT( VK_API_VERSION_1_4 <= appInfo.apiVersion );
 
@@ -593,7 +551,8 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 
 vk_query_pool VkMakeQueryPool( VkDevice vkDevice, u32 maxQueryCount, VkQueryType queryType )
 {
-	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags = VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
+	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags =
+	    VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT
@@ -1034,7 +993,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 				break;
 			}
 
-			VK_CHECK( vkResetCommandPool( device, del.hndl.pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+			VK_CHECK( vkResetCommandPool( device, del.hndl.pool, 0 ) );
 			cbPool.free.TryPush( del.hndl );
 		}
 	}
@@ -1045,7 +1004,6 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 
 	// NOTE: since it's queue-like, we always start at begin() 
 	// and advance until there's an entry not deletable this frame
-	// NOTE: eastl::ring_buffer pop decreases the size 
 	for( auto it = std::begin( resourceDeletionQueue ); std::end( resourceDeletionQueue ) != it; )
 	{
 		vk_resc_deletion& rsc = *it;
@@ -1142,37 +1100,6 @@ void vk_context::CreateSwapchain()
 	}
 }
 
-inline VkCommandPool VkMakeCmdPool(  VkDevice vkDevice, u32 queueFamilyIdx )
-{
-	HT_ASSERT( ~u32( 0 ) != queueFamilyIdx );
-
-	VkCommandPoolCreateInfo cmdPoolInfo = {
-		.sType				= VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags				= VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-		.queueFamilyIndex	= queueFamilyIdx
-	};
-
-	VkCommandPool cmdPool = {};
-	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
-
-	return cmdPool;
-}
-
-inline VkCommandBuffer VkMakeCmdBuff( VkDevice vkDevice, VkCommandPool cmdPool )
-{
-	VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
-		.sType				= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool		= cmdPool,
-		.level				= VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1
-	};
-
-	VkCommandBuffer cmdBuff = {};
-	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
-
-	return cmdBuff;
-}
-
 inline vk_queue* VkContextGetQueueByType( vk_context& ctx, vk_queue_t queueType )
 {
 	switch( queueType )
@@ -1208,24 +1135,24 @@ vk_command_buffer vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 	};
 }
 
-void vk_context::QueueSubmit(
-	const vk_queue&                  queue,
-	const vk_command_buffer&         cb,
-	std::span<VkSemaphoreSubmitInfo> waits,
-	std::span<VkSemaphoreSubmitInfo> signals,
-	VkFence                          vkFence
+u64 vk_context::QueueSubmit(
+	vk_queue&                           queue,
+	const vk_command_buffer&            cb,
+	std::span<VkSemaphoreSubmitInfo>    waits,
+	std::span<VkSemaphoreSubmitInfo>    signals,
+	VkFence                             vkFence
 ) {
-	queue.lock.Acquire();
-    defer{ queue.lock.Release(); };
+	queue.submitLock.Acquire();
+    defer{ queue.submitLock.Release(); };
 
 	inline_vector<VkSemaphoreSubmitInfo, 8> vecSignals = { std::from_range, signals };
 
 	// NOTE: always signal ourselves
-	queue.submitionCount++;
+	queue.submitCount++;
 	vecSignals.push_back( {
 		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 		.semaphore = queue.timelineSema,
-		.value     = queue.submitionCount,
+		.value     = queue.submitCount,
 		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 	} );
 
@@ -1249,8 +1176,10 @@ void vk_context::QueueSubmit(
 	vk_cb_pool&     cbPool  = cbPools[ ( u64 ) cb.parentQueueFamType ];
 	vk_cb_deletion  cbDel   = {
 		.sema		= queue.timelineSema,
-		.waitVal	= queue.submitionCount,
+		.waitVal	= queue.submitCount,
 		.hndl		= { .pool = cb.cmdPool, .buff = cb.hndl, .parentQueueFamType = cb.parentQueueFamType }
 	};
 	HT_ASSERT( cbPool.pending.TryPush( cbDel ) );
+
+    return queue.submitCount; // NOTE: return this while under lock to make the submitCount "thread-safe"
 }
