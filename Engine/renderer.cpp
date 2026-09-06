@@ -2257,7 +2257,10 @@ void renderer_context::UploadMeshes(
 		CopyScaffoldingLambda( megaGpuIdxBuff, idxRegionCopies, meshUpload.idxAsBytes, htMesh.triAlloc.offset );
 	}
 
-	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+	pVkCtx->RecycleCBsForQueueThread( vk_queue_t::COPY, HtCurrentThreadIdx() );
+	pVkCtx->RecycleCBsForQueueThread( vk_queue_t::GFX, HtCurrentThreadIdx() );
+
+	vk_command_buffer copyCmdBuff = pVkCtx->AllocCmdBuffForThread( vk_queue_t::COPY, HtCurrentThreadIdx() );
 
 	copyCmdBuff.CmdBeginCmdBuffer();
 
@@ -2272,9 +2275,9 @@ void renderer_context::UploadMeshes(
 
 	copyCmdBuff.CmdEndCmdBuffer();
 
-	u64 copyDoneWaitVal = pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff );
+	u64 copyDoneWaitVal = pVkCtx->QueueSubmit( HtCurrentThreadIdx(), pVkCtx->copyQueue, copyCmdBuff );
 
-	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
+	vk_command_buffer gfxCmdBuff = pVkCtx->AllocCmdBuffForThread( vk_queue_t::GFX, HtCurrentThreadIdx() );
 
 	arena_vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &arena };
 	buffTransferOwnershipBarriers.reserve( barrierCount );
@@ -2297,7 +2300,8 @@ void renderer_context::UploadMeshes(
 		.stageMask	= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCmdBuff, waitCpyDone, {}, jobFences[ ( fence_hndl32 ) hRndUpload ] );
+	pVkCtx->QueueSubmit( HtCurrentThreadIdx(), pVkCtx->gfxQueue, gfxCmdBuff, waitCpyDone,
+	    {}, jobFences[ ( fence_hndl32 ) hRndUpload ] );
 }
 
 u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )
@@ -2346,12 +2350,13 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 	HtGetGpuFrameProfiler()->ReadbackQueries( gpuData.timedZones, gpuData.pipelinesStats );
 
 	pVkCtx->FlushDeletionQueues( currentFrameIdx );
+    pVkCtx->RecycleCBsForQueueThread( vk_queue_t::GFX, HtCurrentThreadIdx() );
 
 	virtual_frame& thisVFrame = vrtFrames[ currentFrameInFlightIdx ];
 
 	u32 instCount = UpdateSceneData( thisVFrame, frameData );
 
-	vk_command_buffer thisFrameCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
+	vk_command_buffer thisFrameCmdBuff = pVkCtx->AllocCmdBuffForThread( vk_queue_t::GFX, HtCurrentThreadIdx() );
 
 	thisFrameCmdBuff.CmdBeginCmdBuffer();
 
@@ -2536,6 +2541,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 		pVkCtx->gpuFrameTimeline.GetSignalNextPoint( VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT )
 	};
 
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, thisFrameCmdBuff, waitScImgAcquire, signalRenderFinished );
+	pVkCtx->QueueSubmit( HtCurrentThreadIdx(), pVkCtx->gfxQueue, thisFrameCmdBuff,
+	    waitScImgAcquire, signalRenderFinished );
 	pVkCtx->QueuePresent( pVkCtx->gfxQueue, scImgIdx );
 }

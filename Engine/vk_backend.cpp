@@ -46,7 +46,7 @@ constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
 
-static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
+static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex, vk_queue_t queueId )
 {
 	VkQueue	hndl;
 	vkGetDeviceQueue( vkDevice, queueFamilyIndex, 0, &hndl );
@@ -55,8 +55,9 @@ static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 	return {
 		.hndl			= hndl,
 		.timelineSema	= VkMakeSemaphore( vkDevice, true, 0 ),
-		.submitCount = 0,
+		.submitCount    = 0,
 		.familyIdx		= queueFamilyIndex,
+	    .queueId        = queueId
 	};
 }
 
@@ -256,14 +257,16 @@ static vk_instance VkMakeInstance()
 
 	instInfo.pNext = &vkDbgExt;
 
-	VK_CHECK( vkCreateInstance( &instInfo, 0, &vkInstance ) );
+	VK_CHECK( vkCreateInstance( &instInfo, nullptr, &vkInstance ) );
 
 	volkLoadInstance( vkInstance );
 
-	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, 0, &vkDbgUtilsMsgExt ) );
+	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, nullptr, &vkDbgUtilsMsgExt ) );
 
 	return { .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
 }
+
+inline
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND hWnd )
@@ -497,11 +500,11 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount,
 		    std::data( formats ) ) );
 
-		for( u64 i = 0; i < formatCount; ++i )
+		for( const VkSurfaceFormatKHR& surfFormat : formats )
 		{
-			if( formats[ i ].format == scDesiredFormat )
+			if( surfFormat.format == scDesiredFormat )
 			{
-				scFormatAndColSpace = formats[ i ];
+				scFormatAndColSpace = surfFormat;
 				break;
 			}
 		}
@@ -516,9 +519,9 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( 
 			vkPhysicalDevice, vkSurf, &numPresentModes, std::data( presentModes ) ) );
 
-		for( u32 j = 0; j < numPresentModes; ++j )
+		for( VkPresentModeKHR presMode : presentModes )
 		{
-			if( presentModes[ j ] == desiredPresentMode )
+			if( presMode == desiredPresentMode )
 			{
 				presentMode = desiredPresentMode;
 				break;
@@ -585,8 +588,8 @@ vk_query_pool VkMakeQueryPool( VkDevice vkDevice, u32 maxQueryCount, VkQueryType
 vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_config& cfg )
 {
 	auto[ vkInst, vkDbgMsg ] = VkMakeInstance();
-	VkSurfaceKHR vkSurf = VkMakeWinSurface( vkInst, ( HINSTANCE ) hInst, ( HWND ) hWnd );
-	vk_device vkDevice = VkMakeDevice( vkInst, vkSurf );
+	VkSurfaceKHR    vkSurf      = VkMakeWinSurface( vkInst, ( HINSTANCE ) hInst, ( HWND ) hWnd );
+	vk_device       vkDevice    = VkMakeDevice( vkInst, vkSurf );
 
 	const VkPhysicalDeviceLimits& vkGpuLimits = vkDevice.gpuProps.limits;
 	std::array<VkDescriptorPoolSize, vk_desc_binding_t::COUNT> poolSizes = {
@@ -621,12 +624,21 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		bindingSlots[ bi ] = { ArenaNewArray<desc_hndl32>( *pPersistentArena, descCount ), type };
 	}
 
+    HT_ASSERT( gNumCores );
+
+    vk_worker_cb_pool<vk_cb_pool> cbPools = {};
+    for( auto& workerPool : cbPools )
+    {
+        workerPool = { ArenaNewArray<vk_cb_pool>( *pPersistentArena, gNumCores ) };
+    }
+
 	constexpr u32 MAX_QUERY_COUNT = 1024;
 
 	return {
-		.descBindingSlots		= std::move( bindingSlots ),
-		.gfxQueue				= VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
-		.copyQueue				= VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx ),
+		.descBindingSlots		= MOV( bindingSlots ),
+	    .cbPools                = MOV( cbPools ),
+		.gfxQueue				= VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx, vk_queue_t::GFX ),
+		.copyQueue				= VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx, vk_queue_t::COPY ),
 		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_TIMESTAMP ),
 		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
 		.gpuFrameTimeline		= {
@@ -918,10 +930,7 @@ vk_compute_pipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 	return { .hndl = pipeline, .groupSize = shader.groupSize };
 }
 
-VkSemaphore vk_context::CreateBinarySemaphore()
-{
-	return VkMakeSemaphore( device, false, -1 );
-}
+VkSemaphore vk_context::CreateBinarySemaphore() { return VkMakeSemaphore( device, false, -1 ); }
 
 desc_hndl32 vk_context::AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo )
 {
@@ -980,28 +989,7 @@ void vk_context::FlushPendingDescriptorUpdates()
 
 void vk_context::FlushDeletionQueues( u64 frameIdx )
 {
-	for( vk_cb_pool& cbPool : cbPools )
-	{
-		for( vk_cb_deletion del = {}; cbPool.pending.TryPop( del ); )
-		{
-			u64 submissionsCompleted = 0;
-			VK_CHECK( vkGetSemaphoreCounterValue( device, del.sema, &submissionsCompleted ) );
-			if( del.waitVal > submissionsCompleted )
-			{
-				// NOTE: if we can't retire we put it back and break for this frame
-				while( !cbPool.pending.TryPush( del ) );
-				break;
-			}
-
-			VK_CHECK( vkResetCommandPool( device, del.hndl.pool, 0 ) );
-			cbPool.free.TryPush( del.hndl );
-		}
-	}
-	
-	
-	u64 frameSubmissionsCompleted = 0;
-	VK_CHECK( vkGetSemaphoreCounterValue( device, gpuFrameTimeline.sema, &frameSubmissionsCompleted ) );
-
+	u64 frameSubmissionsCompleted = VkGetTimelineSemaValue( device, gpuFrameTimeline.sema );
 	// NOTE: since it's queue-like, we always start at begin() 
 	// and advance until there's an entry not deletable this frame
 	for( auto it = std::begin( resourceDeletionQueue ); std::end( resourceDeletionQueue ) != it; )
@@ -1112,36 +1100,58 @@ inline vk_queue* VkContextGetQueueByType( vk_context& ctx, vk_queue_t queueType 
 	return nullptr;
 }
 
-vk_command_buffer vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
+vk_command_buffer vk_context::AllocCmdBuffForThread( vk_queue_t queueId, u64 threadIdx )
 {
-	vk_cb_pool& cbPool = cbPools[ ( u64 ) queueType ];
+    const vk_queue& vkQ     = *VkContextGetQueueByType( *this, queueId );
+	vk_cb_pool&     cbPool  = cbPools[ ( u64 ) queueId ][ threadIdx ];
 
-	vk_cmd_pool_buff cb = {};
-	if( !cbPool.free.TryPop( cb ) )
-	{
-		const vk_queue* vkQ     = VkContextGetQueueByType( *this, queueType );
-		VkCommandPool cmdPool   = VkMakeCmdPool( device, vkQ->familyIdx );
-		cb = { .pool = cmdPool, .buff = VkMakeCmdBuff( device, cmdPool ), .parentQueueFamType = queueType };
-	}
+    vk_cmd_pool_buff cb = {};
+    if( !cbPool.free.TryPop( cb ) )
+    {
+        VkCommandPool cmdPool = VkMakeCmdPool( device, vkQ.familyIdx );
+        cb = { .pool = cmdPool, .buff = VkMakeCmdBuff( device, cmdPool ), .queueId = vkQ.queueId };
+    }
 
-	HT_ASSERT( cb.parentQueueFamType == queueType );
+	HT_ASSERT( cb.queueId == vkQ.queueId );
 
 	return {
 		.cmdPool				= cb.pool,
 		.hndl					= cb.buff,
-		.bindlessPipelineLayout = ( vk_queue_t::GFX == queueType ) ? globalPipelineLayout : VK_NULL_HANDLE,
-		.bindlessDescriptorSet	= ( vk_queue_t::GFX == queueType ) ? descSet : VK_NULL_HANDLE,
-		.parentQueueFamType		= queueType
+		.bindlessPipeLayout = ( vk_queue_t::GFX == vkQ.queueId ) ? globalPipelineLayout : VK_NULL_HANDLE,
+		.bindlessDescSet	= ( vk_queue_t::GFX == vkQ.queueId ) ? descSet              : VK_NULL_HANDLE,
+		.queueId		= vkQ.queueId
 	};
 }
 
+void vk_context::RecycleCBsForQueueThread( vk_queue_t queueId, u64 threadIdx )
+{
+    const vk_queue& vkQ     = *VkContextGetQueueByType( *this, queueId );
+    vk_cb_pool&     cbPool  = cbPools[ ( u64 ) queueId ][ threadIdx ];
+
+    u64                     submitsCompleted    = VkGetTimelineSemaValue( device, vkQ.timelineSema );
+    const vk_cmd_pool_buff* pCbHead             = cbPool.pending.TryPeekHead();
+    while( pCbHead && ( pCbHead->waitVal <= submitsCompleted ) )
+    {
+        vk_cmd_pool_buff cb = {};
+        HT_ASSERT( cbPool.pending.TryPop( cb ) );
+
+        VK_CHECK( vkResetCommandPool( device, cb.pool, 0 ) );
+
+        HT_ASSERT( cbPool.free.TryPush( cb ) );
+        pCbHead = cbPool.pending.TryPeekHead();
+    }
+}
+
 u64 vk_context::QueueSubmit(
+    u64                                 threadIdx,
 	vk_queue&                           queue,
 	const vk_command_buffer&            cb,
 	std::span<VkSemaphoreSubmitInfo>    waits,
 	std::span<VkSemaphoreSubmitInfo>    signals,
 	VkFence                             vkFence
 ) {
+    HT_ASSERT( cb.queueId == queue.queueId );
+
 	queue.submitLock.Acquire();
     defer{ queue.submitLock.Release(); };
 
@@ -1173,13 +1183,13 @@ u64 vk_context::QueueSubmit(
 	VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, vkFence ) );
 
 	// NOTE: we always defer delete the cbs wrt to our timeline
-	vk_cb_pool&     cbPool  = cbPools[ ( u64 ) cb.parentQueueFamType ];
-	vk_cb_deletion  cbDel   = {
-		.sema		= queue.timelineSema,
-		.waitVal	= queue.submitCount,
-		.hndl		= { .pool = cb.cmdPool, .buff = cb.hndl, .parentQueueFamType = cb.parentQueueFamType }
-	};
-	HT_ASSERT( cbPool.pending.TryPush( cbDel ) );
+	vk_cb_pool& cbPool  = cbPools[ ( u64 ) cb.queueId ][ threadIdx ];
+    HT_ASSERT( cbPool.pending.TryPush( vk_cmd_pool_buff{
+        .pool       = cb.cmdPool,
+        .buff       = cb.hndl,
+        .waitVal    = queue.submitCount,
+        .queueId    = cb.queueId
+    } ) );
 
     return queue.submitCount; // NOTE: return this while under lock to make the submitCount "thread-safe"
 }

@@ -357,5 +357,12 @@ inline VkCommandBuffer VkMakeCmdBuff( VkDevice vkDevice, VkCommandPool cmdPool )
     return cmdBuff;
 }
 
+inline u64 VkGetTimelineSemaValue( VkDevice vkDevice, VkSemaphore timelineSema )
+{
+    u64 value = 0;
+    VK_CHECK( vkGetSemaphoreCounterValue( vkDevice, timelineSema, &value ) );
+    return value;
+}
+
 #endif // !__VK_UTILS_H__
 

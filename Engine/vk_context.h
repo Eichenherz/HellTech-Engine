@@ -67,26 +67,24 @@ struct vk_queue
 	VkSemaphore			timelineSema;
 	u64			        submitCount;
 	u32					familyIdx;
+    vk_queue_t			queueId;
 };
 
 struct vk_cmd_pool_buff
 {
-	VkCommandPool		pool;
-	VkCommandBuffer		buff;
-	vk_queue_t			parentQueueFamType;
+	VkCommandPool		pool    = nullptr;
+	VkCommandBuffer		buff    = nullptr;
+    u64					waitVal = ~0ull;
+	vk_queue_t			queueId;
 };
 
-struct vk_cb_deletion
-{
-	VkSemaphore			sema;
-	u64					waitVal;
-	vk_cmd_pool_buff	hndl;
-};
 
-struct vk_cb_pool
+struct alignas( 64 ) vk_cb_pool
 {
-	fixed_ringbuff_w_lock<vk_cmd_pool_buff, 128>	free;
-	fixed_ringbuff_w_lock<vk_cb_deletion, 128>	pending;
+    static constexpr u64 VK_CB_POOL_SZ = 32;
+
+    fixed_ringbuff<vk_cmd_pool_buff, VK_CB_POOL_SZ> free    = {};
+    fixed_ringbuff<vk_cmd_pool_buff, VK_CB_POOL_SZ> pending = {};
 };
 
 struct vk_desc_deletion
@@ -146,9 +144,13 @@ struct vk_desc_binding
     }
 };
 
+template<typename T>
+using vk_worker_cb_pool = std::array<std::span<T>, ( u64 ) vk_queue_t::COUNT>;
+
 struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
+
 	// NOTE: we only alloc PERSISTENT resources on other timelines;
 	// only the main GPU timeline is allowed to alloc and free TRANSIENTS
 	std::vector<vk_resc_deletion>			resourceDeletionQueue;
@@ -158,10 +160,10 @@ struct vk_context
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	
-	copyable_srwlock                        descUpdatesLock;
+	copyable_srwlock                        descUpdatesLock = {};
 	std::vector<vk_descriptor_write>        descPendingUpdates;
 
-	vk_cb_pool		                        cbPools[ ( u64 ) vk_queue_t::COUNT ];
+    vk_worker_cb_pool<vk_cb_pool>           cbPools;
 
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
@@ -249,10 +251,12 @@ struct vk_context
 	void                CreateSwapchain();
 	u32                 AcquireNextSwapchainImageBlocking( VkSemaphore canGetImgSema ) const;
 
-	vk_command_buffer   AllocateCmdPoolAndBuff( vk_queue_t queueType );
+	vk_command_buffer   AllocCmdBuffForThread( vk_queue_t queueId, u64 threadIdx );
+    void                RecycleCBsForQueueThread( vk_queue_t queueId, u64 threadIdx );
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
 	u64                 QueueSubmit(
+	    u64                                 threadIdx,
 		vk_queue&                           queue,
 		const vk_command_buffer&            cb,
 		std::span<VkSemaphoreSubmitInfo>    waits   = {},
@@ -270,10 +274,8 @@ inline VkSampler vk_context::CreateSampler( const VkSamplerCreateInfo& samplerCr
 }
 inline VkResult vk_context::TimelineTryWaitFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime )
 {
-    u64 submissionsCompleted = 0;
-    VK_CHECK( vkGetSemaphoreCounterValue( device, timeline.sema, &submissionsCompleted ) );
-
-    if( timeline.submitsIssuedCount >= maxDiffAllowed + submissionsCompleted )
+    u64 submitsCompleted = VkGetTimelineSemaValue( device, timeline.sema );
+    if( timeline.submitsIssuedCount >= maxDiffAllowed + submitsCompleted )
     {
         u64 targetCount = timeline.submitsIssuedCount;
         VkSemaphoreWaitInfo waitInfo = {

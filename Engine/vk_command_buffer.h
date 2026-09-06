@@ -118,12 +118,12 @@ struct vk_scoped_timestamp
 
 struct vk_command_buffer
 {
-	VkCommandPool		cmdPool					= VK_NULL_HANDLE;
-	VkCommandBuffer		hndl					= VK_NULL_HANDLE;
-	VkPipelineLayout	bindlessPipelineLayout 	= VK_NULL_HANDLE;
-	VkDescriptorSet		bindlessDescriptorSet 	= VK_NULL_HANDLE;
-	VkPipelineBindPoint currentBindPoint		= { VK_PIPELINE_BIND_POINT_MAX_ENUM };
-	vk_queue_t			parentQueueFamType		= vk_queue_t::COUNT;
+	VkCommandPool		cmdPool				= VK_NULL_HANDLE;
+	VkCommandBuffer		hndl				= VK_NULL_HANDLE;
+	VkPipelineLayout	bindlessPipeLayout 	= VK_NULL_HANDLE;
+	VkDescriptorSet		bindlessDescSet 	= VK_NULL_HANDLE;
+	VkPipelineBindPoint currentBindPoint	= { VK_PIPELINE_BIND_POINT_MAX_ENUM };
+	vk_queue_t			queueId		        = vk_queue_t::COUNT;
 
 	void CmdBeginCmdBuffer()
 	{
@@ -178,8 +178,8 @@ struct vk_command_buffer
 	{
 		if( bindPoint != currentBindPoint )
 		{
-			vkCmdBindDescriptorSets( hndl, bindPoint, bindlessPipelineLayout, 0,
-			    1, &bindlessDescriptorSet, 0, nullptr );
+			vkCmdBindDescriptorSets( hndl, bindPoint, bindlessPipeLayout, 0,
+			    1, &bindlessDescSet, 0, nullptr );
 			currentBindPoint = bindPoint;
 		}
 		vkCmdBindPipeline( hndl, bindPoint, pipeline );
@@ -191,7 +191,7 @@ struct vk_command_buffer
 
 		VkPushConstantsInfo pushConstInfo = {
 			.sType		= VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
-			.layout		= bindlessPipelineLayout,
+			.layout		= bindlessPipeLayout,
 			.stageFlags = VK_SHADER_STAGE_ALL,
 			.offset		= 0,
 			.size		= size,
