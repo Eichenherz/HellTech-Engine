@@ -131,6 +131,12 @@ inline void ImGuiHandleWidget( const imgui_widget& widget )
 	}
 }
 
+template<u64 N>
+inline void ImGuiTxt( const fixed_string<N>& txt )
+{
+	ImGui::TextUnformatted( std::data( txt ), std::end( txt ) );
+}
+
 inline void ImGuiPrintFloatAction( const void* pData )
 {
 	HT_ASSERT( pData );

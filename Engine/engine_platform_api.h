@@ -25,12 +25,12 @@ struct sys_semaphore;
 
 
 // TODO: must patch shaders to take any resolution
-constexpr u32 SCREEN_WIDTH = 1024;
-constexpr u32 SCREEN_HEIGHT = 640;
+constexpr u32 SCREEN_WIDTH  = 1280;
+constexpr u32 SCREEN_HEIGHT = 720;
 
 struct ht_input_state
 {
-    static constexpr u64 BUTTON_COUNT = 0x205; // TODO: maybe not here
+    static constexpr u64 BUTTON_COUNT = 517; // TODO: maybe not here
     // NOTE: includes mouse buttons
     std::bitset<BUTTON_COUNT>   buttonsEndedDown                        = {};
     u16                         buttonsHalfTransitions[ BUTTON_COUNT ]  = {};
@@ -93,6 +93,7 @@ struct alignas( 64 ) thread_ctx
     std::array<linear_arena, 2> scratchArenas = {};
 };
 
+extern u64                      gNumCores;
 extern job_system_ctx*          pJobSys;
 extern thread_local thread_ctx* pThreadCtx;
 // NOTE: this is used to hold the actual engine components; ie thread pool, renderer, etc

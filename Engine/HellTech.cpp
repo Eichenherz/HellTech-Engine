@@ -282,34 +282,25 @@ struct helltech final : helltech_interface
 
 };
 
-void ImGuiPrintTimedZones( const void* pData )
-{
-    const borrowed_vector<ht_timed_zone>& timedZones = *( const borrowed_vector<ht_timed_zone>* ) pData;
-	for( const ht_timed_zone& tz : timedZones )
-	{
-		ImGui::Text( "%-20s %.5f ms", ( const char* ) tz.name, tz.timeMs );
-	}
-}
-
 void ImGuiPrintPipelineStats( const void* pData )
 {
     const borrowed_vector<ht_pipeline_stats>& htPipelineStats = *( const borrowed_vector<ht_pipeline_stats>* ) pData;
 	for( const ht_pipeline_stats& ps : htPipelineStats )
 	{
-		if( 0 != ps.inputAssemblyVtxNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "IA vertices",
-			ps.inputAssemblyVtxNum );
-		if( 0 != ps.inputAssemblyPrimitiveNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "IA primitives",
-			ps.inputAssemblyPrimitiveNum );
-		if( 0 != ps.vsInvocationNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "VS invocations",
-			ps.vsInvocationNum );
-		if( 0 != ps.clipInvocationNum ) ImGui::Text( "%-20s %-24s %llu", ( const char* ) ps.name, "Clip invocations",
-			ps.clipInvocationNum );
-		if( 0 != ps.clipPrimitiveNum ) ImGui::Text( "%-20s %-20s %llu", ( const char* ) ps.name, "Clip primitives",
-			ps.clipPrimitiveNum );
-		if( 0 != ps.psInvocationCount ) ImGui::Text( "%-20s %-20s %llu", ( const char* ) ps.name, "PS invocations",
-			ps.psInvocationCount );
-		if( 0 != ps.csInvocationCount ) ImGui::Text( "%-20s %-20s %llu", ( const char* ) ps.name, "CS invocations",
-			ps.csInvocationCount );
+		if( 0 != ps.inputAssemblyVtxNum ) ImGuiTxt( fixed_string<128>{ "{} IA vertices : {}",
+			ps.name, ps.inputAssemblyVtxNum } );
+		if( 0 != ps.inputAssemblyPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} IA primitives : {}",
+			ps.name, ps.inputAssemblyPrimitiveNum } );
+		if( 0 != ps.vsInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} VS invocations : {}",
+			ps.name, ps.vsInvocationNum } );
+		if( 0 != ps.clipInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} Clip invocations : {}",
+			ps.name, ps.clipInvocationNum } );
+		if( 0 != ps.clipPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} Clip primitives : {}",
+			ps.name, ps.clipPrimitiveNum } );
+		if( 0 != ps.psInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} PS invocations : {}",
+			ps.name, ps.psInvocationCount } );
+		if( 0 != ps.csInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} CS invocations : {}",
+			ps.name, ps.csInvocationCount } );
 	}
 }
 
@@ -318,8 +309,28 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 	imgui_window imguiWnds[] = {
 	    imgui_window{
 	        .widgets = {
-	            { .pData = pTimedZones, .Action = ImGuiPrintTimedZones, .type = imgui_widget_type::TEXT },
-                { .pData = pPipeStats, .Action = ImGuiPrintPipelineStats, .type = imgui_widget_type::TEXT }
+	            {
+	                .pData  = pTimedZones,
+	                .Action = []( const void* pData )
+	                {
+	                    const borrowed_vector<ht_timed_zone>& timedZones = *( const borrowed_vector<ht_timed_zone>* ) pData;
+	                    for( const ht_timed_zone& tz : timedZones )
+	                    {
+	                        ImGuiTxt( fixed_string<128>{ "{} : {}", tz.name, tz.timeMs } );
+	                    }
+	                },
+	                .type   = imgui_widget_type::TEXT
+	            },
+                { .pData = pPipeStats, .Action = ImGuiPrintPipelineStats, .type = imgui_widget_type::TEXT },
+	            {
+	                .pData = ( const void* ) g_pVirtualAllocator->committedInBytes,
+	                .Action = []( const void* pData )
+	                {
+	                    ImGuiTxt( fixed_string<128>{ "Commited VMem MiB : {}", ( u64 ) pData / MB } );
+	                },
+	                .type   = imgui_widget_type::TEXT
+	            }
+
 	        },
             .name	= "Engine Stats",
             .flags	= ImGuiWindowFlags_NoScrollbar

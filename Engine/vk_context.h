@@ -23,7 +23,6 @@
 #include "vk_command_buffer.h"
 
 #include <array>
-#include <vector>
 #include <span>
 
 struct vk_timeline
@@ -62,10 +61,10 @@ struct vk_swapchain_image
 
 struct vk_queue
 {
-	copyable_srwlock    lock;
+	copyable_srwlock    submitLock; // NOTE: as mandated by the vulkan spec
 	VkQueue				hndl;
 	VkSemaphore			timelineSema;
-	mutable u64			submitionCount;
+	u64			        submitCount;
 	u32					familyIdx;
 };
 
@@ -151,15 +150,15 @@ struct vk_context
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
 	// NOTE: we only alloc PERSISTENT resources on other timelines;
 	// only the main GPU timeline is allowed to alloc and free TRANSIENTS
-	std::vector<vk_resc_deletion>			resourceDeletionQueue;
-	std::vector<vk_desc_deletion>			descriptorDeletionQueue;
+	borrowed_vector<vk_resc_deletion>		resourceDeletionQueue;
+	borrowed_vector<vk_desc_deletion>		descDeletionQueue;
 
 	inline_vector<vk_swapchain_image, 8>	scImgs;
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	
 	copyable_srwlock                        descUpdatesLock;
-	std::vector<vk_descriptor_write>        descPendingUpdates;
+	borrowed_vector<vk_descriptor_write>    descPendingUpdates;
 
 	vk_cb_pool		                        cbPools[ ( u64 ) vk_queue_t::COUNT ];
 
@@ -176,7 +175,7 @@ struct vk_context
 	VkSwapchainKHR		                    swapchain;
 
 	// TODO: sync when doing parallel uploads
-	std::vector<VkFence>                    copyFencesPool;
+	inline_vector<VkFence, 16>              copyFencesPool;
 
 	VkDescriptorPool						descPool;
 	VkDescriptorSetLayout					descSetLayout;
@@ -207,7 +206,7 @@ struct vk_context
 	}
 	void                EnqueueDescriptorFree( const vk_desc_deletion& rscDeletion )
 	{
-	    descriptorDeletionQueue.push_back( rscDeletion );
+	    descDeletionQueue.push_back( rscDeletion );
 	}
 
 	vk_shader           CreateShaderFromSpirv( std::span<const u8> spvByteCode );
@@ -240,7 +239,7 @@ struct vk_context
 	desc_hndl32         AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo );
 	void                EnqueueDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx )
 	{
-		descriptorDeletionQueue.push_back( { frameIdx, handle } );
+		descDeletionQueue.push_back( { frameIdx, handle } );
 	}
 
 	void                FlushPendingDescriptorUpdates();
@@ -252,12 +251,12 @@ struct vk_context
 	vk_command_buffer   AllocateCmdPoolAndBuff( vk_queue_t queueType );
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
-	void                QueueSubmit(
-		const vk_queue&                  queue,
-		const vk_command_buffer&         cb,
-		std::span<VkSemaphoreSubmitInfo> waits   = {},
-		std::span<VkSemaphoreSubmitInfo> signals = {},
-		VkFence                          vkFence = VK_NULL_HANDLE
+	u64                 QueueSubmit(
+		vk_queue&                           queue,
+		const vk_command_buffer&            cb,
+		std::span<VkSemaphoreSubmitInfo>    waits   = {},
+		std::span<VkSemaphoreSubmitInfo>    signals = {},
+		VkFence                             vkFence = VK_NULL_HANDLE
 	);
 	void                QueuePresent( const vk_queue& queue, u32 imgIdx );
 };

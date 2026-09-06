@@ -14,7 +14,7 @@
 
 enum class vk_resource_type : u8
 {
-    INVLAID,
+    INVALID,
     BUFFER,
     IMAGE
 };

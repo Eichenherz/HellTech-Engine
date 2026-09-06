@@ -25,7 +25,7 @@ inline VkRect2D VkGetScissor( u32 width, u32 height )
 	return { { 0, 0 }, { width, height } };
 }
 
-inline constexpr VkDescriptorType VkDescBindingToType( vk_desc_binding_t binding )
+constexpr VkDescriptorType VkDescBindingToType( vk_desc_binding_t binding )
 {
 	using enum vk_desc_binding_t;
 	switch( binding )
@@ -39,7 +39,7 @@ inline constexpr VkDescriptorType VkDescBindingToType( vk_desc_binding_t binding
 	return VK_DESCRIPTOR_TYPE_MAX_ENUM;
 }
 
-inline constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
+constexpr vk_desc_binding_t VkDescTypeToBinding( VkDescriptorType type )
 {
 	using enum vk_desc_binding_t;
 	switch( type )
@@ -194,8 +194,9 @@ inline VkMemoryPropertyFlags VkChooseMemoryPropertiesFromBufferUsage( buffer_usa
 		case HOST_VISIBLE: return
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 		case STAGING: return VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-		default: HT_ASSERT( 0 && "Unknown memory type" );
 	}
+
+    HT_ASSERT( 0 && "Unknown memory type" );
 	return 0;
 }
 
@@ -279,6 +280,81 @@ inline void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags u
 
 	HT_ASSERT( ( formatProps3.optimalTilingFeatures & formatFeatures ) == formatFeatures );
 	// Fallback to a different format or use other means of uploading data
+}
+
+inline VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
+{
+    VkSemaphoreTypeCreateInfo timelineInfo = {
+        .sType			= VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+        .semaphoreType	= VK_SEMAPHORE_TYPE_TIMELINE,
+        .initialValue	= initialTimelineVal,
+    };
+    VkSemaphoreCreateInfo timelineSemaInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = isTimeline ? &timelineInfo : nullptr
+    };
+
+    VkSemaphore timelineSema;
+    VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
+
+    return timelineSema;
+}
+
+inline VkPipelineLayout VkMakeGlobalPipelineLayout(
+    VkDevice							vkDevice,
+    VkDescriptorSetLayout				descSetLayout,
+    const VkPhysicalDeviceProperties&	props
+) {
+    VkPushConstantRange pushConstRange = {
+        .stageFlags = VK_SHADER_STAGE_ALL,
+        .offset		= 0,
+        .size		= props.limits.maxPushConstantsSize
+    };
+    VkPipelineLayoutCreateInfo pipeLayoutInfo = {
+        .sType					= VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount			= 1,
+        .pSetLayouts			= &descSetLayout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges	= &pushConstRange
+    };
+
+    VkPipelineLayout pipelineLayout = {};
+    VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &pipelineLayout ) );
+
+    return pipelineLayout;
+}
+
+inline VkCommandPool VkMakeCmdPool( VkDevice vkDevice, u32 queueFamilyIdx )
+{
+    HT_ASSERT( ~u32( 0 ) != queueFamilyIdx );
+
+    VkCommandPoolCreateInfo cmdPoolInfo = {
+        .sType				= VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        // NOTE: hints the impl to use a single allocator for CBs for the whole pool;
+        // we can't free individual CBs but we currently don't aim for that anyway
+        .flags				= VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex	= queueFamilyIdx
+    };
+
+    VkCommandPool cmdPool = {};
+    VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
+
+    return cmdPool;
+}
+
+inline VkCommandBuffer VkMakeCmdBuff( VkDevice vkDevice, VkCommandPool cmdPool )
+{
+    VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
+        .sType				= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool		= cmdPool,
+        .level				= VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1
+    };
+
+    VkCommandBuffer cmdBuff = {};
+    VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
+
+    return cmdBuff;
 }
 
 #endif // !__VK_UTILS_H__

@@ -7,8 +7,6 @@
 #define VOLK_IMPLEMENTATION 
 #include <Volk/volk.h>
 
-#include <vector>
-#include <cstdarg>
 #include <format>
 #include <span>
 #include <array>
@@ -46,24 +44,6 @@ constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
 
-static VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
-{
-	VkSemaphoreTypeCreateInfo timelineInfo = { 
-		.sType			= VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType	= VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue	= initialTimelineVal,
-	};
-	VkSemaphoreCreateInfo timelineSemaInfo = { 
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, 
-		.pNext = isTimeline ? &timelineInfo : 0
-	};
-
-	VkSemaphore timelineSema;
-	VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
-
-	return timelineSema;
-}
-
 static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 {
 	VkQueue	hndl;
@@ -73,7 +53,7 @@ static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 	return {
 		.hndl			= hndl,
 		.timelineSema	= VkMakeSemaphore( vkDevice, true, 0 ),
-		.submitionCount = 0,
+		.submitCount    = 0,
 		.familyIdx		= queueFamilyIndex,
 	};
 }
@@ -114,10 +94,13 @@ struct vk_descriptor_set
 };
 static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const VkDescriptorPoolSize> descPoolSizes ) 
 {
+    linear_arena&   scratchPad  = pThreadCtx->scratchArenas[ 0 ];
+    ht_mem_scope    memScope    = { scratchPad };
+
 	constexpr u32 maxSetCount = 1;
 
-	VkDescriptorPool vkDescPool;
-	VkDescriptorPoolCreateInfo descPoolInfo = {
+	VkDescriptorPool            vkDescPool      = nullptr;
+	VkDescriptorPoolCreateInfo  descPoolInfo    = {
 		.sType			= VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 		.flags			= VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
 		.maxSets		= maxSetCount,
@@ -130,8 +113,10 @@ static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const
 	constexpr VkDescriptorBindingFlags flag =
 		VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
 
-	std::vector<VkDescriptorBindingFlags> bindingFlags( std::size( descPoolSizes ) );
-	std::vector<VkDescriptorSetLayoutBinding> descSetLayout( std::size( descPoolSizes ) );
+	std::span bindingFlags  = ArenaNewArray<VkDescriptorBindingFlags>(
+	    scratchPad, std::size( descPoolSizes ) );
+	std::span descSetLayout = ArenaNewArray<VkDescriptorSetLayoutBinding>(
+	    scratchPad, std::size( descPoolSizes ) );
 	for( u32 i = 0; i < vk_desc_binding_t::COUNT; ++i )
 	{
 		auto[ type, count ] = descPoolSizes[ i ];
@@ -178,30 +163,6 @@ static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const
 	};
 }
 
-static VkPipelineLayout VkMakeGlobalPipelineLayout( 
-	VkDevice							vkDevice,
-	VkDescriptorSetLayout				descSetLayout,
-	const VkPhysicalDeviceProperties&	props
-) {
-	VkPushConstantRange pushConstRange = { 
-		.stageFlags = VK_SHADER_STAGE_ALL, 
-		.offset		= 0,
-		.size		= props.limits.maxPushConstantsSize
-	};
-	VkPipelineLayoutCreateInfo pipeLayoutInfo = { 
-		.sType					= VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount			= 1,
-		.pSetLayouts			= &descSetLayout,
-		.pushConstantRangeCount = 1,
-		.pPushConstantRanges	= &pushConstRange
-	};
-
-	VkPipelineLayout pipelineLayout = {};
-	VK_CHECK( vkCreatePipelineLayout( vkDevice, &pipeLayoutInfo, 0, &pipelineLayout ) );
-
-	return pipelineLayout;
-}
-
 struct vk_instance
 {
 	VkInstance					hndl;
@@ -227,9 +188,12 @@ static vk_instance VkMakeInstance()
 
 	VK_CHECK( volkInitialize() );
 
+    linear_arena&   scratchPad  = pThreadCtx->scratchArenas[ 0 ];
+    ht_mem_scope    memScope    = { scratchPad };
+
 	u32 vkExtsNum = 0;
-	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, 0 ) );
-	std::vector<VkExtensionProperties> givenExts( vkExtsNum );
+	VK_CHECK( vkEnumerateInstanceExtensionProperties( nullptr, &vkExtsNum, nullptr ) );
+	std::span givenExts = ArenaNewArray<VkExtensionProperties>( scratchPad, vkExtsNum );
 	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, std::data( givenExts ) ) );
 	for( std::string_view requiredExt : ENABLED_INST_EXTS )
 	{
@@ -246,8 +210,8 @@ static vk_instance VkMakeInstance()
 	};
 
 	u32 layerCount = 0;
-	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, 0 ) );
-	std::vector<VkLayerProperties> layersAvailable( layerCount );
+	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, nullptr ) );
+    std::span layersAvailable = ArenaNewArray<VkLayerProperties>( scratchPad, layerCount );
 	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, std::data( layersAvailable ) ) );
 	for( std::string_view requiredLayer : LAYERS )
 	{
@@ -264,10 +228,10 @@ static vk_instance VkMakeInstance()
 	}
 
 
-	VkInstance vkInstance = 0;
-	VkDebugUtilsMessengerEXT vkDbgUtilsMsgExt = 0;
+	VkInstance                  vkInstance          = nullptr;
+	VkDebugUtilsMessengerEXT    vkDbgUtilsMsgExt    = nullptr;
 
-	VkApplicationInfo appInfo = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO };
+	VkApplicationInfo           appInfo             = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO };
 	VK_CHECK( vkEnumerateInstanceVersion( &appInfo.apiVersion ) );
 	HT_ASSERT( VK_API_VERSION_1_4 <= appInfo.apiVersion );
 
@@ -286,23 +250,28 @@ static vk_instance VkMakeInstance()
 		.pEnabledValidationFeatures		= VK_ENABLED_VALIDATION_FEATURES,
 	};
 
+    constexpr VkDebugUtilsMessageSeverityFlagsEXT     messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
+    constexpr VkDebugUtilsMessageTypeFlagsEXT         messageType =
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+
 	VkDebugUtilsMessengerCreateInfoEXT vkDbgExt = { 
 		.sType				= VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
 		.pNext				= &vkValidationFeatures,
-		.messageSeverity	= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
-		VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-		VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-		.messageType		= VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+		.messageSeverity	= messageSeverity,
+		.messageType		= messageType,
 		.pfnUserCallback	= VkDbgUtilsMsgCallback,
 	};
 
 	instInfo.pNext = &vkDbgExt;
 
-	VK_CHECK( vkCreateInstance( &instInfo, 0, &vkInstance ) );
+	VK_CHECK( vkCreateInstance( &instInfo, nullptr, &vkInstance ) );
 
 	volkLoadInstance( vkInstance );
 
-	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, 0, &vkDbgUtilsMsgExt ) );
+	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, nullptr, &vkDbgUtilsMsgExt ) );
 
 	return { .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
 }
@@ -317,7 +286,7 @@ static VkSurfaceKHR VkMakeWinSurface( VkInstance vkInst, HINSTANCE hInst, HWND h
 	};
 
 	VkSurfaceKHR vkSurf;
-	VK_CHECK( vkCreateWin32SurfaceKHR( vkInst, &surfInfo, 0, &vkSurf ) );
+	VK_CHECK( vkCreateWin32SurfaceKHR( vkInst, &surfInfo, nullptr, &vkSurf ) );
 	return vkSurf;
 }
 #else
@@ -352,9 +321,12 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 		VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME
 	};
 
+    linear_arena&   scratchPad  = pThreadCtx->scratchArenas[ 0 ];
+    ht_mem_scope    memScope    = { scratchPad };
+
 	u32 numDevices = 0;
-	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, 0 ) );
-	std::vector<VkPhysicalDevice> availableDevices( numDevices );
+	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, nullptr ) );
+	std::span availableDevices = ArenaNewArray<VkPhysicalDevice>( scratchPad, numDevices );
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
 
 	VkPhysicalDeviceHostImageCopyProperties hostImgCopyProps =
@@ -392,8 +364,8 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
 
 	// TODO: check for more stuff ?
-	VkPhysicalDevice gpu = 0;
-	u32 deviceIdx = 0;
+	VkPhysicalDevice    gpu         = nullptr;
+	u32                 deviceIdx   = 0;
 	for( ; deviceIdx < numDevices; ++deviceIdx )
 	{
 		vkGetPhysicalDeviceProperties2( availableDevices[ deviceIdx ], &gpuProps2 );
@@ -404,9 +376,12 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 		vkGetPhysicalDeviceFeatures2( availableDevices[ deviceIdx ], &gpuFeatures );
 
 		u32 extsNum = 0;
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ], 0, &extsNum, 0 ) || !extsNum ) continue;
-		std::vector<VkExtensionProperties> availableExts( extsNum );
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ], 0, &extsNum, std::data( availableExts ) ) ) continue;
+		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ],
+		    nullptr, &extsNum, nullptr ) || !extsNum ) continue;
+
+	    std::span availableExts = ArenaNewArray<VkExtensionProperties>( scratchPad, extsNum );
+		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ],
+		    nullptr, &extsNum, std::data( availableExts ) ) ) continue;
 
 		for( std::string_view requiredExt : ENABLED_DEVICE_EXTS )
 		{
@@ -435,47 +410,49 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	HT_ASSERT( gpu );
 
 	u32 queueFamNum = 0;
-	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, 0 );
+	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, nullptr );
 	HT_ASSERT( queueFamNum );
-	std::vector<VkQueueFamilyProperties> queueFamProps( queueFamNum );
+
+    std::span queueFamProps = ArenaNewArray<VkQueueFamilyProperties>( scratchPad, queueFamNum );
 	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, std::data( queueFamProps ) );
 
-	constexpr float queuePriorities = 1.0f;
-	std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+	constexpr float         queuePriorities     = 1.0f;
+	VkDeviceQueueCreateInfo queueCreateInfos[]  = {
+	    {
+	        .sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex	= VkGetQueueFamilyIndex(
+                queueFamProps, VK_QUEUE_GRAPHICS_BIT, VK_TRUE, gpu, vkSurf ),
+            .queueCount			= 1,
+            .pQueuePriorities	= &queuePriorities
+	    },
+	    {
+	        .sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex	= VkGetQueueFamilyIndex(
+                queueFamProps, VK_QUEUE_COMPUTE_BIT, VK_TRUE, gpu, vkSurf ),
+            .queueCount			= 1,
+            .pQueuePriorities	= &queuePriorities
+	    },
+	    {
+	        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex	= VkGetQueueFamilyIndex(
+                queueFamProps, VK_QUEUE_TRANSFER_BIT, VK_FALSE, gpu, vkSurf ),
+            .queueCount			= 1,
+            .pQueuePriorities	= &queuePriorities
+        }
 
-	queueCreateInfos.push_back( {
-		.sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex	= VkGetQueueFamilyIndex(
-		    queueFamProps, VK_QUEUE_GRAPHICS_BIT, VK_TRUE, gpu, vkSurf ),
-		.queueCount			= 1,
-		.pQueuePriorities	= &queuePriorities
-	} );
-	queueCreateInfos.push_back( {
-		.sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex	= VkGetQueueFamilyIndex(
-		    queueFamProps, VK_QUEUE_COMPUTE_BIT, VK_TRUE, gpu, vkSurf ),
-		.queueCount			= 1,
-		.pQueuePriorities	= &queuePriorities
-	} );
-	queueCreateInfos.push_back( {
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex	= VkGetQueueFamilyIndex(
-		    queueFamProps, VK_QUEUE_TRANSFER_BIT, VK_FALSE, gpu, vkSurf ),
-		.queueCount			= 1,
-		.pQueuePriorities	= &queuePriorities
-	} );
+	};
 
 	VkDeviceCreateInfo deviceInfo = {
 		.sType						= VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext						= &gpuFeatures,
 		.queueCreateInfoCount		= ( u32 ) std::size( queueCreateInfos ),
-		.pQueueCreateInfos			= std::data( queueCreateInfos ),
+		.pQueueCreateInfos			= queueCreateInfos,
 		.enabledExtensionCount		= ( u32 ) std::size( ENABLED_DEVICE_EXTS ),
 		.ppEnabledExtensionNames	= ENABLED_DEVICE_EXTS,
 	};
 
 	VkDevice vkDevice;
-	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, 0, &vkDevice ) );
+	VK_CHECK( vkCreateDevice( gpu, &deviceInfo, nullptr, &vkDevice ) );
 
 	volkLoadDevice( vkDevice );
 
@@ -489,13 +466,6 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 		.waveSize				= waveProps.subgroupSize
 	};
 }
-
-
-struct vk_swapchain
-{
-	std::vector<vk_swapchain_image>  imgs;
-	VkSwapchainKHR		             swapchain;
-};
 
 struct vk_surface_info
 {
@@ -531,11 +501,14 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 		? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
 		: VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
 
+    linear_arena&   scratchPad  = pThreadCtx->scratchArenas[ 0 ];
+    ht_mem_scope    memScope    = { scratchPad };
+
 	VkSurfaceFormatKHR scFormatAndColSpace = {};
 	{
 		u32 formatCount = 0;
 		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount, 0 ) );
-		std::vector<VkSurfaceFormatKHR> formats( formatCount );
+		std::span formats = ArenaNewArray<VkSurfaceFormatKHR>( scratchPad, formatCount );
 		VK_CHECK( vkGetPhysicalDeviceSurfaceFormatsKHR( vkPhysicalDevice, vkSurf, &formatCount,
 		    std::data( formats ) ) );
 
@@ -554,7 +527,7 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 	{
 		u32 numPresentModes;
 		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( vkPhysicalDevice, vkSurf, &numPresentModes, 0 ) );
-		std::vector<VkPresentModeKHR> presentModes( numPresentModes );
+		std::span presentModes = ArenaNewArray<VkPresentModeKHR>( scratchPad, numPresentModes );
 		VK_CHECK( vkGetPhysicalDeviceSurfacePresentModesKHR( 
 			vkPhysicalDevice, vkSurf, &numPresentModes, std::data( presentModes ) ) );
 
@@ -593,7 +566,8 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 
 vk_query_pool VkMakeQueryPool( VkDevice vkDevice, u32 maxQueryCount, VkQueryType queryType )
 {
-	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags = VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
+	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags =
+	    VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT
 		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT
@@ -665,7 +639,10 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	constexpr u32 MAX_QUERY_COUNT = 1024;
 
 	return {
-		.descBindingSlots		= std::move( bindingSlots ),
+	    .resourceDeletionQueue  = { ArenaNewArray<vk_resc_deletion>( *pPersistentArena, 128 ) },
+        .descDeletionQueue      = { ArenaNewArray<vk_desc_deletion>( *pPersistentArena, 128 ) },
+		.descBindingSlots		= MOV( bindingSlots ),
+	    .descPendingUpdates     = { ArenaNewArray<vk_descriptor_write>( *pPersistentArena, 1'000 ) },
 		.gfxQueue				= VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
 		.copyQueue				= VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx ),
 		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_TIMESTAMP ),
@@ -985,33 +962,38 @@ void vk_context::FlushPendingDescriptorUpdates()
 
 	if( !std::size( descPendingUpdates ) ) return;
 
-	std::vector<VkWriteDescriptorSet> writes;
-	for( const vk_descriptor_write& update : descPendingUpdates )
+    linear_arena&   scratchPad  = pThreadCtx->scratchArenas[ 0 ];
+    ht_mem_scope    memScope    = { scratchPad };
+
+	std::span   writes      = ArenaNewArray<VkWriteDescriptorSet>( scratchPad, std::size( descPendingUpdates ) );
+	u64         writeIdx    = 0;
+	for( vk_descriptor_write& update : descPendingUpdates )
 	{
-		const VkDescriptorImageInfo*    pImageInfo  = nullptr;
-		const VkDescriptorBufferInfo*   pBufferInfo = nullptr;
+	    const VkDescriptorImageInfo*    pImageInfo  = nullptr;
+	    const VkDescriptorBufferInfo*   pBufferInfo = nullptr;
 
-		if( update.descInfo.rscType == vk_resource_type::BUFFER )
-		{
-			pBufferInfo = &update.descInfo.buff;
-		}
-		else if( update.descInfo.rscType == vk_resource_type::IMAGE )
-		{
-			pImageInfo = &update.descInfo.img;
-		}
+	    if( update.descInfo.rscType == vk_resource_type::BUFFER )
+	    {
+	        pBufferInfo = &update.descInfo.buff;
+	    }
+	    else if( update.descInfo.rscType == vk_resource_type::IMAGE )
+	    {
+	        pImageInfo = &update.descInfo.img;
+	    }
 
-		VkDescriptorType descType = update.descInfo.descriptorType;
-		VkWriteDescriptorSet writeEntryInfo = {
-			.sType				= VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet				= descSet,
-			.dstBinding			= VkDescTypeToBinding( descType ),
-			.dstArrayElement	= update.hndl.slot,
-			.descriptorCount	= 1,
-			.descriptorType		= descType,
-			.pImageInfo			= pImageInfo,
-			.pBufferInfo		= pBufferInfo
-		};
-		writes.push_back( writeEntryInfo );
+	    VkDescriptorType        descType        = update.descInfo.descriptorType;
+	    VkWriteDescriptorSet    writeEntryInfo  = {
+	        .sType				= VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet				= descSet,
+            .dstBinding			= VkDescTypeToBinding( descType ),
+            .dstArrayElement	= update.hndl.slot,
+            .descriptorCount	= 1,
+            .descriptorType		= descType,
+            .pImageInfo			= pImageInfo,
+            .pBufferInfo		= pBufferInfo
+        };
+
+		writes[ writeIdx++ ] = writeEntryInfo;
 	}
 
 	vkUpdateDescriptorSets( device, ( u32 ) std::size( writes ),
@@ -1034,7 +1016,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 				break;
 			}
 
-			VK_CHECK( vkResetCommandPool( device, del.hndl.pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT ) );
+			VK_CHECK( vkResetCommandPool( device, del.hndl.pool, 0 ) );
 			cbPool.free.TryPush( del.hndl );
 		}
 	}
@@ -1045,7 +1027,6 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 
 	// NOTE: since it's queue-like, we always start at begin() 
 	// and advance until there's an entry not deletable this frame
-	// NOTE: eastl::ring_buffer pop decreases the size 
 	for( auto it = std::begin( resourceDeletionQueue ); std::end( resourceDeletionQueue ) != it; )
 	{
 		vk_resc_deletion& rsc = *it;
@@ -1061,12 +1042,12 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		}
 		it = resourceDeletionQueue.erase( it );
 	}
-	for( auto it = std::begin( descriptorDeletionQueue ); std::end( descriptorDeletionQueue ) != it; )
+	for( auto it = std::begin( descDeletionQueue ); std::end( descDeletionQueue ) != it; )
 	{
 		auto[ timelineCounterVal, hndl ] = *it;
 		if( frameSubmissionsCompleted <= timelineCounterVal ) break;
 		descBindingSlots[ hndl.type ].FreeSlot( hndl );
-		it = descriptorDeletionQueue.erase( it );
+		it = descDeletionQueue.erase( it );
 	}
 }
 
@@ -1081,7 +1062,8 @@ void vk_context::CreateSwapchain()
 	VkPresentModeKHR	presentMode = scConfig.presentMode;
 	VkImageUsageFlags	imgUsage	= scConfig.imgUsage;
 
-	vk_surface_info surfInfo = VkCheckSwapchainRequirementsAgainstSurface( gpu, surf, format, presentMode, imgUsage, minNumImgs );
+	vk_surface_info surfInfo = VkCheckSwapchainRequirementsAgainstSurface(
+	    gpu, surf, format, presentMode, imgUsage, minNumImgs );
 
 	HT_ASSERT( format == surfInfo.format );
 
@@ -1104,17 +1086,15 @@ void vk_context::CreateSwapchain()
 		.oldSwapchain			= this->swapchain
 	};
 
-	VK_CHECK( vkCreateSwapchainKHR( device, &scInfo, 0, &this->swapchain ) );
+	VK_CHECK( vkCreateSwapchainKHR( device, &scInfo, nullptr, &this->swapchain ) );
 
 	u32 scImgsNum = 0;
-	VK_CHECK( vkGetSwapchainImagesKHR( device, this->swapchain, &scImgsNum, 0 ) ); 
+	VK_CHECK( vkGetSwapchainImagesKHR( device, this->swapchain, &scImgsNum, nullptr ) );
 
-	std::vector<VkImage> vkScImgs( scImgsNum );
+    inline_vector<VkImage, 8> vkScImgs; // NOTE: already asserts on cap
+    vkScImgs.resize( scImgsNum );
 	VK_CHECK( vkGetSwapchainImagesKHR( device, this->swapchain, &scImgsNum, std::data( vkScImgs ) ) );
 
-	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( scInfo.imageFormat );
-
-	scImgs.reserve( scImgsNum );
 	scImgs.resize( 0 );
 
 	for( u64 scii = 0; scii < scImgsNum; ++scii )
@@ -1140,37 +1120,6 @@ void vk_context::CreateSwapchain()
 			.writeDescIdx = AllocDescriptorIdx( vk_descriptor_info{ view, VK_IMAGE_LAYOUT_GENERAL } )
 		} );
 	}
-}
-
-inline VkCommandPool VkMakeCmdPool(  VkDevice vkDevice, u32 queueFamilyIdx )
-{
-	HT_ASSERT( ~u32( 0 ) != queueFamilyIdx );
-
-	VkCommandPoolCreateInfo cmdPoolInfo = {
-		.sType				= VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags				= VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-		.queueFamilyIndex	= queueFamilyIdx
-	};
-
-	VkCommandPool cmdPool = {};
-	VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
-
-	return cmdPool;
-}
-
-inline VkCommandBuffer VkMakeCmdBuff( VkDevice vkDevice, VkCommandPool cmdPool )
-{
-	VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
-		.sType				= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool		= cmdPool,
-		.level				= VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1
-	};
-
-	VkCommandBuffer cmdBuff = {};
-	VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
-
-	return cmdBuff;
 }
 
 inline vk_queue* VkContextGetQueueByType( vk_context& ctx, vk_queue_t queueType )
@@ -1208,24 +1157,24 @@ vk_command_buffer vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
 	};
 }
 
-void vk_context::QueueSubmit(
-	const vk_queue&                  queue,
-	const vk_command_buffer&         cb,
-	std::span<VkSemaphoreSubmitInfo> waits,
-	std::span<VkSemaphoreSubmitInfo> signals,
-	VkFence                          vkFence
+u64 vk_context::QueueSubmit(
+	vk_queue&                           queue,
+	const vk_command_buffer&            cb,
+	std::span<VkSemaphoreSubmitInfo>    waits,
+	std::span<VkSemaphoreSubmitInfo>    signals,
+	VkFence                             vkFence
 ) {
-	queue.lock.Acquire();
-    defer{ queue.lock.Release(); };
+	queue.submitLock.Acquire();
+    defer{ queue.submitLock.Release(); };
 
 	inline_vector<VkSemaphoreSubmitInfo, 8> vecSignals = { std::from_range, signals };
 
 	// NOTE: always signal ourselves
-	queue.submitionCount++;
+	queue.submitCount++;
 	vecSignals.push_back( {
 		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 		.semaphore = queue.timelineSema,
-		.value     = queue.submitionCount,
+		.value     = queue.submitCount,
 		.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 	} );
 
@@ -1249,8 +1198,10 @@ void vk_context::QueueSubmit(
 	vk_cb_pool&     cbPool  = cbPools[ ( u64 ) cb.parentQueueFamType ];
 	vk_cb_deletion  cbDel   = {
 		.sema		= queue.timelineSema,
-		.waitVal	= queue.submitionCount,
+		.waitVal	= queue.submitCount,
 		.hndl		= { .pool = cb.cmdPool, .buff = cb.hndl, .parentQueueFamType = cb.parentQueueFamType }
 	};
 	HT_ASSERT( cbPool.pending.TryPush( cbDel ) );
+
+    return queue.submitCount; // NOTE: return this while under lock to make the submitCount "thread-safe"
 }

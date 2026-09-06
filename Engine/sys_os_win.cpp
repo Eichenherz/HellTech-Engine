@@ -20,12 +20,35 @@
 
 
 //===================GLOBALS====================//
-job_system_ctx*			pJobSys	            = nullptr;
-thread_local thread_ctx* pThreadCtx          = nullptr;
-linear_arena*            pPersistentArena    = nullptr;
+u64                         gNumCores           = 0;
+job_system_ctx*             pJobSys	            = nullptr;
+thread_local thread_ctx*    pThreadCtx          = nullptr;
+linear_arena*               pPersistentArena    = nullptr;
 //==============================================//
 
+static u64 SysGetPhysicalCoreCount()
+{
+    constexpr LOGICAL_PROCESSOR_RELATIONSHIP relType = RelationProcessorCore;
 
+    ht_mem_scope memScope = { *pPersistentArena };
+
+    DWORD buffSzInBytes = 0;
+    GetLogicalProcessorInformationEx( relType, nullptr, &buffSzInBytes );
+    WIN_CHECK( ERROR_INSUFFICIENT_BUFFER == GetLastError() );
+
+    std::span buff = ArenaNewArray<u8>( *pPersistentArena, buffSzInBytes );
+    WIN_CHECK( GetLogicalProcessorInformationEx(
+            relType, ( SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX* ) std::data( buff ), &buffSzInBytes ) );
+
+    u64 physicalCoreCount = 0;
+    for( DWORD byteOffset = 0; byteOffset < buffSzInBytes; )
+    {
+        const auto& infoEx = *( SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX* ) ( std::data( buff ) + byteOffset );
+        byteOffset += infoEx.Size;
+        physicalCoreCount++;
+    }
+    return physicalCoreCount;
+}
 
 static void SysOsCreateConsole()
 {
@@ -200,8 +223,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	};
 	WIN_CHECK( RegisterClassExA( &wc ) );
 
-	LONG left	= 200;
-	LONG top	= 100;
+	LONG left	= 140;
+	LONG top	= 60;
 	RECT wr		= {
 		.left	= left,
 		.top	= top,
@@ -234,14 +257,14 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	};
 	WIN_CHECK( RegisterRawInputDevices( hid, std::size( hid ), sizeof( RAWINPUTDEVICE ) ) );
 
-	constexpr u64 NUM_CORES = 8;
-
     HtInitMemorySystem();
 
     persistentArena  = { g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ) };
     pPersistentArena    = &persistentArena;
 
-    threadCtxArray      = ArenaNewArray<thread_ctx>( persistentArena, NUM_CORES );
+    gNumCores            = SysGetPhysicalCoreCount();
+
+    threadCtxArray      = ArenaNewArray<thread_ctx>( persistentArena, gNumCores );
     for( thread_ctx& tctx : threadCtxArray )
     {
         tctx.scratchArenas = {
@@ -255,7 +278,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
     pJobSys             = ArenaNew<job_system_ctx>( persistentArena );
     HT_ASSERT( nullptr != pJobSys );
 
-    std::span threads   = ArenaNewArray<sys_thread>( persistentArena, NUM_CORES );
+    std::span threads   = ArenaNewArray<sys_thread>( persistentArena, gNumCores );
     for( u64 ti = 1; ti < std::size( threads ); ++ti )
     {
         fixed_wstring<16> name = { L"Thread #{}", ti };
