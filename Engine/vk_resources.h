@@ -7,6 +7,7 @@
 #include <vulkan.h>
 
 #include <ht_core_types.h>
+#include <ht_renderer_types.h>
 #include "vk_error.h"
 #include "vk_types.h"
 
@@ -197,17 +198,17 @@ struct vk_descriptor_info
 	}
 };
 
-// TODO: not here ?
-static_assert( IsPowOf2( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE )
-    && ( ( 1 << 16 ) == vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE ) );
-
 struct desc_hndl32
 {
 	u32 slot	: 16;
 	u32 type	: 2;
 	u32 inUse	: 1;
-	u32 unused	: 13;
+	u32 unused	: 13 = 0;
 };
+
+static_assert( IsPowOf2( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE )
+    && ( MAX_DESCRIPTOR_COUNT == vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE ) );
+static_assert( ( MAX_DESCRIPTOR_COUNT - 1 ) == desc_hndl32{ .slot = MAX_DESCRIPTOR_COUNT - 1 }.slot );
 
 struct vk_descriptor_write
 {

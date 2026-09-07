@@ -633,7 +633,8 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	for( u64 bi = 0; bi < std::size( poolSizes ); ++bi )
 	{
 	    auto[ type, descCount ] = poolSizes[ bi ];
-		bindingSlots[ bi ] = { ArenaNewArray<desc_hndl32>( *pPersistentArena, descCount ), type };
+	    HT_ASSERT( vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE == descCount );
+		bindingSlots[ bi ] = { type };
 	}
 
 	constexpr u32 MAX_QUERY_COUNT = 1024;

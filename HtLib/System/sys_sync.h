@@ -45,6 +45,7 @@ enum class sys_fence_t
     NONE,
     ACQ,
     REL,
+    SEQ_CST,
     COUNT
 };
 
@@ -52,6 +53,8 @@ template<sys_fence_t BARRIER>
 u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand );
 template<sys_fence_t BARRIER>
 u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask );
+template<sys_fence_t BARRIER>
+u64 SysAtomicOr64( atomic_u64* pAddr, u64 value );
 template<sys_fence_t BARRIER>
 u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value );
 template<sys_fence_t BARRIER>

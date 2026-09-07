@@ -12,7 +12,7 @@
 
 #include <ht_core_types.h>
 #include <ht_error.h>
-
+#include <ht_utils.h>
 #include <ht_ring_buffer.h>
 #include <System/sys_sync.h>
 
@@ -111,37 +111,49 @@ struct vk_resc_deletion
 
 struct vk_desc_binding
 {
-    ringbuff_w_lock<desc_hndl32>	slots   = {};
-    VkDescriptorType		        type    = {};
+    // NOTE: this divides even just bc of our numbers
+    static constexpr u64 SLOT_COUNT = vk_renderer_config::MAX_DESCRIPTOR_COUNT_PER_TYPE / 64;
+    alignas( 64 ) atomic_u64    slotsBmp[ SLOT_COUNT ]  = {};
+    VkDescriptorType            type                    = {};
 
     vk_desc_binding() = default;
 
-    vk_desc_binding( std::span<desc_hndl32> ringBuffMem, VkDescriptorType descType ) :
-        slots{ ringBuffMem }, type{ descType }
-    {
-        vk_desc_binding_t bindingType = VkDescTypeToBinding( type );
-        for( u64 si = 0; si < std::size( slots ); ++si )
-        {
-            slots.TryPush( desc_hndl32{ .slot = ( u16 ) si, .type = bindingType, .inUse = false } );
-        }
-    }
+    vk_desc_binding( VkDescriptorType descType ) : type{ descType } {}
 
     desc_hndl32 AllocSlot()
     {
-        desc_hndl32 hDesc = {};
-        while( !slots.TryPop( hDesc ) );
+        for( u64 qwi = 0; qwi < std::size( slotsBmp ); ++qwi ) // TODO: maybe do the whole atomic ceremony ?
+        {
+            u64 qword = slotsBmp[ qwi ];
+            for( ;; )
+            {
+                u64 firstFreeMask = FirstUnsetMask64( qword ) ;
+                if( !firstFreeMask ) break;
 
-        hDesc.inUse = true;
-        return hDesc;
+                u64 oldBinState = SysAtomicOr64<sys_fence_t::SEQ_CST>( &slotsBmp[ qwi ], firstFreeMask );
+                if( !( firstFreeMask & oldBinState ) )
+                {
+                    return {
+                        .slot   = u32( qwi * 64 + std::countr_zero( firstFreeMask ) ),
+                        //.type   = ,
+                        .inUse  = true
+                    };
+                }
+                qword = oldBinState | firstFreeMask;
+            }
+        }
+        return std::bit_cast<desc_hndl32>( ~0u );
     }
 
     void FreeSlot( desc_hndl32 hDesc )
     {
-        HT_ASSERT( hDesc.slot < std::size( slots ) );
-        HT_ASSERT( !hDesc.inUse );
+        HT_ASSERT( hDesc.slot < std::size( slotsBmp ) * 64 );
+        HT_ASSERT( hDesc.inUse );
 
-        hDesc.inUse = false;
-        while( !slots.TryPush( hDesc ) );
+        u64 binIdx = hDesc.slot >> 6;
+        u64 bitIdx = hDesc.slot & 63;
+
+        SysAtomicAnd64<sys_fence_t::REL>( &slotsBmp[ binIdx ], ~( 1ull << bitIdx ) );
     }
 };
 

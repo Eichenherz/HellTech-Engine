@@ -68,6 +68,11 @@ u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand )
 		return ( u64 ) InterlockedCompareExchangeRelease64(
 			( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
 	}
+	else if constexpr( sys_fence_t::SEQ_CST == BARRIER )
+	{
+		return ( u64 ) InterlockedCompareExchange64(
+			( win32_atomic64* ) pAddr,  ( LONG64 ) exchange, ( LONG64 ) comparand );
+	}
 
 	return ~0ull;
 }
@@ -87,8 +92,36 @@ u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask )
 	{
 		return ( u64 ) InterlockedAnd64Release( ( win32_atomic64* ) pAddr, ( LONG64 ) mask );
 	}
+	else if constexpr( sys_fence_t::SEQ_CST == BARRIER )
+	{
+		return ( u64 ) InterlockedAnd64( ( win32_atomic64* ) pAddr, ( LONG64 ) mask );
+	}
 
 	return ~0ull;
+}
+
+template<sys_fence_t BARRIER>
+u64 SysAtomicOr64( atomic_u64* pAddr, u64 value )
+{
+    // NOTE: exch returns PREV value
+    if constexpr( sys_fence_t::NONE == BARRIER )
+    {
+        return ( u64 ) InterlockedOr64NoFence( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+    }
+    else if constexpr( sys_fence_t::ACQ == BARRIER )
+    {
+        return ( u64 ) InterlockedOr64Acquire( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+    }
+    else if constexpr( sys_fence_t::REL == BARRIER )
+    {
+        return ( u64 ) InterlockedOr64Release( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+    }
+    else if constexpr( sys_fence_t::SEQ_CST == BARRIER )
+    {
+        return ( u64 ) InterlockedOr64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+    }
+
+    return ~0ull;
 }
 
 template<sys_fence_t BARRIER>
@@ -107,6 +140,10 @@ u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value )
 	{
 		return ( u64 ) InterlockedExchangeAddRelease64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
 	}
+	else if constexpr( sys_fence_t::SEQ_CST == BARRIER )
+	{
+		return ( u64 ) InterlockedExchangeAdd64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+	}
 
 	return ~0ull;
 }
@@ -119,6 +156,10 @@ u64 SysAtomicRead64( atomic_u64* pAddr )
 		return ( u64 ) ReadNoFence64( ( win32_atomic64* ) pAddr );
 	}
 	else if constexpr( sys_fence_t::ACQ == BARRIER )
+	{
+		return ( u64 ) ReadAcquire64( ( win32_atomic64* ) pAddr );
+	}
+	else if constexpr( sys_fence_t::SEQ_CST == BARRIER )
 	{
 		return ( u64 ) ReadAcquire64( ( win32_atomic64* ) pAddr );
 	}
@@ -137,22 +178,35 @@ void SysAtomicWrite64( atomic_u64* pAddr, u64 value )
 	{
 		WriteRelease64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
 	}
+	else if constexpr( sys_fence_t::SEQ_CST == BARRIER )
+	{
+		InterlockedExchange64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
+	}
 }
 
 // NOTE: defined here, so every barrier caller in another TU can ask for has to be instantiated here
 template u64 SysAtomicCas64<sys_fence_t::NONE>( atomic_u64*, u64, u64 );
 template u64 SysAtomicCas64<sys_fence_t::ACQ>( atomic_u64*, u64, u64 );
 template u64 SysAtomicCas64<sys_fence_t::REL>( atomic_u64*, u64, u64 );
+template u64 SysAtomicCas64<sys_fence_t::SEQ_CST>( atomic_u64*, u64, u64 );
 template u64 SysAtomicAnd64<sys_fence_t::NONE>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_fence_t::ACQ>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_fence_t::REL>( atomic_u64*, u64 );
+template u64 SysAtomicAnd64<sys_fence_t::SEQ_CST>( atomic_u64*, u64 );
+template u64 SysAtomicOr64<sys_fence_t::NONE>( atomic_u64*, u64 );
+template u64 SysAtomicOr64<sys_fence_t::ACQ>( atomic_u64*, u64 );
+template u64 SysAtomicOr64<sys_fence_t::REL>( atomic_u64*, u64 );
+template u64 SysAtomicOr64<sys_fence_t::SEQ_CST>( atomic_u64*, u64 );
 template u64 SysAtomicAdd64<sys_fence_t::NONE>( atomic_u64*, u64 );
 template u64 SysAtomicAdd64<sys_fence_t::ACQ>( atomic_u64*, u64 );
 template u64 SysAtomicAdd64<sys_fence_t::REL>( atomic_u64*, u64 );
+template u64 SysAtomicAdd64<sys_fence_t::SEQ_CST>( atomic_u64*, u64 );
 template u64 SysAtomicRead64<sys_fence_t::NONE>( atomic_u64* );
 template u64 SysAtomicRead64<sys_fence_t::ACQ>( atomic_u64* );
+template u64 SysAtomicRead64<sys_fence_t::SEQ_CST>( atomic_u64* );
 template void SysAtomicWrite64<sys_fence_t::NONE>( atomic_u64*, u64 );
 template void SysAtomicWrite64<sys_fence_t::REL>( atomic_u64*, u64 );
+template void SysAtomicWrite64<sys_fence_t::SEQ_CST>( atomic_u64*, u64 );
 
 sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( NULL, 0, LONG_MAX, NULL ) }
 {

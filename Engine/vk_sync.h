@@ -157,7 +157,7 @@ VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
 VK_ACCESS_2_TRANSFER_WRITE_BIT |
 VK_ACCESS_2_HOST_WRITE_BIT;
 
-inline constexpr bool VkIsWriteAccess( VkAccessFlags2 access )
+constexpr bool VkIsWriteAccess( VkAccessFlags2 access )
 {
 	return access & VK_ALL_WRITE_ACCESSES;
 }
@@ -201,8 +201,9 @@ inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
 	VkDeviceSize					offset	= 0,
 	VkDeviceSize					size	= VK_WHOLE_SIZE
 ) {
-	return VkMakeBufferBarrier( buff.hndl, srcSync.stageFlags, srcSync.accessFlags, dstSync.stageFlags,
-		dstSync.accessFlags, offset, size, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED );
+	return VkMakeBufferBarrier( buff.hndl, srcSync.stageFlags, srcSync.accessFlags,
+	    dstSync.stageFlags, dstSync.accessFlags, offset, size,
+	    VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED );
 }
 
 
