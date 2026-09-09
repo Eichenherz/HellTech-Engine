@@ -16,6 +16,21 @@ using i16   = int16_t;
 using i32   = int32_t;
 using i64   = int64_t;
 
+struct alignas( 16 ) u128
+{
+    u64 lo;
+    u64 hi;
+
+    bool operator==( const u128& ) const = default;
+};
+
+template<typename T>
+struct alignas( 16 ) tagged_ptr
+{
+    T*  ptr = nullptr;
+    u64 tag = 0;
+};
+
 #define INVALID_IDX -1
 
 template<typename T>
@@ -25,7 +40,7 @@ template<typename T>
 concept UINT_T = std::unsigned_integral<T>;
 
 template<INTEGER_T T>
-inline bool IsIndexValid( T idx ) 
+bool IsIndexValid( T idx )
 { 
     constexpr T INVALID = T( INVALID_IDX );
     return INVALID != idx;

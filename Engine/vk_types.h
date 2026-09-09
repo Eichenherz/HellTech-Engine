@@ -121,5 +121,13 @@ struct vk_query_pool
 	u64 GetSizeInSlots() const { return queryCount * queryStrideInSlots; }
 };
 
+struct vk_cmd_pool_node
+{
+    vk_cmd_pool_node*   pNext   = nullptr;
+    VkCommandPool		pool    = nullptr;
+    VkCommandBuffer		buff    = nullptr;
+    u64                 waitVal = 0;
+};
+
 #endif // !__VK_TYPES_H__
 

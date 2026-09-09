@@ -357,5 +357,26 @@ inline VkCommandBuffer VkMakeCmdBuff( VkDevice vkDevice, VkCommandPool cmdPool )
     return cmdBuff;
 }
 
+inline u64 VkGetTimelineSemaValue( VkDevice vkDevice, VkSemaphore timelineSema )
+{
+    u64 val = 0;
+    VK_CHECK( vkGetSemaphoreCounterValue( vkDevice, timelineSema, &val ) );
+    return val;
+}
+
+inline auto VkMakeCmdPoolAndBuff( VkDevice vkDevice, u32 queueFamIdx )
+{
+    struct retval
+    {
+        VkCommandPool   pool;
+        VkCommandBuffer buff;
+    };
+    VkCommandPool cmdPool = VkMakeCmdPool( vkDevice, queueFamIdx );
+    return retval{
+        .pool = cmdPool,
+        .buff = VkMakeCmdBuff( vkDevice, cmdPool )
+    };
+}
+
 #endif // !__VK_UTILS_H__
 

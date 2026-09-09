@@ -40,6 +40,13 @@ enum sys_thread_signal : i64
 
 using atomic_u64 = volatile u64;
 
+// NOTE for cas 128
+struct alignas( 16 ) atomic_u128
+{
+    volatile u64 lo;
+    volatile u64 hi;
+};
+
 enum class sys_fence_t
 {
     NONE,
@@ -51,6 +58,8 @@ enum class sys_fence_t
 
 template<sys_fence_t BARRIER>
 u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand );
+template<sys_fence_t BARRIER = sys_fence_t::SEQ_CST> // NOTE: default on win
+u128 SysAtomicCas128( atomic_u128* pAddr, u128 exchange, u128 comparand );
 template<sys_fence_t BARRIER>
 u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask );
 template<sys_fence_t BARRIER>

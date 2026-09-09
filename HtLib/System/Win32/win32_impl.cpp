@@ -78,6 +78,19 @@ u64 SysAtomicCas64( atomic_u64* pAddr, u64 exchange, u64 comparand )
 }
 
 template<sys_fence_t BARRIER>
+u128 SysAtomicCas128( atomic_u128* pAddr, u128 exchange, u128 comparand )
+{
+#if defined( _M_ARM64 )
+#error "Impl this"
+#endif
+
+	InterlockedCompareExchange128( ( win32_atomic64* ) pAddr, ( __int64 ) exchange.hi,
+	    ( __int64 ) exchange.lo, ( __int64* ) &comparand );
+
+	return comparand;
+}
+
+template<sys_fence_t BARRIER>
 u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask )
 {
 	if constexpr( sys_fence_t::NONE == BARRIER )
@@ -189,6 +202,13 @@ template u64 SysAtomicCas64<sys_fence_t::NONE>( atomic_u64*, u64, u64 );
 template u64 SysAtomicCas64<sys_fence_t::ACQ>( atomic_u64*, u64, u64 );
 template u64 SysAtomicCas64<sys_fence_t::REL>( atomic_u64*, u64, u64 );
 template u64 SysAtomicCas64<sys_fence_t::SEQ_CST>( atomic_u64*, u64, u64 );
+template u128 SysAtomicCas128<sys_fence_t::NONE>( atomic_u128*, u128, u128 );
+template u128 SysAtomicCas128<sys_fence_t::ACQ>( atomic_u128*, u128, u128 );
+template u128 SysAtomicCas128<sys_fence_t::REL>( atomic_u128*, u128, u128 );
+template u128 SysAtomicCas128<sys_fence_t::SEQ_CST>( atomic_u128*, u128, u128 );
+template u128 SysAtomicRead128<sys_fence_t::NONE>( atomic_u128* );
+template u128 SysAtomicRead128<sys_fence_t::ACQ>( atomic_u128* );
+template u128 SysAtomicRead128<sys_fence_t::SEQ_CST>( atomic_u128* );
 template u64 SysAtomicAnd64<sys_fence_t::NONE>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_fence_t::ACQ>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_fence_t::REL>( atomic_u64*, u64 );

@@ -27,8 +27,8 @@
 
 struct vk_timeline
 {
-	VkSemaphore         sema;
-	u64			        submitsIssuedCount;
+	VkSemaphore         sema                = nullptr;
+	u64			        submitsIssuedCount  = 0;
 
 	VkSemaphoreSubmitInfo GetWaitAtPoint( VkPipelineStageFlags2 stage ) const
 	{
@@ -39,7 +39,6 @@ struct vk_timeline
 			.stageMask = stage,
 		};
 	}
-
 	VkSemaphoreSubmitInfo GetSignalNextPoint( VkPipelineStageFlags2 stage )
 	{
 		submitsIssuedCount++;
@@ -54,38 +53,31 @@ struct vk_timeline
 
 struct vk_swapchain_image
 {
-	VkSemaphore		    canPresentSema;
-	vk_image            img;
-	desc_hndl32         writeDescIdx;
+	VkSemaphore		    canPresentSema  = nullptr;
+	vk_image            img             = {};
+	desc_hndl32         writeDescIdx    = std::bit_cast<desc_hndl32>( ~0u );
+};
+
+constexpr u64 MAX_CBS_PER_QUEUE = 64;
+static_assert( IsPowOf2( MAX_CBS_PER_QUEUE ) );
+
+struct cmd_pool_cache
+{
+    std::array<vk_cmd_pool_node, MAX_CBS_PER_QUEUE> payload         = {};
+    alignas( 64 ) atomic_u64                        payloadOffset   = {};
+    alignas( 64 ) atomic_u128                       freeHead        = {};
+    alignas( 64 ) atomic_u128                       recycleHead     = {};
 };
 
 struct vk_queue
 {
-	copyable_srwlock    submitLock; // NOTE: as mandated by the vulkan spec
-	VkQueue				hndl;
-	VkSemaphore			timelineSema;
-	u64			        submitCount;
-	u32					familyIdx;
-};
-
-struct vk_cmd_pool_buff
-{
-	VkCommandPool		pool;
-	VkCommandBuffer		buff;
-	vk_queue_t			parentQueueFamType;
-};
-
-struct vk_cb_deletion
-{
-	VkSemaphore			sema;
-	u64					waitVal;
-	vk_cmd_pool_buff	hndl;
-};
-
-struct vk_cb_pool
-{
-	fixed_ringbuff_w_lock<vk_cmd_pool_buff, 128>	free;
-	fixed_ringbuff_w_lock<vk_cb_deletion, 128>	pending;
+	copyable_srwlock    submitLock                          = {}; // NOTE: as mandated by the vulkan spec
+	VkQueue				hndl                                = nullptr;
+	VkSemaphore			timelineSema                        = nullptr;
+	u64			        submitCount                         = 0;
+    cmd_pool_cache      cmdBuffCache                        = {};
+    vk_queue_t          queueType                           = vk_queue_t::COUNT;
+	u32					familyIdx                           = ~0u;
 };
 
 struct vk_desc_deletion
@@ -157,6 +149,7 @@ struct vk_desc_binding
     }
 };
 
+// TODO: make sure the gpu atomics are aligned !
 struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
@@ -171,8 +164,6 @@ struct vk_context
 	
 	copyable_srwlock                        descUpdatesLock;
 	borrowed_vector<vk_descriptor_write>    descPendingUpdates;
-
-	vk_cb_pool		                        cbPools[ ( u64 ) vk_queue_t::COUNT ];
 
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
@@ -260,7 +251,7 @@ struct vk_context
 	void                CreateSwapchain();
 	u32                 AcquireNextSwapchainImageBlocking( VkSemaphore canGetImgSema ) const;
 
-	vk_command_buffer   AllocateCmdPoolAndBuff( vk_queue_t queueType );
+	vk_command_buffer   AllocateCmdBufferForQueue( vk_queue_t queueType );
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
 	u64                 QueueSubmit(
