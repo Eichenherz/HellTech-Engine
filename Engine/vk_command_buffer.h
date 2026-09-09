@@ -118,12 +118,12 @@ struct vk_scoped_timestamp
 
 struct vk_command_buffer
 {
-	VkCommandPool		cmdPool					= VK_NULL_HANDLE;
+    vk_cmd_pool         cmdPool                 = {};
 	VkCommandBuffer		hndl					= VK_NULL_HANDLE;
 	VkPipelineLayout	bindlessPipelineLayout 	= VK_NULL_HANDLE;
 	VkDescriptorSet		bindlessDescriptorSet 	= VK_NULL_HANDLE;
 	VkPipelineBindPoint currentBindPoint		= { VK_PIPELINE_BIND_POINT_MAX_ENUM };
-	vk_queue_t			parentQueueFamType		= vk_queue_t::COUNT;
+	vk_queue_t			parentQueueId		    = vk_queue_t::COUNT;
 
 	void CmdBeginCmdBuffer()
 	{
@@ -134,10 +134,7 @@ struct vk_command_buffer
 		VK_CHECK( vkBeginCommandBuffer( hndl, &cmdBufBegInfo ) );
 	}
 
-	void CmdEndCmdBuffer()
-	{
-		VK_CHECK( vkEndCommandBuffer( hndl ) );
-	}
+	void CmdEndCmdBuffer() { VK_CHECK( vkEndCommandBuffer( hndl ) ); }
 
 	vk_scoped_label CmdIssueScopedLabel( const char* labelName, float4 col = {} ) { return { hndl, labelName, col }; }
 

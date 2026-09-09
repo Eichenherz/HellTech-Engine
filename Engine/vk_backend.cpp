@@ -27,6 +27,8 @@
 #include <ht_error.h>
 #include <ht_vector.h>
 
+#include <ht_atomic_stack.h>
+
 #include "vk_error.h"
 #include "vk_context.h"
 #include "vk_types.h"
@@ -44,6 +46,7 @@ constexpr VkValidationFeatureEnableEXT VK_ENABLED_VALIDATION_FEATURES[] = {
 	//VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
 };
 
+template<vk_queue_t QUEUE_T>
 static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 {
 	VkQueue	hndl;
@@ -54,6 +57,7 @@ static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 		.hndl			= hndl,
 		.timelineSema	= VkMakeSemaphore( vkDevice, true, 0 ),
 		.submitCount    = 0,
+	    .queueType      = QUEUE_T,
 		.familyIdx		= queueFamilyIndex,
 	};
 }
@@ -644,8 +648,8 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
         .descDeletionQueue      = { ArenaNewArray<vk_desc_deletion>( *pPersistentArena, 128 ) },
 		.descBindingSlots		= MOV( bindingSlots ),
 	    .descPendingUpdates     = { ArenaNewArray<vk_descriptor_write>( *pPersistentArena, 1'000 ) },
-		.gfxQueue				= VkCreateQueue( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
-		.copyQueue				= VkCreateQueue( vkDevice.logical, vkDevice.transferQueueFamIdx ),
+		.gfxQueue				= VkCreateQueue<vk_queue_t::GFX>( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
+		.copyQueue				= VkCreateQueue<vk_queue_t::COPY>( vkDevice.logical, vkDevice.transferQueueFamIdx ),
 		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_TIMESTAMP ),
 		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
 		.gpuFrameTimeline		= {
@@ -1004,34 +1008,28 @@ void vk_context::FlushPendingDescriptorUpdates()
 
 void vk_context::FlushDeletionQueues( u64 frameIdx )
 {
-	for( vk_cb_pool& cbPool : cbPools )
+	for( vk_queue* pVkQ : { &gfxQueue, &copyQueue } )
 	{
-		for( vk_cb_deletion del = {}; cbPool.pending.TryPop( del ); )
-		{
-			u64 submissionsCompleted = 0;
-			VK_CHECK( vkGetSemaphoreCounterValue( device, del.sema, &submissionsCompleted ) );
-			if( del.waitVal > submissionsCompleted )
-			{
-				// NOTE: if we can't retire we put it back and break for this frame
-				while( !cbPool.pending.TryPush( del ) );
-				break;
-			}
+		u64 submitsDone = VkGetTimelineSemaValue( device, pVkQ->timelineSema );
 
-			VK_CHECK( vkResetCommandPool( device, del.hndl.pool, 0 ) );
-			cbPool.free.TryPush( del.hndl );
+		auto PfnIsRetired = [ submitsDone ]( const vk_cmd_pool& cmdPool ) { return cmdPool.waitVal <= submitsDone; };
+
+		// NOTE: submitCount is monotonic under submitLock, so the front is the min; stop at the first live one
+		for( vk_cmd_pool cmdPool = {}; pVkQ->pendingCbs.TryPopIf( cmdPool, PfnIsRetired ); )
+		{
+			VK_CHECK( vkResetCommandPool( device, cmdPool.pool, 0 ) );
+			HT_ASSERT( pVkQ->freeCbs.TryPush( cmdPool ) );
 		}
 	}
-	
-	
-	u64 frameSubmissionsCompleted = 0;
-	VK_CHECK( vkGetSemaphoreCounterValue( device, gpuFrameTimeline.sema, &frameSubmissionsCompleted ) );
+
+	u64 frameSubmitsDone = VkGetTimelineSemaValue( device, gpuFrameTimeline.sema );
 
 	// NOTE: since it's queue-like, we always start at begin() 
 	// and advance until there's an entry not deletable this frame
 	for( auto it = std::begin( resourceDeletionQueue ); std::end( resourceDeletionQueue ) != it; )
 	{
 		vk_resc_deletion& rsc = *it;
-		if( frameSubmissionsCompleted <= rsc.frameTimelineVal ) break;
+		if( frameSubmitsDone <= rsc.frameTimelineVal ) break;
 		if( vk_resource_type::BUFFER ==  rsc.type )
 		{
 			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.mem );
@@ -1046,7 +1044,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 	for( auto it = std::begin( descDeletionQueue ); std::end( descDeletionQueue ) != it; )
 	{
 		auto[ timelineCounterVal, hndl ] = *it;
-		if( frameSubmissionsCompleted <= timelineCounterVal ) break;
+		if( frameSubmitsDone <= timelineCounterVal ) break;
 		descBindingSlots[ hndl.type ].FreeSlot( hndl );
 		it = descDeletionQueue.erase( it );
 	}
@@ -1135,26 +1133,50 @@ inline vk_queue* VkContextGetQueueByType( vk_context& ctx, vk_queue_t queueType 
 	return nullptr;
 }
 
-vk_command_buffer vk_context::AllocateCmdPoolAndBuff( vk_queue_t queueType )
+inline vk_cmd_pool VkMakeCmdPoolBuff( VkDevice vkDevice, u32 queueFamilyIdx )
 {
-	vk_cb_pool& cbPool = cbPools[ ( u64 ) queueType ];
+    HT_ASSERT( ~u32( 0 ) != queueFamilyIdx );
 
-	vk_cmd_pool_buff cb = {};
-	if( !cbPool.free.TryPop( cb ) )
-	{
-		const vk_queue* vkQ     = VkContextGetQueueByType( *this, queueType );
-		VkCommandPool cmdPool   = VkMakeCmdPool( device, vkQ->familyIdx );
-		cb = { .pool = cmdPool, .buff = VkMakeCmdBuff( device, cmdPool ), .parentQueueFamType = queueType };
-	}
+    VkCommandPoolCreateInfo cmdPoolInfo = {
+        .sType				= VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        // NOTE: hints the impl to use a single allocator for CBs for the whole pool;
+        // we can't free individual CBs but we currently don't aim for that anyway
+        .flags				= VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex	= queueFamilyIdx
+    };
 
-	HT_ASSERT( cb.parentQueueFamType == queueType );
+    VkCommandPool cmdPool = nullptr;
+    VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
+
+    VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
+        .sType				= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool		= cmdPool,
+        .level				= VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1
+    };
+
+    VkCommandBuffer cmdBuff = nullptr;
+    VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
+
+    return { .pool = cmdPool, .buff = cmdBuff };
+}
+
+vk_command_buffer vk_context::AllocateCmdBufferForQueue( vk_queue_t queueType )
+{
+    vk_queue&   queue   = *VkContextGetQueueByType( *this, queueType );
+
+    vk_cmd_pool cmdPool = {};
+    if( !queue.freeCbs.TryPop( cmdPool ) )
+    {
+        cmdPool = VkMakeCmdPoolBuff( device, queue.familyIdx );
+    }
 
 	return {
-		.cmdPool				= cb.pool,
-		.hndl					= cb.buff,
-		.bindlessPipelineLayout = ( vk_queue_t::GFX == queueType ) ? globalPipelineLayout : VK_NULL_HANDLE,
-		.bindlessDescriptorSet	= ( vk_queue_t::GFX == queueType ) ? descSet : VK_NULL_HANDLE,
-		.parentQueueFamType		= queueType
+	    .cmdPool                = cmdPool,
+		.hndl					= cmdPool.buff,
+		.bindlessPipelineLayout = ( vk_queue_t::GFX == queueType ) ? globalPipelineLayout   : VK_NULL_HANDLE,
+		.bindlessDescriptorSet	= ( vk_queue_t::GFX == queueType ) ? descSet                : VK_NULL_HANDLE,
+		.parentQueueId		    = queueType
 	};
 }
 
@@ -1165,6 +1187,8 @@ u64 vk_context::QueueSubmit(
 	std::span<VkSemaphoreSubmitInfo>    signals,
 	VkFence                             vkFence
 ) {
+    HT_ASSERT( cb.parentQueueId == queue.queueType );
+
 	queue.submitLock.Acquire();
     defer{ queue.submitLock.Release(); };
 
@@ -1195,14 +1219,9 @@ u64 vk_context::QueueSubmit(
 	};
 	VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, vkFence ) );
 
-	// NOTE: we always defer delete the cbs wrt to our timeline
-	vk_cb_pool&     cbPool  = cbPools[ ( u64 ) cb.parentQueueFamType ];
-	vk_cb_deletion  cbDel   = {
-		.sema		= queue.timelineSema,
-		.waitVal	= queue.submitCount,
-		.hndl		= { .pool = cb.cmdPool, .buff = cb.hndl, .parentQueueFamType = cb.parentQueueFamType }
-	};
-	HT_ASSERT( cbPool.pending.TryPush( cbDel ) );
+    // NOTE: this path can't ever be contended
+    HT_ASSERT( queue.pendingCbs.TryPush( vk_cmd_pool{
+        .pool = cb.cmdPool.pool, .buff = cb.cmdPool.buff, .waitVal = queue.submitCount } ) );
 
     return queue.submitCount; // NOTE: return this while under lock to make the submitCount "thread-safe"
 }

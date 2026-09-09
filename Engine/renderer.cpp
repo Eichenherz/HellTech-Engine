@@ -17,7 +17,7 @@
 #include "vk_error.h"
 #include "vk_resources.h"
 #include "vk_sync.h"
-
+#include "vk_utils.h"
 #include "vk_context.h"
 
 #include <ht_vector.h>
@@ -2257,7 +2257,7 @@ void renderer_context::UploadMeshes(
 		CopyScaffoldingLambda( megaGpuIdxBuff, idxRegionCopies, meshUpload.idxAsBytes, htMesh.triAlloc.offset );
 	}
 
-	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::COPY );
+	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdBufferForQueue( vk_queue_t::COPY );
 
 	copyCmdBuff.CmdBeginCmdBuffer();
 
@@ -2274,7 +2274,7 @@ void renderer_context::UploadMeshes(
 
 	u64 copyDoneWaitVal = pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff );
 
-	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
+	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdBufferForQueue( vk_queue_t::GFX );
 
 	arena_vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &arena };
 	buffTransferOwnershipBarriers.reserve( barrierCount );
@@ -2351,7 +2351,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 
 	u32 instCount = UpdateSceneData( thisVFrame, frameData );
 
-	vk_command_buffer thisFrameCmdBuff = pVkCtx->AllocateCmdPoolAndBuff( vk_queue_t::GFX );
+	vk_command_buffer thisFrameCmdBuff = pVkCtx->AllocateCmdBufferForQueue( vk_queue_t::GFX );
 
 	thisFrameCmdBuff.CmdBeginCmdBuffer();
 

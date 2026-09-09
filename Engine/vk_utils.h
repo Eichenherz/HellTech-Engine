@@ -324,58 +324,11 @@ inline VkPipelineLayout VkMakeGlobalPipelineLayout(
     return pipelineLayout;
 }
 
-inline VkCommandPool VkMakeCmdPool( VkDevice vkDevice, u32 queueFamilyIdx )
-{
-    HT_ASSERT( ~u32( 0 ) != queueFamilyIdx );
-
-    VkCommandPoolCreateInfo cmdPoolInfo = {
-        .sType				= VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        // NOTE: hints the impl to use a single allocator for CBs for the whole pool;
-        // we can't free individual CBs but we currently don't aim for that anyway
-        .flags				= VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-        .queueFamilyIndex	= queueFamilyIdx
-    };
-
-    VkCommandPool cmdPool = {};
-    VK_CHECK( vkCreateCommandPool( vkDevice, &cmdPoolInfo, 0, &cmdPool ) );
-
-    return cmdPool;
-}
-
-inline VkCommandBuffer VkMakeCmdBuff( VkDevice vkDevice, VkCommandPool cmdPool )
-{
-    VkCommandBufferAllocateInfo cmdBuffAllocInfo = {
-        .sType				= VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool		= cmdPool,
-        .level				= VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1
-    };
-
-    VkCommandBuffer cmdBuff = {};
-    VK_CHECK( vkAllocateCommandBuffers( vkDevice, &cmdBuffAllocInfo, &cmdBuff ) );
-
-    return cmdBuff;
-}
-
 inline u64 VkGetTimelineSemaValue( VkDevice vkDevice, VkSemaphore timelineSema )
 {
     u64 val = 0;
     VK_CHECK( vkGetSemaphoreCounterValue( vkDevice, timelineSema, &val ) );
     return val;
-}
-
-inline auto VkMakeCmdPoolAndBuff( VkDevice vkDevice, u32 queueFamIdx )
-{
-    struct retval
-    {
-        VkCommandPool   pool;
-        VkCommandBuffer buff;
-    };
-    VkCommandPool cmdPool = VkMakeCmdPool( vkDevice, queueFamIdx );
-    return retval{
-        .pool = cmdPool,
-        .buff = VkMakeCmdBuff( vkDevice, cmdPool )
-    };
 }
 
 #endif // !__VK_UTILS_H__

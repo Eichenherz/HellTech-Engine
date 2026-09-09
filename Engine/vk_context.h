@@ -19,7 +19,6 @@
 #include "vk_error.h"
 #include "vk_types.h"
 #include "vk_resources.h"
-#include "vk_utils.h"
 #include "vk_command_buffer.h"
 
 #include <array>
@@ -59,25 +58,19 @@ struct vk_swapchain_image
 };
 
 constexpr u64 MAX_CBS_PER_QUEUE = 64;
-static_assert( IsPowOf2( MAX_CBS_PER_QUEUE ) );
-
-struct cmd_pool_cache
-{
-    std::array<vk_cmd_pool_node, MAX_CBS_PER_QUEUE> payload         = {};
-    alignas( 64 ) atomic_u64                        payloadOffset   = {};
-    alignas( 64 ) atomic_u128                       freeHead        = {};
-    alignas( 64 ) atomic_u128                       recycleHead     = {};
-};
 
 struct vk_queue
 {
-	copyable_srwlock    submitLock                          = {}; // NOTE: as mandated by the vulkan spec
-	VkQueue				hndl                                = nullptr;
-	VkSemaphore			timelineSema                        = nullptr;
-	u64			        submitCount                         = 0;
-    cmd_pool_cache      cmdBuffCache                        = {};
-    vk_queue_t          queueType                           = vk_queue_t::COUNT;
-	u32					familyIdx                           = ~0u;
+    using fixed_queue = fixed_ringbuff_w_lock<vk_cmd_pool, MAX_CBS_PER_QUEUE>;
+
+	copyable_srwlock    submitLock   = {}; // NOTE: as mandated by the vulkan spec
+	VkQueue				hndl         = nullptr;
+	VkSemaphore			timelineSema = nullptr;
+	u64			        submitCount  = 0;
+    fixed_queue         freeCbs      = {};
+    fixed_queue         pendingCbs   = {};
+    vk_queue_t          queueType    = vk_queue_t::COUNT;
+	u32					familyIdx    = ~0u;
 };
 
 struct vk_desc_deletion
@@ -158,7 +151,7 @@ struct vk_context
 	borrowed_vector<vk_resc_deletion>		resourceDeletionQueue;
 	borrowed_vector<vk_desc_deletion>		descDeletionQueue;
 
-	inline_vector<vk_swapchain_image, 8>	scImgs;
+	inline_vector<vk_swapchain_image, 6>	scImgs;
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	
@@ -178,7 +171,7 @@ struct vk_context
 	VkSwapchainKHR		                    swapchain;
 
 	// TODO: sync when doing parallel uploads
-	inline_vector<VkFence, 16>              copyFencesPool;
+	inline_vector<VkFence, 8>               copyFencesPool;
 
 	VkDescriptorPool						descPool;
 	VkDescriptorSetLayout					descSetLayout;
