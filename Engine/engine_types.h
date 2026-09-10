@@ -9,7 +9,7 @@
 #include "ht_renderer_types.h"
 
 #include <ht_fixed_string.h>
-#include <ht_vector.h>
+#include <ht_array.h>
 
 #include <ht_math.h>
 
@@ -112,8 +112,8 @@ struct ht_timed_zone
 
 struct gpu_data
 {
-	borrowed_vector<ht_timed_zone>&		timedZones;
-	borrowed_vector<ht_pipeline_stats>& pipelinesStats;
+	borrowed_array<ht_timed_zone>&		timedZones;
+	borrowed_array<ht_pipeline_stats>& pipelinesStats;
 };
 
 #endif // !__ENGINE_TYPES_H__

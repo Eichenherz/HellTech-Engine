@@ -20,7 +20,7 @@
 #include "vk_utils.h"
 #include "vk_context.h"
 
-#include <ht_vector.h>
+#include <ht_array.h>
 #include <ht_fixed_string.h>
 #include "ht_slot_vector.h"
 
@@ -105,12 +105,12 @@ struct pipestats_query
 struct ht_gpu_frame_profiler
 {
     // NOTE: these are 2 per query so we need std::size * 2
-	borrowed_vector<timestamp_query>    timedZonesQueries       = {};
-	borrowed_vector<pipestats_query>    pipelineStatsQueries    = {};
+	borrowed_array<timestamp_query>    timedZonesQueries       = {};
+	borrowed_array<pipestats_query>    pipelineStatsQueries    = {};
 	vk_buffer						    timestampQueryBuff      = {};
 	vk_buffer						    pipelineStatsQueryBuff  = {};
 
-	void ReadbackQueries( borrowed_vector<ht_timed_zone>& timedGpuZones, borrowed_vector<ht_pipeline_stats>& pipelinesStats )
+	void ReadbackQueries( borrowed_array<ht_timed_zone>& timedGpuZones, borrowed_array<ht_pipeline_stats>& pipelinesStats )
 	{
 		timedGpuZones.append_range( timedZonesQueries | std::views::transform( [ this ]( const auto& q )
 		{
@@ -566,7 +566,7 @@ struct debug_draw_passes
 	static constexpr box_wireframe_indices	lineVtxBuff = GenerateBoxWireframeIndices();
 	//constexpr box_triangle_indices trisVtxBuff = BoxVerticesAsTriangles( unitCube );
 
-	borrowed_vector<dbg_aabb_instance>		cpuInstView = {};
+	borrowed_array<dbg_aabb_instance>		cpuInstView = {};
 
 	vk_buffer			vtxBuff 			= {};
 	vk_buffer			idxBuff 			= {};
@@ -1958,8 +1958,11 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 // but the engine only issues the available instances and only valid data is accessed.
 struct renderer_context final : renderer_interface
 {
-	using mesh_hndl32	= slot_vector<ht_mesh_component>::hndl32;
-	using fence_hndl32	= slot_vector<VkFence>::hndl32;
+    template<TRIVIAL_T T>
+    using slotmap = borrowed_slot_array<T>;
+
+	using mesh_hndl32	= slotmap<ht_mesh_component>::hndl32;
+	using fence_hndl32	= slotmap<VkFence>::hndl32;
 
 	alignas( 8 ) vk_renderer_config         config = {};
 
@@ -1973,9 +1976,9 @@ struct renderer_context final : renderer_interface
 	vbuffer_pass							vBuffPass;
 	fwd_pass								fwdPass;
 	// NOTE: will hold all the renderer components, both available and pending upload
-	slot_vector<ht_mesh_component>			rendererComponents;
+	slotmap<ht_mesh_component>			    rendererComponents;
 
-	slot_vector<VkFence>					jobFences;
+	slotmap<VkFence>					    jobFences;
 
 	std::array<virtual_frame, MAX_FIF>	    vrtFrames;
 
@@ -2015,11 +2018,11 @@ struct renderer_context final : renderer_interface
 	HRNDMESH32  AllocMeshComponent( const hpk_mesh_view& mesh ) override;
 	HJOBFENCE32 AllocJobFence() override
 	{
-		return std::bit_cast<HJOBFENCE32>( jobFences.PushEntry( pVkCtx->AllocFence() ) );
+		return std::bit_cast<HJOBFENCE32>( SlotArrayPushEntry( jobFences, pVkCtx->AllocFence() ) );
 	}
 	bool        PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) override
 	{
-		return pVkCtx->FenceWaitAndResetOnDone( jobFences[ ( fence_hndl32 ) hJobFence ], timeoutNanosecs );
+		return pVkCtx->FenceWaitAndResetOnDone( jobFences[ std::bit_cast<fence_hndl32>( hJobFence ) ], timeoutNanosecs );
 	}
 	void        UploadMeshes( HJOBFENCE32 hRndUpload, std::span<const mesh_upload_req>	meshAssets, linear_arena& arena ) override;
 
@@ -2153,6 +2156,9 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		vrtFrames[ fifIdx ]                 = MakeVirtualFrame( 4 * sizeof( view_data ), fifIdx );
 		globalHtGpuFrameProfiler[ fifIdx ]  = HtMakeGpuFrameProfiler();
 	}
+
+    rendererComponents  = HtMakeSlotArray<ht_mesh_component>( *pPersistentArena, 10'000 );
+    jobFences           = HtMakeSlotArray<VkFence>( *pPersistentArena, 10 );
 }
 
 HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
@@ -2194,7 +2200,7 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 		.triAlloc		= idxAlloc
 	};
 
-	return std::bit_cast<u32>( rendererComponents.PushEntry( htMesh ) );
+	return std::bit_cast<u32>( SlotArrayPushEntry( rendererComponents, htMesh ) );
 }
 
 void renderer_context::UploadMeshes(
@@ -2204,29 +2210,29 @@ void renderer_context::UploadMeshes(
 ) {
 	ht_mem_scope memScope = { arena };
 
-	borrowed_vector<u8> stagingScratch = { VkBufferHostView<u8>( stagingBuff ) };
+	borrowed_array<u8> stagingScratch = { VkBufferHostView<u8>( stagingBuff ) };
 
 	u64 barrierCount = std::size( meshUploadReqs ) * 4;
 	u64 copyCmdCount = std::size( meshUploadReqs );
 
-	arena_vector<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &arena };
+	arena_array<VkBufferMemoryBarrier2> buffInitCpyBarriers{ &arena };
 	buffInitCpyBarriers.reserve( barrierCount );
 
-	arena_vector<VkBufferCopy2> mltRegionCopies{ &arena };
+	arena_array<VkBufferCopy2> mltRegionCopies{ &arena };
 	mltRegionCopies.reserve( copyCmdCount );
-	arena_vector<VkBufferCopy2> vtxPosRegionCopies{ &arena };
+	arena_array<VkBufferCopy2> vtxPosRegionCopies{ &arena };
 	vtxPosRegionCopies.reserve( copyCmdCount );
-	arena_vector<VkBufferCopy2> vtxAttrsRegionCopies{ &arena };
+	arena_array<VkBufferCopy2> vtxAttrsRegionCopies{ &arena };
 	vtxAttrsRegionCopies.reserve( copyCmdCount );
-	arena_vector<VkBufferCopy2> idxRegionCopies{ &arena };
+	arena_array<VkBufferCopy2> idxRegionCopies{ &arena };
 	idxRegionCopies.reserve( copyCmdCount );
 
-	arena_vector<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &arena };
+	arena_array<VkBufferMemoryBarrier2> buffEndCpyBarriers{ &arena };
 	buffEndCpyBarriers.reserve( barrierCount );
 
 	auto CopyScaffoldingLambda = [ & ] (
 		const vk_buffer&			dstBuff,
-		arena_vector<VkBufferCopy2>&regionCopies,
+		arena_array<VkBufferCopy2>&regionCopies,
 		std::span<const u8>			bytesSrc,
 		u32							dstOffsetInBytes
 	){
@@ -2249,7 +2255,7 @@ void renderer_context::UploadMeshes(
 
 	for( const mesh_upload_req& meshUpload : meshUploadReqs )
 	{
-		const ht_mesh_component& htMesh = rendererComponents[ ( mesh_hndl32 ) meshUpload.hSlot ];
+		const ht_mesh_component& htMesh = rendererComponents[ std::bit_cast<mesh_hndl32>( meshUpload.hSlot ) ];
 
 		CopyScaffoldingLambda( megaGpuMeshletBuff, mltRegionCopies, meshUpload.mltAsBytes, htMesh.mltAlloc.offset );
 		CopyScaffoldingLambda( megaGpuVtxPosBuff, vtxPosRegionCopies, meshUpload.vtxPosAsBytes, htMesh.vtxPosAlloc.offset );
@@ -2276,7 +2282,7 @@ void renderer_context::UploadMeshes(
 
 	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdBufferForQueue( vk_queue_t::GFX );
 
-	arena_vector<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &arena };
+	arena_array<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &arena };
 	buffTransferOwnershipBarriers.reserve( barrierCount );
 
 	for( const VkBufferMemoryBarrier2& barr : buffEndCpyBarriers )
@@ -2297,7 +2303,8 @@ void renderer_context::UploadMeshes(
 		.stageMask	= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
 	} };
 
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCmdBuff, waitCpyDone, {}, jobFences[ ( fence_hndl32 ) hRndUpload ] );
+	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCmdBuff, waitCpyDone,
+	    {}, jobFences[ std::bit_cast<fence_hndl32>( hRndUpload ) ] );
 }
 
 u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )
@@ -2305,16 +2312,16 @@ u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_da
 	HT_ASSERT( BYTE_COUNT( frameData.views ) <= thisVFrame.viewData.sizeInBytes );
 	std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
 
-	borrowed_vector<gpu_mesh> gpuMeshTable = { VkBufferHostView<gpu_mesh>( thisVFrame.gpuMeshTable ) };
+	borrowed_array<gpu_mesh> gpuMeshTable = VkBufferHostView<gpu_mesh>( thisVFrame.gpuMeshTable );
 	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accessed anyways
 	HT_ASSERT( std::size( rendererComponents ) <= gpuMeshTable.capacity() );
 
-	for( const ht_mesh_component& component : rendererComponents.items )
+	for( const auto& slot : rendererComponents )
 	{
-		gpuMeshTable.push_back( component.desc );
+		gpuMeshTable.push_back( slot.item.desc );
 	}
 
-	borrowed_vector<gpu_instance> gpuInstList = { VkBufferHostView<gpu_instance>( thisVFrame.gpuInstances ) };
+	borrowed_array<gpu_instance> gpuInstList = VkBufferHostView<gpu_instance>( thisVFrame.gpuInstances );
 	HT_ASSERT( std::size( frameData.instances ) <= gpuInstList.capacity() );
 
 	for( const instance_desc& sceneNode : frameData.instances )

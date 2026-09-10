@@ -2,7 +2,7 @@
 #ifndef __HT_SERIALIZATION_H__
 #define __HT_SERIALIZATION_H__
 
-#include <ht_vector.h>
+#include <ht_array.h>
 #include <vector>
 #include <span>
 
@@ -138,7 +138,7 @@ inline hellpack_blob HpkSerializeAsset<HPK_ASSET_T>( const HPK_ASSET_T& a )
     constexpr u64 viewOffset = FwdAlignPot( sizeof( hellpack_file_header ), alignof( hpk_rel_view ) );
     constexpr u32 blobCount  = 0 HPK_STRUCT_MACRO( HPK_X_BLOB_COUNT );
 
-    inline_vector<hpk_placed_blob, blobCount> blobs = {};
+    inline_array<hpk_placed_blob, blobCount> blobs = {};
     u64 cursor = viewOffset + sizeof( hpk_rel_view );
 
     auto Place = [ & ]<typename T>( const T& src ) -> typename hpk_rel_view_of<T>::type

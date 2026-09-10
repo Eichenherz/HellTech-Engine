@@ -148,15 +148,15 @@ struct vk_context
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
 	// NOTE: we only alloc PERSISTENT resources on other timelines;
 	// only the main GPU timeline is allowed to alloc and free TRANSIENTS
-	borrowed_vector<vk_resc_deletion>		resourceDeletionQueue;
-	borrowed_vector<vk_desc_deletion>		descDeletionQueue;
+	borrowed_array<vk_resc_deletion>		resourceDeletionQueue;
+	borrowed_array<vk_desc_deletion>		descDeletionQueue;
 
-	inline_vector<vk_swapchain_image, 6>	scImgs;
+	inline_array<vk_swapchain_image, 6>	scImgs;
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	
 	copyable_srwlock                        descUpdatesLock;
-	borrowed_vector<vk_descriptor_write>    descPendingUpdates;
+	borrowed_array<vk_descriptor_write>    descPendingUpdates;
 
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
@@ -171,7 +171,7 @@ struct vk_context
 	VkSwapchainKHR		                    swapchain;
 
 	// TODO: sync when doing parallel uploads
-	inline_vector<VkFence, 8>               copyFencesPool;
+	inline_array<VkFence, 8>               copyFencesPool;
 
 	VkDescriptorPool						descPool;
 	VkDescriptorSetLayout					descSetLayout;
@@ -260,7 +260,7 @@ struct vk_context
 inline VkSampler vk_context::CreateSampler( const VkSamplerCreateInfo& samplerCreateInfo )
 {
     VkSampler sampler;
-    VK_CHECK( vkCreateSampler( device, &samplerCreateInfo, 0, &sampler ) );
+    VK_CHECK( vkCreateSampler( device, &samplerCreateInfo, nullptr, &sampler ) );
     return sampler;
 }
 inline VkResult vk_context::TimelineTryWaitFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime )
@@ -293,7 +293,7 @@ inline VkFence vk_context::AllocFence()
 
     VkFenceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 
-    VkFence fence;
+    VkFence fence = nullptr;
     VK_CHECK( vkCreateFence( device, &ci, nullptr, &fence ) );
 
     return fence;

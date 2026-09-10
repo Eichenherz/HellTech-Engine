@@ -25,7 +25,7 @@
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
 #include <ht_error.h>
-#include <ht_vector.h>
+#include <ht_array.h>
 
 #include <ht_atomic_stack.h>
 
@@ -1090,7 +1090,7 @@ void vk_context::CreateSwapchain()
 	u32 scImgsNum = 0;
 	VK_CHECK( vkGetSwapchainImagesKHR( device, this->swapchain, &scImgsNum, nullptr ) );
 
-    inline_vector<VkImage, 8> vkScImgs; // NOTE: already asserts on cap
+    inline_array<VkImage, 8> vkScImgs; // NOTE: already asserts on cap
     vkScImgs.resize( scImgsNum );
 	VK_CHECK( vkGetSwapchainImagesKHR( device, this->swapchain, &scImgsNum, std::data( vkScImgs ) ) );
 
@@ -1192,7 +1192,7 @@ u64 vk_context::QueueSubmit(
 	queue.submitLock.Acquire();
     defer{ queue.submitLock.Release(); };
 
-	inline_vector<VkSemaphoreSubmitInfo, 8> vecSignals = { std::from_range, signals };
+	inline_array<VkSemaphoreSubmitInfo, 8> vecSignals = { std::from_range, signals };
 
 	// NOTE: always signal ourselves
 	queue.submitCount++;

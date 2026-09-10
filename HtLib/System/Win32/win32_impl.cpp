@@ -206,9 +206,6 @@ template u128 SysAtomicCas128<sys_fence_t::NONE>( atomic_u128*, u128, u128 );
 template u128 SysAtomicCas128<sys_fence_t::ACQ>( atomic_u128*, u128, u128 );
 template u128 SysAtomicCas128<sys_fence_t::REL>( atomic_u128*, u128, u128 );
 template u128 SysAtomicCas128<sys_fence_t::SEQ_CST>( atomic_u128*, u128, u128 );
-template u128 SysAtomicRead128<sys_fence_t::NONE>( atomic_u128* );
-template u128 SysAtomicRead128<sys_fence_t::ACQ>( atomic_u128* );
-template u128 SysAtomicRead128<sys_fence_t::SEQ_CST>( atomic_u128* );
 template u64 SysAtomicAnd64<sys_fence_t::NONE>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_fence_t::ACQ>( atomic_u64*, u64 );
 template u64 SysAtomicAnd64<sys_fence_t::REL>( atomic_u64*, u64 );
@@ -251,19 +248,12 @@ void SysSemaphoreWait( sys_semaphore sema, u32 millisecs )
 // ---------------------------------------------------------------------------------------------------------------
 constexpr DWORD MakeGenericAccessFlags( file_permissions_flags openFlags )
 {
+    using enum file_permissions_bits;
 	DWORD access = 0;
 
-	if( openFlags & file_permissions_bits::READ )
-	{
-		access |= GENERIC_READ;
-	}
-
-	if( openFlags & file_permissions_bits::WRITE )
-	{
-		access |= GENERIC_WRITE;
-	}
-
-	if( ( openFlags & file_permissions_bits::READ ) && ( openFlags & file_permissions_bits::WRITE ) )
+	if( openFlags & READ ) { access |= GENERIC_READ; }
+	if( openFlags & WRITE ) { access |= GENERIC_WRITE; }
+	if( ( openFlags & READ ) && ( openFlags & WRITE ) )
 	{
 		access = GENERIC_ALL;
 	}
@@ -272,23 +262,19 @@ constexpr DWORD MakeGenericAccessFlags( file_permissions_flags openFlags )
 }
 constexpr DWORD MakeFileMappingFlags( file_permissions_flags openFlags )
 {
-	if( ( openFlags & file_permissions_bits::READ ) && ( openFlags & file_permissions_bits::WRITE ) )
-	{
-		return PAGE_READWRITE;
-	}
-	if( openFlags & file_permissions_bits::READ ) return PAGE_READONLY;
-	if( openFlags & file_permissions_bits::WRITE ) return PAGE_WRITECOPY;
+    using enum file_permissions_bits;
+	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return PAGE_READWRITE; }
+	if( openFlags & READ ) return PAGE_READONLY;
+	if( openFlags & WRITE ) return PAGE_WRITECOPY;
 
 	return 0;
 }
 constexpr DWORD MakeMapViewFlags( file_permissions_flags openFlags )
 {
-	if( ( openFlags & file_permissions_bits::READ ) && ( openFlags & file_permissions_bits::WRITE ) )
-	{
-		return FILE_MAP_ALL_ACCESS;
-	}
-	if( openFlags & file_permissions_bits::READ ) return FILE_MAP_READ;
-	if( openFlags & file_permissions_bits::WRITE ) return FILE_MAP_WRITE;
+    using enum file_permissions_bits;
+	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return FILE_MAP_ALL_ACCESS; }
+	if( openFlags & READ ) return FILE_MAP_READ;
+	if( openFlags & WRITE ) return FILE_MAP_WRITE;
 
 	return 0;
 }
@@ -318,11 +304,11 @@ constexpr DWORD MakeAccessFlags( file_access_flags accessFlags )
 	return 0;
 }
 
-u64 mmap_file::Timestamp()
+u64 mmap_file::Timestamp() const
 {
 	FILETIME fileTime = {};
 	WIN_CHECK( SUCCEEDED( GetFileTime( ( HANDLE ) hFile,
-		0, 0, &fileTime ) ) );
+		nullptr, nullptr, &fileTime ) ) );
 
 	ULARGE_INTEGER timestamp = {};
 	timestamp.LowPart = fileTime.dwLowDateTime;
@@ -348,7 +334,7 @@ mmap_file SysCreateMmapFile(
 	WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
 
 	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFileMappingAccess,
-		0, 0, 0 );
+		0, 0, nullptr );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hFileMapping );
 
 	DWORD	dwFileSizeHigh;
@@ -358,7 +344,7 @@ mmap_file SysCreateMmapFile(
 
 	u8* pData			= ( u8* ) MapViewOfFile( hFileMapping, dwDataViewAccess, 0,
 		0, qwFileSize );
-	WIN_CHECK( 0 != pData );
+	WIN_CHECK( pData );
 
 	return {
 		.hFile			= ( u64 ) hFile,

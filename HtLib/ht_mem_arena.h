@@ -3,7 +3,9 @@
 #ifndef __HT_MEM_ARENA_H__
 #define __HT_MEM_ARENA_H__
 
+#include <array>
 #include <iterator>
+#include <ranges>
 #include <span>
 
 #include <ht_core_types.h>
@@ -131,5 +133,76 @@ struct ht_mem_scope
 	NO_COPY();
 	NO_MOVE();
 };
+
+
+template<typename S, typename ELEM_T>
+concept storage_t = TRIVIAL_T<S>
+    && std::ranges::contiguous_range<decltype( S::mem )>
+    && std::same_as<std::ranges::range_value_t<decltype( S::mem )>, ELEM_T>
+    && requires( S s, u64 reqSzInElems )
+{
+    { s.Grow( reqSzInElems ) }  -> std::same_as<void>;
+    { S::CAN_GROW }             -> std::convertible_to<bool>;
+    { S::OWNS_ELEMENTS }        -> std::convertible_to<bool>;
+};
+
+template<TRIVIAL_T T, u64 N>
+struct inline_storage
+{
+    static constexpr bool   CAN_GROW        = false;
+    static constexpr bool   OWNS_ELEMENTS   = true;
+
+    std::array<T, N>        mem = {};
+
+    void    Grow( this inline_storage&, u64 reqSzInElems ) { HT_ASSERT( reqSzInElems <= N ); }
+};
+
+template<TRIVIAL_T T>
+struct borrowed_storage
+{
+    static constexpr bool   CAN_GROW        = false;
+    static constexpr bool   OWNS_ELEMENTS   = false;
+
+    std::span<T>            mem             = {};
+
+    void    Grow( this borrowed_storage& self, u64 reqSzInElems ) { HT_ASSERT( reqSzInElems <= std::size( self.mem ) ); }
+};
+
+template<TRIVIAL_T T, arena_t ARENA_T = linear_arena>
+struct arena_storage
+{
+    static constexpr bool   CAN_GROW        = true;
+    static constexpr bool   OWNS_ELEMENTS   = false;
+
+    std::span<T>            mem             = {};
+    ARENA_T*                pArena          = nullptr;
+
+    void    Grow( this arena_storage& self, u64 reqSzInElems );
+};
+
+template<TRIVIAL_T T, arena_t ARENA_T>
+void arena_storage<T, ARENA_T>::Grow( this arena_storage& self, u64 reqSzInElems )
+{
+    HT_ASSERT( self.pArena && ( reqSzInElems > std::size( self.mem ) ) );
+
+    u64 reqSzInBytes = reqSzInElems * sizeof( T );
+
+    if( 0 == std::size( self.mem ) )
+    {
+        self.mem = { ( T* ) self.pArena->Alloc( reqSzInBytes, alignof( T ) ), reqSzInElems };
+        return;
+    }
+
+    u64 memSzInBytes        = std::size( self.mem ) * sizeof( T );
+    u64 stretchedSzInBytes  = self.pArena->TryStretchAlloc(
+        { ( u8* ) std::data( self.mem ), memSzInBytes }, reqSzInBytes - memSzInBytes );
+    HT_ASSERT( ~0ull != stretchedSzInBytes );
+
+    self.mem = { std::data( self.mem ), stretchedSzInBytes / sizeof( T ) };
+}
+
+static_assert( storage_t<inline_storage<u8, 4>, u8>
+    && storage_t<borrowed_storage<u8>, u8>
+    && storage_t<arena_storage<u8>, u8> );
 
 #endif // !__HT_MEM_ARENA_H__

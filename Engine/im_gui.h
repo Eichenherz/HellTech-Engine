@@ -10,7 +10,7 @@
 
 #include <System/Win32/win32_kbd_scancodes.h>
 
-#include <ht_vector.h>
+#include <ht_array.h>
 
 struct im_gui_ctx
 {
@@ -88,7 +88,7 @@ constexpr u64 IMGUI_MAX_WIDGETS_PER_WINDOW = 8;
 
 struct imgui_window
 {
-	inline_vector<imgui_widget, IMGUI_MAX_WIDGETS_PER_WINDOW>	widgets;
+	inline_array<imgui_widget, IMGUI_MAX_WIDGETS_PER_WINDOW>	widgets;
 	imgui_window_name			                                name;
 	ImGuiWindowFlags			                                flags;
 };

@@ -3,7 +3,7 @@
 #include "engine_types.h"
 
 #include <ht_memory.h>
-#include <ht_vector.h>
+#include <ht_array.h>
 #include <ht_math.h>
 
 #include "ht_renderer_types.h"
@@ -216,8 +216,8 @@ void job_system_ctx::SubmitJob( job_t job )
 // Uploads
 struct upload_job_payload
 {
-	borrowed_vector<mesh_upload_req>	meshUploads         = {};
-	borrowed_vector<instance_desc>	    entitiesToPromote   = {};
+	borrowed_array<mesh_upload_req>	meshUploads         = {};
+	borrowed_array<instance_desc>	    entitiesToPromote   = {};
 	renderer_interface*			        pRI                 = nullptr;
 	HJOBFENCE32					        hUpload             = ~0u;
     u64                                 allocSzInBytes      = 0; // NOTE: we need this bc we are responsible for the alloc handle
@@ -266,11 +266,11 @@ struct helltech final : helltech_interface
 	renderer_dbg_draw					rndDbgFlags		= {};
 	renderer_interface*                 pRenderer		= {};
     // NOTE: these are hard capped, we don't care to grow free the mem OS will do it for us on program exit
-    borrowed_vector<instance_desc>		drawables		= {};
-	borrowed_vector<upload_job_payload*>jobCache		= {};
+    borrowed_array<instance_desc>		drawables		= {};
+	borrowed_array<upload_job_payload*>jobCache		= {};
 
-	borrowed_vector<ht_timed_zone>		timedZones		= {};
-	borrowed_vector<ht_pipeline_stats>	pipelinesStats	= {};
+	borrowed_array<ht_timed_zone>		timedZones		= {};
+	borrowed_array<ht_pipeline_stats>	pipelinesStats	= {};
 
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
@@ -284,7 +284,7 @@ struct helltech final : helltech_interface
 
 void ImGuiPrintPipelineStats( const void* pData )
 {
-    const borrowed_vector<ht_pipeline_stats>& htPipelineStats = *( const borrowed_vector<ht_pipeline_stats>* ) pData;
+    const borrowed_array<ht_pipeline_stats>& htPipelineStats = *( const borrowed_array<ht_pipeline_stats>* ) pData;
 	for( const ht_pipeline_stats& ps : htPipelineStats )
 	{
 		if( 0 != ps.inputAssemblyVtxNum ) ImGuiTxt( fixed_string<128>{ "{} IA vertices : {}",
@@ -313,7 +313,7 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 	                .pData  = pTimedZones,
 	                .Action = []( const void* pData )
 	                {
-	                    const borrowed_vector<ht_timed_zone>& timedZones = *( const borrowed_vector<ht_timed_zone>* ) pData;
+	                    const borrowed_array<ht_timed_zone>& timedZones = *( const borrowed_array<ht_timed_zone>* ) pData;
 	                    for( const ht_timed_zone& tz : timedZones )
 	                    {
 	                        ImGuiTxt( fixed_string<128>{ "{} : {}", tz.name, tz.timeMs } );

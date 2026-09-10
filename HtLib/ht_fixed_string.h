@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <format>
 #include <string_view>
 

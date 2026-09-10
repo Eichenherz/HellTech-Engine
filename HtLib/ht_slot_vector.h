@@ -1,97 +1,111 @@
 #pragma once
 
-#ifndef __HT_SLOT_VECTOR_H__
-#define __HT_SLOT_VECTOR_H__
+#ifndef __HT_SLOT_ARRAY_H__
+#define __HT_SLOT_ARRAY_H__
 
 #include <ht_core_types.h>
+#include <ht_error.h>
+#include <ht_array.h>
 
 
-// NOTE: this is capped at MAX_ENTRIES_RESERVED
+// NOTE: this is capped at HT_SLOT_MAX_ENTRIES
 
-template<typename T>
-struct slot_vector
+constexpr u64   HT_SLOT_BIT_WIDTH_MAX_IDX   = 20;
+constexpr u64   HT_SLOT_BIT_WIDTH_MAX_GENS  = 11;
+
+constexpr u64   HT_SLOT_MAX_ENTRIES         = 1ull << HT_SLOT_BIT_WIDTH_MAX_IDX;
+constexpr u32   HT_SLOT_MAX_GEN             = ( 1ull << HT_SLOT_BIT_WIDTH_MAX_GENS ) - 1;
+
+using ht_freelist_cursor = u32;
+
+template<TRIVIAL_T T>
+struct ht_array_slot_t
 {
-    static constexpr u64   BIT_WIDTH_MAX_IDX      = 20;
-    static constexpr u64   BIT_WIDTH_MAX_GENS     = 11;
-                           
-    static constexpr u64   MAX_ENTRIES_RESERVED   = 1ull << BIT_WIDTH_MAX_IDX;
-                           
-    static constexpr u32   SANTINEL_IDX           = MAX_ENTRIES_RESERVED - 1;
-    static constexpr u32   MAX_GEN                = ( 1ull << BIT_WIDTH_MAX_GENS ) - 1;
-
-    static constexpr u32   FREELIST_MARKER_U32    = 0xBAD;
-
-    struct freelist_cursor
-    {
-        u32 slotIdx    : BIT_WIDTH_MAX_IDX = SANTINEL_IDX;
-        u32 marker     : 12                = FREELIST_MARKER_U32;
+    u32 generation  = 0;
+    u32 hasItem     = false; // NOTE: all slots are empty basically
+    union {
+        T                   item;
+        ht_freelist_cursor  nextFree = ~0u;
     };
-    static_assert( sizeof( T ) >= sizeof( freelist_cursor ) );
-
-    struct hndl32 
-    { 
-        u32 slotIdx    : BIT_WIDTH_MAX_IDX; 
-        u32 generation : BIT_WIDTH_MAX_GENS;
-        u32 padding    : 1; 
-    };
-    // TODO: use our stretchy buff or allocator/arena
-    std::vector<T>                  items        = {};
-    freelist_cursor                 freelistHead = {};
-
-
-    u64 size() const { return std::size( items ); } // NOTE: bc we can have dead slots
-
-    T& operator[]( hndl32 h )
-    {
-        HT_ASSERT( h.slotIdx < std::size( items ) );
-        return items[ h.slotIdx ];
-    }
-
-    hndl32 PushEntry( const T& val = {} )
-    {
-        if( SANTINEL_IDX == freelistHead.slotIdx )
-        {
-            items.push_back( val );
-            return { .slotIdx = u32( std::size( items ) - 1 ) };//, .generation = newSlot.generation
-        };
-
-        u32 currentFreeSlotIdx = freelistHead.slotIdx;
-
-        freelist_cursor& currentFreelistCursor = ( freelist_cursor& ) items[ currentFreeSlotIdx ];
-        HT_ASSERT( FREELIST_MARKER_U32 == currentFreelistCursor.marker );
-
-        freelistHead.slotIdx = currentFreelistCursor.slotIdx;
-
-        std::memset( &items[ currentFreeSlotIdx ], 0, sizeof( items[ currentFreeSlotIdx ] ) );
-        new( &items[ currentFreeSlotIdx ] ) T( val );
-
-        return { .slotIdx = currentFreeSlotIdx };
-    }
-
-    void RemoveEntry( hndl32 h )
-    {
-        HT_ASSERT( h.slotIdx < std::size( items ) );
-
-        //HT_ASSERT( slots[ h.slotIdx ].valid );
-        //HT_ASSERT( slots[ h.slotIdx ].generation == h.generation );
-
-        items[ h.slotIdx ].~T();
-        std::memset( &items[ h.slotIdx ], 0, sizeof( items[ h.slotIdx ] ) );
-
-        freelist_cursor& currentFreeListCursor = ( freelist_cursor& ) items[ h.slotIdx ];
-        currentFreeListCursor = {};
-
-        currentFreeListCursor.slotIdx = freelistHead.slotIdx;
-        freelistHead.slotIdx = h.slotIdx;
-    }
-
-    inline static bool IsDeadSlot( const T& slotItem )
-    {
-        const freelist_cursor& currentFreeListCursor = ( freelist_cursor& ) slotItem;
-        return FREELIST_MARKER_U32 == currentFreeListCursor.marker;
-    }
-
 };
 
-#endif // !__HT_SLOT_VECTOR_H__
+template<TRIVIAL_T T, storage_t<ht_array_slot_t<T>> STORAGE_T>
+struct slot_array : ht_array<ht_array_slot_t<T>, STORAGE_T>
+{
+    struct hndl32
+    {
+        u32 slotIdx    : HT_SLOT_BIT_WIDTH_MAX_IDX;
+        u32 generation : HT_SLOT_BIT_WIDTH_MAX_GENS;
+        u32 padding    : 1;
+    };
 
+    ht_freelist_cursor  freelistHead = ~0u;
+
+    auto&   operator[]( this auto&& self, hndl32 h )
+    {
+        HT_ASSERT( h.slotIdx < std::size( self ) );
+
+        auto& slot = std::data( self )[ h.slotIdx ];
+        HT_ASSERT( slot.hasItem );
+        HT_ASSERT( slot.generation == h.generation );
+
+        return slot.item;
+    }
+};
+
+auto SlotArrayPushEntry( auto& self, const auto& val )
+{
+    using hndl32 = decltype( auto( self ) )::hndl32;
+
+    if( ~0u == self.freelistHead )
+    {
+        auto& newSlot = self.push_back( { .hasItem = true, .item = val } );
+        return hndl32{ .slotIdx = u32( &newSlot - std::data( self ) ), .generation = newSlot.generation };
+    }
+
+    u32     currentFreeSlotIdx  = self.freelistHead;
+    auto&   currentFreeSlot     = std::data( self )[ currentFreeSlotIdx ];
+    HT_ASSERT( !currentFreeSlot.hasItem );
+
+    self.freelistHead   = currentFreeSlot.nextFree;
+    currentFreeSlot     = { .generation = currentFreeSlot.generation, .hasItem = true, .item = val };
+
+    return hndl32{ .slotIdx = currentFreeSlotIdx, .generation = currentFreeSlot.generation };
+}
+
+auto SlotArrayRemoveEntry( auto& self, auto h )
+{
+    HT_ASSERT( h.slotIdx < std::size( self ) );
+
+    auto& slot = std::data( self )[ h.slotIdx ];
+    HT_ASSERT( slot.hasItem );
+    HT_ASSERT( slot.generation == h.generation );
+
+    auto removedItem = slot.item;
+
+    slot = {
+        .generation = ( slot.generation + 1 ) & HT_SLOT_MAX_GEN,
+        .hasItem    = false,
+        .nextFree   = self.freelistHead
+    };
+    self.freelistHead = h.slotIdx;
+
+    return removedItem;
+}
+
+template<TRIVIAL_T T, arena_t ARENA_T = linear_arena>
+using arena_slot_array      = slot_array<T, arena_storage<ht_array_slot_t<T>, ARENA_T>>;
+
+template<TRIVIAL_T T>
+using borrowed_slot_array   = slot_array<T, borrowed_storage<ht_array_slot_t<T>>>;
+
+template<TRIVIAL_T T, u64 N>
+using inline_slot_array     = slot_array<T, inline_storage<ht_array_slot_t<T>, N>>;
+
+template<TRIVIAL_T T, arena_t ARENA_T>
+borrowed_slot_array<T> HtMakeSlotArray( ARENA_T& arena, u64 slotCount )
+{
+    return { ArenaNewArray<ht_array_slot_t<T>>( arena, slotCount ) };
+}
+
+#endif // !__HT_SLOT_ARRAY_H__

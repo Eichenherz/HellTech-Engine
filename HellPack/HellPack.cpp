@@ -261,9 +261,9 @@ std::vector<__meshopt_lod> MeshoptGenerateLODChain( const raw_mesh& rawMesh, u64
 }
 
 template<TRIVIAL_T T>
-using mlt_attr_vector = inline_vector<T, RASTER_MAX_VTX_PER_MLT>;
+using mlt_attr_vector = inline_array<T, RASTER_MAX_VTX_PER_MLT>;
 
-using mlt_idx_vector = inline_vector<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
+using mlt_idx_vector = inline_array<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
 
 template<TRIVIAL_T T>
 inline mlt_attr_vector<T> GetMeshletLocalAttrStream(
@@ -329,8 +329,8 @@ std::vector<__hp_meshlet> MeshoptMakeHpMeshletsWithLod(
 	std::vector<__hp_meshlet> outMlts = {};
 	outMlts.reserve( std::size( meshlets ) );
 
-	inline_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempIndices32 = {}; // NOTE: bc we can't have simplify on u8
-	inline_vector<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempLod = {};
+	inline_array<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempIndices32 = {}; // NOTE: bc we can't have simplify on u8
+	inline_array<u32, RASTER_MAX_TRIS_PER_MLT * 3> mltTempLod = {};
 
 	constexpr float normalsWeight = 0.9f;
 	constexpr float attrWeights[] = { normalsWeight, normalsWeight, normalsWeight };

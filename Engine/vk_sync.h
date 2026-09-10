@@ -11,7 +11,7 @@
 #include "vk_resources.h"
 #include "vk_command_buffer.h"
 
-#include <ht_vector.h>
+#include <ht_array.h>
 #include <ankerl/unordered_dense.h>
 
 constexpr VkAccessFlags2 HT_SHADER_ACCESS_READ_WRITE = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
@@ -253,8 +253,8 @@ struct vk_rsc_state_tracker
 	using unordered_dense = ankerl::unordered_dense::map<Key, T>;
 
 	unordered_dense<vk_rsc_hndl64, vk_rsc_sync_state>	resourceStateTracker;
-	inline_vector<VkBufferMemoryBarrier2, 16>			buffBarrierCache;
-	inline_vector<VkImageMemoryBarrier2, 16>			imgBarrierCache;
+	inline_array<VkBufferMemoryBarrier2, 16>			buffBarrierCache;
+	inline_array<VkImageMemoryBarrier2, 16>			imgBarrierCache;
 
 	// NOTE: buffers will always be in VK_IMAGE_LAYOUT_MAX_ENUM aka INVALID
 	void UseBuffer( 
