@@ -12,6 +12,7 @@
 #include <array>
 
 #include <SPIRV-Reflect/spirv_reflect.h>
+#include <SPIRV-Reflect/spirv_reflect.c>
 
 #define VMA_IMPLEMENTATION
 
@@ -26,8 +27,6 @@
 #include <ht_vec_types.h>
 #include <ht_error.h>
 #include <ht_array.h>
-
-#include <ht_atomic_stack.h>
 
 #include "vk_error.h"
 #include "vk_context.h"
@@ -317,7 +316,7 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 		VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
 
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
-
+	    
 		VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
 
 		VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
@@ -335,7 +334,7 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 
 	VkPhysicalDeviceHostImageCopyProperties hostImgCopyProps =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_PROPERTIES };
-	VkPhysicalDeviceSubgroupProperties waveProps = 
+	VkPhysicalDeviceSubgroupProperties waveProps =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &hostImgCopyProps };
 	VkPhysicalDeviceVulkan14Properties gpuProps14 = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_PROPERTIES, &waveProps };
@@ -347,9 +346,9 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, &gpuProps12 };
 	VkPhysicalDeviceProperties2 gpuProps2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gpuProps11 };
 
-	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = 
+	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR };
-	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = 
+	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, &presentWaitFeatures };
 	VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &presentIdFeatures };
@@ -674,19 +673,30 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	};
 }
 
+constexpr u64 GPU_CACHELINE_SZ_IN_BYTES = 128;
 
 vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
+    if( buffInfo.isAtomic ) HT_ASSERT( buffInfo.sizeInBytes <= GPU_CACHELINE_SZ_IN_BYTES );
+    // TODO: find a better flag ?
+    u64 szInBytes = buffInfo.isAtomic ?
+        FwdAlignPot( buffInfo.sizeInBytes, GPU_CACHELINE_SZ_IN_BYTES )
+        : buffInfo.sizeInBytes;
+    // TODO: do this once at creation ?
+    u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
+
 	VkBufferCreateInfo bufferCreateInfo = { 
-		.sType			= VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size			= buffInfo.sizeInBytes,
-		.usage			= buffInfo.usageFlags,
-		.sharingMode	= VK_SHARING_MODE_EXCLUSIVE,
+		.sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size			        = szInBytes,
+		.usage			        = buffInfo.usageFlags,
+	    // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
+		.sharingMode	        = buffInfo.sharingMode,
+	    .queueFamilyIndexCount  = std::size( queueFamIdxCount ),
+	    .pQueueFamilyIndices    = queueFamIdxCount
 	};
 
-	VkMemoryPropertyFlags memPropFlags = VkChooseMemoryPropertiesFromBufferUsage( buffInfo.usage );
-
-	VmaAllocationCreateFlags allocFlags =
+	VkMemoryPropertyFlags       memPropFlags    = VkChooseMemoryPropertiesFromBufferUsage( buffInfo.usage );
+	VmaAllocationCreateFlags    allocFlags      =
 		VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT;
 	// TODO: do we do random access ?
 	if( memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
@@ -780,7 +790,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 
 vk_shader vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 {
-	HT_ASSERT( 0 != std::size( spvByteCode ) );
+	HT_ASSERT( std::size( spvByteCode ) );
 
 	SpvReflectShaderModule spvReflInfo;
 	VK_CHECK( ( VkResult ) spvReflectCreateShaderModule( std::size( spvByteCode ),
@@ -796,7 +806,7 @@ vk_shader vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 	};
 
 	VkShaderModule sm;
-	VK_CHECK( vkCreateShaderModule( device, &shaderModuleInfo, 0, &sm ) );
+	VK_CHECK( vkCreateShaderModule( device, &shaderModuleInfo, nullptr, &sm ) );
 
 	return {
 		.entryPoint = entryPt.name,

@@ -151,7 +151,7 @@ struct vk_context
 	borrowed_array<vk_resc_deletion>		resourceDeletionQueue;
 	borrowed_array<vk_desc_deletion>		descDeletionQueue;
 
-	inline_array<vk_swapchain_image, 6>	scImgs;
+	inline_array<vk_swapchain_image, 6>	    scImgs;
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	
@@ -169,9 +169,6 @@ struct vk_context
 	VmaAllocator							allocator;
 
 	VkSwapchainKHR		                    swapchain;
-
-	// TODO: sync when doing parallel uploads
-	inline_array<VkFence, 8>               copyFencesPool;
 
 	VkDescriptorPool						descPool;
 	VkDescriptorSetLayout					descSetLayout;
@@ -229,9 +226,6 @@ struct vk_context
 	// NOTE: passing UINT64_MAX will block forever
 	VkResult            TimelineTryWaitFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime );
 
-	VkFence             AllocFence();
-	bool                FenceWaitAndResetOnDone( VkFence vkFence, u64 timeoutNanosecs );
-
 	desc_hndl32         AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo );
 	void                EnqueueDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx )
 	{
@@ -281,33 +275,6 @@ inline VkResult vk_context::TimelineTryWaitFor( const vk_timeline& timeline, u64
         return vkWaitSemaphores( device, &waitInfo, waitTime );
     }
     return VK_SUCCESS;
-}
-inline VkFence vk_context::AllocFence()
-{
-    if( std::size( copyFencesPool ) != 0 )
-    {
-        VkFence fence = *std::rbegin( copyFencesPool );
-        copyFencesPool.pop_back();
-        return fence;
-    }
-
-    VkFenceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-
-    VkFence fence = nullptr;
-    VK_CHECK( vkCreateFence( device, &ci, nullptr, &fence ) );
-
-    return fence;
-}
-inline bool vk_context::FenceWaitAndResetOnDone( VkFence vkFence, u64 timeoutNanosecs )
-{
-    VkResult vkRes = vkWaitForFences( device, 1, &vkFence, VK_TRUE, timeoutNanosecs );
-    if( VK_TIMEOUT == vkRes ) return false;
-
-    HT_ASSERT( vkRes < VK_TIMEOUT );
-    vkResetFences( device, 1, &vkFence );
-
-    copyFencesPool.push_back( vkFence );
-    return true;
 }
 inline u32 vk_context::AcquireNextSwapchainImageBlocking( VkSemaphore canGetImgSema ) const
 {

@@ -31,10 +31,12 @@ enum class buffer_usage : u8
 
 struct buffer_info
 {
-	const char*        name;
-	VkBufferUsageFlags usageFlags;
-	u64                sizeInBytes;
-	buffer_usage       usage;
+	const char*         name;
+	VkBufferUsageFlags  usageFlags;
+    VkSharingMode       sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	u64                 sizeInBytes;
+	buffer_usage        usage;
+    bool                isAtomic = false;
 };
 
 struct image_info

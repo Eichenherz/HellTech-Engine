@@ -638,11 +638,13 @@ struct debug_draw_passes
 			.name			= "Buff_DbgDrawCount",
 			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY
+		    .usage			= buffer_usage::GPU_ONLY,
+            .isAtomic       = true
+
 		} );
 
 		drawCmdsBuff = pVkCtx->CreateBuffer( {
-			.name			= "Buff_DbgDrawCount",
+			.name			= "Buff_DbgDraws",
 			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( draw_instanced_indexed_indirect ),
 			.usage			= buffer_usage::GPU_ONLY
@@ -660,7 +662,8 @@ struct debug_draw_passes
 			.name			= "Buff_DbgGpuInstCount",
 			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY
+		    .usage			= buffer_usage::GPU_ONLY,
+            .isAtomic       = true
 		} );
 		gpuInstCountBuffIdx = pVkCtx->AllocDescriptorIdx( gpuInstCountBuff );
 
@@ -934,7 +937,8 @@ struct culling_pass
 			.name			= "Buff_DrawCount",
 			.usageFlags 	= usgStorageAndBDA | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 			.sizeInBytes 	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY
+			.usage			= buffer_usage::GPU_ONLY,
+		    .isAtomic       = true
 		} );
 		drawCounterIdx = pVkCtx->AllocDescriptorIdx( drawCounter );
 
@@ -975,7 +979,8 @@ struct culling_pass
 			.name			= "Buff_VisibleInstCounter",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY
+			.usage			= buffer_usage::GPU_ONLY,
+            .isAtomic       = true
 		} );
 
 		visibleInstCounterIdx = pVkCtx->AllocDescriptorIdx( visibleInstCounter );
@@ -993,7 +998,8 @@ struct culling_pass
 			.name			= "Buff_OccludedInstCounter",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY
+		    .usage			= buffer_usage::GPU_ONLY,
+            .isAtomic       = true
 		} );
 		occludedInstCounterIdx = pVkCtx->AllocDescriptorIdx( occludedInstancesCounter );
 
@@ -1010,7 +1016,8 @@ struct culling_pass
 			.name			= "Buff_MeshletsToProcessCount",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY
+		    .usage			= buffer_usage::GPU_ONLY,
+            .isAtomic       = true
 		} );
 		meshletsToProcessCounterIdx = pVkCtx->AllocDescriptorIdx( meshletsToProcessCounter );
 
@@ -1026,7 +1033,9 @@ struct culling_pass
 			.name			= "Buff_OccludedMeshletsCount",
 			.usageFlags		= usgStorageAndBDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY } );
+		    .usage			= buffer_usage::GPU_ONLY,
+            .isAtomic       = true
+		} );
 		occludedMeshletsCounterIdx = pVkCtx->AllocDescriptorIdx( occludedMeshletsCounter );
 	}
 
@@ -1212,14 +1221,16 @@ struct tone_mapping_pass
 			.name = "Buff_AvgLum",
 			.usageFlags = usageFlags,
 			.sizeInBytes = 1 * sizeof( float ),
-			.usage = buffer_usage::GPU_ONLY } );
+			.usage = buffer_usage::GPU_ONLY
+		} );
 		avgLumIdx = pVkCtx->AllocDescriptorIdx( averageLuminanceBuffer );
 
 		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
 			.name = "Buff_TonemappingAtomicWgCounter",
 			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } );
+			.usage = buffer_usage::GPU_ONLY
+		} );
 		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
 
 		luminanceHistogramBuffer = pVkCtx->CreateBuffer( {
@@ -1362,10 +1373,12 @@ struct depth_pyramid_pass
 		}
 
 		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
-			.name = "Buff_DownsamplerAtomicWgCounter",
-			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY } );
+			.name           = "Buff_DownsamplerAtomicWgCounter",
+			.usageFlags     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.sizeInBytes    = 1 * sizeof( u32 ),
+		    .usage          = buffer_usage::GPU_ONLY,
+            .isAtomic       = true
+		} );
 		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
 
 
@@ -1962,7 +1975,6 @@ struct renderer_context final : renderer_interface
     using slotmap = borrowed_slot_array<T>;
 
 	using mesh_hndl32	= slotmap<ht_mesh_component>::hndl32;
-	using fence_hndl32	= slotmap<VkFence>::hndl32;
 
 	alignas( 8 ) vk_renderer_config         config = {};
 
@@ -1977,8 +1989,6 @@ struct renderer_context final : renderer_interface
 	fwd_pass								fwdPass;
 	// NOTE: will hold all the renderer components, both available and pending upload
 	slotmap<ht_mesh_component>			    rendererComponents;
-
-	slotmap<VkFence>					    jobFences;
 
 	std::array<virtual_frame, MAX_FIF>	    vrtFrames;
 
@@ -2016,15 +2026,14 @@ struct renderer_context final : renderer_interface
 	void        InitBackend( u64 hInst, u64 hWnd ) override;
 
 	HRNDMESH32  AllocMeshComponent( const hpk_mesh_view& mesh ) override;
-	HJOBFENCE32 AllocJobFence() override
+	bool        PollJobCompletion( atomic_u64* hJobDoneSignal ) override
 	{
-		return std::bit_cast<HJOBFENCE32>( SlotArrayPushEntry( jobFences, pVkCtx->AllocFence() ) );
+	    // TODO: don't hardcode like this; but we know the upload flow here sooooo
+	    return VkGetTimelineSemaValue( pVkCtx->device, pVkCtx->copyQueue.timelineSema ) >=
+	        SysAtomicRead64<sys_fence_t::ACQ>( hJobDoneSignal );
 	}
-	bool        PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) override
-	{
-		return pVkCtx->FenceWaitAndResetOnDone( jobFences[ std::bit_cast<fence_hndl32>( hJobFence ) ], timeoutNanosecs );
-	}
-	void        UploadMeshes( HJOBFENCE32 hRndUpload, std::span<const mesh_upload_req>	meshAssets, linear_arena& arena ) override;
+	void        UploadMeshes( atomic_u64* hJobDoneSignal,
+	    std::span<const mesh_upload_req> meshAssets, linear_arena& arena ) override;
 
 	void        HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData ) override;
 
@@ -2099,18 +2108,22 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuMeshletBuff",
 		.usageFlags		= megaBuffUsg,
+	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( gpu_meshlet ),
-		.usage			= buffer_usage::GPU_ONLY
+		.usage			= buffer_usage::GPU_ONLY,
+
 	} );
 	megaGpuVtxAttrsBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuVtxAttrsBuff",
 		.usageFlags		= megaBuffUsg,
+	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		.sizeInBytes	= MAX_VERTICES_IN_SCENE * sizeof( packed_vtx_attr ),
 		.usage			= buffer_usage::GPU_ONLY
 	} );
 	megaGpuVtxPosBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuVtxPosBuff",
 		.usageFlags		= megaBuffUsg,
+	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		// NOTE: to u32 bc we'll unpack via that in the shader
 		.sizeInBytes	= FwdAlignPot( MAX_VERTICES_IN_SCENE * sizeof( u32x3 ), sizeof( u32 ) ),
 		.usage			= buffer_usage::GPU_ONLY
@@ -2120,6 +2133,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	megaGpuIdxBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuIdxBuff",
 		.usageFlags		= megaBuffUsg | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
 		// bounds accesses, essentially we'll read garbage data safely
 		.sizeInBytes	= FwdAlignPot( 3 * MAX_TRIANGLES_IN_SCENE * sizeof( index_t ), sizeof( u32 ) ),
@@ -2158,21 +2172,20 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	}
 
     rendererComponents  = HtMakeSlotArray<ht_mesh_component>( *pPersistentArena, 10'000 );
-    jobFences           = HtMakeSlotArray<VkFence>( *pPersistentArena, 10 );
 }
 
 HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 {
-	std::span<const u8> mltAsBytes				= AsBytes( mesh.meshlets );
-	std::span<const u8> vtxPosBitstreamAsBytes	= AsBytes( mesh.vtxPosBitstream );
-	std::span<const u8> vtxAttrsAsBytes			= AsBytes( mesh.vertexAttrs );
-	std::span<const u8> idxAsBytes				= AsBytes( mesh.indices );
+	std::span<const u8> mltAsBytes		= AsBytes( mesh.meshlets );
+	std::span<const u8> vtxPosAsBytes	= AsBytes( mesh.vtxPosBitstream );
+	std::span<const u8> vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs );
+	std::span<const u8> idxAsBytes		= AsBytes( mesh.indices );
 
-	HT_ASSERT( std::size( mltAsBytes ) && std::size( vtxPosBitstreamAsBytes )
-		&& std::size( vtxAttrsAsBytes ) && std::size( idxAsBytes ) );
+	HT_ASSERT( std::size( mltAsBytes ) && std::size( vtxPosAsBytes )
+	    && std::size( vtxAttrsAsBytes ) && std::size( idxAsBytes ) );
 
 	offset_alloc_t mltAlloc		= meshletAllocator.Alloc( ( u32 ) std::size( mltAsBytes ) );
-	offset_alloc_t vtxPosAlloc	= vtxPosAllocator.Alloc( ( u32 ) std::size( vtxPosBitstreamAsBytes ) );
+	offset_alloc_t vtxPosAlloc	= vtxPosAllocator.Alloc( ( u32 ) std::size( vtxPosAsBytes ) );
 	offset_alloc_t vtxAttrAlloc	= vtxAttrsAllocator.Alloc( ( u32 ) std::size( vtxAttrsAsBytes ) );
 	offset_alloc_t idxAlloc		= idxAllocator.Alloc( ( u32 ) std::size( idxAsBytes ) );
 
@@ -2204,7 +2217,7 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 }
 
 void renderer_context::UploadMeshes(
-	HJOBFENCE32							hRndUpload,
+	atomic_u64*					        hJobDoneSignal,
 	std::span<const mesh_upload_req>	meshUploadReqs,
 	linear_arena&						arena
 ) {
@@ -2278,33 +2291,7 @@ void renderer_context::UploadMeshes(
 
 	copyCmdBuff.CmdEndCmdBuffer();
 
-	u64 copyDoneWaitVal = pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff );
-
-	vk_command_buffer gfxCmdBuff = pVkCtx->AllocateCmdBufferForQueue( vk_queue_t::GFX );
-
-	arena_array<VkBufferMemoryBarrier2> buffTransferOwnershipBarriers{ &arena };
-	buffTransferOwnershipBarriers.reserve( barrierCount );
-
-	for( const VkBufferMemoryBarrier2& barr : buffEndCpyBarriers )
-	{
-		buffTransferOwnershipBarriers.push_back( VkMakeBufferBarrier( barr.buffer, 0, 0,
-			0, 0, barr.offset, barr.size,
-			pVkCtx->copyQueue.familyIdx, pVkCtx->gfxQueue.familyIdx ) );
-	}
-
-	gfxCmdBuff.CmdBeginCmdBuffer();
-	gfxCmdBuff.CmdPipelineBufferBarriers( buffTransferOwnershipBarriers );
-	gfxCmdBuff.CmdEndCmdBuffer();
-
-	VkSemaphoreSubmitInfo waitCpyDone[] = { {
-		.sType		= VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore	= pVkCtx->copyQueue.timelineSema,
-		.value		= copyDoneWaitVal,
-		.stageMask	= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-	} };
-
-	pVkCtx->QueueSubmit( pVkCtx->gfxQueue, gfxCmdBuff, waitCpyDone,
-	    {}, jobFences[ std::bit_cast<fence_hndl32>( hRndUpload ) ] );
+	SysAtomicWrite64<sys_fence_t::REL>( hJobDoneSignal, pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff ) );
 }
 
 u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )

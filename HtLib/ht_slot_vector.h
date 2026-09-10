@@ -83,11 +83,9 @@ auto SlotArrayRemoveEntry( auto& self, auto h )
 
     auto removedItem = slot.item;
 
-    slot = {
-        .generation = ( slot.generation + 1 ) & HT_SLOT_MAX_GEN,
-        .hasItem    = false,
-        .nextFree   = self.freelistHead
-    };
+    HT_ASSERT( ( slot.generation + 1 ) < HT_SLOT_MAX_GEN );
+
+    slot = { .generation = slot.generation + 1, .hasItem = false, .nextFree = self.freelistHead };
     self.freelistHead = h.slotIdx;
 
     return removedItem;

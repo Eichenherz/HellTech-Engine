@@ -103,7 +103,7 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
     ]
 
     if args.dbg:
-        cmd += ["-Zi", "-Qembed_debug", "-fspv-debug=vulkan-with-source"]
+        cmd += ["-Zi", "-Qembed_debug", "-fspv-debug=vulkan"]
     if args.opt:
         cmd += [f"-{args.opt}"]
 

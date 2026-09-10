@@ -217,10 +217,10 @@ void job_system_ctx::SubmitJob( job_t job )
 struct upload_job_payload
 {
 	borrowed_array<mesh_upload_req>	meshUploads         = {};
-	borrowed_array<instance_desc>	    entitiesToPromote   = {};
-	renderer_interface*			        pRI                 = nullptr;
-	HJOBFENCE32					        hUpload             = ~0u;
-    u64                                 allocSzInBytes      = 0; // NOTE: we need this bc we are responsible for the alloc handle
+	borrowed_array<instance_desc>	entitiesToPromote   = {};
+	renderer_interface*			    pRI                 = nullptr;
+	atomic_u64					    hUploadDoneSignal   = ~0ull; // NOTE: bc we check it against the timeline sema
+    u64                             allocSzInBytes      = 0; // NOTE: we need this bc we are responsible for the alloc handle
 };
 
 static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, u64 maxInstCap, renderer_interface* pRI )
@@ -240,7 +240,6 @@ static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, u64 maxInstCap, 
         .meshUploads        = { FromBytes<mesh_upload_req>( meshMem ) },
         .entitiesToPromote  = { FromBytes<instance_desc>( instMem ) },
         .pRI                = pRI,
-        .hUpload            = pRI->AllocJobFence(),
         .allocSzInBytes     = std::size( mem )
     };
 
@@ -250,7 +249,7 @@ static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, u64 maxInstCap, 
 void PfnRendererUploadJob( void* payload, linear_arena* arena )
 {
 	upload_job_payload* pJob = ( upload_job_payload* ) payload;
-	pJob->pRI->UploadMeshes( pJob->hUpload, pJob->meshUploads, *arena );
+	pJob->pRI->UploadMeshes( &pJob->hUploadDoneSignal, pJob->meshUploads, *arena );
 }
 
 // Engine
@@ -503,7 +502,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 	if( std::size( jobCache ) )
 	{
 		upload_job_payload* pPayload = jobCache[ 0 ];
-		if( pRenderer->PollJobFenceAndRemoveOnCompletion( pPayload->hUpload, 100'000 ) )
+		if( pRenderer->PollJobCompletion( &pPayload->hUploadDoneSignal ) )
 		{
 			drawables.append_range( pPayload->entitiesToPromote );
 		    jobCache.pop_back();

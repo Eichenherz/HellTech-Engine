@@ -45,7 +45,6 @@ endif()
 # Suppress static analysis on 3rdParty sources + spirv_reflect.c
 if(MSVC)
     set_source_files_properties(
-        spirv_reflect.c
         ${THIRD_PARTY}/imgui/imgui.cpp
         ${THIRD_PARTY}/imgui/imgui_draw.cpp
         ${THIRD_PARTY}/imgui/imgui_tables.cpp

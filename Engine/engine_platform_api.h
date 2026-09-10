@@ -109,9 +109,8 @@ struct renderer_interface
 {
     virtual void		    InitBackend( u64 hInst, u64 hWnd ) = 0;
     virtual HRNDMESH32	    AllocMeshComponent( const hpk_mesh_view& ) = 0;
-    virtual HJOBFENCE32     AllocJobFence() = 0;
-    virtual bool            PollJobFenceAndRemoveOnCompletion( HJOBFENCE32 hJobFence, u64 timeoutNanosecs ) = 0;
-    virtual void		    UploadMeshes( HJOBFENCE32, std::span<const mesh_upload_req>, linear_arena& ) = 0;
+    virtual bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) = 0;
+    virtual void		    UploadMeshes( atomic_u64*, std::span<const mesh_upload_req>, linear_arena& ) = 0;
     virtual void		    HostFrames( const frame_data&, linear_arena&, gpu_data& ) = 0;
 };
 

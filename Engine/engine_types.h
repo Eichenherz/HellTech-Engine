@@ -10,8 +10,9 @@
 
 #include <ht_fixed_string.h>
 #include <ht_array.h>
-
 #include <ht_math.h>
+
+#include <System/sys_sync.h>
 
 // CONVENTIONS -----------------------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -25,9 +26,10 @@ constexpr bool IS_WORLD_RH = CrossProd( WORLD_FWD, WORLD_LEFT ) == WORLD_UP;
 static_assert( IS_WORLD_RH, "Current convention is RH !!! But basis doesn't match" );
 // -----------------------------------------------------------------------------
 
-// TODO: these must be strong typed
+
+
+// TODO: should these be strong typed ?
 using HRNDMESH32    = u32;
-using HJOBFENCE32   = u32;
 
 enum class upload_t
 {
