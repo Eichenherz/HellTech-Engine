@@ -212,14 +212,12 @@ inline u32 VkGetQueueFamilyIndex(
 	{
 		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
 		{
-			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
-			bool hasTransfer = queueFamProps[ qfi ].queueFlags & VK_QUEUE_TRANSFER_BIT;
-			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
-			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
-			if( hasTransfer && !hasCompute && !hasGfx )
-			{
-				return qfi;
-			}
+			VkQueueFamilyProperties famProps    = queueFamProps[ qfi ];
+			bool                    hasTransfer = queueFamProps[ qfi ].queueFlags & VK_QUEUE_TRANSFER_BIT;
+			bool                    hasCompute  = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
+			bool                    hasGfx      = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
+
+			if( hasTransfer && !hasCompute && !hasGfx ) return qfi;
 		}
 	}
 
@@ -227,9 +225,9 @@ inline u32 VkGetQueueFamilyIndex(
 	{
 		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++)
 		{
-			VkQueueFamilyProperties famProps = queueFamProps[ qfi ];
-			bool hasCompute = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
-			bool hasGfx = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
+			VkQueueFamilyProperties famProps    = queueFamProps[ qfi ];
+			bool                    hasCompute  = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
+			bool                    hasGfx      = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
 			if( hasCompute && !hasGfx )
 			{
 				if( mustPresent )

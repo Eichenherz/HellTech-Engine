@@ -30,7 +30,7 @@
 #include <ht_math.h>
 #include <imgui.h>
 
-#include <ht_file.h>
+#include <System/sys_file.h>
 
 #include <DirectXPackedVector.h>
 
@@ -262,7 +262,7 @@ struct imgui_pass
 	static_assert( sizeof( ImDrawVert ) == sizeof( imgui_vertex ) );
 	static_assert( sizeof( ImDrawIdx ) == sizeof( index_t ) );
 
-	static constexpr u64					DEFAULT_BUFF_SIZE = 16 * KB;
+	static constexpr u64 DEFAULT_BUFF_SIZE = 16 * KB;
 
 	std::array<vk_buffer, MAX_FIF>		vtx = {};
 	std::array<vk_buffer, MAX_FIF>		idx = {};
@@ -281,12 +281,11 @@ struct imgui_pass
 	    i32 height  = 0;
 		ImGui::GetIO().Fonts->GetTexDataAsRGBA32( &pixels, &width, &height );
 
-		constexpr VkImageUsageFlags usgFlags = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 		fontAtlasImg = pVkCtx->CreateImage( {
 			.name		= "Img_ImGuiFonts",
 			.format		= VK_FORMAT_R8G8B8A8_UNORM,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= usgFlags,
+			.usgFlags	= VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 			.width		= ( u16 ) width,
 			.height		= ( u16 ) height,
 			.layerCount = 1,
@@ -518,8 +517,12 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 	VkDescriptorUpdateTemplate descTemplate = {};
 	VK_CHECK( vkCreateDescriptorUpdateTemplate( pVkCtx->device, &templateInfo, 0, &descTemplate ) );
 
-	vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_ImGuiVsMain.spirv" ) );
-	vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_ImGuiPsMain.spirv" ) );
+    scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
+
+	vk_shader vtx = pVkCtx->CreateShaderFromSpirv(
+	    SysReadFileBinary( "bin/SpirV/vertex_ImGuiVsMain.spirv", tempArena ) );
+	vk_shader frag = pVkCtx->CreateShaderFromSpirv(
+	    SysReadFileBinary( "bin/SpirV/pixel_ImGuiPsMain.spirv", tempArena ) );
 
 	defer {
 		pVkCtx->DestroyShaderModule( vtx.module );
@@ -587,8 +590,12 @@ struct debug_draw_passes
 
 	void Init( vk_renderer_config& rndCfg )
 	{
-		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_DbgBoxVsMain.spirv" ) );
-		vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_ColPassPsMain.spirv" ) );
+	    scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
+
+		vk_shader vtx = pVkCtx->CreateShaderFromSpirv(
+		    SysReadFileBinary( "bin/SpirV/vertex_DbgBoxVsMain.spirv", tempArena ) );
+		vk_shader frag = pVkCtx->CreateShaderFromSpirv(
+		    SysReadFileBinary( "bin/SpirV/pixel_ColPassPsMain.spirv", tempArena ) );
 
 		defer {
 			pVkCtx->DestroyShaderModule( vtx.module );
@@ -628,7 +635,7 @@ struct debug_draw_passes
 		//	1, rndCfg.desiredDepthFormat, triDrawPipelineState );
 
 		vk_shader recordDbgDraw = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_RecordDbgDrawCsMain.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_RecordDbgDrawCsMain.spirv", tempArena ) );
 		defer {  pVkCtx->DestroyShaderModule( recordDbgDraw.module ); };
 
 		compRecordDbgDraw = pVkCtx->CreateComputePipeline( recordDbgDraw );
@@ -902,24 +909,26 @@ struct culling_pass
 
 	void Init()
 	{
-		vk_shader instCull = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
-			"bin/SpirV/compute_DrawCullCsMain.spirv" ) );
+		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
+
+		vk_shader instCull = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+			"bin/SpirV/compute_DrawCullCsMain.spirv", tempArena ) );
 		instCullPass = pVkCtx->CreateComputePipeline( instCull );
 
-		vk_shader instExp = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
-			"bin/SpirV/compute_ExpandDrawsCsMain.spirv" ) );
+		vk_shader instExp = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+			"bin/SpirV/compute_ExpandDrawsCsMain.spirv", tempArena ) );
 		instExpansionPass = pVkCtx->CreateComputePipeline( instExp );
 
 		vk_shader dispatcher = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv", tempArena ) );
 		indirectDispatchPass = pVkCtx->CreateComputePipeline( dispatcher );
 
 		vk_shader meshletCs = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_MeshletCullCsMain.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_MeshletCullCsMain.spirv", tempArena ) );
 		meshletCullPass = pVkCtx->CreateComputePipeline( meshletCs );
 
 		vk_shader initCs = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_CsMainCullingInit.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_CsMainCullingInit.spirv", tempArena ) );
 		cullingInitPass = pVkCtx->CreateComputePipeline( initCs );
 
 		defer {
@@ -1202,12 +1211,14 @@ struct tone_mapping_pass
 
 	void Init()
 	{
+		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
+
 		vk_shader avgLum = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_AvgLuminanceCsMain.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_AvgLuminanceCsMain.spirv", tempArena ) );
 		compAvgLumPipe = pVkCtx->CreateComputePipeline( avgLum );
 
 		vk_shader toneMapper = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_TonemappingGammaCsMain.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_TonemappingGammaCsMain.spirv", tempArena ) );
 		compTonemapPipe = pVkCtx->CreateComputePipeline( toneMapper );
 
 		defer {
@@ -1331,14 +1342,16 @@ struct depth_pyramid_pass
 
 	void Init( u16 srcWidth, u16 srcHeight )
 	{
+		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
+
 		vk_shader downsampler = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv", tempArena ) );
 		defer { pVkCtx->DestroyShaderModule( downsampler.module ); };
 
 		multiPassPipeline = pVkCtx->CreateComputePipeline( downsampler );
 
 		vk_shader pow2DownsamplerShader = pVkCtx->CreateShaderFromSpirv(
-			ReadFileBinary( "bin/SpirV/compute_DownsamplerCsMain.spirv" ) );
+			SysReadFileBinary( "bin/SpirV/compute_DownsamplerCsMain.spirv", tempArena ) );
 		defer { pVkCtx->DestroyShaderModule( pow2DownsamplerShader.module ); };
 
 		pow2DownsamplerPipeline = pVkCtx->CreateComputePipeline( pow2DownsamplerShader );
@@ -1569,8 +1582,10 @@ struct vbuffer_pass
 
 		vbuffRG32Srv = pVkCtx->AllocDescriptorIdx( { vbuffRG32Target.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/vertex_VBufferVsMain.spirv" ) );
-		vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary( "bin/SpirV/pixel_VBufferPsMain.spirv" ) );
+		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
+
+		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary( "bin/SpirV/vertex_VBufferVsMain.spirv", tempArena ) );
+		vk_shader frag = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary( "bin/SpirV/pixel_VBufferPsMain.spirv", tempArena ) );
 
 		defer {
 			pVkCtx->DestroyShaderModule( vtx.module );
@@ -1595,10 +1610,10 @@ struct vbuffer_pass
 		    depthFormat, vbuffState, pVkCtx->globalPipelineLayout );
 
 		vk_shader comp = pVkCtx->CreateShaderFromSpirv(
-				ReadFileBinary( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv" ) );
+				SysReadFileBinary( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv", tempArena ) );
 		compDbgHashTriToScPipeline = pVkCtx->CreateComputePipeline( comp );
 		vk_shader lambert = pVkCtx->CreateShaderFromSpirv(
-				ReadFileBinary( "bin/SpirV/compute_LambertianClayCsMain.spirv" ) );
+				SysReadFileBinary( "bin/SpirV/compute_LambertianClayCsMain.spirv", tempArena ) );
 		compLambertianClay = pVkCtx->CreateComputePipeline( lambert );
 
 		defer {
@@ -1745,8 +1760,10 @@ struct fwd_pass
 
 	void Init( VkFormat depthFormat, VkFormat colorFormat )
 	{
-		vk_shader vtxDepth = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
-				"bin/SpirV/vertex_DepthPrepassVsMain.spirv" ) );
+		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
+
+		vk_shader vtxDepth = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+				"bin/SpirV/vertex_DepthPrepassVsMain.spirv", tempArena ) );
 
 		vk_gfx_pso_config depthPrepassState = {
 			.polyMode			= VK_POLYGON_MODE_FILL,
@@ -1765,10 +1782,10 @@ struct fwd_pass
 		gfxDepthPrepass = pVkCtx->CreateGfxPipeline( shaderStagesDepth, dynamicStatesDepth, {},
 		    depthFormat, depthPrepassState, pVkCtx->globalPipelineLayout );
 
-		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
-				"bin/SpirV/vertex_MeshletPassVsMain.spirv" ) );
-		vk_shader frag = pVkCtx->CreateShaderFromSpirv( ReadFileBinary(
-			"bin/SpirV/pixel_MeshletClayPassPsMain.spirv" ) );
+		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+				"bin/SpirV/vertex_MeshletPassVsMain.spirv", tempArena ) );
+		vk_shader frag = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+			"bin/SpirV/pixel_MeshletClayPassPsMain.spirv", tempArena ) );
 
 		vk_gfx_pso_config gfxState = {
 			.polyMode				= VK_POLYGON_MODE_FILL,
@@ -2221,9 +2238,9 @@ void renderer_context::UploadMeshes(
 	std::span<const mesh_upload_req>	meshUploadReqs,
 	linear_arena&						arena
 ) {
-	ht_mem_scope memScope = { arena };
+	scoped_arena tempArena = { arena };
 
-	borrowed_array<u8> stagingScratch = { VkBufferHostView<u8>( stagingBuff ) };
+	borrowed_array<u8> stagingScratch = VkBufferHostView<u8>( stagingBuff );
 
 	u64 barrierCount = std::size( meshUploadReqs ) * 4;
 	u64 copyCmdCount = std::size( meshUploadReqs );
@@ -2326,7 +2343,7 @@ u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_da
 
 void renderer_context::HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData )
 {
-	ht_mem_scope memScope               = { scratchArena };
+	scoped_arena tempArena              = { scratchArena };
 
 	const u64 currentFrameIdx			= vFrameIdx++;
 	const u32 currentFrameInFlightIdx	= currentFrameIdx % framesInFlight;
@@ -2487,7 +2504,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 
 	rscStateTracker.UseImage( colorTarget, HT_COLOR_TARGET_OUT_READWRITE, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL );
 	rscStateTracker.FlushBarriers( thisFrameCmdBuff );
-	// TODO: MUST ONLY DRAW WE RECORD THE STATE BEFORE THIS, at beg frame
+	// TODO: MUST ONLY DRAW; WE RECORD THE STATE BEFORE THIS, at beg frame
 	imguiPass.DrawUiPass( thisFrameCmdBuff.hndl, colorTarget, currentFrameIdx, currentFrameInFlightIdx );
 
 	// NOTE: init swapchain

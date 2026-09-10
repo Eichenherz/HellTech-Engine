@@ -43,12 +43,10 @@ constexpr u64 HT_ASAN_MIN_ALIGN	= 1;
 template<typename T>
 concept arena_t = requires( T a, std::span<u8> alloc, u64 bytes, u64 alignment, u64 mark )
 {
-	{ a.mem }				                -> std::convertible_to<u8*>;
-	{ a.offsetInBytes }				        -> std::convertible_to<u64>;
-	{ a.sizeInBytes }				        -> std::convertible_to<u64>;
     { a.Alloc( bytes, alignment ) }         -> std::same_as<void*>;
     { a.TryStretchAlloc( alloc, bytes ) }   -> std::same_as<u64>;
 	{ a.Rewind( mark ) }			        -> std::same_as<void>;
+    { a.Mark() }                            -> std::same_as<u64>;
 };
 
 struct linear_arena
@@ -67,6 +65,7 @@ struct linear_arena
         HT_ASSERT( ( nullptr != mem ) && ( 0 != sizeInBytes ) );
     }
 
+    u64     Mark() const { return offsetInBytes; }
     void    Rewind( u64 markInBytes )
     {
         HT_ASSERT( markInBytes <= sizeInBytes );
@@ -127,13 +126,28 @@ struct ht_mem_scope
 	Arena&	arena;
 	u64		baseFrameOffset;
 
-    ht_mem_scope( Arena& a ) : arena{ a }, baseFrameOffset{ a.offsetInBytes }{}
+    ht_mem_scope( Arena& a ) : arena{ a }, baseFrameOffset{ a.Mark() }{}
     ~ht_mem_scope() { arena.Rewind( baseFrameOffset ); }
 
 	NO_COPY();
 	NO_MOVE();
 };
 
+template<arena_t Arena>
+struct scoped_arena : ht_mem_scope<Arena>
+{
+    scoped_arena( Arena& a ) : ht_mem_scope<Arena>{ a }{}
+
+    u64     Mark( this auto&& self ) { return self.arena.Mark(); }
+    void    Rewind( this auto&& self, u64 markInBytes ) { self.arena.Rewind( markInBytes ); }
+    void*   Alloc( this auto&& self, u64 szInBytes, u64 alignment ) { return self.arena.Alloc( szInBytes, alignment ); }
+    u64     TryStretchAlloc( this auto&& self, std::span<u8> alloc, u64 stretchInBytes )
+    {
+        return self.arena.TryStretchAlloc( alloc, stretchInBytes );
+    }
+
+    operator Arena&( this auto&& self ) { return self.arena; }
+};
 
 template<typename S, typename ELEM_T>
 concept storage_t = TRIVIAL_T<S>

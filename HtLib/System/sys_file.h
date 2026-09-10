@@ -4,8 +4,10 @@
 #define __SYS_FILE_H__
 
 #include <ht_core_types.h>
+#include <ht_mem_arena.h>
 #include <span>
 
+std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena );
 
 enum file_permissions_bits : u64
 {

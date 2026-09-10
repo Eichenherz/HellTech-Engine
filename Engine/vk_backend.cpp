@@ -680,8 +680,7 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
     if( buffInfo.isAtomic ) HT_ASSERT( buffInfo.sizeInBytes <= GPU_CACHELINE_SZ_IN_BYTES );
     // TODO: find a better flag ?
     u64 szInBytes = buffInfo.isAtomic ?
-        FwdAlignPot( buffInfo.sizeInBytes, GPU_CACHELINE_SZ_IN_BYTES )
-        : buffInfo.sizeInBytes;
+        FwdAlignPot( buffInfo.sizeInBytes, GPU_CACHELINE_SZ_IN_BYTES ) : buffInfo.sizeInBytes;
     // TODO: do this once at creation ?
     u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
 
@@ -691,8 +690,9 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 		.usage			        = buffInfo.usageFlags,
 	    // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
 		.sharingMode	        = buffInfo.sharingMode,
-	    .queueFamilyIndexCount  = std::size( queueFamIdxCount ),
-	    .pQueueFamilyIndices    = queueFamIdxCount
+	    .queueFamilyIndexCount  =
+	        ( VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode ) ? ( u32 ) std::size( queueFamIdxCount ) : 0,
+	    .pQueueFamilyIndices    = ( VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode ) ? queueFamIdxCount : 0
 	};
 
 	VkMemoryPropertyFlags       memPropFlags    = VkChooseMemoryPropertiesFromBufferUsage( buffInfo.usage );

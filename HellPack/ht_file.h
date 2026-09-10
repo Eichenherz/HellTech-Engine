@@ -8,8 +8,8 @@
 
 #include <stdio.h>
 
-#include "ht_core_types.h"
-#include "ht_error.h"
+#include <ht_core_types.h>
+#include <ht_error.h>
 
 // NOTE: we use C lib here bc we're lazy and there's no point in using platform specific stuff for this
 inline void WriteFileBinary( const char* path, std::span<const u8> bytes )

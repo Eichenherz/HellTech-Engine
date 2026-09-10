@@ -15,7 +15,8 @@ void*	ht_os_virtual_reserve( u64 sizeInBytes )
 void	ht_os_virtual_release( void* mem ) { WIN_CHECK( VirtualFree( mem, 0, MEM_RELEASE ) ); }
 void*	ht_os_virtual_commit( void* mem, u64 sizeInBytes )
 {
-	u64 alignedSize = ( ( sizeInBytes + OS_COMMIT_PAGE_SIZE_IN_BYTES - 1 ) / OS_COMMIT_PAGE_SIZE_IN_BYTES ) * OS_COMMIT_PAGE_SIZE_IN_BYTES;
+	u64 alignedSize = ( ( sizeInBytes + OS_COMMIT_PAGE_SIZE_IN_BYTES - 1 )
+	    / OS_COMMIT_PAGE_SIZE_IN_BYTES ) * OS_COMMIT_PAGE_SIZE_IN_BYTES;
 
 	void* newBase = VirtualAlloc( mem, alignedSize, MEM_COMMIT, PAGE_READWRITE );
 	WIN_CHECK( newBase );
@@ -225,7 +226,7 @@ template void SysAtomicWrite64<sys_fence_t::NONE>( atomic_u64*, u64 );
 template void SysAtomicWrite64<sys_fence_t::REL>( atomic_u64*, u64 );
 template void SysAtomicWrite64<sys_fence_t::SEQ_CST>( atomic_u64*, u64 );
 
-sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( NULL, 0, LONG_MAX, NULL ) }
+sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( 0, 0, LONG_MAX, 0 ) }
 {
 	WIN_CHECK( NULL != ( HANDLE ) hndl );
 }
@@ -246,6 +247,29 @@ void SysSemaphoreWait( sys_semaphore sema, u32 millisecs )
 // ---------------------------------------------------------------------------------------------------------------
 #include <System/sys_file.h>
 // ---------------------------------------------------------------------------------------------------------------
+static u64 WinGetFileSizeInBytes( HANDLE hFile )
+{
+    LARGE_INTEGER largeInt;
+    WIN_CHECK( GetFileSizeEx( hFile, &largeInt ) );
+    return largeInt.QuadPart;
+}
+
+std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena )
+{
+    HANDLE hFile = CreateFileA( path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr );
+    HT_ASSERT( INVALID_HANDLE_VALUE != hFile );
+    defer { WIN_CHECK( CloseHandle( hFile ) ); };
+
+    u64     szInBytes       = WinGetFileSizeInBytes( hFile );
+    void*   mem             = arena.Alloc( szInBytes, 1 );
+    DWORD   readSzInBytes   = 0;
+    WIN_CHECK( ReadFile( hFile, mem, ( DWORD ) szInBytes, &readSzInBytes, nullptr ) );
+    HT_ASSERT( ( DWORD ) szInBytes == readSzInBytes );
+
+    return { ( u8* ) mem, szInBytes };
+}
+
 constexpr DWORD MakeGenericAccessFlags( file_permissions_flags openFlags )
 {
     using enum file_permissions_bits;
@@ -335,12 +359,10 @@ mmap_file SysCreateMmapFile(
 
 	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFileMappingAccess,
 		0, 0, nullptr );
-	WIN_CHECK( INVALID_HANDLE_VALUE != hFileMapping );
+	WIN_CHECK( hFileMapping );
 
-	DWORD	dwFileSizeHigh;
-	u64		qwFileSize	= GetFileSize( hFile, &dwFileSizeHigh );
-	qwFileSize			+= u64( dwFileSizeHigh ) << 32;
-	WIN_CHECK( 0 != qwFileSize );
+	u64		qwFileSize	= WinGetFileSizeInBytes( hFile );
+	WIN_CHECK( qwFileSize );
 
 	u8* pData			= ( u8* ) MapViewOfFile( hFileMapping, dwDataViewAccess, 0,
 		0, qwFileSize );

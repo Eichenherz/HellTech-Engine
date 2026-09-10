@@ -142,7 +142,6 @@ struct vk_desc_binding
     }
 };
 
-// TODO: make sure the gpu atomics are aligned !
 struct vk_context
 {
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
@@ -155,8 +154,8 @@ struct vk_context
 
 	std::array<vk_desc_binding, NUM_DESC>   descBindingSlots;
 	
-	copyable_srwlock                        descUpdatesLock;
-	borrowed_array<vk_descriptor_write>    descPendingUpdates;
+	copyable_srwlock                        descUpdatesLock; // TODO: use a concurrent queue
+	borrowed_array<vk_descriptor_write>     descPendingUpdates;
 
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;

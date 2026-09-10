@@ -286,19 +286,19 @@ void ImGuiPrintPipelineStats( const void* pData )
     const borrowed_array<ht_pipeline_stats>& htPipelineStats = *( const borrowed_array<ht_pipeline_stats>* ) pData;
 	for( const ht_pipeline_stats& ps : htPipelineStats )
 	{
-		if( 0 != ps.inputAssemblyVtxNum ) ImGuiTxt( fixed_string<128>{ "{} IA vertices : {}",
+		if( ps.inputAssemblyVtxNum ) ImGuiTxt( fixed_string<128>{ "{} IA vertices : {}",
 			ps.name, ps.inputAssemblyVtxNum } );
-		if( 0 != ps.inputAssemblyPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} IA primitives : {}",
+		if( ps.inputAssemblyPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} IA primitives : {}",
 			ps.name, ps.inputAssemblyPrimitiveNum } );
-		if( 0 != ps.vsInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} VS invocations : {}",
+		if( ps.vsInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} VS invocations : {}",
 			ps.name, ps.vsInvocationNum } );
-		if( 0 != ps.clipInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} Clip invocations : {}",
+		if( ps.clipInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} Clip invocations : {}",
 			ps.name, ps.clipInvocationNum } );
-		if( 0 != ps.clipPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} Clip primitives : {}",
+		if( ps.clipPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} Clip primitives : {}",
 			ps.name, ps.clipPrimitiveNum } );
-		if( 0 != ps.psInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} PS invocations : {}",
+		if( ps.psInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} PS invocations : {}",
 			ps.name, ps.psInvocationCount } );
-		if( 0 != ps.csInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} CS invocations : {}",
+		if( ps.csInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} CS invocations : {}",
 			ps.name, ps.csInvocationCount } );
 	}
 }
