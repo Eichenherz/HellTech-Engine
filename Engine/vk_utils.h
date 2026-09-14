@@ -329,5 +329,14 @@ inline u64 VkGetTimelineSemaValue( VkDevice vkDevice, VkSemaphore timelineSema )
     return val;
 }
 
+inline VkSemaphoreSubmitInfo VkGetSemaSubmit( VkSemaphore sema, VkPipelineStageFlags2 stageMask, u64 waitVal = 0 )
+{
+    return {
+        .sType      = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .semaphore  = sema,
+        .value      = waitVal,
+        .stageMask  = stageMask,
+    };
+}
 #endif // !__VK_UTILS_H__
 

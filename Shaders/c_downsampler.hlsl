@@ -365,6 +365,11 @@ void DownsamplerCsMain( u32 localLinearID : SV_GroupIndex, u32x3 workgroupID : S
 
     if( (  MAX_WORKGROUP_COUNT - 1 ) != ldsWorkgrIdx ) return;
 
+    if( 0 == localLinearID )
+    {
+        BufferStore<u32>( pushBlock.atomicWgCounterIdx, 0, 0 );
+    }
+
     float4 q6 = DownsampleMip6( quadID, pushBlock.mip0Resolution >> 5 );
 
     // From here on the stages mostly reapeat

@@ -7,12 +7,19 @@
 
 #include <ht_core_types.h>
 #define __VK // NOTE: used to not include all the vk shit everywhere
-#include "ht_renderer_types.h"
+
+#include <ht_macros.h>
+#include <ht_array.h>
+
 
 #include "vk_types.h"
 #include "vk_resources.h"
+#include "vk_sync.h"
 
+#include <algorithm>
 #include <span>
+#include <ranges>
+
 
 inline u32 GroupCount( u32 invocationCount, u32 workGroupSize )
 {
@@ -37,6 +44,8 @@ concept DRAW_INDEXED_CMD_T = requires( T t )
 
 struct vk_scoped_label
 {
+    NO_COPY(); NO_MOVE();
+
 	VkCommandBuffer cmdBuff;
 
 	vk_scoped_label( VkCommandBuffer cmdBuff, const char* labelName, float4 col ) : cmdBuff{ cmdBuff }
@@ -73,6 +82,8 @@ struct vk_gfx_dynamic_state
 
 struct vk_scoped_renderpass
 {
+    NO_COPY(); NO_MOVE();
+
 	VkCommandBuffer cmdBuff;
 
 	vk_scoped_renderpass( VkCommandBuffer _cmdBuff, const VkRenderingInfo& renderInfo )
@@ -88,6 +99,8 @@ struct vk_scoped_renderpass
 
 struct vk_scoped_timestamp
 {
+    NO_COPY(); NO_MOVE();
+
 	VkCommandBuffer 				cmdBuff;
 	VkQueryPool						queryPool;
 	VkPipelineStageFlagBits2		stageBegin;
@@ -119,10 +132,13 @@ struct vk_scoped_timestamp
 struct vk_command_buffer
 {
     vk_cmd_pool         cmdPool                 = {};
+
 	VkCommandBuffer		hndl					= VK_NULL_HANDLE;
 	VkPipelineLayout	bindlessPipelineLayout 	= VK_NULL_HANDLE;
 	VkDescriptorSet		bindlessDescriptorSet 	= VK_NULL_HANDLE;
+
 	VkPipelineBindPoint currentBindPoint		= { VK_PIPELINE_BIND_POINT_MAX_ENUM };
+
 	vk_queue_t			parentQueueId		    = vk_queue_t::COUNT;
 
 	void CmdBeginCmdBuffer()
@@ -133,7 +149,6 @@ struct vk_command_buffer
 		};
 		VK_CHECK( vkBeginCommandBuffer( hndl, &cmdBufBegInfo ) );
 	}
-
 	void CmdEndCmdBuffer() { VK_CHECK( vkEndCommandBuffer( hndl ) ); }
 
 	vk_scoped_label CmdIssueScopedLabel( const char* labelName, float4 col = {} ) { return { hndl, labelName, col }; }
@@ -240,21 +255,6 @@ struct vk_command_buffer
 			0, maxDrawCount, sizeof( T ) );
 	}
 
-	void CmdPipelineBarriers(
-		std::span<const VkBufferMemoryBarrier2> buffBarriers, 
-		std::span<const VkImageMemoryBarrier2>	imgBarriers
-	) const 
-	{
-		VkDependencyInfo dependency = {
-			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.bufferMemoryBarrierCount	= ( u32 ) std::size( buffBarriers ),
-			.pBufferMemoryBarriers		= std::data( buffBarriers ),
-			.imageMemoryBarrierCount	= ( u32 ) std::size( imgBarriers ),
-			.pImageMemoryBarriers		= std::data( imgBarriers ),
-		};
-		vkCmdPipelineBarrier2( hndl, &dependency );
-	}
-
 	void CmdCopyBuffer( const vk_buffer& src, const vk_buffer& dst, std::span<const VkBufferCopy2> copyRegions )
 	{
 		VkCopyBufferInfo2 cpyInfo = {
@@ -329,6 +329,52 @@ struct vk_command_buffer
 		vkCmdCopyBufferToImage( hndl, src.hndl, dst.hndl, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imgCopyRegion );
 	}
 
+    void CmdBarrier(
+        ht_sync_exec_mask                           srcStage,
+        ht_sync_exec_mask                           dstStage,
+        ht_sync_cache_flush_mask                    flushMask,
+        ht_sync_cache_inval_mask                    invalMask,
+        std::span<const ht_img_layout_transition>   transitions = {}
+    ) {
+	    VkMemoryBarrier2 memBarrier = VkMakeBarrier( srcStage, flushMask, dstStage, invalMask );
+	    inline_array<VkImageMemoryBarrier2, 16> imgBarriers = { std::from_range,
+	        transitions | std::views::transform( [ & ]( const ht_img_layout_transition& t ) {
+	            return VkMakeImageBarrier( t.img, srcStage, HtSyncFlushFromLayout( t.srcLayout ),
+	                dstStage, HtSyncInvalFromLayout( t.dstLayout ), t.srcLayout, t.dstLayout );
+	        } ) };
+	    VkDependencyInfo dependency = {
+	        .sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount	        = 1,
+            .pMemoryBarriers		    = &memBarrier,
+            .imageMemoryBarrierCount	= ( u32 ) std::size( imgBarriers ),
+            .pImageMemoryBarriers		= std::data( imgBarriers ),
+        };
+	    vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+    void CmdBarrier(
+        ht_sync_exec_mask                 srcStage,
+        ht_sync_exec_mask                 dstStage,
+        ht_sync_cache_flush_mask          flushMask,
+        ht_sync_cache_inval_mask          invalMask,
+        const ht_img_layout_transition&   transitions
+    ) {
+	    return CmdBarrier( srcStage, dstStage, flushMask, invalMask, std::array{ transitions } );
+	}
+    void CmdPipelineBarriers(
+        std::span<const VkMemoryBarrier2>       memBarriers,
+        std::span<const VkImageMemoryBarrier2>	imgBarriers
+    ) const
+	{
+	    VkDependencyInfo dependency = {
+	        .sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount	        = ( u32 ) std::size( memBarriers ),
+            .pMemoryBarriers		    = std::data( memBarriers ),
+            .imageMemoryBarrierCount	= ( u32 ) std::size( imgBarriers ),
+            .pImageMemoryBarriers		= std::data( imgBarriers ),
+        };
+	    vkCmdPipelineBarrier2( hndl, &dependency );
+	}
+
 	void CmdPipelineMemoryBarriers( std::span<const VkMemoryBarrier2> memBarriers )
 	{
 		VkDependencyInfo dependency = {
@@ -349,7 +395,7 @@ struct vk_command_buffer
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
 
-	void CmdPipelineBufferBarriers( std::span<VkBufferMemoryBarrier2> buffBarriers ) 
+	void CmdPipelineBufferBarriers( std::span<const VkBufferMemoryBarrier2> buffBarriers )
 	{
 		VkDependencyInfo dependency = {
 			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -369,7 +415,7 @@ struct vk_command_buffer
 		vkCmdPipelineBarrier2( hndl, &dependency );
 	}
 
-	void CmdPipelineImageBarriers( std::span<VkImageMemoryBarrier2> imgBarriers ) 
+	void CmdPipelineImageBarriers( std::span<const VkImageMemoryBarrier2> imgBarriers )
 	{
 		VkDependencyInfo dependency = {
 			.sType						= VK_STRUCTURE_TYPE_DEPENDENCY_INFO,

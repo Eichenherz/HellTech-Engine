@@ -241,11 +241,11 @@ struct vk_context
 
 	// NOTE: queue submit has implicit host sync for trivial stuff, 
 	u64                 QueueSubmit(
-		vk_queue&                           queue,
-		const vk_command_buffer&            cb,
-		std::span<VkSemaphoreSubmitInfo>    waits   = {},
-		std::span<VkSemaphoreSubmitInfo>    signals = {},
-		VkFence                             vkFence = VK_NULL_HANDLE
+		vk_queue&                               queue,
+		const vk_command_buffer&                cb,
+		std::span<const VkSemaphoreSubmitInfo>  waits   = {},
+		std::span<const VkSemaphoreSubmitInfo>  signals = {},
+		VkFence                                 vkFence = VK_NULL_HANDLE
 	);
 	void                QueuePresent( const vk_queue& queue, u32 imgIdx );
 };

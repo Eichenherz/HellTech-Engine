@@ -186,7 +186,6 @@ static vk_instance VkMakeInstance()
 	constexpr const char* LAYERS[] =
 	{
 		"VK_LAYER_KHRONOS_validation",
-		//"VK_LAYER_LUNARG_api_dump"
 	};
 
 	VK_CHECK( volkInitialize() );
@@ -1191,11 +1190,11 @@ vk_command_buffer vk_context::AllocateCmdBufferForQueue( vk_queue_t queueType )
 }
 
 u64 vk_context::QueueSubmit(
-	vk_queue&                           queue,
-	const vk_command_buffer&            cb,
-	std::span<VkSemaphoreSubmitInfo>    waits,
-	std::span<VkSemaphoreSubmitInfo>    signals,
-	VkFence                             vkFence
+	vk_queue&                               queue,
+	const vk_command_buffer&                cb,
+	std::span<const VkSemaphoreSubmitInfo>  waits,
+	std::span<const VkSemaphoreSubmitInfo>  signals,
+	VkFence                                 vkFence
 ) {
     HT_ASSERT( cb.parentQueueId == queue.queueType );
 

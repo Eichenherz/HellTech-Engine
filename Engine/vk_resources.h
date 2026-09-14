@@ -101,7 +101,7 @@ struct vk_image
 	VkExtent3D Extent3D() const { return { width, height, 1 }; }
 };
 
-inline VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
+constexpr VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
 {
 	return ( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 }
@@ -138,8 +138,8 @@ VkMakeImgView(
 	u32				arrayLayer	= 0,
 	u32				layerCount	= 1
 ){
-	VkImageAspectFlags aspectFlags = VkSelectAspectMaskFromFormat( imgFormat );
-	VkImageViewCreateInfo viewInfo = { 
+	VkImageAspectFlags      aspectFlags = VkSelectAspectMaskFromFormat( imgFormat );
+	VkImageViewCreateInfo   viewInfo    = {
 		.sType				= VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image				= vkImg,
 		.viewType			= imgViewType,

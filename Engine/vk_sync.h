@@ -9,145 +9,6 @@
 #include <ht_core_types.h>
 
 #include "vk_resources.h"
-#include "vk_command_buffer.h"
-
-#include <ht_array.h>
-#include <ankerl/unordered_dense.h>
-
-constexpr VkAccessFlags2 HT_SHADER_ACCESS_READ_WRITE = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
-constexpr VkAccessFlags2 HT_COLOR_ATTACHMENT_ACCESS_READ_WRITE = 
-VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-constexpr VkAccessFlags2 HT_DEPTH_ATTACHMENT_ACCESS_READ_WRITE = 
-VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-
-constexpr VkPipelineStageFlags2 HT_FRAGMENT_TESTS_STAGE = 
-VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-
-enum vk_read_stages_bits : u64
-{
-	R_DRAW_INDIRECT            = 1ull << 0, // includes vkCmdDispatchIndirect params
-	R_INDEX_INPUT              = 1ull << 1, 
-	R_VERTEX_SHADER            = 1ull << 2,
-	R_FRAGMENT_SHADER          = 1ull << 3,
-	R_EARLY_FRAGMENT_TESTS     = 1ull << 4,
-	R_LATE_FRAGMENT_TESTS      = 1ull << 5,
-	R_COLOR_ATTACHMENT_OUTPUT  = 1ull << 6,
-	R_COMPUTE_SHADER           = 1ull << 7,
-	R_TRANSFER                 = 1ull << 8, // covers copy/blit/resolve/clear if you use ALL_TRANSFER/TRANSFER
-	R_HOST                     = 1ull << 9,
-};
-
-inline u64 VkReadStagesFlagsFromVkStages( VkPipelineStageFlags2 s )
-{
-	u64 flagBits = 0;
-
-	if( s & VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT )             flagBits |= R_DRAW_INDIRECT;
-	if( s & VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT )               flagBits |= R_INDEX_INPUT;
-
-	if( s & VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT )             flagBits |= R_VERTEX_SHADER;
-	if( s & VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT )           flagBits |= R_FRAGMENT_SHADER;
-	if( s & VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT )      flagBits |= R_EARLY_FRAGMENT_TESTS;
-	if( s & VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT )       flagBits |= R_LATE_FRAGMENT_TESTS;
-	if( s & VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT )   flagBits |= R_COLOR_ATTACHMENT_OUTPUT;
-
-	if( s & VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT )            flagBits |= R_COMPUTE_SHADER;
-
-	if( s & ( VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT |
-		VK_PIPELINE_STAGE_2_COPY_BIT |
-		VK_PIPELINE_STAGE_2_BLIT_BIT |
-		VK_PIPELINE_STAGE_2_RESOLVE_BIT |
-		VK_PIPELINE_STAGE_2_CLEAR_BIT ) )
-		flagBits |= R_TRANSFER; // ALL_TRANSFER is equivalent to OR of those sub-stages 
-
-	if( s & VK_PIPELINE_STAGE_2_HOST_BIT )                      flagBits |= R_HOST;
-
-	return flagBits;
-}
-
-struct vk_access_stage_masks
-{
-	VkAccessFlags2        accessFlags	= VK_ACCESS_2_NONE;
-	VkPipelineStageFlags2 stageFlags	= VK_PIPELINE_STAGE_2_NONE;
-};
-
-constexpr vk_access_stage_masks HT_COMPUTE_READ						= { VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
-constexpr vk_access_stage_masks HT_COMPUTE_WRITE					= { VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
-constexpr vk_access_stage_masks HT_COMPUTE_READWRITE				= { HT_SHADER_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
-constexpr vk_access_stage_masks HT_TRANSFER_READ					= { VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT };
-constexpr vk_access_stage_masks HT_TRANSFER_WRITE					= { VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT };
-constexpr vk_access_stage_masks HT_DRAW_INDIRECT_READ				= { VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT };
-constexpr vk_access_stage_masks HT_COLOR_TARGET_OUT_READWRITE		= { HT_COLOR_ATTACHMENT_ACCESS_READ_WRITE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT };
-constexpr vk_access_stage_masks HT_COLOR_TARGET_OUT_WRITE			= { VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT };
-constexpr vk_access_stage_masks HT_DEPTH_TARGET_FRAG_TESTS_WRITE	= { VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, HT_FRAGMENT_TESTS_STAGE };
-constexpr vk_access_stage_masks HT_DEPTH_TARGET_FRAG_TESTS_READ	    = { VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,  HT_FRAGMENT_TESTS_STAGE };
-
-inline vk_access_stage_masks VkGetAccessAndStageFromReadStagesBits( u64 mask )
-{
-	VkAccessFlags2        accessFlags = 0; 
-	VkPipelineStageFlags2 stageFlags = 0;
-
-	if( mask & R_DRAW_INDIRECT )
-	{
-		accessFlags |= VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT; // indirect draw + dispatch params
-		stageFlags  |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
-	}
-
-	if( mask & R_INDEX_INPUT )
-	{
-		accessFlags |= VK_ACCESS_2_INDEX_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
-	}
-
-	if( mask & R_VERTEX_SHADER )
-	{
-		accessFlags |= VK_ACCESS_2_SHADER_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
-	}
-
-	if( mask & R_FRAGMENT_SHADER )
-	{
-		accessFlags |= VK_ACCESS_2_SHADER_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-	}
-
-	if( mask & R_COMPUTE_SHADER )
-	{
-		accessFlags |= VK_ACCESS_2_SHADER_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-	}
-
-	if( mask & R_EARLY_FRAGMENT_TESTS )
-	{
-		accessFlags |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT;
-	}
-
-	if( mask & R_LATE_FRAGMENT_TESTS )
-	{
-		accessFlags |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-	}
-
-	if( mask & R_COLOR_ATTACHMENT_OUTPUT )
-	{
-		accessFlags |= VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-	}
-
-	if( mask & R_TRANSFER )
-	{
-		accessFlags |= VK_ACCESS_2_TRANSFER_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
-	}
-
-	if( mask & R_HOST )
-	{
-		accessFlags |= VK_ACCESS_2_HOST_READ_BIT;
-		stageFlags  |= VK_PIPELINE_STAGE_2_HOST_BIT;
-	}
-
-	return { .accessFlags = accessFlags, .stageFlags = stageFlags };
-}
 
 constexpr VkAccessFlags2 VK_ALL_WRITE_ACCESSES =
 VK_ACCESS_2_MEMORY_WRITE_BIT |
@@ -162,235 +23,186 @@ constexpr bool VkIsWriteAccess( VkAccessFlags2 access )
 	return access & VK_ALL_WRITE_ACCESSES;
 }
 
-struct vk_rsc_sync_state
-{
-	vk_access_stage_masks   lastWriteMask;
-	VkImageLayout			imgLayout;
-	u64			            perStageReaders;
-};
-
-inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
-	VkBuffer                        buff,
+inline VkImageMemoryBarrier2 VkMakeImageBarrier(
+	VkImage							img,
 	VkPipelineStageFlags2			srcStageMask,
 	VkAccessFlags2					srcAccessMask,
 	VkPipelineStageFlags2			dstStageMask,
 	VkAccessFlags2					dstAccessMask,
-	VkDeviceSize					offset              = 0,
-	VkDeviceSize					size                = VK_WHOLE_SIZE,
+	VkImageLayout					srcLayout,
+	VkImageLayout					dstLayout,
+	const VkImageSubresourceRange&	subResource,
 	u32								srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 	u32								dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
 ) {
 	return {
-		.sType					= VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+		.sType					= VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
 		.srcStageMask			= srcStageMask,
 		.srcAccessMask			= srcAccessMask,
 		.dstStageMask			= dstStageMask,
 		.dstAccessMask			= dstAccessMask,
-		.srcQueueFamilyIndex	= srcQueueFamilyIndex,
-		.dstQueueFamilyIndex	= dstQueueFamilyIndex,
-		.buffer					= buff,
-		.offset					= offset,
-		.size					= size
-	};
-}
-
-inline VkBufferMemoryBarrier2 VkMakeBufferBarrier(
-	const vk_buffer&                buff,
-	const vk_access_stage_masks&	srcSync,
-	const vk_access_stage_masks&	dstSync,
-	VkDeviceSize					offset	= 0,
-	VkDeviceSize					size	= VK_WHOLE_SIZE
-) {
-	return VkMakeBufferBarrier( buff.hndl, srcSync.stageFlags, srcSync.accessFlags,
-	    dstSync.stageFlags, dstSync.accessFlags, offset, size,
-	    VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED );
-}
-
-
-
-inline VkImageMemoryBarrier2 VkMakeImageBarrier(
-	const vk_image&					img,
-	const vk_access_stage_masks&	srcSync,
-	const vk_access_stage_masks&	dstSync,
-	VkImageLayout					srcLayout,
-	VkImageLayout					dstLayout,
-	const VkImageSubresourceRange&	subResource
-) {
-	return {
-		.sType					= VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-		.srcStageMask			= srcSync.stageFlags,
-		.srcAccessMask			= srcSync.accessFlags,
-		.dstStageMask			= dstSync.stageFlags,
-		.dstAccessMask			= dstSync.accessFlags,
 		.oldLayout				= srcLayout,
 		.newLayout				= dstLayout,
-		.srcQueueFamilyIndex	= VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex	= VK_QUEUE_FAMILY_IGNORED,
-		.image					= img.hndl,
+		.srcQueueFamilyIndex	= srcQueueFamilyIndex,
+		.dstQueueFamilyIndex	= dstQueueFamilyIndex,
+		.image					= img,
 		.subresourceRange		= subResource
 	};
 }
 
-constexpr VkMemoryBarrier2 FULL_SYNC_MEM_BARRIER = {
-		.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-		.pNext         = nullptr,
+inline VkImageMemoryBarrier2 VkMakeImageBarrier(
+	const vk_image&					img,
+	VkPipelineStageFlags2			srcStageMask,
+	VkAccessFlags2					srcAccessMask,
+	VkPipelineStageFlags2			dstStageMask,
+	VkAccessFlags2					dstAccessMask,
+	VkImageLayout					srcLayout,
+	VkImageLayout					dstLayout
+) {
+	return VkMakeImageBarrier( img.hndl, srcStageMask, srcAccessMask, dstStageMask, dstAccessMask,
+		srcLayout, dstLayout, VkFullResource( img ), VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED );
+}
 
-		// 1. Source: Wait for EVERY previous command to finish
-		.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		// Flush EVERY possible write (Compute, Color, Depth, Transfer, etc.)
-		.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
-
-		// 2. Destination: Block EVERY future command until sync is done
-		.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		// Make memory visible for EVERY possible future operation
-		.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT
-};
-
-using vk_rsc_hndl64 = u64;
-struct vk_rsc_state_tracker
+enum ht_sync_exec_mask : VkPipelineStageFlags2
 {
-	template <class Key, class T>
-	using unordered_dense = ankerl::unordered_dense::map<Key, T>;
-
-	unordered_dense<vk_rsc_hndl64, vk_rsc_sync_state>	resourceStateTracker;
-	inline_array<VkBufferMemoryBarrier2, 16>			buffBarrierCache;
-	inline_array<VkImageMemoryBarrier2, 16>			imgBarrierCache;
-
-	// NOTE: buffers will always be in VK_IMAGE_LAYOUT_MAX_ENUM aka INVALID
-	void UseBuffer( 
-		const vk_buffer&				rsc,
-		const vk_access_stage_masks&	dstMasks,
-		VkDeviceSize					offset = 0,
-		VkDeviceSize					size = VK_WHOLE_SIZE
-	) {
-		auto it = resourceStateTracker.find( ( u64 ) rsc.hndl );
-		if( std::cend( resourceStateTracker ) == it )
-		{
-			resourceStateTracker.emplace( ( u64 ) rsc.hndl, vk_rsc_sync_state{ dstMasks, VK_IMAGE_LAYOUT_MAX_ENUM } );
-			return;
-		}
-		
-		const vk_access_stage_masks currentLastWriteMask = it->second.lastWriteMask;
-		const VkImageLayout currentImgLayout = it->second.imgLayout;
-		const u64 currentPerStageReaders = it->second.perStageReaders;
-
-		const vk_access_stage_masks currentReadMask = VkGetAccessAndStageFromReadStagesBits( currentPerStageReaders );
-
-		bool isSyncReqWrite = VkIsWriteAccess( dstMasks.accessFlags );
-		if( !isSyncReqWrite )
-		{
-			bool hasPrevWrite = currentLastWriteMask.accessFlags && currentLastWriteMask.stageFlags;
-
-			u64 syncReqScopeBits = VkReadStagesFlagsFromVkStages( dstMasks.stageFlags );
-			bool syncReqScopeSawPrevWrite = currentPerStageReaders & syncReqScopeBits;
-
-			if( hasPrevWrite && syncReqScopeSawPrevWrite ) return;
-
-			if( hasPrevWrite && !syncReqScopeSawPrevWrite )
-			{
-				buffBarrierCache.push_back( VkMakeBufferBarrier( rsc, currentLastWriteMask, dstMasks, offset, size ) );
-			}
-
-			it->second = {
-				.lastWriteMask = currentLastWriteMask,
-				.perStageReaders = currentPerStageReaders | syncReqScopeBits
-			};
-		}
-		else
-		{
-			vk_access_stage_masks srcMask = {
-				.accessFlags = currentLastWriteMask.accessFlags | currentReadMask.accessFlags,
-				.stageFlags = currentLastWriteMask.stageFlags | currentReadMask.stageFlags
-			};
-
-			buffBarrierCache.push_back( VkMakeBufferBarrier( rsc, srcMask, dstMasks, offset, size ) );
-			it->second = { .lastWriteMask = dstMasks, .perStageReaders = 0 };
-		}
-	}
-
-	void UseImage( const vk_image& rsc, const vk_access_stage_masks& dstMasks, VkImageLayout dstLayout )
-	{
-		VkImageSubresourceRange subResource = VkFullResource( rsc );
-		UseImage( rsc, dstMasks, dstLayout, subResource );
-	}
-
-	void UseImage( 
-		const vk_image&					rsc,
-		const vk_access_stage_masks&	dstMasks,
-		VkImageLayout					dstLayout,
-		const VkImageSubresourceRange&	subResource
-	) {
-		auto it = resourceStateTracker.find( ( u64 ) rsc.hndl );
-		if( std::cend( resourceStateTracker ) == it )
-		{
-			resourceStateTracker.emplace( ( u64 ) rsc.hndl, vk_rsc_sync_state{ dstMasks, dstLayout } );
-			return;
-		}
-
-		const vk_access_stage_masks currentLastWriteMask = it->second.lastWriteMask;
-		const VkImageLayout currentImgLayout = it->second.imgLayout;
-		const u64 currentPerStageReaders = it->second.perStageReaders;
-
-		const vk_access_stage_masks currentReadMask = VkGetAccessAndStageFromReadStagesBits( currentPerStageReaders );
-
-		bool isSyncReqWrite = VkIsWriteAccess( dstMasks.accessFlags );
-		if( !isSyncReqWrite )
-		{
-			bool hasPrevWrite = currentLastWriteMask.accessFlags && currentLastWriteMask.stageFlags;
-
-			u64 syncReqScopeBits = VkReadStagesFlagsFromVkStages( dstMasks.stageFlags );
-			bool syncReqScopeSawPrevWrite = currentPerStageReaders & syncReqScopeBits;
-
-			// NOTE: buffers will always be in VK_IMAGE_LAYOUT_MAX_ENUM aka INVALID
-			bool needsLayoutTransition = ( VK_IMAGE_LAYOUT_MAX_ENUM != dstLayout );
-			bool isLayoutTransition = needsLayoutTransition && ( dstLayout != currentImgLayout );
-
-			if( hasPrevWrite && syncReqScopeSawPrevWrite && !isLayoutTransition ) return;
-
-			if( hasPrevWrite && !syncReqScopeSawPrevWrite )
-			{
-				// NOTE: implicitly handle the layout trsnsition too 
-				imgBarrierCache.push_back( VkMakeImageBarrier( 
-					rsc, currentLastWriteMask, dstMasks, currentImgLayout, dstLayout, subResource ) );
-			}
-			// NOTE: here we use the read flags bc there's no just change my layout barrier
-			if( !hasPrevWrite && isLayoutTransition )
-			{
-				imgBarrierCache.push_back( VkMakeImageBarrier(
-					rsc, currentReadMask, dstMasks, currentImgLayout, dstLayout, subResource ) );
-			}
-
-			it->second = {
-				.lastWriteMask = currentLastWriteMask,
-				.imgLayout = dstLayout,
-				.perStageReaders = currentPerStageReaders | syncReqScopeBits
-			};
-		}
-		else
-		{
-			vk_access_stage_masks srcMask = {
-				.accessFlags = currentLastWriteMask.accessFlags | currentReadMask.accessFlags,
-				.stageFlags = currentLastWriteMask.stageFlags | currentReadMask.stageFlags
-			};
-			imgBarrierCache.push_back( VkMakeImageBarrier(
-				rsc, srcMask, dstMasks, currentImgLayout, dstLayout, subResource ) );
-			it->second = { .lastWriteMask = dstMasks, .imgLayout = dstLayout, .perStageReaders = 0 };
-		}
-	}
-
-	void StopTrackingResource( vk_rsc_hndl64 hndl )
-	{
-		resourceStateTracker.erase( hndl );
-	}
-
-	void FlushBarriers( const vk_command_buffer& cmdBuff )
-	{
-		if( !std::size( buffBarrierCache ) && !std::size( imgBarrierCache ) ) return;
-		cmdBuff.CmdPipelineBarriers( buffBarrierCache, imgBarrierCache );
-		buffBarrierCache.resize( 0 );
-		imgBarrierCache.resize( 0 );
-	}
+    HT_SYNC_EXEC_MASK_GFX         = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+    HT_SYNC_EXEC_MASK_COMP_SRC    = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+    // NOTE: draw/dispatch indirect is before compute
+    HT_SYNC_EXEC_MASK_COMP_DST    = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+    HT_SYNC_EXEC_MASK_XFER        = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+    HT_SYNC_EXEC_MASK_ALL         = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
 };
+
+enum ht_sync_cache_flush_mask : VkAccessFlags2
+{
+    HT_SYNC_CACHE_FLUSH_MASK_SHADER          = VK_ACCESS_2_SHADER_WRITE_BIT,
+    HT_SYNC_CACHE_FLUSH_MASK_XFER            = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+    HT_SYNC_CACHE_FLUSH_MASK_COL_TARGET      = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+    HT_SYNC_CACHE_FLUSH_MASK_DEPTH_TARGET    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+};
+
+enum ht_sync_cache_inval_mask : VkAccessFlags2
+{
+    HT_SYNC_CACHE_INVAL_MASK_SHADER          = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT |
+                        VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+    HT_SYNC_CACHE_INVAL_MASK_GFX             = HT_SYNC_CACHE_INVAL_MASK_SHADER | VK_ACCESS_2_INDEX_READ_BIT,
+    HT_SYNC_CACHE_INVAL_MASK_XFER            = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
+    HT_SYNC_CACHE_INVAL_MASK_COL_TARGET      = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+    HT_SYNC_CACHE_INVAL_MASK_DEPTH_TARGET    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    HT_SYNC_CACHE_INVAL_MASK_TARGET          = HT_SYNC_CACHE_INVAL_MASK_COL_TARGET | HT_SYNC_CACHE_INVAL_MASK_DEPTH_TARGET,
+};
+
+constexpr ht_sync_exec_mask& operator|=( ht_sync_exec_mask& a, ht_sync_exec_mask b )
+{
+    return a = ( ht_sync_exec_mask )( ( VkPipelineStageFlags2 ) a | ( VkPipelineStageFlags2 ) b );
+}
+
+constexpr ht_sync_cache_flush_mask& operator|=( ht_sync_cache_flush_mask& a, ht_sync_cache_flush_mask b )
+{
+    return a = ( ht_sync_cache_flush_mask )( ( VkAccessFlags2 ) a | ( VkAccessFlags2 ) b );
+}
+
+constexpr ht_sync_exec_mask HtSyncExecMaskInvert( ht_sync_exec_mask exec )
+{
+    switch( exec )
+    {
+    case HT_SYNC_EXEC_MASK_COMP_SRC: return HT_SYNC_EXEC_MASK_COMP_DST;
+    case HT_SYNC_EXEC_MASK_COMP_DST: return HT_SYNC_EXEC_MASK_COMP_SRC;
+    }
+
+    return exec;
+}
+
+constexpr ht_sync_cache_inval_mask HtSyncGetInvalFromExec( ht_sync_exec_mask exec )
+{
+    switch( exec )
+    {
+    case HT_SYNC_EXEC_MASK_GFX:  return HT_SYNC_CACHE_INVAL_MASK_GFX;
+    case HT_SYNC_EXEC_MASK_XFER: return HT_SYNC_CACHE_INVAL_MASK_XFER;
+    }
+
+    return HT_SYNC_CACHE_INVAL_MASK_SHADER;
+}
+
+constexpr ht_sync_cache_inval_mask HtSyncGetTargetInvalFromAspect( const vk_image& img )
+{
+    switch( VkSelectAspectMaskFromFormat( img.format ) )
+    {
+    case VK_IMAGE_ASPECT_DEPTH_BIT: return HT_SYNC_CACHE_INVAL_MASK_DEPTH_TARGET;
+    }
+
+    return HT_SYNC_CACHE_INVAL_MASK_COL_TARGET;
+}
+
+constexpr ht_sync_cache_flush_mask HtSyncGetFlushFromInval( ht_sync_cache_inval_mask inval )
+{
+    return ( ht_sync_cache_flush_mask )( inval & VK_ALL_WRITE_ACCESSES );
+}
+
+constexpr VkMemoryBarrier2 VkMakeBarrier(
+    VkPipelineStageFlags2       srcExec,
+    VkAccessFlags2              accessFlush,
+    VkPipelineStageFlags2       dstExec,
+    VkAccessFlags2              invalMask
+) {
+   return {
+        .sType			= VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .srcStageMask	= srcExec,
+        .srcAccessMask	= accessFlush,
+        .dstStageMask	= dstExec,
+        .dstAccessMask	= invalMask,
+    };
+}
+
+struct ht_img_layout_transition
+{
+    const vk_image&     img;
+    VkImageLayout       srcLayout;
+    VkImageLayout       dstLayout;
+};
+
+constexpr ht_sync_cache_inval_mask HtSyncInvalFromLayout( VkImageLayout layout )
+{
+    switch( layout )
+    {
+    case VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL:        return HT_SYNC_CACHE_INVAL_MASK_TARGET;
+    case VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL:
+    case VK_IMAGE_LAYOUT_GENERAL:                   return HT_SYNC_CACHE_INVAL_MASK_SHADER;
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:      return HT_SYNC_CACHE_INVAL_MASK_XFER;
+    }
+    return ( ht_sync_cache_inval_mask ) VK_ACCESS_2_NONE;
+}
+
+constexpr ht_sync_cache_flush_mask HtSyncFlushFromLayout( VkImageLayout layout )
+{
+    return HtSyncGetFlushFromInval( HtSyncInvalFromLayout( layout ) );
+}
+
+inline VkImageMemoryBarrier2 VkMakeImageBarrier(
+    const vk_image&             img,
+    ht_sync_exec_mask           srcExec,
+    ht_sync_cache_flush_mask    flushMask,
+    ht_sync_exec_mask           dstExec,
+    ht_sync_cache_inval_mask    invalMask,
+    VkImageLayout               srcLayout,
+    VkImageLayout               dstLayout
+) {
+    return {
+        .sType					= VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask			= srcExec,
+        .srcAccessMask			= flushMask,
+        .dstStageMask			= dstExec,
+        .dstAccessMask			= invalMask,
+        .oldLayout				= srcLayout,
+        .newLayout				= dstLayout,
+        .srcQueueFamilyIndex	= VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex	= VK_QUEUE_FAMILY_IGNORED,
+        .image					= img.hndl,
+        .subresourceRange		= VkFullResource( img )
+    };
+}
 
 #endif // !__VK_SYNC_H__
 
