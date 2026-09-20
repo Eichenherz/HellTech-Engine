@@ -7,11 +7,17 @@
 
 #include <ankerl/unordered_dense.h>
 #include <vector>
-#include <string>
+#include <ht_fixed_string.h>
+
+enum class raw_mesh_topology_t : u32
+{
+    MESH,
+    POINTS
+};
 
 struct raw_mesh
 {
-	std::string         name;
+	fixed_string<128>   name;
 	std::vector<float3> pos;
 	std::vector<float3> normals;
 	std::vector<float4> tans;
@@ -19,6 +25,7 @@ struct raw_mesh
 	std::vector<u32>    indices;
 	aabb_t<float3>		aabb;
 	u32                 materialIdx;
+    raw_mesh_topology_t topology;
 };
 
 enum class image_channels_t : u8
@@ -63,30 +70,31 @@ struct raw_image_view
 
 struct raw_material_info
 {
-	std::string name;
+    fixed_string<512>   name;
 
-	float4		baseColFactor;
-	float		metallicFactor;
-	float		roughnessFactor;
-	float		alphaCutoff;
-	float3		emissiveFactor;
+	float4		        baseColFactor;
+	float		        metallicFactor;
+	float		        roughnessFactor;
+	float		        alphaCutoff;
+	float3		        emissiveFactor;
 
-	u16 		baseColorIdx;
-	u16 		metallicRoughnessIdx;
-	u16 		normalIdx;
-	u16 		occlusionIdx;
-	u16 		emissiveIdx;
-	u16 		samplerIdx;
+	u16 		        baseColorIdx;
+	u16 		        metallicRoughnessIdx;
+	u16 		        normalIdx;
+	u16 		        occlusionIdx;
+	u16 		        emissiveIdx;
+	u16 		        samplerIdx;
 
-	alpha_mode	alphaMode;
+	alpha_mode	        alphaMode;
 };
 
 struct packed_trs;
 
 struct raw_node
 {
-	packed_trs	toWorld;
-	i32			meshIdx;
+	packed_trs	    toWorld;
+    aabb_t<float3>  aabb;
+	u64			    meshIdx;
 };
 
 template<TRIVIAL_T T>
@@ -101,18 +109,10 @@ struct ankerl_hash_as_bytes
 	}
 };
 
-struct raw_node_eq
-{
-	bool operator()( const raw_node& a, const raw_node& b ) const
-	{
-		const packed_trs& at = a.toWorld;
-		const packed_trs& bt = b.toWorld;
-		return ( a.meshIdx == b.meshIdx )
-			&& ( at.t.x == bt.t.x ) && ( at.t.y == bt.t.y ) && ( at.t.z == bt.t.z )
-			&& ( at.r.x == bt.r.x ) && ( at.r.y == bt.r.y ) && ( at.r.z == bt.r.z ) && ( at.r.w == bt.r.w )
-			&& ( at.s.x == bt.s.x ) && ( at.s.y == bt.s.y ) && ( at.s.z == bt.s.z );
-	}
-};
+constexpr bool operator==( const packed_trs& a, const packed_trs& b ) { return ( a.t == b.t ) && ( a.r == b.r ) && ( a.s == b.s ); }
+constexpr bool operator==( const raw_node& a, const raw_node& b ) { return ( a.meshIdx == b.meshIdx ) && ( a.toWorld == b.toWorld ); }
+
+template<> struct ankerl::unordered_dense::hash<raw_node> : ankerl_hash_as_bytes<raw_node> {};
 
 // NOTE: stupid C++
 struct u32x3_eq
