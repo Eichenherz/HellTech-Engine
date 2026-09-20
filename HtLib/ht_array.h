@@ -49,6 +49,9 @@ struct ht_array : STORAGE_T
     template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
     ht_array( SRC_ARENA_T& srcArena )                      : STORAGE_T{ {}, &srcArena } {}
     ht_array( std::from_range_t, std::ranges::input_range auto&& r ) { this->append_range( FWD( r ) ); }
+    template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
+    ht_array( SRC_ARENA_T& srcArena, std::from_range_t, std::ranges::input_range auto&& r )
+                                                            : STORAGE_T{ {}, &srcArena } { this->append_range( FWD( r ) ); }
 
     auto*       data( this auto&& self ) { return ( ht_const_like_ptr<T, decltype( self )> ) std::data( self.mem ); }
 

@@ -64,6 +64,9 @@ inline float4 fmaxf( float4 a, float4 b )
 	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ), fmaxf( a.w,b.w ) };
 }
 
+constexpr i32x2 imin( i32x2 a, i32x2 b ) { return { std::min( a.x, b.x ), std::min( a.y, b.y ) }; }
+constexpr i32x2 imax( i32x2 a, i32x2 b ) { return { std::max( a.x, b.x ), std::max( a.y, b.y ) }; }
+
 constexpr float3 CrossProd( float3 a, float3 b )
 {
 	return  { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y  *b.x };
@@ -80,6 +83,12 @@ constexpr float DotProd( float3 a, float3 b )
 constexpr float DotProd( float4 a, float4 b )
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+inline float3 Normalize( float3 v )
+{
+	float len = std::sqrt( DotProd( v, v ) );
+	return ( len > 0.0f ) ? float3{ v.x / len, v.y / len, v.z / len } : float3{};
 }
 
 constexpr float FSignOf( float x )

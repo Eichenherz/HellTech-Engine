@@ -27,9 +27,10 @@ constexpr u64 ZIP_LOCAL_HDR_SZ = 30;
 
 struct zip_writer
 {
-	ankerl::unordered_dense::set<vfs_path> files;
-	mz_zip_archive za = {};
+	ankerl::unordered_dense::set<vfs_path>  files;
+	mz_zip_archive                          za = {};
 
+    zip_writer( std::string_view physicalPath ) : zip_writer{ std::data( physicalPath ) } {}
 	zip_writer( const char* physicalPath )
 	{
 		mz_zip_zero_struct( &za );

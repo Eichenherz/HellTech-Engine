@@ -62,6 +62,8 @@ CONSTEXPR u32 BIT_DEPTH_OCT_N = 11;
 CONSTEXPR u32 BIT_DEPTH_TAN_A = 9;
 CONSTEXPR u32 BIT_DEPTH_BTAN_S = 1;
 
+typedef u32 oct16x2;
+
 // NOTE: octahedron encoded normal + tan angle + bitan sign; will alias bc we will select the bit depth in the enc/dec
 typedef u32 oct11x2s_a9_s1;
 

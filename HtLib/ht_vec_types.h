@@ -23,6 +23,7 @@
 
 namespace DXPacked = DirectX::PackedVector;
 
+using i32x2		= DirectX::XMINT2;
 using i32x3		= DirectX::XMINT3;
 
 using u16x2		= DXPacked::XMUSHORT2;
@@ -76,25 +77,20 @@ constexpr bool operator==( const float4& a, const float4& b )
 	return ( a.x == b.x ) && ( a.y == b.y ) && ( a.z == b.z ) && ( a.w == b.w );
 }
 
-constexpr float2 operator-( float2 v )
-{
-	return { -v.x, -v.y };
-}
+constexpr float2 operator-( float2 v ) { return { -v.x, -v.y }; }
 
-constexpr float3 operator-( float3 v )
-{
-	return { -v.x, -v.y, -v.z };
-}
+constexpr float3 operator-( float3 v ) { return { -v.x, -v.y, -v.z }; }
 
-constexpr float4 operator-( float4 v )
-{
-	return { -v.x, -v.y, -v.z, -v.w };
-}
+constexpr float4 operator-( float4 v ) { return { -v.x, -v.y, -v.z, -v.w }; }
 
-constexpr float3 operator-( float3 a, float3 b )
-{
-	return { a.x - b.x, a.y - b.y, a.z - b.z };
-}
+constexpr i32x2 operator-( i32x2 a, i32x2 b ) { return { a.x - b.x, a.y - b.y }; }
+
+constexpr i32x3 operator*( i32x3 a, i32 scalar ) { return { a.x * scalar, a.y * scalar, a.z * scalar }; }
+
+constexpr float3 operator-( float3 a, float3 b ) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
+constexpr float3 operator*( float3 a, float scalar ) { return { a.x * scalar, a.y * scalar, a.z * scalar }; }
+constexpr float3 operator+( float3 a, float3 b ) { return { a.x + b.x, a.y + b.y, a.z + b.z }; }
+constexpr float3& operator+=( float3& a, float3 b ) { return a = a + b; }
 
 __forceinline float3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
 {

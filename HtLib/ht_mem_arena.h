@@ -11,6 +11,7 @@
 #include <ht_core_types.h>
 #include <ht_error.h>
 #include <ht_utils.h>
+#include <ht_memory.h>
 
 // NOTE: We poison the border between allocs to detect trampling;
 // markers MUST start at an 8byte alignment to not be lost
@@ -119,7 +120,7 @@ std::span<T> ArenaNewArray( Arena& arena, u64 elemCount )
 	return { new ( arena.Alloc( sizeof( T ) * elemCount, alignof( T ) ) ) T[ elemCount ], elemCount };
 }
 
-// NOTE: acts like a slim stack
+// TODO: fold into scoped_arena
 template<arena_t Arena>
 struct ht_mem_scope
 {
@@ -149,9 +150,61 @@ struct scoped_arena : ht_mem_scope<Arena>
     operator Arena&( this auto&& self ) { return self.arena; }
 };
 
+struct virtual_arena
+{
+    static constexpr u64 COMMIT_SZ_IN_BYTES = 2 * MB;
+
+    linear_arena    linear      = {};
+    u64             commited    = 0; // NOTE: linear.sizeInBytes will double as reserved for US !
+
+    virtual_arena() = default;
+    virtual_arena( u64 reservedInBytes ) : linear{ ht_os_virtual_reserve( reservedInBytes ), reservedInBytes } {}
+
+    u64     Mark() const { return linear.Mark(); }
+    void    Rewind( u64 markInBytes ) { linear.Rewind( markInBytes ); }
+    void*   Alloc( u64 szInBytes, u64 alignment );
+    u64     TryStretchAlloc( std::span<u8> alloc, u64 stretchInBytes );
+
+    void    Decommit( u64 keepBytes );
+};
+
+inline void virtual_arena::Decommit( u64 keepBytes )
+{
+    HT_ASSERT( keepBytes >= linear.offsetInBytes );
+
+    u64 keepCommitted = FwdAlignPot( keepBytes, OS_RESERVE_PAGE_SIZE_IN_BYTES );
+    if( keepCommitted >= commited ) return;
+
+    ht_os_virtual_decommit( linear.mem + keepCommitted, commited - keepCommitted );
+    commited = keepCommitted;
+}
+
+inline void VirtualArenaCommit( virtual_arena& arena, u64 reqSzInBytes )
+{
+    u64 reqEnd = FwdAlignPot( arena.linear.offsetInBytes + reqSzInBytes + HT_ASAN_BORDER,
+        OS_RESERVE_PAGE_SIZE_IN_BYTES );
+    if( reqEnd <= arena.commited ) return;
+
+    u64 newCommitted = std::min( FwdAlignPot( reqEnd, virtual_arena::COMMIT_SZ_IN_BYTES ),
+        arena.linear.sizeInBytes );
+    ht_os_virtual_commit( arena.linear.mem + arena.commited, newCommitted - arena.commited );
+    arena.commited = newCommitted;
+}
+
+inline void* virtual_arena::Alloc( u64 szInBytes, u64 alignment )
+{
+    VirtualArenaCommit( *this, alignment + szInBytes );
+    return linear.Alloc( szInBytes, alignment );
+}
+
+inline u64 virtual_arena::TryStretchAlloc( std::span<u8> alloc, u64 stretchInBytes )
+{
+    VirtualArenaCommit( *this, stretchInBytes );
+    return linear.TryStretchAlloc( alloc, stretchInBytes );
+}
+
 template<typename S, typename ELEM_T>
-concept storage_t = TRIVIAL_T<S>
-    && std::ranges::contiguous_range<decltype( S::mem )>
+concept storage_t = std::ranges::contiguous_range<decltype( S::mem )>
     && std::same_as<std::ranges::range_value_t<decltype( S::mem )>, ELEM_T>
     && requires( S s, u64 reqSzInElems )
 {
@@ -160,7 +213,7 @@ concept storage_t = TRIVIAL_T<S>
     { S::OWNS_ELEMENTS }        -> std::convertible_to<bool>;
 };
 
-template<TRIVIAL_T T, u64 N>
+template<typename T, u64 N>
 struct inline_storage
 {
     static constexpr bool   CAN_GROW        = false;
@@ -171,7 +224,7 @@ struct inline_storage
     void    Grow( this inline_storage&, u64 reqSzInElems ) { HT_ASSERT( reqSzInElems <= N ); }
 };
 
-template<TRIVIAL_T T>
+template<typename T>
 struct borrowed_storage
 {
     static constexpr bool   CAN_GROW        = false;

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <Type Name="fixed_string_base&lt;char,*&gt;">
+    <DisplayString>{elems._Elems,[sizeInElems]s}</DisplayString>
+    <StringView>elems._Elems,[sizeInElems]s</StringView>
+    <Expand>
+      <Item Name="[size]">sizeInElems</Item>
+      <Item Name="[capacity]">$T1</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="fixed_string_base&lt;wchar_t,*&gt;">
+    <DisplayString>{elems._Elems,[sizeInElems]su}</DisplayString>
+    <StringView>elems._Elems,[sizeInElems]su</StringView>
+    <Expand>
+      <Item Name="[size]">sizeInElems</Item>
+      <Item Name="[capacity]">$T1</Item>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>

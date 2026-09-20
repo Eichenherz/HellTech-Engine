@@ -65,7 +65,7 @@ bool ring_buffer<T, STORAGE_T, Sync_T>::TryPop( this auto&& self, T& out )
     defer{ self.lock.Release(); };
 
     if( self.tail == self.head ) return false;
-    out = self.mem[ self.head & ( std::size( self.mem ) - 1 ) ];
+    out = MOV( self.mem[ self.head & ( std::size( self.mem ) - 1 ) ] );
     ++self.head;
     return true;
 }
@@ -78,18 +78,18 @@ bool ring_buffer<T, STORAGE_T, Sync_T>::TryPopIf( this auto&& self, T& out, auto
 
     if( self.tail == self.head ) return false;
 
-    const T& front = self.mem[ self.head & ( std::size( self.mem ) - 1 ) ];
+    T& front = self.mem[ self.head & ( std::size( self.mem ) - 1 ) ];
     if( !PfnIsPoppable( front ) ) return false;
 
-    out = front;
+    out = MOV( front );
     ++self.head;
     return true;
 }
 
-template<TRIVIAL_T T, u64 N>
+template<typename T, u64 N>
 using fixed_ringbuff_w_lock = ring_buffer<T, inline_storage<T, N>, copyable_srwlock>;
 
-template<TRIVIAL_T T>
+template<typename T>
 using ringbuff_w_lock = ring_buffer<T, borrowed_storage<T>, copyable_srwlock>;
 
 template<TRIVIAL_T T>
