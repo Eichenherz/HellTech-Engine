@@ -15,6 +15,8 @@ call :clone "3rdParty/bc7enc_rdo"               "https://github.com/Eichenherz/b
 call :clone "3rdParty/ImGuiFileDialog"          "https://github.com/aiekick/ImGuiFileDialog.git"
 call :clone "3rdParty/minunit"                  "https://github.com/kattkieru/minunit.git"
 call :clone "3rdParty/OffsetAllocator"          "https://github.com/sebbbi/OffsetAllocator.git"
+call :clone "3rdParty/NvGDeflate"               "https://github.com/NVIDIA/libdeflate.git"
+
 
 echo.
 if %FAILED%==0 (

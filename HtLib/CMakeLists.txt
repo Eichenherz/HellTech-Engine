@@ -38,3 +38,9 @@ list(APPEND HTLIB_SRC ${HTLIB_PLATFORM_SRC})
 # Absolute paths are required: entries in INTERFACE_SOURCES are resolved
 # against the *consuming* target's directory, not this one.
 target_sources(HtLib INTERFACE ${HTLIB_SRC})
+
+# Debugger visualizers. MSVC's linker embeds .natvis files listed as sources
+# into the PDB ( /NATVIS ), so every consumer exe gets them for free.
+if(MSVC)
+    target_sources(HtLib INTERFACE "${CMAKE_CURRENT_LIST_DIR}/HtLib.natvis")
+endif()
