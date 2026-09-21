@@ -35,7 +35,7 @@ struct gltf_strided_elem
 	const u8*	data		= nullptr;
 	u64			strideBytes	= 0;
 
-	const T& operator()( u64 i ) const { return ( const T& ) data[ i * strideBytes ]; }
+	HT_FORCEINLINE const T& operator()( u64 i ) const { return ( const T& ) data[ i * strideBytes ]; }
 };
 
 template<TRIVIAL_T T>
@@ -241,7 +241,6 @@ struct gltf_loader
         HT_ASSERT( cgltf_result_success == cgltf_validate( data ) );
         //HT_ASSERT( cgltf_result_success == cgltf_load_buffers( &options, data, nullptr ) );
         HT_ASSERT( 1 == data->scenes_count );
-        std::cout << "Successfully loaded the file.\n";
     }
     gltf_loader( std::string_view inputFilePath ) : gltf_loader{ std::data( inputFilePath ) } {}
 	gltf_loader( const char* filePath )

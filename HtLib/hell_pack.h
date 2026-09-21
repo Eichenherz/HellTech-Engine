@@ -10,16 +10,19 @@
 
 #include <span>
 #include <vector>
+#include <ht_array.h>
 
 #include "range_utils.h"
 
 struct bit_stream
 {
-	std::vector<u64>	qwords;
+	borrowed_array<u64>	qwords;
 	u64					cursorInBits = 0;  // NOTE: lsb
 
 	const u64* begin() const { return std::data( qwords ); }
 	const u64* end()   const { return std::data( qwords ) + std::size( qwords ); }
+
+    void Reset() { qwords.resize( 0 ); cursorInBits = 0; }
 
 	void AppendBits( u32 inBitStream, u32 bitDepth )
 	{
@@ -65,10 +68,10 @@ struct hpk_relative_ref
 template<typename T> struct hpk_view_of { using type = T; };
 template<CONTIGUOUS_RANGE_T R> struct hpk_view_of<R> { using type = std::span<const std::ranges::range_value_t<R>>; };
 
-
+/*	X( std::vector<packed_vtx_attr>, vertexAttrs				) \ */
 #define HPK_MESH_ASSET( X )										  \
 	X( bit_stream,                   vtxPosBitstream			) \
-	X( std::vector<packed_vtx_attr>, vertexAttrs				) \
+	X( std::vector<oct16x2>,         vtxNormals				    ) \
 	X( std::vector<index_t>,         indices					) \
 	X( std::vector<gpu_meshlet>,     meshlets					) \
 	X( aabb_t<float3>,               aabb						) \

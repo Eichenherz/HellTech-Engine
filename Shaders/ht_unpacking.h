@@ -74,8 +74,8 @@ u32x3 FetchTriangleIndicesFromMegaBuff( u64 globalIdxInBytes )
 
 u32 UnpackFromBitstream( in device_ptr<u32> packedPosMegaBuff, in u32 bitDepth, in u32 globalOffsetInBits )
 {
-    u32 bucketIdx = globalOffsetInBits >> 5;
-    u32 bitIdxInBucket = globalOffsetInBits & 31;
+    u32 bucketIdx       = globalOffsetInBits >> 5;
+    u32 bitIdxInBucket  = globalOffsetInBits & 31;
 
     u32 w0 = packedPosMegaBuff[ bucketIdx ];
     u32 w1 = packedPosMegaBuff[ bucketIdx + 1 ];

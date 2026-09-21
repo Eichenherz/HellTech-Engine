@@ -111,7 +111,7 @@ bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
 }
 
 template<typename T>
-inline constexpr auto HtCastTo = []( auto x ) { return static_cast<T>(x); };
+inline constexpr auto HtCastTo = []( auto x ) [[msvc::forceinline]] { return static_cast<T>(x); };
 
 template <typename T, u64 Extent>
 constexpr u32 HtElemStrideInBytes( std::span<T, Extent> ) { return sizeof( T ); }

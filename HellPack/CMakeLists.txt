@@ -1,34 +1,48 @@
-set(THIRD_PARTY "${CMAKE_SOURCE_DIR}/3rdParty")
-
 # ----------------------------------------------------------------------------
-# HellPack3rdParty — every 3rdParty lib HellPack uses, compiled MAX OPT in every
-# config, symbols kept. /O2 is incompatible with /RTC1, so /RTC1 is stripped
-# from this directory's Debug flags and re-added to the HellPack exe below.
+# HellPack3rdParty — every 3rdParty lib HellPack uses, one static .lib, MAX OPT
+# in every config, symbols kept, NO ASan.
+# The target is created under the root's directory-level add_compile_options /
+# link_libraries, so it inherits those flags and CommonDeps at creation;
+# both are wiped from its properties below and the root's RelWithDebInfo flag set
+# ( HT_MSVC_* ) is applied unconditionally, in every config.
 # ----------------------------------------------------------------------------
-if(MSVC)
-    string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-    string(REPLACE "/RTC1" "" CMAKE_C_FLAGS_DEBUG   "${CMAKE_C_FLAGS_DEBUG}")
-endif()
-
 add_library(HellPack3rdParty STATIC
     3rdPartyTU.cpp
     3rdPartyTU2.cpp
     ${THIRD_PARTY}/miniz/miniz.c
 )
+set_target_properties(HellPack3rdParty PROPERTIES
+    COMPILE_OPTIONS ""
+    LINK_LIBRARIES  ""
+)
 target_link_libraries(HellPack3rdParty PRIVATE ThirdPartyIncludes)
-
 if(MSVC)
-    # NOTE: no /GL — LTCG objects can't link into a non-LTCG Debug exe
+    # NOTE: Debug STL ABI must match the exe's TUs — see HT_MSVC_DEBUG_ABI_DEFS in the root.
+    target_compile_definitions(HellPack3rdParty PRIVATE
+        "$<$<CONFIG:Debug>:${HT_MSVC_DEBUG_ABI_DEFS}>"
+    )
+    # Full optimization + full debug info ( /Zi /Zo ) in EVERY config — the root's RelWithDebInfo set.
+    # NOTE: no /GL — LTCG objects can't link into a non-LTCG Debug exe.
+    #       /O2 /Ot explicit: they must override the /Od that CMAKE_CXX_FLAGS_DEBUG carries.
     target_compile_options(HellPack3rdParty PRIVATE
-        /O2 /Ob3 /Oi /Ot /Gw /Zc:inline /fp:fast /GS- /sdl- /analyze- /Zi
+        ${HT_MSVC_COMMON_FLAGS}
+        /O2 /Ot ${HT_MSVC_OPT_FLAGS}
+        ${HT_MSVC_OPT_DBGINFO_FLAGS}
+        /analyze-
     )
 endif()
 
 # ----------------------------------------------------------------------------
-# HellPack exe — our code, normal per-config flags
+# HellPack exe — our code, normal per-config flags.
 # NOTE: HtLib's own .cpps are not listed here — they arrive as INTERFACE sources
 #       through CommonDeps -> HtLib and are compiled into this exe.
 # ----------------------------------------------------------------------------
+if(MSVC)
+    # NOTE: /Ob1 inlines everything marked inline / __forceinline ( the whole STL ranges layer ),
+    #       /Od stays so our own logic is still steppable.
+    string(REPLACE "/Ob0" "/Ob1" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+endif()
+
 add_executable(HellPack
     HellPack.cpp
 )
@@ -38,9 +52,9 @@ target_compile_definitions(HellPack PRIVATE _CONSOLE)
 target_link_libraries(HellPack PRIVATE HellPack3rdParty)
 
 if(MSVC)
-    target_compile_options(HellPack PRIVATE $<$<CONFIG:Debug>:/RTC1>)
-    # NOTE: level 1 keeps range checks, drops the level 2 iterator ownership tracking ( + its lock ).
-    #       Must match across every TU in the binary, so the 3rdParty lib gets it too.
-    target_compile_definitions(HellPack         PRIVATE $<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=1>)
-    target_compile_definitions(HellPack3rdParty PRIVATE $<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=1>)
+    # ASan in Debug, only on HellPack.cpp — the HtLib .cpps stay uninstrumented.
+    # Mixed TUs link thanks to HT_MSVC_DEBUG_ABI_DEFS ( via CommonDeps ).
+    set_source_files_properties(HellPack.cpp
+        PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:/fsanitize=address>"
+    )
 endif()

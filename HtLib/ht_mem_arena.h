@@ -161,7 +161,11 @@ struct virtual_arena
     virtual_arena( u64 reservedInBytes ) : linear{ ht_os_virtual_reserve( reservedInBytes ), reservedInBytes } {}
 
     u64     Mark() const { return linear.Mark(); }
-    void    Rewind( u64 markInBytes ) { linear.Rewind( markInBytes ); }
+    void    Rewind( u64 markInBytes )
+    {
+        linear.Rewind( markInBytes );
+        Decommit( std::max( markInBytes, 2 * GB ) );
+    }
     void*   Alloc( u64 szInBytes, u64 alignment );
     u64     TryStretchAlloc( std::span<u8> alloc, u64 stretchInBytes );
 
@@ -240,6 +244,8 @@ struct arena_storage
 {
     static constexpr bool   CAN_GROW        = true;
     static constexpr bool   OWNS_ELEMENTS   = false;
+
+    using arena_type = ARENA_T;
 
     std::span<T>            mem             = {};
     ARENA_T*                pArena          = nullptr;

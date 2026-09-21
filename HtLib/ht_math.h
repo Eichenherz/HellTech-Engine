@@ -4,7 +4,7 @@
 #define __HT_MATH_H__
 
 #include <ht_vec_types.h>
-#include "../Lib/ht_gfx_types.h"
+#include "ht_gfx_types.h"
 
 #include <ht_core_types.h>
 #include <ht_error.h>
@@ -63,6 +63,14 @@ inline float4 fmaxf( float4 a, float4 b )
 {
 	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ), fmaxf( a.w,b.w ) };
 }
+
+namespace hpk
+{
+    inline float3 floorf( float3 v ) { return { std::floorf( v.x ), std::floorf( v.y ), std::floorf( v.z ) }; }
+    inline float3 ceilf( float3 v ) { return { std::ceilf( v.x ), std::ceilf( v.y ), std::ceilf( v.z ) }; }
+    inline float3 roundf( float3 v ) { return { std::roundf( v.x ), std::roundf( v.y ), std::roundf( v.z ) }; }
+}
+
 
 constexpr i32x2 imin( i32x2 a, i32x2 b ) { return { std::min( a.x, b.x ), std::min( a.y, b.y ) }; }
 constexpr i32x2 imax( i32x2 a, i32x2 b ) { return { std::max( a.x, b.x ), std::max( a.y, b.y ) }; }

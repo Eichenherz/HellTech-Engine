@@ -4,7 +4,7 @@
 #define __HT_GFX_TYPES_H__
 
 #include "ht_core_types.h"
-#include "../HtLib/ht_vec_types.h"
+#include "ht_vec_types.h"
 
 struct packed_trs
 {
@@ -59,16 +59,12 @@ struct sampler_config
 	u32 wrapModeS	: 8;
 	u32 wrapModeT	: 8;
 
-	inline bool operator==( const sampler_config& rhs ) const
+	bool operator==( const sampler_config& rhs ) const
 	{
 		return filterModeS	== rhs.filterModeS
 			&& filterModeT	== rhs.filterModeT
 			&& wrapModeS	== rhs.wrapModeS
 			&& wrapModeT	== rhs.wrapModeT;
-	}
-	inline bool operator!=( const sampler_config& rhs ) const
-	{
-		return !( *this == rhs );
 	}
 };
 

@@ -42,6 +42,18 @@ if(MSVC)
     target_link_options(Engine PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL:NO>)
 endif()
 
+# ASan in Debug, only on our hot TUs. Needs /Zi, no /RTC1, no incremental link.
+# __HT_USE_ASAN__ ( CommonDeps ) turns on the arena borders / poison-on-rewind in ht_mem_arena.h.
+if(MSVC)
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/renderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/vk_backend.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/HellTech.cpp"
+        TARGET_DIRECTORY Engine
+        PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:/fsanitize=address>"
+    )
+endif()
+
 # Suppress static analysis on 3rdParty sources + spirv_reflect.c
 if(MSVC)
     set_source_files_properties(
