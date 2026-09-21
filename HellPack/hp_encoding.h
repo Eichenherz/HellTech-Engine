@@ -128,7 +128,7 @@ inline mlt_quantized_grid HpkMakeMltQuantizedGrid( aabb_t<float3> meshletAabb )
 		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( snappedAabbMax.y - snappedAabbMin.y ) ),
 		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( snappedAabbMax.z - snappedAabbMin.z ) )
 	};
-	//HT_ASSERT( u32x3{} != mltBitDepthPerAxis );
+	HT_ASSERT( u32x3{} != mltBitDepthPerAxis );
 
 	return {
 		.quantAabbMin		= snappedAabbMin * invGridFactor,

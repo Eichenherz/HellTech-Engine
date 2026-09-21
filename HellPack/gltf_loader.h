@@ -230,18 +230,109 @@ inline raw_mesh_desc GltfPatchRawMeshDesc( const raw_mesh_desc& in, std::span<co
         .topology   = in.topology
     };
 }
-struct gltf_loader
+
+inline raw_mesh_desc CgltfParseRawMeshDesc(
+    const cgltf_mesh&       parentMesh,
+    const cgltf_primitive&  primitive,
+    u64                     meshIdx,
+    u64                     primIdx
+) {
+    // TODO: how to export more stuff ?
+    // NOTE: gltf guarantees that all present attr streams have the same element count
+    const cgltf_accessor* pPos  = cgltf_find_accessor( &primitive, cgltf_attribute_type_position, 0 );
+    const cgltf_accessor* pNorm = cgltf_find_accessor( &primitive, cgltf_attribute_type_normal, 0 );
+
+    return {
+        .name		= { "{:.64}_{}_Primitive_{}",
+            parentMesh.name ? parentMesh.name : "Mesh", meshIdx, primIdx
+        },
+        // NOTE: gltf mandates that the pos stream be present
+        .pos		= gltf_attr_stream<float3>{ *pPos },
+        .normals 	= pNorm             ? gltf_attr_stream<float3>{ *pNorm }    : gltf_attr_stream<float3>{},
+        .indices	= primitive.indices ? gltf_idx_view{ *primitive.indices }   : gltf_idx_view{},
+        .aabb       = CgltfGetPosStreamBounds( primitive ),
+        .topology   = CgltfPrimitiveTypeToTopology( primitive.type )
+    };
+}
+
+inline const cgltf_data* CgltfLoadMetadataFromRawBytes( std::span<const u8> rawBytes, const cgltf_options& options )
+{
+    cgltf_data* data = nullptr;
+    HT_ASSERT( cgltf_result_success == cgltf_parse( &options, std::data( rawBytes ), std::size( rawBytes ), &data ) );
+    HT_ASSERT( cgltf_result_success == cgltf_validate( data ) );
+    //HT_ASSERT( cgltf_result_success == cgltf_load_buffers( &options, data, nullptr ) );
+    HT_ASSERT( 1 == data->scenes_count );
+    return data;
+}
+
+struct parsed_gltf
+{
+    std::vector<raw_node>       nodes;
+    std::vector<raw_mesh_desc>  meshDesc;
+};
+
+inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data )
+{
+    std::vector<raw_node> flatNodes;
+    flatNodes.reserve( data->nodes_count );
+
+    ankerl::unordered_dense::map<const cgltf_primitive*, raw_mesh_desc> rawMeshDescMap;
+    rawMeshDescMap.reserve( data->meshes_count * 4 ); // NOTE: this is just a best guess
+
+    auto LmbdVisitNode = [ & ]( this auto&& PfnSelf, const cgltf_node& node, packed_trs parentTrs ) -> void
+    {
+        if( CgltfIsNodeHidden( node ) ) return;
+
+        packed_trs trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
+
+        if( node.mesh )
+        {
+            u64 instCount = node.has_mesh_gpu_instancing ? node.mesh_gpu_instancing.attributes[ 0 ].data->count : 1;
+
+            const cgltf_mesh& m = *node.mesh;
+            for( const cgltf_primitive* pPrim = m.primitives; pPrim < ( m.primitives + m.primitives_count ); ++pPrim )
+            {
+                auto iterMeshDesc = rawMeshDescMap.find( pPrim );
+                if( std::end( rawMeshDescMap ) == iterMeshDesc )
+                {
+                    raw_mesh_desc desc = CgltfParseRawMeshDesc( m, *pPrim, &m - data->meshes, pPrim - m.primitives );
+                    iterMeshDesc = rawMeshDescMap.emplace( pPrim, desc ).first;
+                }
+
+                for( u64 ii = 0; ii < instCount; ++ii )
+                {
+                    packed_trs instTrs = node.has_mesh_gpu_instancing ?
+                        GltfComposePackedTRS( trs, GltfGetTRSFromExtGpuInst( node, ii ) ) : trs;
+                    flatNodes.push_back( {
+                        .toWorld    = instTrs,
+                        .aabb       = iterMeshDesc->second.aabb,
+                        // NOTE: this works bc ankerl's map has contiguous key-val pairs
+                        .meshIdx    = u64( iterMeshDesc - std::begin( rawMeshDescMap ) )
+                    } );
+                }
+            }
+        }
+
+        for( const cgltf_node* child : HT_CGLTF_SPAN( node.children ) ) PfnSelf( *child, trs );
+    };
+
+    for( const cgltf_node* root : HT_CGLTF_SPAN( data->scenes[ 0 ].nodes ) )
+    {
+        LmbdVisitNode( *root, IDENTITY_TRS );
+    }
+
+    return {
+        .nodes      = MOV( flatNodes ),
+        .meshDesc   = { std::from_range, rawMeshDescMap | std::views::values }
+    };
+}
+
+
+struct [[ depracated ]] gltf_loader
 {
 	cgltf_data* data = nullptr;
 
     // TODO: make ctors explicit
-    gltf_loader( std::span<const u8> rawBytes, const cgltf_options& options )
-    {
-        HT_ASSERT( cgltf_result_success == cgltf_parse( &options, std::data( rawBytes ), std::size( rawBytes ), &data ) );
-        HT_ASSERT( cgltf_result_success == cgltf_validate( data ) );
-        //HT_ASSERT( cgltf_result_success == cgltf_load_buffers( &options, data, nullptr ) );
-        HT_ASSERT( 1 == data->scenes_count );
-    }
     gltf_loader( std::string_view inputFilePath ) : gltf_loader{ std::data( inputFilePath ) } {}
 	gltf_loader( const char* filePath )
 	{
@@ -252,125 +343,6 @@ struct gltf_loader
 		HT_ASSERT( 1 == data->scenes_count );
 		std::cout << "Successfully loaded the file.\n";
 	}
-
-	std::vector<raw_node> ProcessDrawableNodes() const // NOTE: gltf hierarchy is a forest not a graph
-	{
-	    // NOTE: bc we expand the gltf meshes and prims into raw_mesh which are 1:1 with gltf_prims we need the offsets
-	    // to keep the node hierarchy working
-	    std::vector<u64> meshPrimitiveOffsets = { std::from_range, HT_CGLTF_SPAN( data->meshes )
-	        | std::views::transform( &cgltf_mesh::primitives_count ) };
-	    std::exclusive_scan( std::begin( meshPrimitiveOffsets ), std::end( meshPrimitiveOffsets ),
-            std::begin( meshPrimitiveOffsets ), u64( 0 ) );
-
-		// NOTE: use set to dedup nodes
-		ankerl::unordered_dense::set<raw_node> flatNodesExpanded;
-		flatNodesExpanded.reserve( data->nodes_count ); // NOTE: this is just a best guess
-
-		auto LmbdVisitNode = [ & ]( this auto&& PfnSelf, const cgltf_node& node, packed_trs parentTrs ) -> void
-		{
-			if( CgltfIsNodeHidden( node ) ) return;
-
-			packed_trs trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
-
-			if( node.mesh )
-			{
-				u64 meshPrimOffset = meshPrimitiveOffsets[ cgltf_mesh_index( data, node.mesh ) ];
-				u64 instCount      = node.has_mesh_gpu_instancing ? node.mesh_gpu_instancing.attributes[ 0 ].data->count : 1;
-
-				for( u64 ii = 0; ii < instCount; ++ii )
-				{
-					packed_trs instTrs = node.has_mesh_gpu_instancing ?
-				        GltfComposePackedTRS( trs, GltfGetTRSFromExtGpuInst( node, ii ) ) : trs;
-					for( u64 pi = 0; pi < node.mesh->primitives_count; ++pi )
-					{
-						flatNodesExpanded.emplace( raw_node{
-						    .toWorld    = instTrs,
-						    .aabb       = CgltfGetPosStreamBounds( node.mesh->primitives[ pi ] ),
-						    .meshIdx    = meshPrimOffset + pi
-						} );
-					}
-				}
-			}
-
-			for( const cgltf_node* child : HT_CGLTF_SPAN( node.children ) ) PfnSelf( *child, trs );
-		};
-
-		for( const cgltf_node* root : HT_CGLTF_SPAN( data->scenes[ 0 ].nodes ) )
-		{
-		    LmbdVisitNode( *root, IDENTITY_TRS );
-		}
-
-		return { std::from_range, flatNodesExpanded };
-	}
-
-	std::vector<raw_mesh> ProcessPrimitives() const
-	{
-		std::vector<raw_mesh> meshesOut = {};
-	    std::vector<raw_mesh> prims = {};
-
-		for( u64 mi = 0; mi < data->meshes_count; ++mi )
-		{
-			const cgltf_mesh& m = data->meshes[ mi ];
-
-            prims.resize( m.primitives_count );
-			for( u64 pi = 0; pi < m.primitives_count; ++pi )
-			{
-				const cgltf_primitive& primitive = m.primitives[ pi ];
-
-				// TODO: how to export more stuff ?
-				// NOTE: gltf guarantees that all present attr streams have the same element count
-				prims[ pi ] = {
-					.name			= { "{}_{}_Primitive_{}", m.name ? m.name : "Mesh", mi, pi },
-					// NOTE: gltf mandates that the pos stream be present
-					.pos			= CgltfCopyAttrStream<float3>( primitive, cgltf_attribute_type_position, 0 ),
-					.normals 		= CgltfCopyAttrStream<float3>( primitive, cgltf_attribute_type_normal, 0 ),
-					.tans			= CgltfCopyAttrStream<float4>( primitive, cgltf_attribute_type_tangent, 0 ),
-					.uvs			= CgltfCopyAttrStream<float2>( primitive, cgltf_attribute_type_texcoord, 0 ),
-					.indices		= GetNormalizedIndexBufferFromAccessor( primitive.indices ),
-					.materialIdx	= ~0u,//( u32 ) cgltf_material_index( data, primitive.material ),
-				    .topology       = CgltfPrimitiveTypeToTopology( primitive.type )
-				};
-			}
-		    meshesOut.append_range( prims );
-		}
-
-		return meshesOut;
-	}
-
-    std::vector<raw_mesh_desc> ProcessPrimitivesAttributes() const
-    {
-        std::vector<raw_mesh_desc> meshesOut = {};
-        std::vector<raw_mesh_desc> prims = {};
-
-        for( u64 mi = 0; mi < data->meshes_count; ++mi )
-        {
-            const cgltf_mesh& m = data->meshes[ mi ];
-
-            prims.resize( m.primitives_count );
-            for( u64 pi = 0; pi < m.primitives_count; ++pi )
-            {
-                const cgltf_primitive& primitive = m.primitives[ pi ];
-
-                // TODO: how to export more stuff ?
-                // NOTE: gltf guarantees that all present attr streams have the same element count
-                const cgltf_accessor* pPos  = cgltf_find_accessor( &primitive, cgltf_attribute_type_position, 0 );
-                const cgltf_accessor* pNorm = cgltf_find_accessor( &primitive, cgltf_attribute_type_normal, 0 );
-
-                prims[ pi ] = {
-                    .name				= { "{:.64}_{}_Primitive_{}", m.name ? m.name : "Mesh", mi, pi },
-                    // NOTE: gltf mandates that the pos stream be present
-                    .pos				= gltf_attr_stream<float3>{ *pPos },
-                    .normals 			= pNorm ? gltf_attr_stream<float3>{ *pNorm } : gltf_attr_stream<float3>{},
-                    .indices			= primitive.indices ? gltf_idx_view{ *primitive.indices } : gltf_idx_view{},
-                    .aabb               = CgltfGetPosStreamBounds( primitive ),
-                    .topology			= CgltfPrimitiveTypeToTopology( primitive.type )
-                };
-            }
-            meshesOut.append_range( prims );
-        }
-
-        return meshesOut;
-    }
 
 	// TODO: explicitly enforce the 0th sampler is default convention
 	std::vector<sampler_config> ProcessSamplers() const

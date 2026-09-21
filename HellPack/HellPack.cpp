@@ -432,7 +432,9 @@ void HpkQuantizeAndAppendLODLevel(
 ) {
 	for( const hpk_meshlet& m : meshoptMeshlets )
 	{
-		const aabb_t<float3> meshletAabb = ComputeAabb( m.pos );
+		aabb_t<float3> meshletAabb = ComputeAabb( m.pos );
+        // TODO: why this happens ? and can't we not prevent it ?
+	    if( float3{} == ( meshletAabb.max - meshletAabb.min ) ) continue;
 
 		mlt_quantized_grid mltEncodingGrid = HpkMakeMltQuantizedGrid( meshletAabb );
 
@@ -641,12 +643,6 @@ i32x2 HpkBinNodeTo2DGridSector( const raw_node& node )
     return { ( i32 ) XMVectorGetX( sector ), ( i32 ) XMVectorGetZ( sector ) };
 }
 
-struct alignas( 64 ) gltf_parse_job
-{
-    std::vector<raw_node>       nodes;
-    std::vector<raw_mesh_desc>  meshDesc;
-};
-
 auto GetDirViewOfFiles( std::string_view dir, std::string_view ext )
 {
     return fs::directory_iterator{ dir } | std::views::filter( [ & ]( auto& e )
@@ -661,7 +657,7 @@ void HpkExitWithMsg( std::string_view msg )
     std::exit( -1 );
 }
 
-static gltf_parse_job HpkParseGltfsParallel( std::string_view dir )
+static parsed_gltf HpkParseGltfsParallel( std::string_view dir )
 {
     std::vector gltfPaths = { std::from_range, GetDirViewOfFiles( dir, ".gltf" ) | std::views::transform(
     []( auto& e )
@@ -671,7 +667,7 @@ static gltf_parse_job HpkParseGltfsParallel( std::string_view dir )
 
     if( !std::size( gltfPaths ) ) HpkExitWithMsg( "No gltfs in dir\n" );
 
-    std::vector<gltf_parse_job> parseJobs{ std::size( gltfPaths ), {} };
+    std::vector<parsed_gltf> parseJobs{ std::size( gltfPaths ), {} };
     std::atomic<u64>            atomicJobsCounter = 0;
 
     auto LmbdGltfParseJob = [ & ]()
@@ -694,11 +690,8 @@ static gltf_parse_job HpkParseGltfsParallel( std::string_view dir )
                 .memory = { .alloc_func = CgltfArenaAlloc, .free_func = CgltfArenaFree },
                 .file   = { .read = HtCgltfFileRead, .release = HtCgltfFileRelease }
             };
-            gltf_loader gltf = { rawGltfBytes.dataView, options };
-            parseJobs[ currJobIdx ] = {
-                .nodes      = MOV( gltf.ProcessDrawableNodes() ),
-                .meshDesc   = MOV( gltf.ProcessPrimitivesAttributes() )
-            };
+            const cgltf_data* pGltf = CgltfLoadMetadataFromRawBytes( rawGltfBytes.dataView, options );
+            parseJobs[ currJobIdx ] = CgltfProcessDrawablesHierarchy( pGltf );
         }
     };
 
@@ -709,7 +702,7 @@ static gltf_parse_job HpkParseGltfsParallel( std::string_view dir )
 
     std::vector<u64> meshIdxOffsets( std::size( parseJobs ) );
     {
-        auto meshCounts = parseJobs | std::views::transform( []( const gltf_parse_job& j )
+        auto meshCounts = parseJobs | std::views::transform( []( const parsed_gltf& j )
         {
             return std::size( j.meshDesc );
         } );
@@ -729,11 +722,11 @@ static gltf_parse_job HpkParseGltfsParallel( std::string_view dir )
     return {
         .nodes      = MOV( nodes ),
         .meshDesc   = {
-            std::from_range, parseJobs | std::views::transform( &gltf_parse_job::meshDesc ) | std::views::join }
+            std::from_range, parseJobs | std::views::transform( &parsed_gltf::meshDesc ) | std::views::join }
     };
 }
 
-static gltf_parse_job HpkParseGltfs( std::string_view dir )
+static parsed_gltf HpkParseGltfs( std::string_view dir )
 {
     std::vector gltfPaths = { std::from_range, GetDirViewOfFiles( dir, ".gltf" ) | std::views::transform(
     []( auto& e )
@@ -743,7 +736,7 @@ static gltf_parse_job HpkParseGltfs( std::string_view dir )
 
     if( !std::size( gltfPaths ) ) HpkExitWithMsg( "No gltfs in dir\n" );
 
-    gltf_parse_job merged;
+    parsed_gltf merged;
     for( const fs_path& gltfPath : gltfPaths )
     {
         std::println( stdout, "Processing {}\n", gltfPath );
@@ -761,15 +754,13 @@ static gltf_parse_job HpkParseGltfs( std::string_view dir )
             .memory = { .alloc_func = CgltfArenaAlloc, .free_func = CgltfArenaFree },
             .file   = { .read = HtCgltfFileRead, .release = HtCgltfFileRelease }
         };
-        gltf_loader gltf = { rawGltfBytes.dataView, options };
+        const cgltf_data* pGltf = CgltfLoadMetadataFromRawBytes( rawGltfBytes.dataView, options );
 
-        u64 meshIdxOffset = std::size( merged.meshDesc );
-        merged.nodes.append_range( gltf.ProcessDrawableNodes() | std::views::transform(
-        [ meshIdxOffset ]( const raw_node& n ) -> raw_node
-        {
-            return { .toWorld = n.toWorld, .aabb = n.aabb, .meshIdx = n.meshIdx + meshIdxOffset };
-        } ) );
-        merged.meshDesc.append_range( gltf.ProcessPrimitivesAttributes() );
+        auto[ nodes, meshDescs ] = CgltfProcessDrawablesHierarchy( pGltf );
+        for( raw_node& n : nodes ) n.meshIdx += std::size( merged.meshDesc );
+
+        merged.nodes.append_range( MOV( nodes ) );
+        merged.meshDesc.append_range( MOV( meshDescs ) );
     }
 
     return merged;
