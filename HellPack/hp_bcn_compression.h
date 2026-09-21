@@ -1,15 +1,21 @@
+#pragma once
+
 #ifndef __HP_BCN_COMPRESSION_H__
 #define __HP_BCN_COMPRESSION_H__
 
-#include "ht_core_types.h"
-#include "ht_error.h"
+#include <ht_core_types.h>
+#include <ht_error.h>
 
 #include <bc7enc.h>
 #include <rgbcx.h>
 
+#include <dds.h>
+
 #include <array>
 #include <span>
 #include <vector>
+
+using dds_texture = std::vector<u8>;
 
 // NOTE: only BC2, BC3, BC5, BC6H, BC7
 constexpr u64 BLOCK_PIXEL_PITCH = 4;
@@ -22,6 +28,27 @@ enum class bc_format_t : u8
     BC5_RG   = 1,
 };
 
+constexpr bc_format_t DxgiToBcFormat( dds::DXGI_FORMAT dxgiFmt )
+{
+    using namespace dds;
+    switch( dxgiFmt )
+    {
+        case DXGI_FORMAT_BC5_TYPELESS:
+        case DXGI_FORMAT_BC5_UNORM:
+        case DXGI_FORMAT_BC5_SNORM:
+            return bc_format_t::BC5_RG;
+
+        case DXGI_FORMAT_BC7_TYPELESS:
+        case DXGI_FORMAT_BC7_UNORM:
+        case DXGI_FORMAT_BC7_UNORM_SRGB:
+            return bc_format_t::BC7_RGBA;
+
+        default:
+            HT_ASSERT( 0 && "Unimplement fmt" );
+            return ( bc_format_t ) 0xFF;
+    }
+}
+
 constexpr u32 BCnFormatToBlockSizeInBytes( bc_format_t fmt )
 {
     using enum bc_format_t;
@@ -29,8 +56,9 @@ constexpr u32 BCnFormatToBlockSizeInBytes( bc_format_t fmt )
     {
     case BC7_RGBA: return BC7ENC_BLOCK_SIZE;
     case BC5_RG: return 16;
-    default: HT_ASSERT( false && "Not implemented yet" );
     }
+    HT_ASSERT( false && "Not implemented yet" );
+    return ~0u;
 }
 
 struct bcn_compression_result

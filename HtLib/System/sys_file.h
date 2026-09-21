@@ -9,13 +9,13 @@
 
 std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena );
 
-enum file_permissions_bits : u64
+enum file_perm_bits : u64
 {
 	READ = 1,
 	WRITE = 1 << 1
 };
 
-using file_permissions_flags = u64;
+using file_perm_flags = u64;
 
 enum class file_create_flags : u64
 {
@@ -26,7 +26,8 @@ enum class file_create_flags : u64
 enum class file_access_flags : u64
 {
 	SEQUENTIAL,
-	RANDOM
+	RANDOM,
+	CONCURRENT
 };
 
 struct mmap_file
@@ -54,11 +55,21 @@ struct mmap_file
 
 mmap_file SysCreateMmapFile(
 	const char*				path,
-	file_permissions_flags	permissionFlags,
+	file_perm_flags	permissionFlags,
 	file_create_flags		createFlags,
 	file_access_flags		accessFlags
 );
 
 void SysDestroyMmapFile( mmap_file* mmapFile );
+
+u64 ht_os_create_file(
+    const char*				filePath,
+    file_perm_flags	permissionFlags,
+    file_create_flags		createFlags,
+    file_access_flags		accessFlags
+);
+
+// NOTE: hFile must have been opened with file_access_flags::CONCURRENT, else the kernel serializes per handle
+void SysWriteFileConcurrentBlocking( u64 hFile, u64 offsetInBytes, std::span<const u8> bytes );
 
 #endif // !__SYS_FILE_H__

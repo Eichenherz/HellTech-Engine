@@ -10,10 +10,20 @@ add_library(HellPack3rdParty STATIC
     3rdPartyTU.cpp
     3rdPartyTU2.cpp
     ${THIRD_PARTY}/miniz/miniz.c
+    # NOTE: NvGDeflate is C and gdeflate_*.c each #include the plain deflate_*.c under renamed
+    #       symbols, so they can't share a unity TU — one .c per TU, like miniz.
+    ${THIRD_PARTY}/NvGDeflate/lib/deflate_compress.c
+    ${THIRD_PARTY}/NvGDeflate/lib/gdeflate_compress.c
+    ${THIRD_PARTY}/NvGDeflate/lib/gdeflate_decompress.c
+    ${THIRD_PARTY}/NvGDeflate/lib/utils.c
+    ${THIRD_PARTY}/NvGDeflate/lib/x86/cpu_features.c
 )
 set_target_properties(HellPack3rdParty PROPERTIES
     COMPILE_OPTIONS ""
     LINK_LIBRARIES  ""
+)
+set_source_files_properties(${THIRD_PARTY}/NvGDeflate/lib/deflate_compress.c
+    PROPERTIES COMPILE_DEFINITIONS WITH_GDEFLATE
 )
 target_link_libraries(HellPack3rdParty PRIVATE ThirdPartyIncludes)
 if(MSVC)

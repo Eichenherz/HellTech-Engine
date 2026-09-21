@@ -19,7 +19,6 @@ namespace fs = std::filesystem;
 
 #include "zip_pack.h"
 
-
 #include <ht_gfx_types.h>
 #include <hell_pack.h>
 #include <ht_serialization.h>
@@ -41,6 +40,8 @@ namespace fs = std::filesystem;
 
 #include "hpk_meshopt_pipeline.h"
 
+#include <libdeflate.h>
+
 template<typename T>
 using hpk_virt_array = arena_array<T, virtual_arena>;
 
@@ -48,12 +49,6 @@ static const u64 g_ThreadCount = std::thread::hardware_concurrency();
 
 thread_local static virtual_arena g_ThreadArena[ 2 ] = { { 4 * GB }, { 4 * GB } };
 thread_local static virtual_arena g_ThreadExtLibArena = { 12 * GB };
-
-inline void* MeshoptScratchAlloc( size_t szInBytes ) { return g_ThreadExtLibArena.Alloc( szInBytes, 16 ); }
-inline void MeshoptScratchFree( void* ) {}
-
-inline void* CgltfArenaAlloc( void*, cgltf_size szInBytes ) { return g_ThreadExtLibArena.Alloc( szInBytes, 16 ); }
-inline void CgltfArenaFree( void*, void* ) {}
 
 inline cgltf_result
 HtCgltfFileRead( const cgltf_memory_options*, const cgltf_file_options*, const char*, cgltf_size*, void** )
@@ -66,7 +61,19 @@ inline void HtCgltfFileRelease( const cgltf_memory_options*, const cgltf_file_op
     HT_ASSERT( 0 && "glb only, no external files" );
 }
 
+inline void*    CgltfArenaAlloc( void*, cgltf_size szInBytes ) { return g_ThreadExtLibArena.Alloc( szInBytes, 16 ); }
+inline void     CgltfArenaFree( void*, void* ) {}
 
+inline void*    MeshoptScratchAlloc( size_t szInBytes ) { return g_ThreadExtLibArena.Alloc( szInBytes, 16 ); }
+inline void     MeshoptScratchFree( void* ) {}
+
+inline void*    NvGDeflateArenaAlloc( size_t szInBytes ) { return g_ThreadExtLibArena.Alloc( szInBytes, 16 ); }
+inline void     NvGDeflateArenaFree( void* ) {}
+
+struct nv_gdeflate
+{
+    libdeflate_gdeflate_compressor* pCompressor = nullptr;
+};
 
 constexpr u32x3 CanonicallySortTriangleIndices( u32x3 t )
 {
@@ -99,31 +106,12 @@ std::vector<TriIdx> PermuteTrianglesByPrimitiveRemap(
 	return newIdx;
 }
 
-template<typename Idx>
-std::vector<Idx> BuildVertexRemapFromPermutedIndices( const std::vector<Idx>& permutedIndices, u64 vtxCount )
+void GenerateSmoothNormals( std::span<const float3> pos, std::span<const u32> indices, std::span<float3> normals )
 {
-	constexpr Idx invalidIdx = Idx{ INVALID_IDX };
+    HT_ASSERT( std::size( pos ) == std::size( normals ) );
 
-	HP_ASSERT( invalidIdx >= vtxCount );
+    std::ranges::fill( normals, float3{} );
 
-	std::vector<Idx> remap( vtxCount, invalidIdx );
-	u32 next = 0;
-
-	for( Idx idx : permutedIndices )
-	{
-		Idx oldV = idx;
-		if( invalidIdx == remap[ oldV ] )
-		{
-			remap[ oldV ] = next++;
-		}
-	}
-
-	return remap;
-}
-
-std::vector<float3> GenerateSmoothNormals( std::span<const float3> pos, std::span<const u32> indices )
-{
-    std::vector<float3> normals( std::size( pos ), {} );
     for( u64 triIdx = 0; triIdx < std::size( indices ); triIdx += 3 )
     {
         u32 vtx0 = indices[ triIdx + 0 ];
@@ -141,84 +129,6 @@ std::vector<float3> GenerateSmoothNormals( std::span<const float3> pos, std::spa
     }
 
     std::ranges::for_each( normals, []( float3& n ) { n = Normalize( n ); } );
-    return normals;
-}
-
-template<arena_t ARENA_T>
-arena_array<float3, ARENA_T> GenerateSmoothNormals( std::span<const float3> pos, std::span<const u32> indices, ARENA_T& arena )
-{
-    arena_array<float3, ARENA_T> normals = { arena, std::from_range, std::views::repeat( float3{}, std::size( pos ) ) };
-    for( u64 triIdx = 0; triIdx < std::size( indices ); triIdx += 3 )
-    {
-        u32 vtx0 = indices[ triIdx + 0 ];
-        u32 vtx1 = indices[ triIdx + 1 ];
-        u32 vtx2 = indices[ triIdx + 2 ];
-
-        float3 pos0 = pos[ vtx0 ];
-        float3 pos1 = pos[ vtx1 ];
-        float3 pos2 = pos[ vtx2 ];
-
-        float3 faceNormal = CrossProd( pos1 - pos0, pos2 - pos0 );
-        normals[ vtx0 ] += faceNormal;
-        normals[ vtx1 ] += faceNormal;
-        normals[ vtx2 ] += faceNormal;
-    }
-
-    std::ranges::for_each( normals, []( float3& n ) { n = Normalize( n ); } );
-    return normals;
-}
-
-void ValidateAndNormalizeRawMesh( raw_mesh& rawMesh )
-{
-	HT_ASSERT( std::size( rawMesh.pos ) > 0 );
-	HT_ASSERT( std::size( rawMesh.indices ) != 0 );
-	//HT_ASSERT( rawMesh.materialIdx <= i32( u16( -1 ) ) );
-	HT_ASSERT( ( std::size( rawMesh.indices ) % 3 ) == 0 );
-
-	//DeduplicateTriangles( rawMesh );
-
-    if( std::size( rawMesh.normals ) == 0 )
-    {
-        rawMesh.normals = GenerateSmoothNormals( rawMesh.pos, rawMesh.indices );
-    }
-
-    /*
-	if( std::size( rawMesh.tans ) == 0 )
-	{
-		u64 triCornerCount = std::size( rawMesh.indices );
-
-		std::vector<float4> tangents( triCornerCount );
-		meshopt_generateTangents( &tangents[ 0 ].x, &rawMesh.indices[ 0 ], triCornerCount,
-			&rawMesh.pos[ 0 ].x, std::size( rawMesh.pos ),
-			sizeof( rawMesh.pos[ 0 ] ), &rawMesh.normals[ 0 ].x,
-			sizeof( rawMesh.normals[ 0 ] ), &rawMesh.uvs[ 0 ].x,
-			sizeof( rawMesh.uvs[ 0 ] ) );
-
-		auto LmbdDeindex = [ & ]( const auto& stream )
-		{
-		    return rawMesh.indices | std::views::transform( [ & ]( u32 i ) { return stream[ i ]; } );
-		};
-
-	    // NOTE: the tangents are served per corner vtx[ idxBuf[ triCornerIdx ] ]
-	    // so we need to flatten the other attrs too; this is fine as we reindex later
-		rawMesh.pos     = { std::from_range, LmbdDeindex( rawMesh.pos ) };
-		rawMesh.normals = { std::from_range, LmbdDeindex( rawMesh.normals ) };
-		rawMesh.uvs     = { std::from_range, LmbdDeindex( rawMesh.uvs ) };
-		rawMesh.tans    = MOV( tangents );
-		rawMesh.indices = { std::from_range, std::views::iota( 0u, ( u32 ) triCornerCount ) };
-	}
-
-	HT_ASSERT( ( std::size( rawMesh.pos ) == std::size( rawMesh.normals ) )
-		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.tans ) )
-		&& ( std::size( rawMesh.pos ) == std::size( rawMesh.uvs ) )
-	);
-    */
-
-	//float3 ext = meshAabb.max - meshAabb.min;
-	//HT_ASSERT( std::isfinite( ext.x ) && std::isfinite( ext.y ) && std::isfinite( ext.z ) );
-	//HT_ASSERT( std::max( { ext.x, ext.y, ext.z } ) > 0.0f );
-
-	//rawMesh.aabb = meshAabb;
 }
 
 struct meshlet_config
@@ -492,30 +402,33 @@ void HpkQuantizeAndAppendLODLevel(
 	}
 }
 
-using position_t = float3;
-
-using dds_texture = std::vector<u8>;
-
-constexpr bc_format_t DxgiToBcFormat( dds::DXGI_FORMAT dxgiFmt )
+struct hpk_file_write
 {
-	using namespace dds;
-	switch( dxgiFmt )
-	{
-	case DXGI_FORMAT_BC5_TYPELESS:
-	case DXGI_FORMAT_BC5_UNORM:
-	case DXGI_FORMAT_BC5_SNORM:
-		return bc_format_t::BC5_RG;
+    u64 offsetInBytes;
+    u64 sizeInBytes;
+};
 
-	case DXGI_FORMAT_BC7_TYPELESS:
-	case DXGI_FORMAT_BC7_UNORM:
-	case DXGI_FORMAT_BC7_UNORM_SRGB:
-		return bc_format_t::BC7_RGBA;
+struct hpk_out_file
+{
+    u64                         hFile   = 0;
+    alignas( 64 ) atomic_u64    cursor  = 0;
 
-	default:
-		HT_ASSERT( 0 && "Unimplement fmt" );
-		return ( bc_format_t ) 0xFF;
-	}
-}
+    hpk_out_file() = default;
+    hpk_out_file( const char* filePath ) : hFile{ ht_os_create_file(
+        filePath, file_perm_bits::WRITE, file_create_flags::CREATE, file_access_flags::CONCURRENT ) } {}
+    hpk_out_file( std::string_view filePath ) : hpk_out_file{ std::data( filePath ) } {}
+
+    hpk_file_write WriteBlocking( std::span<const u8> rawBytes )
+    {
+        u64 sizeInBytes     = std::size( rawBytes );
+        u64 offsetInBytes   = SysAtomicAdd64<sys_fence_t::NONE>( &cursor, sizeInBytes );
+
+        SysWriteFileConcurrentBlocking( hFile, offsetInBytes, rawBytes );
+        return { .offsetInBytes = offsetInBytes, .sizeInBytes = sizeInBytes };
+    }
+};
+
+static hpk_out_file hpkOutFile = {};
 
 struct compression_job
 {
@@ -657,75 +570,6 @@ void HpkExitWithMsg( std::string_view msg )
     std::exit( -1 );
 }
 
-static parsed_gltf HpkParseGltfsParallel( std::string_view dir )
-{
-    std::vector gltfPaths = { std::from_range, GetDirViewOfFiles( dir, ".gltf" ) | std::views::transform(
-    []( auto& e )
-    {
-        return fs_path{ e.path().string() };
-    } ) };
-
-    if( !std::size( gltfPaths ) ) HpkExitWithMsg( "No gltfs in dir\n" );
-
-    std::vector<parsed_gltf> parseJobs{ std::size( gltfPaths ), {} };
-    std::atomic<u64>            atomicJobsCounter = 0;
-
-    auto LmbdGltfParseJob = [ & ]()
-    {
-        const u64 jobCount = std::size( parseJobs );
-        for( ;; )
-        {
-            u64 currJobIdx = atomicJobsCounter.fetch_add( 1, std::memory_order_relaxed );
-            if( currJobIdx >= jobCount ) return;
-
-            mmap_file rawGltfBytes = SysCreateMmapFile( ( const char* ) gltfPaths[ currJobIdx ],
-                file_permissions_bits::READ, file_create_flags::OPEN_IF_EXISTS,
-                file_access_flags::SEQUENTIAL );
-            defer { SysDestroyMmapFile( &rawGltfBytes ); };
-
-            scoped_arena fileArena = { g_ThreadArena[ 0 ] };
-
-            cgltf_options options = {
-                .type   = cgltf_file_type_gltf,
-                .memory = { .alloc_func = CgltfArenaAlloc, .free_func = CgltfArenaFree },
-                .file   = { .read = HtCgltfFileRead, .release = HtCgltfFileRelease }
-            };
-            const cgltf_data* pGltf = CgltfLoadMetadataFromRawBytes( rawGltfBytes.dataView, options );
-            parseJobs[ currJobIdx ] = CgltfProcessDrawablesHierarchy( pGltf );
-        }
-    };
-
-    {
-        std::vector workers = { std::from_range, std::views::iota( 0ull, g_ThreadCount )
-            | std::views::transform( [ & ]( u64 ) { return std::jthread{ LmbdGltfParseJob }; } ) };
-    }
-
-    std::vector<u64> meshIdxOffsets( std::size( parseJobs ) );
-    {
-        auto meshCounts = parseJobs | std::views::transform( []( const parsed_gltf& j )
-        {
-            return std::size( j.meshDesc );
-        } );
-        std::exclusive_scan( std::begin( meshCounts ), std::end( meshCounts ),
-            std::begin( meshIdxOffsets ), 0ull );
-    }
-
-    std::vector<raw_node> nodes;
-    for( auto&&[ job, meshIdxOffset ] : std::views::zip( parseJobs, meshIdxOffsets ) )
-    {
-        nodes.append_range( job.nodes | std::views::transform( [ meshIdxOffset ]( const raw_node& n ) -> raw_node
-        {
-            return { .toWorld = n.toWorld, .aabb = n.aabb, .meshIdx = n.meshIdx + meshIdxOffset };
-        } ) );
-    }
-
-    return {
-        .nodes      = MOV( nodes ),
-        .meshDesc   = {
-            std::from_range, parseJobs | std::views::transform( &parsed_gltf::meshDesc ) | std::views::join }
-    };
-}
-
 static parsed_gltf HpkParseGltfs( std::string_view dir )
 {
     std::vector gltfPaths = { std::from_range, GetDirViewOfFiles( dir, ".gltf" ) | std::views::transform(
@@ -742,7 +586,7 @@ static parsed_gltf HpkParseGltfs( std::string_view dir )
         std::println( stdout, "Processing {}\n", gltfPath );
 
         mmap_file rawGltfBytes = SysCreateMmapFile( ( const char* ) gltfPath,
-            file_permissions_bits::READ, file_create_flags::OPEN_IF_EXISTS,
+            file_perm_bits::READ, file_create_flags::OPEN_IF_EXISTS,
             file_access_flags::SEQUENTIAL );
         defer { SysDestroyMmapFile( &rawGltfBytes ); };
 
@@ -781,9 +625,7 @@ static void HpkProcessMeshesParallel( std::span<const raw_mesh_desc> rawMeshDesc
             virtual_arena& scratchArena = g_ThreadArena[ 0 ];
             virtual_arena& tempArena    = g_ThreadArena[ 1 ];
 
-            scoped_arena scopedArena0 = { scratchArena };
-            scoped_arena scopedArena1 = { tempArena };
-            scoped_arena meshoptArena = { g_ThreadExtLibArena };
+            scoped_arena<virtual_arena> memScopes[] = { tempArena, scratchArena, g_ThreadExtLibArena };
 
             const raw_mesh_desc& meshDesc = GltfPatchRawMeshDesc( rawMeshDescs[ currJobIdx ], binData );
             // TODO: process points too
@@ -791,44 +633,55 @@ static void HpkProcessMeshesParallel( std::span<const raw_mesh_desc> rawMeshDesc
             // NOTE: degenerate geometry
             if( float3{} == ( meshDesc.aabb.max - meshDesc.aabb.min ) ) continue;
 
+            std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> mltsWLod = {};
+            {
+                // NOTE: NO tempArena here bc we need it to outlive this scope
+                scoped_arena<virtual_arena> inMemScopes[] = { scratchArena, g_ThreadExtLibArena };
 
-            hpk_virt_array<float3> pos     = { scratchArena, std::from_range, meshDesc.pos };
-            hpk_virt_array<u32>    indices = ReadNormalizedIndexBuffer( meshDesc.indices, scratchArena );
-            hpk_virt_array<float3> normals = std::size( meshDesc.normals ) ?
-                hpk_virt_array<float3>{ scratchArena, std::from_range, meshDesc.normals }
-                : GenerateSmoothNormals( pos, indices, scratchArena );
+                hpk_virt_array<float3> pos     = { scratchArena, std::from_range, meshDesc.pos };
+                hpk_virt_array<u32>    indices = ReadNormalizedIndexBuffer( meshDesc.indices, scratchArena );
+                hpk_virt_array<float3> normals;
+                if( std::size( meshDesc.normals ) )
+                {
+                    normals = hpk_virt_array<float3>{ scratchArena, std::from_range, meshDesc.normals };
+                }
+                else
+                {
+                    normals = hpk_virt_array<float3>{ scratchArena, std::size( pos ) };
+                    GenerateSmoothNormals( pos, indices, normals );
+                }
+                MeshoptReindexAndOptimizeMesh( pos, normals, indices, scratchArena );
 
-            MeshoptReindexAndOptimizeMesh( pos, normals, indices, scratchArena );
-
-            std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> mltsWLod = MeshoptMakeHpMeshletsWithLod(
+                mltsWLod = MeshoptMakeHpMeshletsWithLod(
                 pos, normals, indices, LOD_MESH_LEVEL_RATIO, {}, tempArena, scratchArena );
+            }
 
-            u64 totalMltCount = std::size( mltsWLod[ 0 ].meshlets ); // NOTE: yes the 0th == lod0
-
+            u64 totalMltCount       = std::size( mltsWLod[ 0 ].meshlets ); // NOTE: yes the 0th == lod0
             // NOTE: our vtx size quantized CANNOT ever exceed sizeof( float3 )
-            bit_stream					vtxPosBitstream = {
-                .qwords = ArenaNewArray<u64>( tempArena, totalMltCount * RASTER_MAX_VTX_PER_MLT * sizeof( float3 ) )
-            };
-            borrowed_array<oct16x2>		vtxNormals      = ArenaNewArray<oct16x2>(
-                tempArena, totalMltCount * RASTER_MAX_VTX_PER_MLT );
-            borrowed_array<index_t>		idxBuff         = ArenaNewArray<index_t>(
-                tempArena, totalMltCount * RASTER_MLT_MAX_INDEX * LODS_PER_MESHLET );
-            borrowed_array<gpu_meshlet>	meshlets        = ArenaNewArray<gpu_meshlet>( tempArena, totalMltCount );
+            u64 maxVtxPosReserve    = totalMltCount * RASTER_MAX_VTX_PER_MLT * sizeof( float3 );
+            u64 maxVtxNormReserve   = totalMltCount * totalMltCount * RASTER_MAX_VTX_PER_MLT;
+            u64 maxIdxBuffReserve   = totalMltCount * RASTER_MLT_MAX_INDEX * LODS_PER_MESHLET;
 
             for( const hpk_meshlets_w_lod& lodLevel : mltsWLod )
             {
                 if( FLT_MAX == lodLevel.meshLevelError ) continue;
 
-                vtxPosBitstream.Reset();
-                vtxNormals.resize( 0 );
-                idxBuff.resize( 0 );
-                meshlets.resize( 0 );
+                scoped_arena<virtual_arena> inMemScopes[] = { tempArena, g_ThreadExtLibArena };
+
+                bit_stream					vtxPosBitstream = { .qwords = ArenaNewArray<u64>( tempArena, maxVtxPosReserve ) };
+                borrowed_array<oct16x2>		vtxNormals      = ArenaNewArray<oct16x2>( tempArena, maxVtxNormReserve );
+                borrowed_array<index_t>		idxBuff         = ArenaNewArray<index_t>( tempArena, maxIdxBuffReserve );
+                borrowed_array<gpu_meshlet>	meshlets        = ArenaNewArray<gpu_meshlet>( tempArena, totalMltCount );
 
                 HpkQuantizeAndAppendLODLevel( lodLevel.meshlets, vtxPosBitstream, vtxNormals, idxBuff, meshlets );
+
+                HT_ASSERT( std::ranges::size( vtxPosBitstream ) && std::ranges::size( vtxNormals ) &&
+                    std::ranges::size( idxBuff ) && std::ranges::size( meshlets ) );
+
+                // compress, wrte to hpk file write toc
             }
 
-            HT_ASSERT( std::ranges::size( vtxPosBitstream ) && std::ranges::size( vtxNormals ) &&
-                std::ranges::size( indices ) && std::ranges::size( meshlets ) );
+
 
             hpk_mesh_asset meshAsset = {
                 //.vtxPosBitstream			= MOV( vtxPosBitstream ),
@@ -886,12 +739,12 @@ i32 main( i32 argc, char** argv  )
 
 
         mmap_file rawGltfBinData = SysCreateMmapFile( ( const char* ) binPath,
-           file_permissions_bits::READ, file_create_flags::OPEN_IF_EXISTS,
+           file_perm_bits::READ, file_create_flags::OPEN_IF_EXISTS,
            file_access_flags::RANDOM );
 
         // NOTE: this is global but our hook call thread local data, so safe
         meshopt_setAllocator( MeshoptScratchAlloc, MeshoptScratchFree );
-
+        hpkOutFile = { cliArgs[ 2 ] }; // TODO: don't hardcode
         std::println( stdout, "Starting HpkProcessMeshesParallel" );
 
         // TODO: maybe compute the LOD count dynamically; for now we'll do 4 mesh LODS @ 1/4 + 2 mlt LODs ( full + 1/2 )

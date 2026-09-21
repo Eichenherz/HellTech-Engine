@@ -270,9 +270,9 @@ std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena )
     return { ( u8* ) mem, szInBytes };
 }
 
-constexpr DWORD MakeGenericAccessFlags( file_permissions_flags openFlags )
+constexpr DWORD MakeGenericAccessFlags( file_perm_flags openFlags )
 {
-    using enum file_permissions_bits;
+    using enum file_perm_bits;
 	DWORD access = 0;
 
 	if( openFlags & READ ) { access |= GENERIC_READ; }
@@ -284,18 +284,18 @@ constexpr DWORD MakeGenericAccessFlags( file_permissions_flags openFlags )
 
 	return access;
 }
-constexpr DWORD MakeFileMappingFlags( file_permissions_flags openFlags )
+constexpr DWORD MakeFileMappingFlags( file_perm_flags openFlags )
 {
-    using enum file_permissions_bits;
+    using enum file_perm_bits;
 	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return PAGE_READWRITE; }
 	if( openFlags & READ ) return PAGE_READONLY;
 	if( openFlags & WRITE ) return PAGE_WRITECOPY;
 
 	return 0;
 }
-constexpr DWORD MakeMapViewFlags( file_permissions_flags openFlags )
+constexpr DWORD MakeMapViewFlags( file_perm_flags openFlags )
 {
-    using enum file_permissions_bits;
+    using enum file_perm_bits;
 	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return FILE_MAP_ALL_ACCESS; }
 	if( openFlags & READ ) return FILE_MAP_READ;
 	if( openFlags & WRITE ) return FILE_MAP_WRITE;
@@ -322,6 +322,7 @@ constexpr DWORD MakeAccessFlags( file_access_flags accessFlags )
 	{
 	case SEQUENTIAL:	return FILE_FLAG_SEQUENTIAL_SCAN;
 	case RANDOM:		return FILE_FLAG_RANDOM_ACCESS;
+	case CONCURRENT:	return FILE_FLAG_OVERLAPPED;
 	}
 
 	HT_ASSERT( 0 && "Wrong falgs" );
@@ -343,7 +344,7 @@ u64 mmap_file::Timestamp() const
 
 mmap_file SysCreateMmapFile(
 	const char*				path,
-	file_permissions_flags	permissionFlags,
+	file_perm_flags	permissionFlags,
 	file_create_flags		createFlags,
 	file_access_flags		accessFlags
 ) {
@@ -354,7 +355,7 @@ mmap_file SysCreateMmapFile(
 	DWORD dwDataViewAccess		= MakeMapViewFlags( permissionFlags );
 
 	HANDLE hFile		= CreateFileA( path, dwPermissionFlags, FILE_SHARE_READ,
-		0, dwCreateFlags, dwAccessFlags, NULL );
+		nullptr, dwCreateFlags, dwAccessFlags, nullptr );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
 
 	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFileMappingAccess,
@@ -384,6 +385,49 @@ void SysDestroyMmapFile( mmap_file* mmapFile )
 		CloseHandle( ( HANDLE ) mmapFile->hFile );
 		mmapFile = nullptr;
 	}
+}
+
+u64 ht_os_create_file(
+    const char* filePath,
+    file_perm_flags permissionFlags,
+    file_create_flags createFlags,
+    file_access_flags accessFlags )
+{
+    DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
+    DWORD dwCreateFlags			= MakeCreateFlags( createFlags );
+    DWORD dwAccessFlags			= MakeAccessFlags( accessFlags );
+
+    HANDLE hFile = CreateFileA( filePath, dwPermissionFlags,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+        dwCreateFlags, dwAccessFlags, nullptr );
+    WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
+
+    return ( u64 ) hFile;
+}
+
+void SysWriteFileConcurrentBlocking( u64 hFile, u64 offsetInBytes, std::span<const u8> bytes )
+{
+    HT_ASSERT( std::size( bytes ) <= MAXDWORD );
+
+    HANDLE hEvent = CreateEventA( nullptr, TRUE, FALSE, nullptr );
+    WIN_CHECK( hEvent );
+    defer { WIN_CHECK( CloseHandle( hEvent ) ); };
+    
+    OVERLAPPED ov   = {
+        .Offset       = ( DWORD ) offsetInBytes,
+        .OffsetHigh   = ( DWORD ) ( offsetInBytes >> 32 ),
+        .hEvent       = hEvent
+    };
+    
+    if( !WriteFile( ( HANDLE ) hFile, std::data( bytes ), DWORD( std::size( bytes ) ),
+        nullptr, &ov ) )
+    {
+        WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
+    }
+
+    DWORD writtenInBytes = 0;
+    WIN_CHECK( GetOverlappedResult( ( HANDLE ) hFile, &ov, &writtenInBytes, TRUE ) );
+    HT_ASSERT( std::size( bytes ) == writtenInBytes );
 }
 // ---------------------------------------------------------------------------------------------------------------
 
