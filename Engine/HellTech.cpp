@@ -374,7 +374,7 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 	constexpr char assetFile[] = "D:/3d models/bistro.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/cyberbaron/cyberbaron.hpk";
 	//constexpr char	assetFile[] = "D:/3d models/sponza.hpk";
-	memMappedFile = SysCreateMmapFile( assetFile, file_permissions_bits::READ,
+	memMappedFile = SysCreateMmapFile( assetFile, file_perm_bits::READ,
 		file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
 
     // NOTE: arbitrary sized for now

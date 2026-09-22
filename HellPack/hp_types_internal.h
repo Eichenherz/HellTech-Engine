@@ -4,8 +4,9 @@
 #define __HP_TYPES_INTERNAL_H__
 
 #include <ht_core_types.h>
+#include <ht_vec_types.h>
+#include <ht_renderer_types.h>
 
-#include <ankerl/unordered_dense.h>
 #include <vector>
 #include <ht_fixed_string.h>
 
@@ -94,7 +95,7 @@ struct raw_node
 {
 	packed_trs	    toWorld;
     aabb_t<float3>  aabb;
-	u64			    meshIdx;
+	u64			    meshHash;
 };
 
 template<TRIVIAL_T T>
@@ -110,7 +111,7 @@ struct ankerl_hash_as_bytes
 };
 
 constexpr bool operator==( const packed_trs& a, const packed_trs& b ) { return ( a.t == b.t ) && ( a.r == b.r ) && ( a.s == b.s ); }
-constexpr bool operator==( const raw_node& a, const raw_node& b ) { return ( a.meshIdx == b.meshIdx ) && ( a.toWorld == b.toWorld ); }
+constexpr bool operator==( const raw_node& a, const raw_node& b ) { return ( a.meshHash == b.meshHash ) && ( a.toWorld == b.toWorld ); }
 
 template<> struct ankerl::unordered_dense::hash<raw_node> : ankerl_hash_as_bytes<raw_node> {};
 
@@ -131,5 +132,36 @@ constexpr bool operator==( const triangle_pos& a, const triangle_pos& b )
 {
 	return ( a.v0 == b.v0 ) && ( a.v1 == b.v1 ) &&  ( a.v2 == b.v2 );
 }
+
+template<TRIVIAL_T T>
+using mlt_attr_vector = inline_array<T, RASTER_MAX_VTX_PER_MLT>;
+
+using mlt_idx_vector = inline_array<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
+using mlt_idx_vector32 = inline_array<u32, RASTER_MAX_TRIS_PER_MLT * 3>;
+
+struct hpk_meshlet
+{
+    mlt_attr_vector<float3>	pos		= {};
+    mlt_attr_vector<float3>	norm	= {};
+    mlt_attr_vector<float4>	tan 	= {};
+    mlt_attr_vector<float2>	uvs 	= {};
+    mlt_idx_vector			indices	= {};
+    mlt_idx_vector			idxLod	= {};
+
+    float					lodError = FLT_MAX;
+    u16 					vtxCount = 0;
+};
+
+constexpr float LOD_MESH_LEVEL_RATIO = 0.25f;
+constexpr u64   LODS_PER_MESHLET = 2; // NOTE: includes the src/lod0
+
+struct hpk_meshlets_w_lod
+{
+    arena_array<hpk_meshlet, virtual_arena>	meshlets        = {};
+    float									meshLevelError  = FLT_MAX;
+};
+
+template<typename T>
+using hpk_virt_array = arena_array<T, virtual_arena>;
 
 #endif // !__HP_TYPES_INTERNAL_H__

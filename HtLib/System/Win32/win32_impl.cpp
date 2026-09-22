@@ -310,6 +310,7 @@ constexpr DWORD MakeCreateFlags( file_create_flags createFlags )
 	{
 	case CREATE:			return CREATE_NEW;
 	case OPEN_IF_EXISTS:	return OPEN_EXISTING;
+	case OVERWRITE:			return CREATE_ALWAYS;
 	}
 	HT_ASSERT( 0 && "Wrong flags" );
 	return 0;
@@ -429,6 +430,7 @@ void SysWriteFileConcurrentBlocking( u64 hFile, u64 offsetInBytes, std::span<con
     WIN_CHECK( GetOverlappedResult( ( HANDLE ) hFile, &ov, &writtenInBytes, TRUE ) );
     HT_ASSERT( std::size( bytes ) == writtenInBytes );
 }
+
 // ---------------------------------------------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------------------------------------------

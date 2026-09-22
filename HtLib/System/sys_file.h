@@ -5,7 +5,10 @@
 
 #include <ht_core_types.h>
 #include <ht_mem_arena.h>
+#include <ht_fixed_string.h>
 #include <span>
+
+#include <System/sys_consts.h>
 
 std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena );
 
@@ -20,7 +23,8 @@ using file_perm_flags = u64;
 enum class file_create_flags : u64
 {
 	CREATE,
-	OPEN_IF_EXISTS
+	OPEN_IF_EXISTS,
+	OVERWRITE
 };
 
 enum class file_access_flags : u64
@@ -71,5 +75,25 @@ u64 ht_os_create_file(
 
 // NOTE: hFile must have been opened with file_access_flags::CONCURRENT, else the kernel serializes per handle
 void SysWriteFileConcurrentBlocking( u64 hFile, u64 offsetInBytes, std::span<const u8> bytes );
+
+using sys_path = fixed_string<SYS_MAX_PATH_LEN>;
+
+constexpr std::string_view SysPathFileName( std::string_view path )
+{
+	return path.substr( path.find_last_of( "\\/" ) + 1 );
+}
+
+constexpr std::string_view SysPathExt( std::string_view path )
+{
+	std::string_view name = SysPathFileName( path );
+	u64 dot = name.find_last_of( '.' );
+	return ( std::string_view::npos == dot ) ? std::string_view{} : name.substr( dot );
+}
+
+constexpr std::string_view SysPathStem( std::string_view path )
+{
+	std::string_view name = SysPathFileName( path );
+	return name.substr( 0, name.find_last_of( '.' ) );
+}
 
 #endif // !__SYS_FILE_H__

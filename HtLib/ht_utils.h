@@ -151,10 +151,7 @@ constexpr u64 NextPow2( u64 num ) { return 1ull << Log2Ceil( num ); }
 inline u32 HwRandSeed32()
 {
     u32 seed = 0;
-    for( u64 tryIdx = 0; tryIdx < 4; ++tryIdx )
-    {
-        if( 1 == _rdseed32_step( &seed ) ) break;
-    }
+    for( ; 1 != _rdseed32_step( &seed ); );
     return seed;
 }
 

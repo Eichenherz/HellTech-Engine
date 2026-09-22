@@ -234,6 +234,7 @@ inline raw_mesh_desc GltfPatchRawMeshDesc( const raw_mesh_desc& in, std::span<co
 inline raw_mesh_desc CgltfParseRawMeshDesc(
     const cgltf_mesh&       parentMesh,
     const cgltf_primitive&  primitive,
+    std::string_view        originFileName,
     u64                     meshIdx,
     u64                     primIdx
 ) {
@@ -243,7 +244,7 @@ inline raw_mesh_desc CgltfParseRawMeshDesc(
     const cgltf_accessor* pNorm = cgltf_find_accessor( &primitive, cgltf_attribute_type_normal, 0 );
 
     return {
-        .name		= { "{:.64}_{}_Primitive_{}",
+        .name		= { "{}_{:.60}_{}_Primitive_{}", originFileName,
             parentMesh.name ? parentMesh.name : "Mesh", meshIdx, primIdx
         },
         // NOTE: gltf mandates that the pos stream be present
@@ -254,6 +255,12 @@ inline raw_mesh_desc CgltfParseRawMeshDesc(
         .topology   = CgltfPrimitiveTypeToTopology( primitive.type )
     };
 }
+
+struct gltf_loader
+{
+    cgltf_data* data = nullptr;
+
+};
 
 inline const cgltf_data* CgltfLoadMetadataFromRawBytes( std::span<const u8> rawBytes, const cgltf_options& options )
 {
@@ -271,7 +278,7 @@ struct parsed_gltf
     std::vector<raw_mesh_desc>  meshDesc;
 };
 
-inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data )
+inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::string_view originFileName )
 {
     std::vector<raw_node> flatNodes;
     flatNodes.reserve( data->nodes_count );
@@ -295,9 +302,12 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data )
                 auto iterMeshDesc = rawMeshDescMap.find( pPrim );
                 if( std::end( rawMeshDescMap ) == iterMeshDesc )
                 {
-                    raw_mesh_desc desc = CgltfParseRawMeshDesc( m, *pPrim, &m - data->meshes, pPrim - m.primitives );
+                    raw_mesh_desc desc = CgltfParseRawMeshDesc( m, *pPrim, originFileName,
+                        &m - data->meshes, pPrim - m.primitives );
                     iterMeshDesc = rawMeshDescMap.emplace( pPrim, desc ).first;
                 }
+
+                u64 meshHash = ankerl::unordered_dense::hash<std::string_view>{}( iterMeshDesc->second.name );
 
                 for( u64 ii = 0; ii < instCount; ++ii )
                 {
@@ -306,8 +316,7 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data )
                     flatNodes.push_back( {
                         .toWorld    = instTrs,
                         .aabb       = iterMeshDesc->second.aabb,
-                        // NOTE: this works bc ankerl's map has contiguous key-val pairs
-                        .meshIdx    = u64( iterMeshDesc - std::begin( rawMeshDescMap ) )
+                        .meshHash   = meshHash
                     } );
                 }
             }
@@ -327,7 +336,7 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data )
     };
 }
 
-
+/*
 struct [[ depracated ]] gltf_loader
 {
 	cgltf_data* data = nullptr;
@@ -469,5 +478,6 @@ struct [[ depracated ]] gltf_loader
 		};
 	}
 };
+*/
 
 #endif // !__GLTF_LOADER_H__

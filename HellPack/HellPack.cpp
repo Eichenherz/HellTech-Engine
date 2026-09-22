@@ -36,19 +36,15 @@ namespace fs = std::filesystem;
 
 #include <ht_macros.h>
 
-#include <range_utils.h>
-
 #include "hpk_meshopt_pipeline.h"
 
 #include <libdeflate.h>
 
-template<typename T>
-using hpk_virt_array = arena_array<T, virtual_arena>;
 
 static const u64 g_ThreadCount = std::thread::hardware_concurrency();
 
-thread_local static virtual_arena g_ThreadArena[ 2 ] = { { 4 * GB }, { 4 * GB } };
-thread_local static virtual_arena g_ThreadExtLibArena = { 12 * GB };
+thread_local static virtual_arena g_ThreadArena[ 2 ]    = { { 4 * GB }, { 4 * GB } };
+thread_local static virtual_arena g_ThreadExtLibArena   = { 12 * GB };
 
 inline cgltf_result
 HtCgltfFileRead( const cgltf_memory_options*, const cgltf_file_options*, const char*, cgltf_size*, void** )
@@ -72,8 +68,71 @@ inline void     NvGDeflateArenaFree( void* ) {}
 
 struct nv_gdeflate
 {
+    using page_t = libdeflate_gdeflate_out_page;
+
+    static constexpr u64 MAX_PAGE_SZ = 64 * KB;
+
     libdeflate_gdeflate_compressor* pCompressor = nullptr;
+
+    nv_gdeflate( i32 compressionLevel )
+    {
+        pCompressor = libdeflate_alloc_gdeflate_compressor( compressionLevel );
+        HT_ASSERT( pCompressor );
+    }
+   // NOTE: we will just rwind the arena
 };
+
+struct gdeflate_compressed
+{
+    std::span<u8>   packedData;
+    std::span<u64>  exclusiveOffsets;
+};
+
+static gdeflate_compressed
+NvGDeflateCompressInArenaMem(
+    const nv_gdeflate&  nvGdef,
+    std::span<const u8> rawData,
+    virtual_arena&      scratchArena,
+    virtual_arena&      tempArena
+) {
+    u64 pageCount   = 0;
+    u64 totalBound  = libdeflate_gdeflate_compress_bound( nvGdef.pCompressor, std::size( rawData ), &pageCount );
+    u64 pageBound   = totalBound / pageCount;
+    HT_ASSERT( ( pageBound * pageCount ) == totalBound );
+
+    std::span compressedOut = ArenaNewArray<u8>( tempArena, totalBound );
+    std::span nvGDeflPages  = ArenaNewArray<nv_gdeflate::page_t>( scratchArena, pageCount );
+
+    for( nv_gdeflate::page_t& gdPage : nvGDeflPages )
+    {
+        u8* pData = std::data( compressedOut );
+        gdPage = {
+            .data   = pData + u64( &gdPage - std::data( nvGDeflPages ) ) * pageBound,
+            .nbytes = pageBound
+        };
+    }
+
+    const u64 compressedSize = libdeflate_gdeflate_compress( nvGdef.pCompressor, std::data( rawData ),
+        std::size( rawData ), std::data( nvGDeflPages ), std::size( nvGDeflPages ) );
+    HT_ASSERT( compressedSize );
+
+    std::span exclusiveOffsets = ArenaNewArray<u64>( tempArena, pageCount );
+
+    u64 offsetAcc = 0;
+    for( auto[ gdPage, dataOff ] : std::views::zip( nvGDeflPages, exclusiveOffsets ) )
+    {
+        dataOff = offsetAcc;
+        std::memmove( std::data( compressedOut ) + dataOff, gdPage.data, gdPage.nbytes );
+        offsetAcc += gdPage.nbytes;
+    }
+    HT_ASSERT( offsetAcc == compressedSize );
+
+    // NOTE: this is theoretically a potential source of bugs bc we're leaking the totalBound - compressedSize chunk;
+    // but we don't care bc we're rewinding the arena every loop
+    return {
+        .packedData         = compressedOut.subspan( 0, compressedSize ),
+        .exclusiveOffsets   = exclusiveOffsets };
+}
 
 constexpr u32x3 CanonicallySortTriangleIndices( u32x3 t )
 {
@@ -94,9 +153,9 @@ std::vector<TriIdx> PermuteTrianglesByPrimitiveRemap(
 	std::vector<TriIdx> newIdx( std::size( oldIdx ) );
 	for( u64 ti = 0; ti < triangleCount; ++ti )
 	{
-		u64 oldTi = primitiveIndices[ ti ];
-		u64 src = 3ull * oldTi;
-		u64 dst = 3ull * ti;
+		u64 oldTi   = primitiveIndices[ ti ];
+		u64 src     = 3ull * oldTi;
+		u64 dst     = 3ull * ti;
 
 		newIdx[ dst + 0 ] = oldIdx[ src + 0 ];
 		newIdx[ dst + 1 ] = oldIdx[ src + 1 ];
@@ -131,186 +190,6 @@ void GenerateSmoothNormals( std::span<const float3> pos, std::span<const u32> in
     std::ranges::for_each( normals, []( float3& n ) { n = Normalize( n ); } );
 }
 
-struct meshlet_config
-{
-	//float   coneWeight		= 0.8f;
-	float	fillWeight		= 0.5f;
-	u16		maxVertices		= RASTER_MAX_VTX_PER_MLT;
-	u16		minTriangles	= RASTER_MAX_TRIS_PER_MLT / 4;
-	u16		maxTriangles	= RASTER_MAX_TRIS_PER_MLT;
-};
-
-constexpr float LOD_MESH_LEVEL_RATIO = 0.25f;
-constexpr u64   LODS_PER_MESHLET = 2; // NOTE: includes the src/lod0
-
-template<TRIVIAL_T T>
-using mlt_attr_vector = inline_array<T, RASTER_MAX_VTX_PER_MLT>;
-
-using mlt_idx_vector = inline_array<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
-using mlt_idx_vector32 = inline_array<u32, RASTER_MAX_TRIS_PER_MLT * 3>;
-
-template<TRIVIAL_T T>
-mlt_attr_vector<T> GetMeshletLocalAttrStream(
-	std::span<const T>		meshAttrStream,
-	std::span<const u32>	mltVtx,
-	u64						mltVtxOffset,
-	u64						mltVtxCount
-){
-	return { std::from_range, mltVtx.subspan( mltVtxOffset, mltVtxCount )
-		| std::views::transform( [ meshAttrStream ]( u32 vi ) { return meshAttrStream[ vi ]; } ) };
-}
-
-struct hpk_meshlet
-{
-	mlt_attr_vector<float3>	pos		= {};
-	mlt_attr_vector<float3>	norm	= {};
-	mlt_attr_vector<float4>	tan 	= {};
-	mlt_attr_vector<float2>	uvs 	= {};
-	mlt_idx_vector			indices	= {};
-	mlt_idx_vector			idxLod	= {};
-
-	float					lodError;
-	u16 					vtxCount;
-};
-
-constexpr float HPK_MESHOPT_NORMAL_WEIGHT   = 0.9f;
-constexpr float HPK_MESHOPT_ATTR_WEIGHTS[]  = {
-    HPK_MESHOPT_NORMAL_WEIGHT, HPK_MESHOPT_NORMAL_WEIGHT, HPK_MESHOPT_NORMAL_WEIGHT
-};
-
-hpk_meshlet MeshoptSimplyfyMeshlet(
-    const meshopt_Meshlet&  mlt,
-    std::span<u32>          mltVtx,
-    std::span<u8>           mltTris,
-    std::span<const float3> pos,
-    std::span<const float3> norm,
-    float                   parentMeshLodErr
-) {
-    constexpr u32 mltLodOpts = meshopt_SimplifyLockBorder | meshopt_SimplifyErrorAbsolute | meshopt_SimplifyPermissive;
-
-    HT_ASSERT( ( mlt.vertex_count <= u32( RASTER_MAX_VTX_PER_MLT ) )
-        && ( mlt.triangle_count <= u32( RASTER_MAX_TRIS_PER_MLT ) ) );
-
-    meshopt_optimizeMeshlet( &mltVtx[ mlt.vertex_offset ], &mltTris[ mlt.triangle_offset ], mlt.triangle_count, mlt.vertex_count );
-
-    mlt_attr_vector<float3>	localPos		= GetMeshletLocalAttrStream( pos, mltVtx, mlt.vertex_offset, mlt.vertex_count );
-    mlt_attr_vector<float3>	localNorm		= GetMeshletLocalAttrStream( norm, mltVtx, mlt.vertex_offset, mlt.vertex_count );
-    //mlt_attr_vector<float2>	localUVs		= GetMeshletLocalAttrStream( uvs, mltVtx, m.vertex_offset, m.vertex_count );
-    mlt_idx_vector			localIdx	    = std::span{ &mltTris[ mlt.triangle_offset ], mlt.triangle_count * 3 };
-
-    mlt_idx_vector32        mltTempLod      = { RASTER_MAX_TRIS_PER_MLT * 3, 0 };
-    // NOTE: bc we can't have simplify on u8
-    mlt_idx_vector32        mltTempIdx32    = { std::from_range, localIdx | std::views::transform( HtCastTo<u32> ) };
-    float                   lodError        = 0.0f;
-
-    // NOTE: for mesh-shaders it might be worth it to reorder LOD1's vertices/ triangles to come first in the buffer
-    mltTempLod.resize( meshopt_simplifyWithAttributes( &mltTempLod[ 0 ], &mltTempIdx32[ 0 ],
-        std::size( localIdx ), &localPos[ 0 ].x, std::size( localPos ),
-        sizeof( localPos[ 0 ] ), &localNorm[ 0 ].x,
-        sizeof( localNorm[ 0 ] ), HPK_MESHOPT_ATTR_WEIGHTS,
-        std::size( HPK_MESHOPT_ATTR_WEIGHTS ), nullptr,
-        u64( ( float ) std::size( localIdx ) * 0.5f ), FLT_MAX,
-        mltLodOpts, &lodError ) );
-
-    return {
-        .pos		= MOV( localPos ),
-        .norm		= MOV( localNorm ),
-        //.tan		= GetMeshletLocalAttrStream( tan, mltVtx, m.vertex_offset, m.vertex_count ),
-        //.uvs		= MOV( localUVs ),
-        .indices	= MOV( localIdx ),
-        // NOTE: the "do we have an LOD level here" is decided through FLT_MAX == lodError
-        .idxLod		= { std::from_range, mltTempLod | std::views::transform( HtCastTo<u8> ) },
-        .lodError	= ( std::size( mltTempLod ) < std::size( localIdx ) ) ? parentMeshLodErr + lodError : FLT_MAX,
-        .vtxCount	= ( u16 ) mlt.vertex_count
-    };
-}
-
-struct hpk_meshlets_w_lod
-{
-    arena_array<hpk_meshlet, virtual_arena>	meshlets        = {};
-    float									meshLevelError  = FLT_MAX;
-};
-
-// TODO: if we get meshlet weirdness we'd prolly need to protect some attrs during simplification
-std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpMeshletsWithLod(
-	std::span<const float3> pos,
-	std::span<const float3> normals,
-	//std::span<const float4> tan,
-	//std::span<const float2> uvs,
-	std::span<const u32>	indices,
-	float					simplificationRatio,
-	meshlet_config			cfg,
-	virtual_arena&          arena,
-	virtual_arena&          scratchArena
-) {
-    HT_ASSERT( &arena != &scratchArena );
-
-    constexpr u32 meshLodOpts = meshopt_SimplifyErrorAbsolute | meshopt_SimplifyPermissive
-                                        | meshopt_SimplifyPrune | meshopt_SimplifyLockBorder;
-
-    scoped_arena scratch = { scratchArena };
-
-    std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> lodLevels = {};
-
-    std::span<const u32>    srcIdxBuff      = indices;
-    float                   parentMeshError = 0.0f;
-    for( u64 lodIdx = 0; lodIdx < MAX_LOD_LEVELS_COUNT; ++lodIdx )
-    {
-        const u64 srcIdxCount = std::size( srcIdxBuff );
-        //const u64 maxMltCount = meshopt_buildMeshletsBound( srcIdxCount, cfg.maxVertices, cfg.maxTriangles );
-        const u64 maxMltCount = meshopt_buildMeshletsBound( srcIdxCount, cfg.maxVertices, cfg.minTriangles );
-        hpk_virt_array<meshopt_Meshlet> meshlets    = { scratch, maxMltCount };
-        hpk_virt_array<u32>             mltVtx      = { scratch, srcIdxCount };
-        hpk_virt_array<u8>              mltTris     = { scratch, srcIdxCount };
-
-        //u64 meshletCount = meshopt_buildMeshlets( &meshlets[ 0 ], &mltVtx[ 0 ], &mltTris[ 0 ], &srcIdxBuff[ 0 ],
-        //    srcIdxCount, &pos[ 0 ].x, std::size( pos ),
-        //    sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.maxTriangles,
-        //    cfg.coneWeight );
-        u64 meshletCount = meshopt_buildMeshletsSpatial( &meshlets[ 0 ], &mltVtx[ 0 ], &mltTris[ 0 ], &srcIdxBuff[ 0 ],
-            srcIdxCount, &pos[ 0 ].x, std::size( pos ),
-            sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles,
-            cfg.fillWeight );
-
-        HT_ASSERT( meshletCount < MAX_MESHLETS_PER_MESH );
-
-        const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
-
-        meshlets.resize( meshletCount );
-        mltVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
-        mltTris.resize( ( u64 ) last.triangle_offset + ( u64 ) last.triangle_count * 3 );
-
-        lodLevels[ lodIdx ] = {
-            .meshlets = { arena, std::from_range, meshlets | std::views::transform(
-                [ & ]( const meshopt_Meshlet& m )
-                {
-                    return MeshoptSimplyfyMeshlet( m, mltVtx, mltTris, pos, normals, parentMeshError );
-                } ) },
-            .meshLevelError = parentMeshError
-        };
-
-        if( ( MAX_LOD_LEVELS_COUNT - 1 ) == lodIdx ) break;
-
-        u64 targetIdxCount = u64( simplificationRatio * ( float ) srcIdxCount );
-
-        hpk_virt_array<u32> lod = { scratch, srcIdxCount };
-        float lodError = 0.0f;
-        lod.resize( meshopt_simplifyWithAttributes( &lod[ 0 ], std::data( srcIdxBuff ),
-            srcIdxCount, &pos[ 0 ].x, std::size( pos ),
-            sizeof( pos[ 0 ] ), &normals[ 0 ].x,
-            sizeof( normals[ 0 ] ), HPK_MESHOPT_ATTR_WEIGHTS,
-            std::size( HPK_MESHOPT_ATTR_WEIGHTS ), nullptr, //&locks[ 0 ],
-            targetIdxCount, FLT_MAX, meshLodOpts, &lodError ) );
-
-        if( ( std::size( lod ) >= srcIdxCount ) || ( 0 == std::size( lod ) ) ) break;
-
-        srcIdxBuff       = lod;
-        parentMeshError += lodError;
-    }
-
-	return lodLevels;
-}
-
 std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshlet& mlt )
 {
 	std::vector<packed_vtx_attr> packedVtxAttrs( mlt.vtxCount );
@@ -328,7 +207,6 @@ std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshlet& mlt
 
 	return packedVtxAttrs;
 }
-
 
 constexpr bool validatePosEncoding = true;
 constexpr bool validateNormalEncoding = true;
@@ -415,7 +293,7 @@ struct hpk_out_file
 
     hpk_out_file() = default;
     hpk_out_file( const char* filePath ) : hFile{ ht_os_create_file(
-        filePath, file_perm_bits::WRITE, file_create_flags::CREATE, file_access_flags::CONCURRENT ) } {}
+        filePath, file_perm_bits::WRITE, file_create_flags::OVERWRITE, file_access_flags::CONCURRENT ) } {}
     hpk_out_file( std::string_view filePath ) : hpk_out_file{ std::data( filePath ) } {}
 
     hpk_file_write WriteBlocking( std::span<const u8> rawBytes )
@@ -535,8 +413,6 @@ static void AtomicWait( const std::atomic<u64>& waitAddr, u64 waitVal )
     for( u64 seenVal; ( seenVal = waitAddr.load( std::memory_order_acquire ) ) < waitVal; ) waitAddr.wait( seenVal );
 }
 
-using fs_path = fixed_string<256>;
-
 constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
 constexpr float GRID_SCALE                  = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
 
@@ -575,13 +451,13 @@ static parsed_gltf HpkParseGltfs( std::string_view dir )
     std::vector gltfPaths = { std::from_range, GetDirViewOfFiles( dir, ".gltf" ) | std::views::transform(
     []( auto& e )
     {
-        return fs_path{ e.path().string() };
+        return sys_path{ e.path().string() };
     } ) };
 
     if( !std::size( gltfPaths ) ) HpkExitWithMsg( "No gltfs in dir\n" );
 
     parsed_gltf merged;
-    for( const fs_path& gltfPath : gltfPaths )
+    for( const sys_path& gltfPath : gltfPaths )
     {
         std::println( stdout, "Processing {}\n", gltfPath );
 
@@ -600,8 +476,8 @@ static parsed_gltf HpkParseGltfs( std::string_view dir )
         };
         const cgltf_data* pGltf = CgltfLoadMetadataFromRawBytes( rawGltfBytes.dataView, options );
 
-        auto[ nodes, meshDescs ] = CgltfProcessDrawablesHierarchy( pGltf );
-        for( raw_node& n : nodes ) n.meshIdx += std::size( merged.meshDesc );
+        auto[ nodes, meshDescs ] = CgltfProcessDrawablesHierarchy(
+            pGltf, SysPathStem( gltfPath ) );
 
         merged.nodes.append_range( MOV( nodes ) );
         merged.meshDesc.append_range( MOV( meshDescs ) );
@@ -616,7 +492,8 @@ static void HpkProcessMeshesParallel( std::span<const raw_mesh_desc> rawMeshDesc
 
     auto LmbdProcessMeshJob = [ & ]()
     {
-        const u64 jobCount = std::size( rawMeshDescs );
+        const u64   jobCount    = std::size( rawMeshDescs );
+        nv_gdeflate nvGDeflate  = { 6 };
         for( ;; )
         {
             u64 currJobIdx = atomicJobsCounter.fetch_add( 1, std::memory_order_relaxed );
@@ -656,28 +533,32 @@ static void HpkProcessMeshesParallel( std::span<const raw_mesh_desc> rawMeshDesc
                 pos, normals, indices, LOD_MESH_LEVEL_RATIO, {}, tempArena, scratchArena );
             }
 
-            u64 totalMltCount       = std::size( mltsWLod[ 0 ].meshlets ); // NOTE: yes the 0th == lod0
-            // NOTE: our vtx size quantized CANNOT ever exceed sizeof( float3 )
-            u64 maxVtxPosReserve    = totalMltCount * RASTER_MAX_VTX_PER_MLT * sizeof( float3 );
-            u64 maxVtxNormReserve   = totalMltCount * totalMltCount * RASTER_MAX_VTX_PER_MLT;
-            u64 maxIdxBuffReserve   = totalMltCount * RASTER_MLT_MAX_INDEX * LODS_PER_MESHLET;
-
             for( const hpk_meshlets_w_lod& lodLevel : mltsWLod )
             {
                 if( FLT_MAX == lodLevel.meshLevelError ) continue;
 
-                scoped_arena<virtual_arena> inMemScopes[] = { tempArena, g_ThreadExtLibArena };
+                scoped_arena<virtual_arena> inMemScopes[] = { tempArena, scratchArena, g_ThreadExtLibArena };
 
-                bit_stream					vtxPosBitstream = { .qwords = ArenaNewArray<u64>( tempArena, maxVtxPosReserve ) };
-                borrowed_array<oct16x2>		vtxNormals      = ArenaNewArray<oct16x2>( tempArena, maxVtxNormReserve );
-                borrowed_array<index_t>		idxBuff         = ArenaNewArray<index_t>( tempArena, maxIdxBuffReserve );
-                borrowed_array<gpu_meshlet>	meshlets        = ArenaNewArray<gpu_meshlet>( tempArena, totalMltCount );
+                u64 totalMltCount       = std::size( lodLevel.meshlets );
+                u64 totalVtxPosCount    = totalMltCount * RASTER_MAX_VTX_PER_MLT * QUANT_POS_BIT_DEPTH_BOUND;
+                u64 totalVtxNormCount   = totalMltCount * RASTER_MAX_VTX_PER_MLT;
+                u64 totalIdxBuffCount   = totalMltCount * RASTER_MLT_MAX_INDEX * LODS_PER_MESHLET;
 
-                HpkQuantizeAndAppendLODLevel( lodLevel.meshlets, vtxPosBitstream, vtxNormals, idxBuff, meshlets );
+                bit_stream					posBitstream = { .qwords = ArenaNewArray<u64>( tempArena, totalVtxPosCount ) };
+                borrowed_array<oct16x2>		vtxNormals  = ArenaNewArray<oct16x2>( tempArena, totalVtxNormCount );
+                borrowed_array<index_t>		idxBuff     = ArenaNewArray<index_t>( tempArena, totalIdxBuffCount );
+                borrowed_array<gpu_meshlet>	meshlets    = ArenaNewArray<gpu_meshlet>( tempArena, totalMltCount );
 
-                HT_ASSERT( std::ranges::size( vtxPosBitstream ) && std::ranges::size( vtxNormals ) &&
-                    std::ranges::size( idxBuff ) && std::ranges::size( meshlets ) );
+                HpkQuantizeAndAppendLODLevel( lodLevel.meshlets, posBitstream, vtxNormals, idxBuff, meshlets );
 
+                //HT_ASSERT( std::ranges::size( posBitstream ) && std::ranges::size( vtxNormals ) &&
+                //    std::ranges::size( idxBuff ) && std::ranges::size( meshlets ) );
+
+                // NOTE: perks of having mem arenas i guess
+                std::span<u8> rawData = inMemScopes[ 0 ].GetCurrentScopeByteView();
+
+                gdeflate_compressed compressed = NvGDeflateCompressInArenaMem(
+                    nvGDeflate, rawData, scratchArena, tempArena );
                 // compress, wrte to hpk file write toc
             }
 
@@ -727,6 +608,14 @@ i32 main( i32 argc, char** argv  )
 
         std::vector<i32x2> nodeBins = { std::from_range, nodes | std::views::transform( HpkBinNodeTo2DGridSector ) };
 
+        constexpr u64 BATCH_CAP_IN_VTX_COUNT = 16ull << 10;
+        for( const raw_mesh_desc& rawMeshDesc : meshDescs )
+        {
+            if( std::size( rawMeshDesc.pos ) > BATCH_CAP_IN_VTX_COUNT ) continue;
+
+        }
+
+
         fs::directory_iterator dirIt{ dir };
         auto binEntry = std::ranges::find_if( dirIt, []( auto& e )
         {
@@ -735,7 +624,7 @@ i32 main( i32 argc, char** argv  )
 
         if( std::ranges::end( dirIt ) == binEntry ) HpkExitWithMsg( "No bin in dir\n" );
 
-        fs_path binPath = { binEntry->path().string() };
+        sys_path binPath = { binEntry->path().string() };
 
 
         mmap_file rawGltfBinData = SysCreateMmapFile( ( const char* ) binPath,
@@ -744,13 +633,15 @@ i32 main( i32 argc, char** argv  )
 
         // NOTE: this is global but our hook call thread local data, so safe
         meshopt_setAllocator( MeshoptScratchAlloc, MeshoptScratchFree );
+        libdeflate_set_memory_allocator( NvGDeflateArenaAlloc, NvGDeflateArenaFree );
+
         hpkOutFile = { cliArgs[ 2 ] }; // TODO: don't hardcode
         std::println( stdout, "Starting HpkProcessMeshesParallel" );
 
         // TODO: maybe compute the LOD count dynamically; for now we'll do 4 mesh LODS @ 1/4 + 2 mlt LODs ( full + 1/2 )
         HpkProcessMeshesParallel( meshDescs, rawGltfBinData.dataView );
 
-
+        HT_ASSERT( 0 );
         return 0;
     }
 

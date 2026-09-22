@@ -102,6 +102,8 @@ inline i32 RestoreSign( u32 comp, u32 bitDepth )
 
 struct mlt_quantized_grid
 {
+    static constexpr u32 MAX_BIT_DEPTH = 21;
+
 	float3	quantAabbMin;
 	float3	quantAabbMax;
 	u32x3	bitDepthPerAxis;
@@ -110,12 +112,14 @@ struct mlt_quantized_grid
     float	gridQuantMaxErr;
 };
 
+constexpr u64 QUANT_POS_BIT_DEPTH_BOUND = 3 * mlt_quantized_grid::MAX_BIT_DEPTH;
+
 inline mlt_quantized_grid HpkMakeMltQuantizedGrid( aabb_t<float3> meshletAabb )
 {
     float3  aabbExt         = ( meshletAabb.max - meshletAabb.min ) * 0.5f;
     u32     maxDim          = ( u32 ) std::ceilf( std::max( { aabbExt.x, aabbExt.y, aabbExt.z } ) );
     // NOTE: 23 bc floats have 23 bits for mantissa
-    u32     gridResInBits   = std::min( 21, 23 - std::bit_width( maxDim ) );
+    u32     gridResInBits   = std::min( mlt_quantized_grid::MAX_BIT_DEPTH, u32( 23 - std::bit_width( maxDim ) ) );
 	u32     gridStep        = 1u << gridResInBits;
 
     float   invGridFactor   = 1.0f / float( gridStep );

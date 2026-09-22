@@ -44,6 +44,7 @@ constexpr u64 HT_ASAN_MIN_ALIGN	= 1;
 template<typename T>
 concept arena_t = requires( T a, std::span<u8> alloc, u64 bytes, u64 alignment, u64 mark )
 {
+    { a.mem }                               -> std::convertible_to<u8*>;
     { a.Alloc( bytes, alignment ) }         -> std::same_as<void*>;
     { a.TryStretchAlloc( alloc, bytes ) }   -> std::same_as<u64>;
 	{ a.Rewind( mark ) }			        -> std::same_as<void>;
@@ -125,9 +126,10 @@ template<arena_t Arena>
 struct ht_mem_scope
 {
 	Arena&	arena;
+	u8*		mem;
 	u64		baseFrameOffset;
 
-    ht_mem_scope( Arena& a ) : arena{ a }, baseFrameOffset{ a.Mark() }{}
+    ht_mem_scope( Arena& a ) : arena{ a }, mem{ a.mem }, baseFrameOffset{ a.Mark() }{}
     ~ht_mem_scope() { arena.Rewind( baseFrameOffset ); }
 
 	NO_COPY();
@@ -146,24 +148,27 @@ struct scoped_arena : ht_mem_scope<Arena>
     {
         return self.arena.TryStretchAlloc( alloc, stretchInBytes );
     }
+    std::span<u8> GetCurrentScopeByteView( this auto&& self )
+    {
+        return { self.mem + self.baseFrameOffset, self.arena.Mark() - self.baseFrameOffset };
+    }
 
     operator Arena&( this auto&& self ) { return self.arena; }
 };
 
-struct virtual_arena
+struct virtual_arena : linear_arena
 {
     static constexpr u64 COMMIT_SZ_IN_BYTES = 2 * MB;
 
-    linear_arena    linear      = {};
-    u64             commited    = 0; // NOTE: linear.sizeInBytes will double as reserved for US !
+    u64             commited    = 0; // NOTE: sizeInBytes will double as reserved for US !
 
     virtual_arena() = default;
-    virtual_arena( u64 reservedInBytes ) : linear{ ht_os_virtual_reserve( reservedInBytes ), reservedInBytes } {}
+    virtual_arena( u64 reservedInBytes ) : linear_arena{ ht_os_virtual_reserve( reservedInBytes ), reservedInBytes } {}
 
-    u64     Mark() const { return linear.Mark(); }
+    u64     Mark() const { return linear_arena::Mark(); }
     void    Rewind( u64 markInBytes )
     {
-        linear.Rewind( markInBytes );
+        linear_arena::Rewind( markInBytes );
         Decommit( std::max( markInBytes, 2 * GB ) );
     }
     void*   Alloc( u64 szInBytes, u64 alignment );
@@ -174,37 +179,37 @@ struct virtual_arena
 
 inline void virtual_arena::Decommit( u64 keepBytes )
 {
-    HT_ASSERT( keepBytes >= linear.offsetInBytes );
+    HT_ASSERT( keepBytes >= offsetInBytes );
 
     u64 keepCommitted = FwdAlignPot( keepBytes, OS_RESERVE_PAGE_SIZE_IN_BYTES );
     if( keepCommitted >= commited ) return;
 
-    ht_os_virtual_decommit( linear.mem + keepCommitted, commited - keepCommitted );
+    ht_os_virtual_decommit( mem + keepCommitted, commited - keepCommitted );
     commited = keepCommitted;
 }
 
 inline void VirtualArenaCommit( virtual_arena& arena, u64 reqSzInBytes )
 {
-    u64 reqEnd = FwdAlignPot( arena.linear.offsetInBytes + reqSzInBytes + HT_ASAN_BORDER,
+    u64 reqEnd = FwdAlignPot( arena.offsetInBytes + reqSzInBytes + HT_ASAN_BORDER,
         OS_RESERVE_PAGE_SIZE_IN_BYTES );
     if( reqEnd <= arena.commited ) return;
 
     u64 newCommitted = std::min( FwdAlignPot( reqEnd, virtual_arena::COMMIT_SZ_IN_BYTES ),
-        arena.linear.sizeInBytes );
-    ht_os_virtual_commit( arena.linear.mem + arena.commited, newCommitted - arena.commited );
+        arena.sizeInBytes );
+    ht_os_virtual_commit( arena.mem + arena.commited, newCommitted - arena.commited );
     arena.commited = newCommitted;
 }
 
 inline void* virtual_arena::Alloc( u64 szInBytes, u64 alignment )
 {
     VirtualArenaCommit( *this, alignment + szInBytes );
-    return linear.Alloc( szInBytes, alignment );
+    return linear_arena::Alloc( szInBytes, alignment );
 }
 
 inline u64 virtual_arena::TryStretchAlloc( std::span<u8> alloc, u64 stretchInBytes )
 {
     VirtualArenaCommit( *this, stretchInBytes );
-    return linear.TryStretchAlloc( alloc, stretchInBytes );
+    return linear_arena::TryStretchAlloc( alloc, stretchInBytes );
 }
 
 template<typename S, typename ELEM_T>
