@@ -35,27 +35,37 @@ struct ht_array : STORAGE_T
 
     u64                 elemCount   = 0;
 
-    ht_array() {}
-    ht_array( STORAGE_T srcStorage ) requires ( !STORAGE_T::OWNS_ELEMENTS )
-                                                            : STORAGE_T{ srcStorage } {}
+    ht_array() = default;
+
+    ht_array( STORAGE_T srcStorage ) requires ( !STORAGE_T::OWNS_ELEMENTS ) : STORAGE_T{ srcStorage } {}
+
     template<u64 E> requires ( !STORAGE_T::OWNS_ELEMENTS && !STORAGE_T::CAN_GROW )
-    ht_array( std::span<T, E> srcMem )                     : STORAGE_T{ srcMem } {}
+    ht_array( std::span<T, E> srcMem ) : STORAGE_T{ srcMem } {}
+
     template<typename U, u64 E>
     requires ( STORAGE_T::OWNS_ELEMENTS && std::same_as<std::remove_const_t<U>, T> )
-    ht_array( std::span<U, E> src )                        { this->append_range( src ); }
-    ht_array( std::initializer_list<T> il )                { this->append_range( il ); }
+    ht_array( std::span<U, E> src ) { this->append_range( src ); }
+
+    ht_array( std::initializer_list<T> il ) { this->append_range( il ); }
+
     template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T* pSrcArena )                     : STORAGE_T{ {}, pSrcArena } { HT_ASSERT( nullptr != pSrcArena ); }
+    ht_array( SRC_ARENA_T* pSrcArena ) : STORAGE_T{ {}, pSrcArena } { HT_ASSERT( nullptr != pSrcArena ); }
+
     template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T& srcArena )                      : STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } {}
+    ht_array( SRC_ARENA_T& srcArena ) : STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } {}
+
     ht_array( std::from_range_t, std::ranges::input_range auto&& r ) { this->append_range( FWD( r ) ); }
+
     template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T& srcArena, std::from_range_t, std::ranges::input_range auto&& r )
-                                                            : STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } { this->append_range( FWD( r ) ); }
+    ht_array( SRC_ARENA_T& srcArena, std::from_range_t, std::ranges::input_range auto&& r ) :
+        STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } { this->append_range( FWD( r ) ); }
+
     template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T& srcArena, u64 n )                : STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } { this->resize( n ); }
+    ht_array( SRC_ARENA_T& srcArena, u64 n ) :
+        STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } { this->resize( n ); }
+
     template<u64 E> requires ( !STORAGE_T::OWNS_ELEMENTS && !STORAGE_T::CAN_GROW )
-    ht_array( std::span<T, E> srcMem, u64 n )              : STORAGE_T{ srcMem } { this->resize( n ); }
+    ht_array( std::span<T, E> srcMem, u64 n ) : STORAGE_T{ srcMem } { this->resize( n ); }
 
     auto*       data( this auto&& self ) { return ( ht_const_like_ptr<T, decltype( self )> ) std::data( self.mem ); }
 

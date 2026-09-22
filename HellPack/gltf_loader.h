@@ -3,13 +3,9 @@
 #ifndef __GLTF_LOADER_H__
 #define __GLTF_LOADER_H__
 
-#include <algorithm>
-#include <iostream>
 #include <span>
 #include <ranges>
 #include <numeric>
-
-#include <ankerl/unordered_dense.h>
 
 #include <ht_core_types.h>
 #include <ht_error.h>
@@ -211,7 +207,7 @@ arena_array<u32, ARENA_T> ReadNormalizedIndexBuffer( const gltf_idx_view& idxVie
 
 struct raw_mesh_desc
 {
-	fixed_string<128>			name;
+	hpk_mesh_name			    name;
 	gltf_attr_stream<float3>	pos;
 	gltf_attr_stream<float3>	normals;
 	gltf_idx_view				indices;
@@ -307,8 +303,6 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
                     iterMeshDesc = rawMeshDescMap.emplace( pPrim, desc ).first;
                 }
 
-                u64 meshHash = ankerl::unordered_dense::hash<std::string_view>{}( iterMeshDesc->second.name );
-
                 for( u64 ii = 0; ii < instCount; ++ii )
                 {
                     packed_trs instTrs = node.has_mesh_gpu_instancing ?
@@ -316,7 +310,7 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
                     flatNodes.push_back( {
                         .toWorld    = instTrs,
                         .aabb       = iterMeshDesc->second.aabb,
-                        .meshHash   = meshHash
+                        .meshHash   = HpkHashMeshName( iterMeshDesc->second.name )
                     } );
                 }
             }

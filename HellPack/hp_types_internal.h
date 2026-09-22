@@ -10,6 +10,8 @@
 #include <vector>
 #include <ht_fixed_string.h>
 
+#include <ankerl/unordered_dense.h>
+
 enum class raw_mesh_topology_t : u32
 {
     MESH,
@@ -163,5 +165,12 @@ struct hpk_meshlets_w_lod
 
 template<typename T>
 using hpk_virt_array = arena_array<T, virtual_arena>;
+
+using hpk_mesh_name = fixed_string<128>;
+
+inline u64 HpkHashMeshName( const hpk_mesh_name& name )
+{
+    return ankerl::unordered_dense::hash<std::string_view>{}( name );
+}
 
 #endif // !__HP_TYPES_INTERNAL_H__

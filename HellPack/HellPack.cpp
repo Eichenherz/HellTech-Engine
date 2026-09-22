@@ -20,8 +20,8 @@ namespace fs = std::filesystem;
 #include "zip_pack.h"
 
 #include <ht_gfx_types.h>
-#include <hell_pack.h>
-#include <ht_serialization.h>
+//#include <hell_pack.h>
+//#include <ht_serialization.h>
 #include <ht_math.h>
 #include <ht_ring_buffer.h>
 #include <System/sys_file.h>
@@ -43,8 +43,9 @@ namespace fs = std::filesystem;
 
 static const u64 g_ThreadCount = std::thread::hardware_concurrency();
 
-thread_local static virtual_arena g_ThreadArena[ 2 ]    = { { 4 * GB }, { 4 * GB } };
-thread_local static virtual_arena g_ThreadExtLibArena   = { 12 * GB };
+thread_local static virtual_arena g_ThreadArena[ 2 ]        = { { 4 * GB }, { 4 * GB } };
+thread_local static virtual_arena g_ThreadExtLibArena       = { 12 * GB };
+thread_local static virtual_arena g_ThreadPersistentArena   = { 1 * GB };
 
 inline cgltf_result
 HtCgltfFileRead( const cgltf_memory_options*, const cgltf_file_options*, const char*, cgltf_size*, void** )
@@ -84,8 +85,8 @@ struct nv_gdeflate
 
 struct gdeflate_compressed
 {
-    std::span<u8>   packedData;
     std::span<u64>  exclusiveOffsets;
+    std::span<u8>   packedData;
 };
 
 static gdeflate_compressed
@@ -130,9 +131,45 @@ NvGDeflateCompressInArenaMem(
     // NOTE: this is theoretically a potential source of bugs bc we're leaking the totalBound - compressedSize chunk;
     // but we don't care bc we're rewinding the arena every loop
     return {
-        .packedData         = compressedOut.subspan( 0, compressedSize ),
-        .exclusiveOffsets   = exclusiveOffsets };
+        .exclusiveOffsets   = exclusiveOffsets,
+        .packedData         = compressedOut.subspan( 0, compressedSize )
+    };
 }
+
+struct bit_stream
+{
+    borrowed_array<u64>	qwords;
+    u64					cursorInBits = 0;  // NOTE: lsb
+
+    const u64* begin() const { return std::data( qwords ); }
+    const u64* end()   const { return std::data( qwords ) + std::size( qwords ); }
+
+    void Reset() { qwords.resize( 0 ); cursorInBits = 0; }
+
+    void AppendBits( u32 inBitStream, u32 bitDepth )
+    {
+        HT_ASSERT( bitDepth < 64 );
+        u64     bitStream           = u64( inBitStream ) & ( ( 1ull << bitDepth ) - 1 );
+
+        u64     qwBucket            = cursorInBits >> 6;
+        u32     bitOffset           = cursorInBits & 63;
+        u32     howManyBitWillFit   = 64 - bitOffset;
+        bool    carryOver           = bitDepth > howManyBitWillFit;
+
+        if( u64 sz = std::size( qwords ); sz <= ( qwBucket + u64( carryOver ) ) )
+        {
+            qwords.resize( sz + 64, 0 );
+        }
+
+        qwords[ qwBucket ] |= bitStream << bitOffset;
+        if( carryOver )
+        {
+            qwords[ qwBucket + 1 ] |= ( bitStream >> howManyBitWillFit );
+        }
+
+        cursorInBits += bitDepth;
+    }
+};
 
 constexpr u32x3 CanonicallySortTriangleIndices( u32x3 t )
 {
@@ -280,12 +317,6 @@ void HpkQuantizeAndAppendLODLevel(
 	}
 }
 
-struct hpk_file_write
-{
-    u64 offsetInBytes;
-    u64 sizeInBytes;
-};
-
 struct hpk_out_file
 {
     u64                         hFile   = 0;
@@ -296,13 +327,13 @@ struct hpk_out_file
         filePath, file_perm_bits::WRITE, file_create_flags::OVERWRITE, file_access_flags::CONCURRENT ) } {}
     hpk_out_file( std::string_view filePath ) : hpk_out_file{ std::data( filePath ) } {}
 
-    hpk_file_write WriteBlocking( std::span<const u8> rawBytes )
+    u64 WriteBlocking( std::span<const u8> rawBytes )
     {
         u64 sizeInBytes     = std::size( rawBytes );
         u64 offsetInBytes   = SysAtomicAdd64<sys_fence_t::NONE>( &cursor, sizeInBytes );
 
         SysWriteFileConcurrentBlocking( hFile, offsetInBytes, rawBytes );
-        return { .offsetInBytes = offsetInBytes, .sizeInBytes = sizeInBytes };
+        return offsetInBytes;
     }
 };
 
@@ -466,8 +497,7 @@ static parsed_gltf HpkParseGltfs( std::string_view dir )
             file_access_flags::SEQUENTIAL );
         defer { SysDestroyMmapFile( &rawGltfBytes ); };
 
-        scoped_arena fileArena = { g_ThreadArena[ 0 ] };
-        scoped_arena cgltfArena = { g_ThreadExtLibArena };
+        scoped_arena<virtual_arena> scopedArenas[] = { g_ThreadArena[ 0 ], g_ThreadExtLibArena };
 
         cgltf_options options = {
             .type   = cgltf_file_type_gltf,
@@ -486,18 +516,65 @@ static parsed_gltf HpkParseGltfs( std::string_view dir )
     return merged;
 }
 
-static void HpkProcessMeshesParallel( std::span<const raw_mesh_desc> rawMeshDescs, std::span<const u8> binData )
+constexpr char HPK_MAGIC[] = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
+constexpr u64 HPK_FORMAT_VERSION = 1; // TODO: make into a struct hash !
+constexpr u64 HPK_CONTENT_VERSION = 1;
+// NOTE: sizes will make an exclusive scan !
+struct hpk_file_footer
 {
+    u64 magic;
+    u64 fileFormatVersion;
+    u64 contentVersion;
+    u64 dataSizeInBytes;
+    u64 tocSizeInBytes;
+};
+
+struct hpk_entry
+{
+    u64 offsetInBytes;
+    u64 compressedInBytes;
+    u64 sizeInBytes;
+    u64 fileHash;
+    u64 fileHeaderSzInBytes;
+    u64 compressedPagesDescSzInBytes;
+};
+
+// NOTE: "packed" as exclusive scan-able
+struct hpk_mesh_header
+{
+    u64     hashed;
+    u64     posSzInBytes;
+    u64     normalsSzInBytes;
+    u64     idxBuffSzInBytes;
+    u64     mltsSzInBytes;
+    float3  aabbMin;
+    float3  aabbMax;
+    float4  lodErrs;
+    u32x2   u16x4_lodMltCounts; // NOTE: bc older gpu can't do u16 !
+};
+
+static void HpkProcessMeshesParallel(
+    std::span<const raw_mesh_desc>  rawMeshDescs,
+    std::span<const u8>             binData,
+    hpk_virt_array<hpk_entry>       hpkFileToc,
+    std::mutex&                     lock
+) {
     std::atomic<u64> atomicJobsCounter = 0;
 
     auto LmbdProcessMeshJob = [ & ]()
     {
-        const u64   jobCount    = std::size( rawMeshDescs );
-        nv_gdeflate nvGDeflate  = { 6 };
+        const u64                   jobCount    = std::size( rawMeshDescs );
+        nv_gdeflate                 nvGDeflate  = { 6 };
+        hpk_virt_array<hpk_entry>   threadToc   = { g_ThreadPersistentArena };
+
         for( ;; )
         {
             u64 currJobIdx = atomicJobsCounter.fetch_add( 1, std::memory_order_relaxed );
-            if( currJobIdx >= jobCount ) return;
+            if( currJobIdx >= jobCount )
+            {
+                std::lock_guard scopedLock{ lock };
+                hpkFileToc.append_range( threadToc );
+            }
 
             virtual_arena& scratchArena = g_ThreadArena[ 0 ];
             virtual_arena& tempArena    = g_ThreadArena[ 1 ];
@@ -517,68 +594,91 @@ static void HpkProcessMeshesParallel( std::span<const raw_mesh_desc> rawMeshDesc
 
                 hpk_virt_array<float3> pos     = { scratchArena, std::from_range, meshDesc.pos };
                 hpk_virt_array<u32>    indices = ReadNormalizedIndexBuffer( meshDesc.indices, scratchArena );
-                hpk_virt_array<float3> normals;
-                if( std::size( meshDesc.normals ) )
+                hpk_virt_array<float3> normals = { scratchArena, std::from_range, meshDesc.normals };
+                if( !std::size( normals ) )
                 {
-                    normals = hpk_virt_array<float3>{ scratchArena, std::from_range, meshDesc.normals };
-                }
-                else
-                {
-                    normals = hpk_virt_array<float3>{ scratchArena, std::size( pos ) };
+                    normals.resize( std::size( pos ) );
                     GenerateSmoothNormals( pos, indices, normals );
                 }
+
                 MeshoptReindexAndOptimizeMesh( pos, normals, indices, scratchArena );
 
-                mltsWLod = MeshoptMakeHpMeshletsWithLod(
-                pos, normals, indices, LOD_MESH_LEVEL_RATIO, {}, tempArena, scratchArena );
+                mltsWLod = MeshoptMakeHpMeshletsWithLod( pos, normals, indices, LOD_MESH_LEVEL_RATIO,
+                    {}, tempArena, scratchArena );
             }
 
-            for( const hpk_meshlets_w_lod& lodLevel : mltsWLod )
             {
-                if( FLT_MAX == lodLevel.meshLevelError ) continue;
-
                 scoped_arena<virtual_arena> inMemScopes[] = { tempArena, scratchArena, g_ThreadExtLibArena };
 
-                u64 totalMltCount       = std::size( lodLevel.meshlets );
+                u64 totalMltCount = std::ranges::fold_left( mltsWLod, 0ull,
+                []( u64 sum, const hpk_meshlets_w_lod& lod )
+                {
+                    return sum + std::size( lod.meshlets );
+                } );
+
                 u64 totalVtxPosCount    = totalMltCount * RASTER_MAX_VTX_PER_MLT * QUANT_POS_BIT_DEPTH_BOUND;
                 u64 totalVtxNormCount   = totalMltCount * RASTER_MAX_VTX_PER_MLT;
                 u64 totalIdxBuffCount   = totalMltCount * RASTER_MLT_MAX_INDEX * LODS_PER_MESHLET;
+
+                using index_t = u8;
 
                 bit_stream					posBitstream = { .qwords = ArenaNewArray<u64>( tempArena, totalVtxPosCount ) };
                 borrowed_array<oct16x2>		vtxNormals  = ArenaNewArray<oct16x2>( tempArena, totalVtxNormCount );
                 borrowed_array<index_t>		idxBuff     = ArenaNewArray<index_t>( tempArena, totalIdxBuffCount );
                 borrowed_array<gpu_meshlet>	meshlets    = ArenaNewArray<gpu_meshlet>( tempArena, totalMltCount );
 
-                HpkQuantizeAndAppendLODLevel( lodLevel.meshlets, posBitstream, vtxNormals, idxBuff, meshlets );
-
-                //HT_ASSERT( std::ranges::size( posBitstream ) && std::ranges::size( vtxNormals ) &&
-                //    std::ranges::size( idxBuff ) && std::ranges::size( meshlets ) );
-
-                // NOTE: perks of having mem arenas i guess
-                std::span<u8> rawData = inMemScopes[ 0 ].GetCurrentScopeByteView();
-
-                gdeflate_compressed compressed = NvGDeflateCompressInArenaMem(
-                    nvGDeflate, rawData, scratchArena, tempArena );
-                // compress, wrte to hpk file write toc
-            }
-
-
-
-            hpk_mesh_asset meshAsset = {
-                //.vtxPosBitstream			= MOV( vtxPosBitstream ),
-                //.vtxNormals				    = MOV( vtxNormals ),
-                //.indices					= MOV( indices ),
-                //.meshlets					= MOV( meshlets ),
-                .aabb						= { meshDesc.aabb.min, meshDesc.aabb.max },
-                .lodErrors					= {
-                    mltsWLod[ 0 ].meshLevelError, mltsWLod[ 1 ].meshLevelError,
-                    mltsWLod[ 2 ].meshLevelError, mltsWLod[ 3 ].meshLevelError
-                },
-                .packed16x4_lodMltCounts	= {
-                    u32( std::size( mltsWLod[ 0 ].meshlets ) ) | ( u32( std::size( mltsWLod[ 1 ].meshlets ) ) << 16 ),
-                    u32( std::size( mltsWLod[ 2 ].meshlets ) ) | ( u32( std::size( mltsWLod[ 3 ].meshlets ) ) << 16 )
+                for( const hpk_meshlets_w_lod& lodLevel : mltsWLod )
+                {
+                    if( FLT_MAX == lodLevel.meshLevelError ) continue;
+                    HpkQuantizeAndAppendLODLevel( lodLevel.meshlets, posBitstream, vtxNormals, idxBuff, meshlets );
                 }
-            };
+
+                HT_ASSERT( std::ranges::size( posBitstream ) && std::size( vtxNormals ) && std::size( idxBuff )
+                    && std::size( meshlets ) );
+
+                // NOTE: PUT BEFORE the header to avoid adding the header too !!!
+                // NOTE: perks of having mem arenas I guess
+                std::span<u8> rawMeshData = inMemScopes->GetCurrentScopeByteView();
+
+                gdeflate_compressed compressed          = {};
+                u64                 fileOffsetInBytes   = ~0ull;
+                {
+                    scoped_arena writeScope = { tempArena };
+
+                    hpk_mesh_header& fileHeader = *ArenaNew<hpk_mesh_header>( tempArena );
+                    fileHeader = {
+                        .hashed             = HpkHashMeshName( meshDesc.name ),
+                        .posSzInBytes       = FwdAlignPot( posBitstream.cursorInBits, 8 ),
+                        .normalsSzInBytes   = HtRangeSizeInBytes( vtxNormals ),
+                        .idxBuffSzInBytes   = HtRangeSizeInBytes( idxBuff ),
+                        .mltsSzInBytes      = HtRangeSizeInBytes( meshlets ),
+                        .aabbMin            = meshDesc.aabb.min,
+                        .aabbMax            = meshDesc.aabb.min,
+                        .lodErrs            = {
+                            mltsWLod[ 0 ].meshLevelError, mltsWLod[ 1 ].meshLevelError,
+                            mltsWLod[ 2 ].meshLevelError, mltsWLod[ 3 ].meshLevelError
+                        },
+                        .u16x4_lodMltCounts = std::bit_cast<u32x2>( u16x4{
+                            u16( std::size( mltsWLod[ 0 ].meshlets ) ),
+                            u16( std::size( mltsWLod[ 1 ].meshlets ) ),
+                            u16( std::size( mltsWLod[ 2 ].meshlets ) ),
+                            u16( std::size( mltsWLod[ 3 ].meshlets ) )
+                        } )
+                    };
+
+                    compressed = NvGDeflateCompressInArenaMem( nvGDeflate, rawMeshData, scratchArena, tempArena );
+                    fileOffsetInBytes = hpkOutFile.WriteBlocking( writeScope.GetCurrentScopeByteView() );
+                }
+
+               threadToc.push_back( {
+                    .offsetInBytes                  = fileOffsetInBytes,
+                    .compressedInBytes              = std::size( compressed.packedData ),
+                    .sizeInBytes                    = std::size( rawMeshData ),
+                    .fileHash                       = HpkHashMeshName( meshDesc.name ),
+                    .fileHeaderSzInBytes            = sizeof( hpk_mesh_header ),
+                    .compressedPagesDescSzInBytes   = HtRangeSizeInBytes( compressed.exclusiveOffsets )
+                } );
+            }
         }
     };
 
@@ -636,10 +736,24 @@ i32 main( i32 argc, char** argv  )
         libdeflate_set_memory_allocator( NvGDeflateArenaAlloc, NvGDeflateArenaFree );
 
         hpkOutFile = { cliArgs[ 2 ] }; // TODO: don't hardcode
+
+        hpk_virt_array<hpk_entry>   hpkFileToc      = { g_ThreadPersistentArena };
+        std::mutex                  hpkFileTocLock  = {};
         std::println( stdout, "Starting HpkProcessMeshesParallel" );
 
         // TODO: maybe compute the LOD count dynamically; for now we'll do 4 mesh LODS @ 1/4 + 2 mlt LODs ( full + 1/2 )
-        HpkProcessMeshesParallel( meshDescs, rawGltfBinData.dataView );
+        HpkProcessMeshesParallel( meshDescs, rawGltfBinData.dataView, hpkFileToc, hpkFileTocLock );
+
+        hpk_file_footer fileFooter = {
+            .magic              = std::bit_cast<u64>( HPK_MAGIC ),
+            .fileFormatVersion  = HPK_FORMAT_VERSION,
+            .contentVersion     = HPK_CONTENT_VERSION,
+            .dataSizeInBytes    = hpkOutFile.cursor,
+            .tocSizeInBytes     = HtRangeSizeInBytes( hpkFileToc )
+        };
+
+        hpkOutFile.WriteBlocking( AsBytes( std::span{ hpkFileToc } ) );
+        hpkOutFile.WriteBlocking( AsBytes( std::span{ &fileFooter, 1 } ) );
 
         HT_ASSERT( 0 );
         return 0;

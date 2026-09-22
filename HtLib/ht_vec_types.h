@@ -28,6 +28,8 @@ using i32x3		= DirectX::XMINT3;
 
 using u16x2		= DXPacked::XMUSHORT2;
 
+using u16x4		= DXPacked::XMUSHORT4;
+
 using u32x2		= DirectX::XMUINT2;
 using u32x3		= DirectX::XMUINT3;
 using u32x4		= DirectX::XMUINT4;

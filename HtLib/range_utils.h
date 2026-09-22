@@ -116,4 +116,9 @@ inline constexpr auto HtCastTo = []( auto x ) [[msvc::forceinline]] { return sta
 template <typename T, u64 Extent>
 constexpr u32 HtElemStrideInBytes( std::span<T, Extent> ) { return sizeof( T ); }
 
+constexpr u64 HtRangeSizeInBytes( const std::ranges::sized_range auto& range )
+{
+    return std::ranges::size( range ) * sizeof( std::ranges::range_value_t<decltype( range )> );
+}
+
 #endif // !__RANGE_UTILS_H__
