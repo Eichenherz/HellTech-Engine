@@ -19,4 +19,22 @@
     </Expand>
   </Type>
 
+  <Type Name="ht_array&lt;*,*&gt;">
+    <DisplayString>{{ size={elemCount} }}</DisplayString>
+    <Expand>
+      <Item Name="[size]">elemCount</Item>
+      <Item Name="[capacity]" Optional="true">mem._Mysize</Item>
+      <Item Name="[capacity]" Optional="true">sizeof( mem._Elems ) / sizeof( mem._Elems[ 0 ] )</Item>
+      <Item Name="[arena]" Optional="true">*pArena</Item>
+      <ArrayItems Optional="true">
+        <Size>elemCount</Size>
+        <ValuePointer>mem._Mydata</ValuePointer>
+      </ArrayItems>
+      <ArrayItems Optional="true">
+        <Size>elemCount</Size>
+        <ValuePointer>mem._Elems</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
 </AutoVisualizer>

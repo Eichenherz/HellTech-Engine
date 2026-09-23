@@ -121,4 +121,22 @@ constexpr u64 HtRangeSizeInBytes( const std::ranges::sized_range auto& range )
     return std::ranges::size( range ) * sizeof( std::ranges::range_value_t<decltype( range )> );
 }
 
+template<std::ranges::contiguous_range R>
+std::span<const u8> AsBytes( const R& r )
+{
+    return { ( const u8* ) std::ranges::data( r ), HtRangeSizeInBytes( r ) };
+}
+
+template<TRIVIAL_T U>
+auto HtMemCompact( std::span<U> prev, std::ranges::contiguous_range auto&& src )
+{
+    using T = std::ranges::range_value_t<decltype( src )>;
+
+    T* pDst = ( T* ) FwdAlignPot( u64( std::to_address( std::end( prev ) ) ), alignof( T ) );
+    HT_ASSERT( ( const void* ) pDst <= ( const void* ) std::ranges::data( src ) );
+
+    std::memmove( pDst, std::ranges::data( src ), HtRangeSizeInBytes( src ) );
+    return std::span<T>{ pDst, std::ranges::size( src ) };
+}
+
 #endif // !__RANGE_UTILS_H__

@@ -25,7 +25,6 @@ struct world_node
 {
 	packed_trs	toWorld;
 	u64			meshHash;
-	u16			materialIdx;
 };
 
 enum alpha_mode : u8

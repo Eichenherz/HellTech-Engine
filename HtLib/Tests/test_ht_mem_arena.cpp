@@ -95,7 +95,7 @@ MU_TEST( LinearArenaRewind )
     a.Alloc( 64, 8 );
     u64 mark = a.offsetInBytes;
     a.Alloc( 128, 8 );
-    a.Rewind( mark );
+    a.RewindNBytes( a.Mark() - mark );
     mu_check( mark == a.offsetInBytes );
 }
 
@@ -103,7 +103,7 @@ MU_TEST( LinearArenaRewindToZero )
 {
     linear_arena a = { gArenaBuf, ARENA_CAP };
     a.Alloc( 128, 8 );
-    a.Rewind( 0 );
+    a.RewindNBytes( a.Mark() );
     mu_check( 0 == a.offsetInBytes );
 }
 
@@ -111,7 +111,7 @@ MU_TEST( LinearArenaRewindThenAlloc )
 {
     linear_arena a = { gArenaBuf, ARENA_CAP };
     a.Alloc( 256, 8 );
-    a.Rewind( 0 );
+    a.RewindNBytes( a.Mark() );
     void* p = a.Alloc( 32, 8 );
     mu_check( ( void* ) gArenaBuf == p );
     mu_check( ( 32 + HT_ASAN_BORDER ) == a.offsetInBytes );
@@ -274,7 +274,7 @@ MU_TEST( LinearArenaAllocNonPow2AlignFires )
 MU_TEST( LinearArenaRewindPastCapacityFires )
 {
     linear_arena a = { gArenaBuf, ARENA_CAP };
-    MU_ASSERT_FIRES( a.Rewind( ARENA_CAP + 1 ) );
+    MU_ASSERT_FIRES( a.RewindNBytes( ARENA_CAP + 1 ) );
 }
 
 MU_TEST( LinearArenaEmptyBackingFires )

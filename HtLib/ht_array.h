@@ -46,7 +46,9 @@ struct ht_array : STORAGE_T
     requires ( STORAGE_T::OWNS_ELEMENTS && std::same_as<std::remove_const_t<U>, T> )
     ht_array( std::span<U, E> src ) { this->append_range( src ); }
 
-    ht_array( std::initializer_list<T> il ) { this->append_range( il ); }
+    //ht_array( std::initializer_list<T> il ) { this->append_range( il ); }
+
+    ht_array( u64 n, const T& v ) requires ( STORAGE_T::OWNS_ELEMENTS ) { this->resize( n, v ); }
 
     template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
     ht_array( SRC_ARENA_T* pSrcArena ) : STORAGE_T{ {}, pSrcArena } { HT_ASSERT( nullptr != pSrcArena ); }
@@ -97,7 +99,27 @@ struct ht_array : STORAGE_T
 
     void        resize( this ht_array& self, u64 n ) { self.resize( n, T{} ); }
     void        resize( this ht_array& self, u64 n, const T& v );
+
+    u64         grow_by( this ht_array& self, u64 n );
+    u64         shrink_by( this ht_array& self, u64 n );
 };
+
+template<TRIVIAL_T T, storage_t<T> STORAGE_T>
+u64 ht_array<T, STORAGE_T>::grow_by( this ht_array& self, u64 n )
+{
+    u64 oldCount = self.elemCount;
+    self.reserve( oldCount + n );
+    self.elemCount = oldCount + n;
+    return oldCount;
+}
+
+template<TRIVIAL_T T, storage_t<T> STORAGE_T>
+u64 ht_array<T, STORAGE_T>::shrink_by( this ht_array& self, u64 n )
+{
+    HT_ASSERT( n <= self.elemCount );
+    self.elemCount -= n;
+    return self.elemCount;
+}
 
 template<TRIVIAL_T T, storage_t<T> STORAGE_T>
 void ht_array<T, STORAGE_T>::append_range( this ht_array& self, std::ranges::input_range auto&& r )
@@ -136,6 +158,9 @@ void ht_array<T, STORAGE_T>::resize( this ht_array& self, u64 n, const T& v )
     if( n > self.elemCount ) std::fill_n( std::data( self.mem ) + self.elemCount, n - self.elemCount, v );
     self.elemCount = n;
 }
+
+template<typename S> requires requires { S::CAN_GROW; }
+ht_array( S ) -> ht_array<std::ranges::range_value_t<decltype( S::mem )>, S>;
 
 template<typename T, typename STORAGE_T>
 inline constexpr bool std::ranges::enable_borrowed_range<ht_array<T, STORAGE_T>> = !STORAGE_T::OWNS_ELEMENTS;

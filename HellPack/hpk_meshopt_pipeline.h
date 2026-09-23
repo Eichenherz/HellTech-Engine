@@ -122,7 +122,7 @@ constexpr float HPK_MESHOPT_ATTR_WEIGHTS[]  = {
     HPK_MESHOPT_NORMAL_WEIGHT, HPK_MESHOPT_NORMAL_WEIGHT, HPK_MESHOPT_NORMAL_WEIGHT
 };
 
-hpk_meshlet MeshoptSimplyfyMeshlet(
+inline hpk_meshlet MeshoptSimplyfyMeshlet(
     const meshopt_Meshlet&  mlt,
     std::span<u32>          mltVtx,
     std::span<u8>           mltTris,
@@ -170,7 +170,7 @@ hpk_meshlet MeshoptSimplyfyMeshlet(
 }
 
 // TODO: if we get meshlet weirdness we'd prolly need to protect some attrs during simplification
-std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpMeshletsWithLod(
+inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMeshletsWithLod(
 	std::span<const float3> pos,
 	std::span<const float3> normals,
 	//std::span<const float4> tan,
@@ -188,7 +188,7 @@ std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpMeshletsWithLo
 
     scoped_arena scratch = { scratchArena };
 
-    std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> lodLevels = {};
+    inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> lodLevels = {};
 
     std::span<const u32>    srcIdxBuff      = indices;
     float                   parentMeshError = 0.0f;
@@ -218,14 +218,13 @@ std::array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpMeshletsWithLo
         mltVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
         mltTris.resize( ( u64 ) last.triangle_offset + ( u64 ) last.triangle_count * 3 );
 
-        lodLevels[ lodIdx ] = {
-            .meshlets = { arena, std::from_range, meshlets | std::views::transform(
-                [ & ]( const meshopt_Meshlet& m )
-                {
-                    return MeshoptSimplyfyMeshlet( m, mltVtx, mltTris, pos, normals, parentMeshError );
-                } ) },
-            .meshLevelError = parentMeshError
-        };
+        arena_array<hpk_meshlet, virtual_arena> mltsOut = { arena, std::from_range, meshlets
+        | std::views::transform( [ & ]( const meshopt_Meshlet& m )
+        {
+            return MeshoptSimplyfyMeshlet( m, mltVtx, mltTris, pos, normals, parentMeshError );
+        } ) };
+
+        lodLevels.emplace_back( mltsOut, parentMeshError );
 
         if( ( MAX_LOD_LEVELS_COUNT - 1 ) == lodIdx ) break;
 

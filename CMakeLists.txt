@@ -72,7 +72,7 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/cgltf
     ${THIRD_PARTY}/minunit
     ${THIRD_PARTY}/OffsetAllocator
-    ${THIRD_PARTY}/NvGDeflate
+    ${THIRD_PARTY}/fb_zstd/lib
 )
 
 # ============================================================================

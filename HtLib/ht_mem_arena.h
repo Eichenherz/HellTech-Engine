@@ -13,6 +13,8 @@
 #include <ht_utils.h>
 #include <ht_memory.h>
 
+#include <range_utils.h>
+
 // NOTE: We poison the border between allocs to detect trampling;
 // markers MUST start at an 8byte alignment to not be lost
 #ifdef __HT_USE_ASAN__
@@ -47,7 +49,7 @@ concept arena_t = requires( T a, std::span<u8> alloc, u64 bytes, u64 alignment, 
     { a.mem }                               -> std::convertible_to<u8*>;
     { a.Alloc( bytes, alignment ) }         -> std::same_as<void*>;
     { a.TryStretchAlloc( alloc, bytes ) }   -> std::same_as<u64>;
-	{ a.Rewind( mark ) }			        -> std::same_as<void>;
+	{ a.RewindNBytes( bytes ) }			    -> std::same_as<u64>;
     { a.Mark() }                            -> std::same_as<u64>;
 };
 
@@ -68,17 +70,17 @@ struct linear_arena
     }
 
     u64     Mark() const { return offsetInBytes; }
-    void    Rewind( u64 markInBytes )
+    u64     RewindNBytes( u64 bytes )
     {
-        HT_ASSERT( markInBytes <= sizeInBytes );
-        HT_POISON_IF( markInBytes < offsetInBytes, mem + markInBytes, offsetInBytes - markInBytes );
-        offsetInBytes = markInBytes;
+        HT_ASSERT( bytes <= offsetInBytes );
+        offsetInBytes -= bytes;
+        HT_POISON_IF( 0 != bytes, mem + offsetInBytes, bytes );
+        return offsetInBytes;
     }
     void*   Alloc( u64 szInBytes, u64 alignment )
     {
         u64 base        = ( u64 ) mem;
-        u64 align       = std::max( alignment, HT_ASAN_MIN_ALIGN );
-        u64 alignedAddr = FwdAlignPot( base + offsetInBytes, align );
+        u64 alignedAddr = FwdAlignPot( base + offsetInBytes, std::max( alignment, HT_ASAN_MIN_ALIGN ) );
         u64 newOffset   = ( alignedAddr - base ) + szInBytes + HT_ASAN_BORDER;
 
         HT_ASSERT( newOffset <= sizeInBytes );
@@ -98,7 +100,7 @@ struct linear_arena
 
         HT_UNPOISON( mem + allocOffset - HT_ASAN_BORDER, HT_ASAN_BORDER + stretchInBytes );
         HT_POISON( mem + allocOffset + stretchInBytes, HT_ASAN_BORDER );
-        offsetInBytes = allocOffset + stretchInBytes + HT_ASAN_BORDER;
+        offsetInBytes = allocOffset + stretchInBytes;
         return std::size( alloc ) + stretchInBytes;
     }
 };
@@ -130,7 +132,7 @@ struct ht_mem_scope
 	u64		baseFrameOffset;
 
     ht_mem_scope( Arena& a ) : arena{ a }, mem{ a.mem }, baseFrameOffset{ a.Mark() }{}
-    ~ht_mem_scope() { arena.Rewind( baseFrameOffset ); }
+    ~ht_mem_scope() { arena.RewindNBytes( arena.Mark() - baseFrameOffset ); }
 
 	NO_COPY();
 	NO_MOVE();
@@ -142,15 +144,11 @@ struct scoped_arena : ht_mem_scope<Arena>
     scoped_arena( Arena& a ) : ht_mem_scope<Arena>{ a }{}
 
     u64     Mark( this auto&& self ) { return self.arena.Mark(); }
-    void    Rewind( this auto&& self, u64 markInBytes ) { self.arena.Rewind( markInBytes ); }
+    u64     RewindNBytes( this auto&& self, u64 bytes ) { return self.arena.RewindNBytes( bytes ); }
     void*   Alloc( this auto&& self, u64 szInBytes, u64 alignment ) { return self.arena.Alloc( szInBytes, alignment ); }
     u64     TryStretchAlloc( this auto&& self, std::span<u8> alloc, u64 stretchInBytes )
     {
         return self.arena.TryStretchAlloc( alloc, stretchInBytes );
-    }
-    std::span<u8> GetCurrentScopeByteView( this auto&& self )
-    {
-        return { self.mem + self.baseFrameOffset, self.arena.Mark() - self.baseFrameOffset };
     }
 
     operator Arena&( this auto&& self ) { return self.arena; }
@@ -166,10 +164,11 @@ struct virtual_arena : linear_arena
     virtual_arena( u64 reservedInBytes ) : linear_arena{ ht_os_virtual_reserve( reservedInBytes ), reservedInBytes } {}
 
     u64     Mark() const { return linear_arena::Mark(); }
-    void    Rewind( u64 markInBytes )
+    u64     RewindNBytes( u64 bytes )
     {
-        linear_arena::Rewind( markInBytes );
-        Decommit( std::max( markInBytes, 2 * GB ) );
+        linear_arena::RewindNBytes( bytes );
+        Decommit( std::max( offsetInBytes, 2 * GB ) );
+        return offsetInBytes;
     }
     void*   Alloc( u64 szInBytes, u64 alignment );
     u64     TryStretchAlloc( std::span<u8> alloc, u64 stretchInBytes );
@@ -271,9 +270,8 @@ void arena_storage<T, ARENA_T>::Grow( this arena_storage& self, u64 reqSzInElems
         return;
     }
 
-    u64 memSzInBytes        = std::size( self.mem ) * sizeof( T );
-    u64 stretchedSzInBytes  = self.pArena->TryStretchAlloc(
-        { ( u8* ) std::data( self.mem ), memSzInBytes }, reqSzInBytes - memSzInBytes );
+    u64 stretchedSzInBytes  = self.pArena->TryStretchAlloc( AsBytesWritable( self.mem ),
+        reqSzInBytes - HtRangeSizeInBytes( self.mem ) );
     HT_ASSERT( ~0ull != stretchedSzInBytes );
 
     self.mem = { std::data( self.mem ), stretchedSzInBytes / sizeof( T ) };
