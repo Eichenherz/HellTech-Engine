@@ -5,6 +5,7 @@
 #include "ht_error.h"
 
 #include <ranges>
+#include <numeric>
 
 template<typename T>
 struct typed_view
@@ -113,6 +114,9 @@ bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
 template<typename T>
 inline constexpr auto HtCastTo = []( auto x ) [[msvc::forceinline]] { return static_cast<T>(x); };
 
+template<typename T>
+inline constexpr auto HtReinterpretAs = []( const auto& x ) [[msvc::forceinline]] -> const T& { return ( const T& ) x; };
+
 template <typename T, u64 Extent>
 constexpr u32 HtElemStrideInBytes( std::span<T, Extent> ) { return sizeof( T ); }
 
@@ -137,6 +141,27 @@ auto HtMemCompact( std::span<U> prev, std::ranges::contiguous_range auto&& src )
 
     std::memmove( pDst, std::ranges::data( src ), HtRangeSizeInBytes( src ) );
     return std::span<T>{ pDst, std::ranges::size( src ) };
+}
+
+namespace ht::ranges
+{
+    template<
+        std::ranges::common_range R,
+        std::output_iterator<std::ranges::range_value_t<R>> OutIt,
+        typename T, typename BinOp = std::plus<>>
+    constexpr OutIt exclusive_scan( R&& range, OutIt dest, T init, BinOp op = {} )
+    {
+        return std::exclusive_scan(
+            std::ranges::begin( range ), std::ranges::end( range ), dest, MOV( init ), op );
+    }
+
+    template<std::ranges::common_range R, typename T, typename BinOp = std::plus<>>
+        requires std::ranges::forward_range<R> && std::invocable<BinOp&, T, std::ranges::range_reference_t<R>>
+    constexpr auto exclusive_scan( R&& range, T init, BinOp op = {} )
+    {
+        auto beg = std::ranges::begin( range );
+        return std::exclusive_scan( beg, std::ranges::end( range ), beg, MOV( init ), op );
+    }
 }
 
 #endif // !__RANGE_UTILS_H__

@@ -71,7 +71,8 @@ namespace hpk
     inline float3 roundf( float3 v ) { return { std::roundf( v.x ), std::roundf( v.y ), std::roundf( v.z ) }; }
 }
 
-
+constexpr i16x2 imin( i16x2 a, i16x2 b ) { return { std::min( a.x, b.x ), std::min( a.y, b.y ) }; }
+constexpr i16x2 imax( i16x2 a, i16x2 b ) { return { std::max( a.x, b.x ), std::max( a.y, b.y ) }; }
 constexpr i32x2 imin( i32x2 a, i32x2 b ) { return { std::min( a.x, b.x ), std::min( a.y, b.y ) }; }
 constexpr i32x2 imax( i32x2 a, i32x2 b ) { return { std::max( a.x, b.x ), std::max( a.y, b.y ) }; }
 
@@ -80,18 +81,12 @@ constexpr float3 CrossProd( float3 a, float3 b )
 	return  { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y  *b.x };
 }
 
-constexpr float DotProd( float2 a, float2 b )
-{
-	return a.x * b.x + a.y * b.y;
-}
-constexpr float DotProd( float3 a, float3 b )
-{
-	return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-constexpr float DotProd( float4 a, float4 b )
-{
-	return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
-}
+constexpr float DotProd( float2 a, float2 b ) { return a.x * b.x + a.y * b.y; }
+constexpr float DotProd( float3 a, float3 b ) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+constexpr float DotProd( float4 a, float4 b ) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
+constexpr i64 DotProd( i32x2 a, i32x2 b ) { return i64( a.x ) * b.x + i64( a.y ) * b.y; }
+constexpr u32 DotProd( u16x2 a, u16x2 b ) { return a.x * b.x + a.y * b.y; }
+constexpr i32 DotProd( i16x2 a, i16x2 b ) { return a.x * b.x + a.y * b.y; }
 
 inline float3 Normalize( float3 v )
 {

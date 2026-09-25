@@ -204,4 +204,48 @@ constexpr u64 FindRunStartInBitmap( std::span<const u64> bmp, u64 inRunLen )
     return BIT_NPOS;
 }
 
+namespace ht
+{
+    inline u32 pdep( u32 src, u32 mask ) { return _pdep_u32( src, mask ); }
+    inline u64 pdep( u64 src, u64 mask ) { return _pdep_u64( src, mask ); }
+    inline u32 pext( u32 src, u32 mask ) { return _pext_u32( src, mask ); }
+    inline u64 pext( u64 src, u64 mask ) { return _pext_u64( src, mask ); }
+}
+// NOTE: from https://github.com/Forceflow/libmorton/blob/main/include/libmorton/morton_BMI.h
+constexpr u64 BMI_2D_X_MASK = 0x5555555555555555;
+constexpr u64 BMI_2D_Y_MASK = 0xAAAAAAAAAAAAAAAA;
+
+template<typename T>
+concept UVEC_T = std::unsigned_integral<decltype( T::y )>;
+
+template<typename T>
+concept IVEC_T = std::signed_integral<decltype( T::y )>;
+
+template<UINT_T morton_t, UINT_T comp_t>
+inline morton_t MortonEncode2D( comp_t x, comp_t y )
+{
+    static_assert( 2 * sizeof( comp_t ) <= sizeof( morton_t ) );
+
+    return ht::pdep( ( morton_t ) x, ( morton_t ) BMI_2D_X_MASK )
+        | ht::pdep( ( morton_t ) y, ( morton_t ) BMI_2D_Y_MASK );
+}
+
+template<UINT_T morton_t, UVEC_T vec_t>
+inline morton_t MortonEncode2D( vec_t v ) { return MortonEncode2D<morton_t>( v.x, v.y ); }
+
+template<UVEC_T vec_t, UINT_T morton_t>
+inline vec_t MortonDecode2D( morton_t m )
+{
+    using comp_t = std::remove_cvref_t<decltype( vec_t{}.x )>;
+    static_assert( 2 * sizeof( comp_t ) <= sizeof( morton_t ) );
+
+    return {
+        ( comp_t ) ht::pext( m, ( morton_t ) BMI_2D_X_MASK ),
+        ( comp_t ) ht::pext( m, ( morton_t ) BMI_2D_Y_MASK )
+    };
+}
+
+template<UINT_T U>
+constexpr U SIGN_BIT = ~( U( ~0 ) >> 1 );
+
 #endif // !__HT_UTILS_H__

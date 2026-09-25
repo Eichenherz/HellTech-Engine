@@ -7,17 +7,13 @@
 #include "minunit.h"
 
 #include <ht_error.h>
-#include <setjmp.h>
 
 // NOTE: passes if HT_ASSERT fired, fails if it did not
-#define MU_ASSERT_FIRES( expr )                 \
-    do {                                        \
-        gHtAssertFired = 0;                     \
-        if( !setjmp( gHtAssertJmpbuf ) )        \
-        {                                       \
-            ( expr );                           \
-        }                                       \
-        mu_check( gHtAssertFired );             \
+#define MU_ASSERT_FIRES( expr )                                                     \
+    do {                                                                            \
+        bool assertFired = false;                                                   \
+        try { ( expr ); } catch( const ht_assert_fired& ) { assertFired = true; }   \
+        mu_check( assertFired );                                                    \
     } while( 0 )
 
 #endif // !__TEST_COMMON_H__

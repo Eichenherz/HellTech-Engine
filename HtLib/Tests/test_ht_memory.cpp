@@ -18,10 +18,6 @@
 
 #include <Windows.h>
 
-// NOTE: longjmp interception globals — extern'd in ht_error.h under HT_TESTS
-jmp_buf gHtAssertJmpbuf;
-i32     gHtAssertFired = 0;
-
 // ============================================================================
 // fixture
 // ============================================================================

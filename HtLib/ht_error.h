@@ -14,18 +14,11 @@ constexpr u64 HT_LOG_BUFFER_SIZE = 2048;
 
 #ifdef HT_TESTS
 
-#include <setjmp.h>
-
-extern jmp_buf  gHtAssertJmpbuf;
-extern i32      gHtAssertFired;
+struct ht_assert_fired {};
 
 #define HT_ASSERT( boolExpr )                                     \
  do{                                                              \
-     if( !( boolExpr ) )                                          \
-	 {                                                            \
-		 gHtAssertFired = 1;                                      \
-         longjmp( gHtAssertJmpbuf, 1 );                           \
-	 }                                                            \
+     if( !( boolExpr ) ) throw ht_assert_fired{};                 \
  }while( 0 )
 
 #else // !HT_TESTS

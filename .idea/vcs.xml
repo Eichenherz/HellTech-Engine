@@ -8,6 +8,7 @@
     <mapping directory="$PROJECT_DIR$/3rdParty/bc7enc_rdo" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/cgltf" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/dds" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rdParty/fb_zstd" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/imgui" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/meshoptimizer" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/minunit" vcs="Git" />

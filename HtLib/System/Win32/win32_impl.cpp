@@ -1,7 +1,81 @@
+// NOTE: tell the compiler to run our STATIC init before the rest of the program ( CRT still runs first )
+#pragma init_seg( lib )
+
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
 
-#include "win32_err.h"
+#include <ht_error.h>
+
+
+inline bool Win32IsHandleValid( HANDLE h ) { return INVALID_HANDLE_VALUE != h; }
+
+inline void Win32WriteLastErr( LPTSTR lpsLineFile )
+{
+    constexpr DWORD FORMAT_MSG_FLAGS = FORMAT_MESSAGE_FROM_SYSTEM
+        | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK;
+
+    char	msg[ 2048 ] = {};
+    DWORD	dwErr		= GetLastError();
+
+    char*   pErrStr = std::format_to_n( msg, std::size( msg ) - 1, "{}", lpsLineFile ).out;
+    DWORD	bytesFormatted = FormatMessageA( FORMAT_MSG_FLAGS, nullptr, dwErr, 0,
+        pErrStr, DWORD( std::end( msg ) - pErrStr ), nullptr );
+
+    if( 0 == bytesFormatted )
+    {
+        std::memset( msg, 0, std::size( msg ) );
+        std::format_to_n( msg, std::size( msg ) - 1,
+            "{} {} formated 0 bytes, exited with: {}", lpsLineFile, __func__, GetLastError() );
+    }
+
+    return SysErrMsgBox( msg );
+}
+
+#define WIN_CHECK( winExpr )												\
+do{																			\
+    constexpr char WIN_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";		\
+    if( !bool( winExpr ) )													\
+    {																		\
+        Win32WriteLastErr( ( LPSTR ) WIN_ERR_STR );							\
+        std::abort();														\
+    }																		\
+}while( 0 )
+
+
+static LONG WINAPI WinExceptionHandler( EXCEPTION_POINTERS* pException )
+{
+    constexpr u32 NTSTATUS_SEVERITY_ERROR   = 0xC0000000;
+    constexpr u32 NTSTATUS_CUSTOMER_BIT     = 0x20000000;
+    constexpr u32 NTSTATUS_RESERVED_BIT     = 0x10000000;
+    constexpr u32 NTSTATUS_CLASS_MASK       = NTSTATUS_SEVERITY_ERROR | NTSTATUS_CUSTOMER_BIT | NTSTATUS_RESERVED_BIT;
+
+    static constexpr char EXCEPTION_FORMAT_STR[] ="SEH {:#010x} at {:#018x}: {:#018x} {:#018x}\n";
+
+    const EXCEPTION_RECORD* pRecord = pException->ExceptionRecord;
+    // NOTE: for C++ try catch or other things that we're not interested in
+    if( NTSTATUS_SEVERITY_ERROR != ( pRecord->ExceptionCode & NTSTATUS_CLASS_MASK ) ) return EXCEPTION_CONTINUE_SEARCH;
+
+    if( !IsDebuggerPresent() )
+    {
+        HtPrintErrAndDie( EXCEPTION_FORMAT_STR, ( u32 ) pRecord->ExceptionCode,
+        ( u64 ) pRecord->ExceptionAddress, ( u64 ) pRecord->ExceptionInformation[ 0 ],
+        ( u64 ) pRecord->ExceptionInformation[ 1 ] );
+    }
+
+    char msg[ 2048 ] = {};
+    std::format_to_n( msg, std::size( msg ) - 1, EXCEPTION_FORMAT_STR,
+        ( u32 ) pRecord->ExceptionCode, ( u64 ) pRecord->ExceptionAddress,
+        ( u64 ) pRecord->ExceptionInformation[ 0 ], ( u64 ) pRecord->ExceptionInformation[ 1 ] );
+
+    i32 retVal = MessageBoxA( nullptr, msg, "SEH",
+        MB_RETRYCANCEL | MB_ICONERROR | MB_APPLMODAL );
+    // NOTE: user pressed retry so we delegate again; this makes Win hand it to the debugger
+    if( IDRETRY == retVal ) return EXCEPTION_CONTINUE_SEARCH;
+
+    std::abort();
+}
+
+static const bool EXCEPTION_HANDLER_HOOKED = ( AddVectoredExceptionHandler( 1, WinExceptionHandler ), true );
 
 // ---------------------------------------------------------------------------------------------------------------
 #include <ht_memory.h>
@@ -117,7 +191,6 @@ u64 SysAtomicAnd64( atomic_u64* pAddr, u64 mask )
 template<sys_fence_t BARRIER>
 u64 SysAtomicOr64( atomic_u64* pAddr, u64 value )
 {
-    // NOTE: exch returns PREV value
     if constexpr( sys_fence_t::NONE == BARRIER )
     {
         return ( u64 ) InterlockedOr64NoFence( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
@@ -141,7 +214,6 @@ u64 SysAtomicOr64( atomic_u64* pAddr, u64 value )
 template<sys_fence_t BARRIER>
 u64 SysAtomicAdd64( atomic_u64* pAddr, u64 value )
 {
-	// NOTE: exch returns PREV value
 	if constexpr( sys_fence_t::NONE == BARRIER )
 	{
 		return ( u64 ) InterlockedExchangeAddNoFence64( ( win32_atomic64* ) pAddr, ( LONG64 ) value );
@@ -228,7 +300,7 @@ template void SysAtomicWrite64<sys_fence_t::SEQ_CST>( atomic_u64*, u64 );
 
 sys_semaphore::sys_semaphore() : hndl{ ( u64 ) CreateSemaphoreW( 0, 0, LONG_MAX, 0 ) }
 {
-	WIN_CHECK( NULL != ( HANDLE ) hndl );
+	WIN_CHECK( Win32IsHandleValid( ( HANDLE ) hndl ) );
 }
 
 u32 SysSemaphoreRelease( sys_semaphore sema, u32 releaseVal )
@@ -333,13 +405,10 @@ constexpr DWORD MakeAccessFlags( file_access_flags accessFlags )
 u64 mmap_file::Timestamp() const
 {
 	FILETIME fileTime = {};
-	WIN_CHECK( SUCCEEDED( GetFileTime( ( HANDLE ) hFile,
-		nullptr, nullptr, &fileTime ) ) );
+	WIN_CHECK( SUCCEEDED( GetFileTime( ( HANDLE ) hFile, nullptr, nullptr,
+	    &fileTime ) ) );
 
-	ULARGE_INTEGER timestamp = {};
-	timestamp.LowPart = fileTime.dwLowDateTime;
-	timestamp.HighPart = fileTime.dwHighDateTime;
-
+	ULARGE_INTEGER timestamp = { .LowPart = fileTime.dwLowDateTime, .HighPart = fileTime.dwHighDateTime };
 	return u64( timestamp.QuadPart );
 }
 
@@ -444,10 +513,7 @@ sys_thread SysCreateThread( u64	stackSize, PfnSysThreadProc ThreadProc, void* pD
 		pData, 0, &threadId );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hThread );
 
-	if( name )
-	{
-		SysNameThread( ( u64 ) hThread, name );
-	}
+	if( name ) SysNameThread( ( u64 ) hThread, name );
 
 	return {
 		.hndl		= ( u64 ) hThread,
@@ -490,11 +556,10 @@ void SysWriteToStdStream( const char* str, sys_stream_t streamType )
 	if( sys_stream_t::OUTPUT == streamType )	hStream = GetStdHandle( STD_OUTPUT_HANDLE );
 	else if( sys_stream_t::ERR == streamType )	hStream = GetStdHandle( STD_ERROR_HANDLE );
 	DWORD lpNumberOfBytesWritten;
-	WriteFile( hStream, str, ( DWORD ) strlen( str ), &lpNumberOfBytesWritten, NULL );
+	WriteFile( hStream, str, ( DWORD ) strlen( str ), &lpNumberOfBytesWritten, nullptr );
 }
 void SysErrMsgBox( const char* str )
 {
-	MessageBoxA( nullptr, ( LPCTSTR ) str, TEXT( "Error" ),
-		MB_OK | MB_ICONERROR | MB_APPLMODAL );
+	MessageBoxA( nullptr, str, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
 }
 // ---------------------------------------------------------------------------------------------------------------

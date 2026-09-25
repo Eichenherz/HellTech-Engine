@@ -14,7 +14,7 @@ set(HTLIB_TEST_INCLUDES
 # HtLib's own translation units, read straight off the HtLib target so this can
 # never drift from what the exes compile.
 # Tests do NOT link HtLib: they rebuild the same sources with HT_TESTS, which
-# swaps HT_ASSERT for the setjmp trap MU_ASSERT_FIRES needs.
+# swaps HT_ASSERT for the throw MU_ASSERT_FIRES catches; /EHsc turns C++ exceptions back on for them only.
 get_target_property(HTLIB_SRC HtLib INTERFACE_SOURCES)
 
 # INLINED_TU names HtLib .cpp files the test #includes itself to reach the helpers that TU keeps
@@ -30,6 +30,7 @@ function(add_ht_test TARGET_NAME)
     add_executable(${TARGET_NAME} ${HT_TEST_UNPARSED_ARGUMENTS} ${TEST_HTLIB_SRC})
     target_include_directories(${TARGET_NAME} PRIVATE ${HTLIB_TEST_INCLUDES})
     target_compile_definitions(${TARGET_NAME} PRIVATE HT_TESTS _CONSOLE)
+    target_compile_options(${TARGET_NAME} PRIVATE /EHsc)
 endfunction()
 
 # Stress exes are not unit tests, so no HT_TESTS: HT_ASSERT has to abort into the debugger instead of

@@ -5,7 +5,6 @@
 
 #include <span>
 #include <ranges>
-#include <numeric>
 
 #include <ht_core_types.h>
 #include <ht_error.h>
@@ -25,30 +24,19 @@ constexpr u64 DEFAULT_SAMPLER_IDX = 0;
 #define HT_CGLTF_SPAN( ptr ) std::span{ ( ptr ), ( ptr ## _count ) }
 
 
-template<TRIVIAL_T T>
-struct gltf_strided_elem
-{
-	const u8*	data		= nullptr;
-	u64			strideBytes	= 0;
-
-	HT_FORCEINLINE const T& operator()( u64 i ) const { return ( const T& ) data[ i * strideBytes ]; }
-};
-
-template<TRIVIAL_T T>
-using gltf_stream_view = std::ranges::transform_view<std::ranges::iota_view<u64, u64>, gltf_strided_elem<T>>;
-
 // NOTE: can't be replaced by a span, this handles interleaved data as well
 template<TRIVIAL_T T>
 struct gltf_attr_stream
 {
-	gltf_stream_view<T>	view				= {};
+	std::span<const u8>	bytes				= {};
+	u64					count				= 0;
 	u64					byteOffset			= 0;
-	u64					strideInBytes		= 0;
+	u64					strideInBytes		= sizeof( T );
 
 	gltf_attr_stream() = default;
 
-	gltf_attr_stream( const gltf_stream_view<T>& view, u64 byteOffset, u64 strideInBytes )
-		: view{ view }, byteOffset{ byteOffset }, strideInBytes{ strideInBytes } {}
+	gltf_attr_stream( std::span<const u8> bytes, u64 count, u64 byteOffset, u64 strideInBytes )
+		: bytes{ bytes }, count{ count }, byteOffset{ byteOffset }, strideInBytes{ strideInBytes } {}
 
 	gltf_attr_stream( const cgltf_accessor& accessor )
 	{
@@ -76,51 +64,37 @@ struct gltf_attr_stream
 		HT_ASSERT( ( sizeof( T ) == elemSize ) || ( 1 == sizeof( T ) ) );
 
 		// NOTE: buff->data is null until cgltf_load_buffers / Bind; the view then just carries the offset
-		this->view				= gltf_stream_view<T>{
-		    std::ranges::iota_view<u64, u64>{ 0, accessor.count },
-		    { ( ( const u8* ) buff->data ) + baseOffset, stride } };
-		this->byteOffset		= baseOffset;
-		this->strideInBytes		= stride;
+		const u64 bytesSize = accessor.count ? ( accessor.count - 1 ) * stride + elemSize : 0;
+
+		this->bytes		    = { ( ( const u8* ) buff->data ) + baseOffset, bytesSize };
+		this->count		    = accessor.count;
+		this->byteOffset    = baseOffset;
+		this->strideInBytes = stride;
 	}
 
-	auto begin() const { return std::ranges::begin( view ); }
-	auto end() const { return std::ranges::end( view ); }
-	constexpr u64 size() const { return std::ranges::size( view ); }
+	constexpr u64 size() const { return count; }
 };
+
+template<typename To = void, TRIVIAL_T From>
+auto GltfTypedView( const gltf_attr_stream<From>& stream )
+{
+	using elem_t = std::conditional_t<std::is_void_v<To>, From, To>;
+	HT_ASSERT( stream.strideInBytes >= sizeof( elem_t ) );
+	return stream.bytes
+        | std::views::stride( stream.strideInBytes )
+		| std::views::transform( HtReinterpretAs<elem_t> );
+}
 
 template<TRIVIAL_T T>
 gltf_attr_stream<T> GltfPatchAttrStream( const gltf_attr_stream<T>& stream, std::span<const u8> buffer )
 {
-	HT_ASSERT( stream.byteOffset + ( std::size( stream ) - 1 ) * stream.strideInBytes + sizeof( T ) <= std::size( buffer ) );
+	HT_ASSERT( stream.byteOffset + std::size( stream.bytes ) <= std::size( buffer ) );
 	return {
-		gltf_stream_view<T>{
-			std::ranges::iota_view<u64, u64>{ 0, std::size( stream ) },
-			{ std::data( buffer ) + stream.byteOffset, stream.strideInBytes } },
+		{ std::data( buffer ) + stream.byteOffset, std::size( stream.bytes ) },
+		stream.count,
 		stream.byteOffset,
 		stream.strideInBytes
 	};
-}
-
-template<TRIVIAL_T To, TRIVIAL_T From>
-gltf_attr_stream<To> GltfRecastAttrStream( const gltf_attr_stream<From>& stream )
-{
-	HT_ASSERT( stream.strideInBytes >= sizeof( To ) );
-	return {
-		gltf_stream_view<To>{
-			std::ranges::iota_view<u64, u64>{ 0, std::size( stream ) },
-			{ ( const u8* ) &*std::begin( stream ), stream.strideInBytes } },
-		stream.byteOffset,
-		stream.strideInBytes
-	};
-}
-
-template<TRIVIAL_T T>
-std::vector<T> CgltfCopyAttrStream( const cgltf_primitive& prim, cgltf_attribute_type type, i32 attrIdx )
-{
-	const cgltf_accessor* pAccessor = cgltf_find_accessor( &prim, type, attrIdx );
-	if( !pAccessor ) return {};
-
-	return { std::from_range, gltf_attr_stream<T>{ *pAccessor } };
 }
 
 template<TRIVIAL_T T>
@@ -130,87 +104,35 @@ gltf_attr_stream<T> CgltfGetDeferredAttrStream( const cgltf_primitive& prim, cgl
 	return pAccessor ? gltf_attr_stream<T>{ *pAccessor } : gltf_attr_stream<T>{};
 }
 
-struct gltf_idx_view
+inline auto GtlfGetIdx32View( const gltf_attr_stream<u8>& idxStream )
 {
-	gltf_attr_stream<u8>	raw;
-	cgltf_component_type	componentType = cgltf_component_type_invalid;
+    using pfn_idx32 = u32( * )( const u8& );
 
-	gltf_idx_view() = default;
-	gltf_idx_view( const gltf_attr_stream<u8>& raw, cgltf_component_type componentType )
-		: raw{ raw }, componentType{ componentType } {}
-	gltf_idx_view( const cgltf_accessor& accessor ) : raw{ accessor }, componentType{ accessor.component_type }
-	{
-		HT_ASSERT( cgltf_type_scalar == accessor.type );
-	}
-};
+    auto emptyView = std::span<const u8>{} | std::views::stride( 1 ) | std::views::transform( pfn_idx32{} );
 
-inline gltf_idx_view GltfPatchIdxStream( const gltf_idx_view& stream, std::span<const u8> buffer )
-{
-	return { GltfPatchAttrStream( stream.raw, buffer ), stream.componentType };
-}
+    if( 0 == std::size( idxStream ) ) return emptyView;
 
-inline std::vector<u32> GetNormalizedIndexBufferFromAccessor( const cgltf_accessor* idxAccessor )
-{
-    if( !idxAccessor ) return {};
-
-    HT_ASSERT( cgltf_type_scalar == idxAccessor->type );
-
-    switch( idxAccessor->component_type )
+    switch( idxStream.strideInBytes )
     {
-        case cgltf_component_type_r_8u:
-            return { std::from_range, gltf_attr_stream<u8>{ *idxAccessor } | std::views::transform( HtCastTo<u32> ) };
-        case cgltf_component_type_r_16u:
-            return { std::from_range, gltf_attr_stream<u16>{ *idxAccessor } | std::views::transform( HtCastTo<u32> ) };
-        case cgltf_component_type_r_32u: return { std::from_range, gltf_attr_stream<u32>{ *idxAccessor } };
+        case sizeof( u8 ): return idxStream.bytes | std::views::stride( idxStream.strideInBytes )
+            | std::views::transform( pfn_idx32( []( const u8& b ) -> u32 { return HtReinterpretAs<u8>( b ); } ) );
+        case sizeof( u16 ): return idxStream.bytes | std::views::stride( idxStream.strideInBytes )
+            | std::views::transform( pfn_idx32( []( const u8& b ) -> u32 { return HtReinterpretAs<u16>( b ); } ) );
+        case sizeof( u32 ): return idxStream.bytes | std::views::stride( idxStream.strideInBytes )
+            | std::views::transform( pfn_idx32( []( const u8& b ) -> u32 { return HtReinterpretAs<u32>( b ); } ) );
     }
 
     HT_ASSERT( 0 && "Wrong stream type" );
-    return {};
-}
-
-inline std::vector<u32> GetNormalizedIndexBufferFromStream( const gltf_idx_view& idxView )
-{
-    if( 0 == std::size( idxView.raw ) ) return {};
-
-    switch( idxView.componentType )
-    {
-        case cgltf_component_type_r_8u:
-            return { std::from_range, GltfRecastAttrStream<u8>( idxView.raw ) | std::views::transform( HtCastTo<u32> ) };
-        case cgltf_component_type_r_16u:
-            return { std::from_range, GltfRecastAttrStream<u16>( idxView.raw ) | std::views::transform( HtCastTo<u32> ) };
-        case cgltf_component_type_r_32u:
-            return { std::from_range, GltfRecastAttrStream<u32>( idxView.raw ) };
-    }
-
-    HT_ASSERT( 0 && "Wrong stream type" );
-    return {};
-}
-
-template<arena_t ARENA_T>
-arena_array<u32, ARENA_T> ReadNormalizedIndexBuffer( const gltf_idx_view& idxView, ARENA_T& arena )
-{
-    if( 0 == std::size( idxView.raw ) ) return { arena };
-
-    switch( idxView.componentType )
-    {
-        case cgltf_component_type_r_8u:
-            return { arena, std::from_range, GltfRecastAttrStream<u8>( idxView.raw ) | std::views::transform( HtCastTo<u32> ) };
-        case cgltf_component_type_r_16u:
-            return { arena, std::from_range, GltfRecastAttrStream<u16>( idxView.raw ) | std::views::transform( HtCastTo<u32> ) };
-        case cgltf_component_type_r_32u:
-            return { arena, std::from_range, GltfRecastAttrStream<u32>( idxView.raw ) };
-    }
-
-    HT_ASSERT( 0 && "Wrong stream type" );
-    return { arena };
+    return emptyView;
 }
 
 struct raw_mesh_desc
 {
 	hpk_mesh_name			    name;
+    u64                         meshHash;
 	gltf_attr_stream<float3>	pos;
 	gltf_attr_stream<float3>	normals;
-	gltf_idx_view				indices;
+	gltf_attr_stream<u8>		indices;
     aabb_t<float3>              aabb;
 	raw_mesh_topology_t			topology;
 };
@@ -219,9 +141,10 @@ inline raw_mesh_desc GltfPatchRawMeshDesc( const raw_mesh_desc& in, std::span<co
 {
     return {
         .name       = in.name,
+        .meshHash   = in.meshHash,
         .pos        = GltfPatchAttrStream( in.pos, bin ),
         .normals    = GltfPatchAttrStream( in.normals, bin ),
-        .indices    = GltfPatchIdxStream( in.indices, bin ),
+        .indices    = GltfPatchAttrStream( in.indices, bin ),
         .aabb       = in.aabb,
         .topology   = in.topology
     };
@@ -239,14 +162,17 @@ inline raw_mesh_desc CgltfParseRawMeshDesc(
     const cgltf_accessor* pPos  = cgltf_find_accessor( &primitive, cgltf_attribute_type_position, 0 );
     const cgltf_accessor* pNorm = cgltf_find_accessor( &primitive, cgltf_attribute_type_normal, 0 );
 
+    hpk_mesh_name name = { "{}_{:.60}_{}_Primitive_{}", originFileName,
+        parentMesh.name ? parentMesh.name : "Mesh", meshIdx, primIdx
+    };
+
     return {
-        .name		= { "{}_{:.60}_{}_Primitive_{}", originFileName,
-            parentMesh.name ? parentMesh.name : "Mesh", meshIdx, primIdx
-        },
+        .name		= name,
+        .meshHash   = HpkHashMeshName( name ),
         // NOTE: gltf mandates that the pos stream be present
         .pos		= gltf_attr_stream<float3>{ *pPos },
         .normals 	= pNorm             ? gltf_attr_stream<float3>{ *pNorm }    : gltf_attr_stream<float3>{},
-        .indices	= primitive.indices ? gltf_idx_view{ *primitive.indices }   : gltf_idx_view{},
+        .indices	= primitive.indices ? gltf_attr_stream<u8>{ *primitive.indices } : gltf_attr_stream<u8>{},
         .aabb       = CgltfGetPosStreamBounds( primitive ),
         .topology   = CgltfPrimitiveTypeToTopology( primitive.type )
     };
