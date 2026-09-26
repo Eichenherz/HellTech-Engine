@@ -8,6 +8,8 @@
 #include <ht_hash.h>
 #include <ht_macros.h>
 
+#include <span>
+
 /*
  *---------------------------------------------------------------------------------------
  *                                  HELL_PACK LAYOUT
@@ -24,8 +26,8 @@ HT_DEF_STRUCT_W_HASH( hpk_file_footer,
     u64     fileFormatVersion;
     u64     contentVersion;
 
-    u64     firstNodeOffsetInBytes;
-    u64     nodeCount;
+    u64     firstSectorsOffsetInBytes;
+    u64     sectorsCount;
 
     u64     firstMeshDescOffsetInBytes;
     u64     meshDescCount;
@@ -59,16 +61,71 @@ HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,
 );
 
 HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
-    u64     firstNode : 32;
+    u64     firstNodeOffsetInBytes : 32;
     u64     nodeCount : 32;
     i32x2   idx;
+);
+
+HT_DEF_STRUCT_W_HASH( hpk_file_view,
+    template<typename T>
+    using view_t = std::span<const T>;
+
+    view_t<hpk_sector_desc> sectors             = {};
+    view_t<hpk_mesh_desc>   meshes              = {};
+    view_t<hpk_lod_desc>    lods                = {};
 );
 
 constexpr u64 HPK_FORMAT_VERSION  = hpk_file_footer_LAYOUT_HASH
     ^ hpk_lod_desc_LAYOUT_HASH
     ^ hpk_mesh_desc_LAYOUT_HASH
     ^ hpk_sector_desc_LAYOUT_HASH;
-constexpr u64 HPK_CONTENT_VERSION = world_node_LAYOUT_HASH;
+constexpr u64 HPK_CONTENT_VERSION = hpk_file_view_LAYOUT_HASH;
 
+inline hpk_file_view HpkGetFileView( std::span<const u8> mem )
+{
+    hpk_file_footer hpkFooter = *( ( const hpk_file_footer* ) std::end( mem )._Myptr - 1 );
+    HT_ASSERT( std::bit_cast<u64>( HPK_MAGIC ) == hpkFooter.magic );
+    HT_ASSERT( HPK_FORMAT_VERSION == hpkFooter.fileFormatVersion );
+    HT_ASSERT( HPK_CONTENT_VERSION == hpkFooter.contentVersion );
+
+    return {
+        .sectors    = {
+            ( const hpk_sector_desc* ) ( std::data( mem ) + hpkFooter.firstSectorsOffsetInBytes ), hpkFooter.sectorsCount
+        },
+        .meshes     = {
+            ( const hpk_mesh_desc* ) ( std::data( mem ) + hpkFooter.firstMeshDescOffsetInBytes ), hpkFooter.meshDescCount
+        },
+        .lods       = {
+            ( const hpk_lod_desc* ) ( std::data( mem ) + hpkFooter.firstLodDescOffsetInBytes ), hpkFooter.lodDescCount
+        }
+    };
+}
+
+// TODO: use our own
+#include <ankerl/unordered_dense.h>
+
+struct hpk_mesh_desc_key
+{
+    using is_transparent = void;
+    using is_avalanching = void;
+
+    static u64 Key( u64 meshHash ) { return meshHash; }
+    static u64 Key( const hpk_mesh_desc& d ) { return d.hashed; }
+
+    u64  operator()( const auto& v ) const { return Key( v ); }
+    bool operator()( const auto& a, const auto& b ) const { return Key( a ) == Key( b ); }
+};
+
+struct hpk_sector_desc_key
+{
+    using is_transparent = void;
+    using is_avalanching = void;
+
+    static u64 Key( i32x2 idx ) { return std::bit_cast<u64>( idx ); }
+    static u64 Key( const hpk_sector_desc& d ) { return Key( d.idx ); }
+
+    u64  operator()( const auto& v ) const { return ankerl::unordered_dense::hash<u64>{}( Key( v ) ); }
+    bool operator()( const auto& a, const auto& b ) const { return Key( a ) == Key( b ); }
+};
 
 #endif // !__HELL_PACK_H__

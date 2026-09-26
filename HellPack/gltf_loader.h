@@ -12,7 +12,6 @@
 #include <range_utils.h>
 
 #include <ht_fixed_string.h>
-#include <ht_array.h>
 
 #include "gltf_helper.h"
 #include "hp_types_internal.h"
@@ -20,8 +19,6 @@
 #include <cgltf.h>
 
 constexpr u64 DEFAULT_SAMPLER_IDX = 0;
-
-#define HT_CGLTF_SPAN( ptr ) std::span{ ( ptr ), ( ptr ## _count ) }
 
 
 // NOTE: can't be replaced by a span, this handles interleaved data as well
@@ -261,8 +258,6 @@ struct [[ depracated ]] gltf_loader
 {
 	cgltf_data* data = nullptr;
 
-    // TODO: make ctors explicit
-    gltf_loader( std::string_view inputFilePath ) : gltf_loader{ std::data( inputFilePath ) } {}
 	gltf_loader( const char* filePath )
 	{
 		cgltf_options options = {};

@@ -17,27 +17,19 @@ namespace fs = std::filesystem;
 
 #include <ht_core_types.h>
 #include <ht_error.h>
-
-#include "zip_pack.h"
-
+#include <ht_vec_types.h>
+#include <ht_macros.h>
 #include <ht_gfx_types.h>
 #include <hell_pack.h>
-//#include <ht_serialization.h>
+
 #include <ht_math.h>
-#include <ht_ring_buffer.h>
 #include <System/sys_file.h>
 
+#include "hpk_meshopt_pipeline.h"
 #include "hp_encoding.h"
 #include "hp_bcn_compression.h"
-
 #include "gltf_loader.h"
-
 #include "hp_types_internal.h"
-#include <ht_vec_types.h>
-
-#include <ht_macros.h>
-
-#include "hpk_meshopt_pipeline.h"
 
 #define ZSTD_STATIC_LINKING_ONLY
 #include <zstd.h>
@@ -295,12 +287,12 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 
 struct hpk_concurrent_file
 {
-    u64                         hFile   = 0;
+    void*                       hFile   = nullptr;
     alignas( 64 ) atomic_u64    cursor  = 0;
 
     hpk_concurrent_file() = default;
-    hpk_concurrent_file( const char* filePath ) : hFile{ ht_os_create_file(
-        filePath, file_perm_bits::WRITE, file_create_flags::OVERWRITE, file_access_flags::CONCURRENT ) } {}
+    hpk_concurrent_file( const char* filePath ) : hFile{ ht_os_create_file( filePath,
+        file_perm_t::WRITE, file_create_t::OVERWRITE, file_access_t::CONCURRENT ) } {}
     hpk_concurrent_file( std::string_view filePath ) : hpk_concurrent_file{ std::data( filePath ) } {}
 
     u64 WriteBlocking( std::span<const u8> rawBytes )
@@ -473,8 +465,8 @@ static parsed_gltf HpkParseGltfs( std::string_view dir )
         std::println( stdout, "Processing {}\n", gltfPath );
 
         mmap_file rawGltfBytes = SysCreateMmapFile( ( const char* ) gltfPath,
-            file_perm_bits::READ, file_create_flags::OPEN_IF_EXISTS,
-            file_access_flags::SEQUENTIAL );
+            file_perm_t::READ, file_create_t::OPEN_IF_EXISTS,
+            file_access_t::SEQUENTIAL );
         defer { SysDestroyMmapFile( &rawGltfBytes ); };
 
         scoped_arena<virtual_arena> scopedArenas[] = { g_ThreadArena[ 0 ], g_ThreadExtLibArena };
@@ -645,10 +637,16 @@ static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshD
     g_AtomicWorkerCounter.notify_all();
 }
 
-std::vector<world_node> HpkCountSortNodes( std::span<const raw_node> rawNodes )
+struct hpk_world
+{
+    std::vector<hpk_sector_desc>    sectors;
+    std::vector<world_node>         nodes;
+};
+
+hpk_world HpkCountSortNodes( std::span<const raw_node> rawNodes )
 {
     std::vector<u32> binIDs( std::size( rawNodes ) );
-    i16x2 minSec = { INT16_MAX, INT16_MAX }, maxSec = { ( i16 ) INT16_MIN, ( i16 ) INT16_MIN };
+    i16x2 minSec = { INT16_MAX, INT16_MAX }, maxSec = { INT16_MIN, INT16_MIN };
     for( auto[ bin, raw ] : std::views::zip( binIDs, rawNodes ) )
     {
         i16x2 secID = HpkBinNodeTo2DGridSector( raw );
@@ -658,17 +656,35 @@ std::vector<world_node> HpkCountSortNodes( std::span<const raw_node> rawNodes )
     }
 
     // NOTE: build histo
-    i16x2 gridDim = maxSec - minSec + i16x2{ ( i16 ) 1, ( i16 ) 1 };
-    std::vector<u32> sectorScans( gridDim.x * gridDim.y + 1, 0 );
+    i16x2   gridDim     = maxSec - minSec + i16x2{ 1, 1 };
+    u64     sectorCount = gridDim.x * gridDim.y + 1;
+
+    std::vector<u32>                sectorScans( sectorCount, 0 );
     for( u32& bin : binIDs )
     {
         i16x2 secID = std::bit_cast<i16x2>( bin );
-        bin         = ht::dot( secID - minSec, i16x2{ ( i16 ) 1, ( i16 ) gridDim.x } );
-        // NOTE: no need to move back by sign bit bc it gets cancelled
+        bin = ht::dot( secID - minSec, i16x2{ 1, gridDim.x } );
+
         ++sectorScans[ bin ];
     }
 
     ht::ranges::exclusive_scan( sectorScans, 0u );
+
+    std::vector<hpk_sector_desc>    sectors;
+    sectors.reserve( sectorCount );
+    for( u32 binIdx = 1; binIdx < std::size( sectorScans ); ++binIdx  )
+    {
+        u64 nodeCount = sectorScans[ binIdx ] - sectorScans[ binIdx - 1 ];
+
+        if( 0 == nodeCount ) continue;
+
+        i32 cellIdx = binIdx - 1;
+        sectors.push_back( {
+            .firstNodeOffsetInBytes = sectorScans[ binIdx - 1 ] * sizeof( world_node ),
+            .nodeCount              = nodeCount,
+            .idx                    = ht::vec_cast<i32x2>( minSec ) + i32x2{ cellIdx % gridDim.x, cellIdx / gridDim.x }
+        } );
+    }
 
     std::vector<world_node> worldNodes( std::size( rawNodes ) );
     for( auto[ node, binId ] : std::views::zip( rawNodes, binIDs ) )
@@ -676,7 +692,7 @@ std::vector<world_node> HpkCountSortNodes( std::span<const raw_node> rawNodes )
         worldNodes[ sectorScans[ binId ]++ ] = { .toWorld = node.toWorld, .meshHash = node.meshHash };
     }
 
-    return worldNodes;
+    return { .sectors = MOV( sectors ), .nodes = MOV( worldNodes ) };
 }
 
 i32 main( i32 argc, char** argv  )
@@ -709,8 +725,8 @@ i32 main( i32 argc, char** argv  )
 
         sys_path binPath = { binEntry->path().string() };
 
-        mmap_file rawGltfBinData = SysCreateMmapFile( ( const char* ) binPath, file_perm_bits::READ,
-            file_create_flags::OPEN_IF_EXISTS, file_access_flags::RANDOM );
+        mmap_file rawGltfBinData = SysCreateMmapFile( ( const char* ) binPath, file_perm_t::READ,
+            file_create_t::OPEN_IF_EXISTS, file_access_t::RANDOM );
 
         // NOTE: this is global but our hook call thread local data, so safe
         meshopt_setAllocator( MeshoptScratchAlloc, MeshoptScratchFree );
@@ -726,25 +742,28 @@ i32 main( i32 argc, char** argv  )
                 std::span{ meshDescVec }, rawGltfBinData.dataView }.detach();
         }
 
-        std::vector<world_node> worldNodes = HpkCountSortNodes( nodes );
+        auto[ sectorsVec, worldNodes ] = HpkCountSortNodes( nodes );
         nodes.~vector();
 
         AtomicWait( g_AtomicWorkerCounter, g_ThreadCount );
+        meshDescVec.~vector();
+
+        u64 nodesOffset     = hpkOutFile.WriteBlocking( AsBytes( worldNodes ) );
 
         u64 lodDescOffset   = hpkOutFile.WriteBlocking( AsBytes( g_HpkLodDescVec ) );
         u64 meshDescOffset  = hpkOutFile.WriteBlocking( AsBytes( g_HpkMeshDescVec ) );
 
-        meshDescVec.~vector();
+        for( hpk_sector_desc& secDesc : sectorsVec ) secDesc.firstNodeOffsetInBytes += nodesOffset;
 
-        u64 nodesOffset  = hpkOutFile.WriteBlocking( AsBytes( worldNodes ) );
+        u64 secDescOffset  = hpkOutFile.WriteBlocking( AsBytes( sectorsVec ) );
 
         hpk_file_footer fileFooter = {
             .magic                      = std::bit_cast<u64>( HPK_MAGIC ),
             .fileFormatVersion          = HPK_FORMAT_VERSION,
             .contentVersion             = HPK_CONTENT_VERSION,
 
-            .firstNodeOffsetInBytes     = nodesOffset,
-            .nodeCount                  = std::size( worldNodes ),
+            .firstSectorsOffsetInBytes  = secDescOffset,
+            .sectorsCount               = std::size( sectorsVec ),
 
             .firstMeshDescOffsetInBytes = meshDescOffset,
             .meshDescCount              = std::size( g_HpkMeshDescVec ),

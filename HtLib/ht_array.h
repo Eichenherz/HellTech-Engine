@@ -15,6 +15,9 @@
 #include <span>
 #include <type_traits>
 
+struct ht_fill_t {};
+inline constexpr ht_fill_t ht_fill = {};
+
 template<typename T, typename SELF>
 using ht_const_like_ptr = std::conditional_t<std::is_const_v<std::remove_reference_t<SELF>>, const T*, T*>;
 
@@ -46,9 +49,9 @@ struct ht_array : STORAGE_T
     requires ( STORAGE_T::OWNS_ELEMENTS && std::same_as<std::remove_const_t<U>, T> )
     ht_array( std::span<U, E> src ) { this->append_range( src ); }
 
-    //ht_array( std::initializer_list<T> il ) { this->append_range( il ); }
+    ht_array( std::initializer_list<T> il ) requires ( STORAGE_T::OWNS_ELEMENTS ) { this->append_range( il ); }
 
-    ht_array( u64 n, const T& v ) requires ( STORAGE_T::OWNS_ELEMENTS ) { this->resize( n, v ); }
+    ht_array( ht_fill_t, u64 n, const T& v ) requires ( STORAGE_T::OWNS_ELEMENTS ) { this->resize( n, v ); }
 
     template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
     ht_array( SRC_ARENA_T* pSrcArena ) : STORAGE_T{ {}, pSrcArena } { HT_ASSERT( nullptr != pSrcArena ); }
