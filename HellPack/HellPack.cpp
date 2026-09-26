@@ -21,7 +21,7 @@ namespace fs = std::filesystem;
 #include "zip_pack.h"
 
 #include <ht_gfx_types.h>
-//#include <hell_pack.h>
+#include <hell_pack.h>
 //#include <ht_serialization.h>
 #include <ht_math.h>
 #include <ht_ring_buffer.h>
@@ -162,13 +162,13 @@ static void GenerateSmoothNormals( std::span<const float3> pos, std::span<const 
         float3 pos1 = pos[ vtx1 ];
         float3 pos2 = pos[ vtx2 ];
 
-        float3 faceNormal = CrossProd( pos1 - pos0, pos2 - pos0 );
+        float3 faceNormal = ht::cross( pos1 - pos0, pos2 - pos0 );
         normals[ vtx0 ] += faceNormal;
         normals[ vtx1 ] += faceNormal;
         normals[ vtx2 ] += faceNormal;
     }
 
-    std::ranges::for_each( normals, []( float3& n ) { n = Normalize( n ); } );
+    std::ranges::for_each( normals, []( float3& n ) { n = ht::normalize( n ); } );
 }
 
 static std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshlet& mlt )
@@ -223,7 +223,7 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 	{
 		aabb_t<float3> meshletAabb = ComputeAabb( m.pos );
         // TODO: why this happens ? and can't we not prevent it ?
-	    if( float3{} == ( meshletAabb.max - meshletAabb.min ) ) continue;
+	    if( ht::all( float3{} == ( meshletAabb.max - meshletAabb.min ) ) ) continue;
 
 		mlt_quantized_grid mltEncodingGrid = HpkMakeMltQuantizedGrid( meshletAabb );
 
@@ -422,69 +422,6 @@ inline void AtomicWait( const std::atomic<u64>& waitAddr, u64 waitVal )
 constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
 constexpr float GRID_INV_SCALE              = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
 
-/*
- *---------------------------------------------------------------------------------------
- *                                  HELL_PACK LAYOUT
- *---------------------------------------------------------------------------------------
- *  0th byte
- *  [ DATA ]....[ { MESH_DESC }{ LODs } ][ { SECTOR_DESC }{ NODE_PAYLOAD } ][ FOOTER ]
- *                      A                                       |
- *                      |_________________HASH__________________|
- */
-constexpr char  HPK_MAGIC[]         = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
-
-struct hpk_file_footer
-{
-    u64     magic;
-    u64     fileFormatVersion;
-    u64     contentVersion;
-
-    u64     firstNodeOffsetInBytes;
-    u64     nodeCount;
-
-    u64     firstMeshDescOffsetInBytes;
-    u64     meshDescCount;
-
-    u64     firstLodDescOffsetInBytes;
-    u64     lodDescCount;
-};
-
-struct hpk_lod_desc
-{
-    u64 fileOffsetInBytes     = ~0ull;
-    u64 storedSzInBytes       = 0;
-    u64 posSzInBytes     : 32 = 0;
-    u64 normalsSzInBytes : 32 = 0;
-    u64 idxBuffSzInBytes : 32 = 0;
-    u64 mltsSzInBytes    : 32 = 0;
-};
-
-inline bool HpkIsLodCompressed( const hpk_lod_desc& lod )
-{
-    u64 contentSzInBytes = lod.posSzInBytes + lod.normalsSzInBytes + lod.idxBuffSzInBytes + lod.mltsSzInBytes;
-    return lod.storedSzInBytes != contentSzInBytes;
-}
-
-struct hpk_mesh_desc
-{
-    u64     hashed           = 0;
-    float3  aabbMin          = {};
-    float3  aabbMax          = {};
-    float4  lodErrs          = {};
-    u64     firstLod : 56    = 0;
-    u64     lodCount : 8     = 0;
-};
-
-struct hpk_sector_desc
-{
-    u64     firstNode : 32;
-    u64     nodeCount : 32;
-    i32x2   idx;
-};
-
-constexpr u64   HPK_FORMAT_VERSION  = 1; // TODO: make into a struct hash !
-constexpr u64   HPK_CONTENT_VERSION = 1;
-
 i16x2 HpkBinNodeTo2DGridSector( const raw_node& node )
 {
     using namespace DirectX;
@@ -607,7 +544,7 @@ static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshD
         // TODO: process points too
         if( raw_mesh_topology_t::POINTS == meshDesc.topology ) continue;
         // NOTE: degenerate geometry
-        if( float3{} == ( meshDesc.aabb.max - meshDesc.aabb.min ) ) continue;
+        if( ht::all( float3{} == ( meshDesc.aabb.max - meshDesc.aabb.min ) ) ) continue;
 
         inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> mltsWLod = {};
         {
@@ -675,14 +612,17 @@ static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshD
 
             for( hpk_lod_desc& lodDesc : lodDescs ) lodDesc.fileOffsetInBytes += fileOffsetInBytes;
 
+            // NOTE: this is a hack; and we can only index by 0-3 bc we know the lod count
+            const hpk_meshlets_w_lod* pMlts = std::data( mltsWLod );
+
             hpkMeshDescVec.push_back( {
                 .hashed     = meshDesc.meshHash,
                 .aabbMin    = meshDesc.aabb.min,
                 .aabbMax    = meshDesc.aabb.max,
-                //.lodErrs    = {
-                //    mltsWLod[ 0 ].meshLevelError, mltsWLod[ 1 ].meshLevelError,
-                //    mltsWLod[ 2 ].meshLevelError, mltsWLod[ 3 ].meshLevelError
-                //},
+                .lodErrs    = {
+                    pMlts[ 0 ].meshLevelError, pMlts[ 1 ].meshLevelError,
+                    pMlts[ 2 ].meshLevelError, pMlts[ 3 ].meshLevelError
+                },
                 .firstLod   = std::size( hpkLodDescVec ),
                 .lodCount   = std::size( lodDescs )
             } );
@@ -712,8 +652,8 @@ std::vector<world_node> HpkCountSortNodes( std::span<const raw_node> rawNodes )
     for( auto[ bin, raw ] : std::views::zip( binIDs, rawNodes ) )
     {
         i16x2 secID = HpkBinNodeTo2DGridSector( raw );
-        minSec      = imin( minSec, secID );
-        maxSec      = imax( maxSec, secID );
+        minSec      = ht::min( minSec, secID );
+        maxSec      = ht::max( maxSec, secID );
         bin         = std::bit_cast<u32>( secID );
     }
 
@@ -723,7 +663,7 @@ std::vector<world_node> HpkCountSortNodes( std::span<const raw_node> rawNodes )
     for( u32& bin : binIDs )
     {
         i16x2 secID = std::bit_cast<i16x2>( bin );
-        bin         = DotProd( secID - minSec, i16x2{ ( i16 ) 1, ( i16 ) gridDim.x } );
+        bin         = ht::dot( secID - minSec, i16x2{ ( i16 ) 1, ( i16 ) gridDim.x } );
         // NOTE: no need to move back by sign bit bc it gets cancelled
         ++sectorScans[ bin ];
     }
@@ -738,6 +678,7 @@ std::vector<world_node> HpkCountSortNodes( std::span<const raw_node> rawNodes )
 
     return worldNodes;
 }
+
 i32 main( i32 argc, char** argv  )
 {
     std::cout << std::unitbuf;
@@ -781,7 +722,8 @@ i32 main( i32 argc, char** argv  )
         // TODO: maybe compute the LOD count dynamically; for now we'll do 4 mesh LODs @ 1/4 + 2 mlt LODs ( full + 1/2 )
         for( auto _ : std::views::iota( 0ull, g_ThreadCount ) )
         {
-            std::thread{ HpkProcessMeshesParallelJob, std::span{ meshDescVec }, rawGltfBinData.dataView }.detach();
+            std::thread{ HpkProcessMeshesParallelJob,
+                std::span{ meshDescVec }, rawGltfBinData.dataView }.detach();
         }
 
         std::vector<world_node> worldNodes = HpkCountSortNodes( nodes );

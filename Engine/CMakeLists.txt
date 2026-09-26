@@ -52,6 +52,11 @@ if(MSVC)
         TARGET_DIRECTORY Engine
         PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:/fsanitize=address>"
     )
+    target_link_options(Engine PRIVATE "$<$<CONFIG:Debug>:${HT_CL_ASAN_LINK_FLAGS}>")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        add_custom_command(TARGET Engine POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HT_CLANG_RT_DIR}/clang_rt.asan_dynamic-x86_64.dll" "$<TARGET_FILE_DIR:Engine>")
+    endif()
 endif()
 
 # Suppress static analysis on 3rdParty sources + spirv_reflect.c

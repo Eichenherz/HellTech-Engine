@@ -3,13 +3,17 @@
 #ifndef __HT_MACROS_H__
 #define __HT_MACROS_H__
 
-#if defined(_MSC_VER)
-#define HT_FORCEINLINE __forceinline
+#if defined(__clang__)
+#define HT_FORCEINLINE inline __attribute__((always_inline))
+#define HT_LAMBDA_FORCEINLINE __attribute__((always_inline))
 
 #define EMBED_TYPE [[msvc::no_unique_address]]
 
-#elif defined(__clang__)
-#define HT_FORCEINLINE __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define HT_FORCEINLINE inline [[msvc::forceinline]]
+#define HT_LAMBDA_FORCEINLINE [[msvc::forceinline]]
+
+#define EMBED_TYPE [[msvc::no_unique_address]]
 
 #else
 #define EMBED_TYPE [[no_unique_address]]
@@ -58,7 +62,7 @@ __ht_defer_guard<F> operator->*( __ht_defer_tag, F&& f )
 
 #define HT_CONCAT_( a, b ) a##b
 #define HT_CONCAT( a, b )  HT_CONCAT_( a, b )
-#define defer auto HT_CONCAT( __ht_defer_, __COUNTER__ ) = __ht_defer_tag{} ->* [ & ]() noexcept
+#define defer auto HT_CONCAT( __ht_defer_, __COUNTER__ ) = __ht_defer_tag{} ->* [ & ]()
 
 struct ht_no_copy
 {
@@ -75,7 +79,12 @@ struct ht_no_move
 };
 
 // NOTE: use composition to avoid fucking the designated initialization
-#define NO_COPY()  [[no_unique_address]] ht_no_copy _noCopy = {}
-#define NO_MOVE()  [[no_unique_address]] ht_no_move _noMove = {}
+#define NO_COPY()  EMBED_TYPE ht_no_copy _noCopy = {}
+#define NO_MOVE()  EMBED_TYPE ht_no_move _noMove = {}
+
+#define HT_DEF_STRUCT_W_HASH( name, ... )                                           \
+struct name { __VA_ARGS__ };                                                        \
+constexpr u64 name##_LAYOUT_HASH = MurmurHash64( #name "{" #__VA_ARGS__ "}" )       \
+    ^ SplitmixHash64( ( u64( sizeof( name ) ) << 32 ) | u64( alignof( name ) ) )
 
 #endif // !__HT_MACROS_H__

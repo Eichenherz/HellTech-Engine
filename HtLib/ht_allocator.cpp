@@ -120,7 +120,7 @@ ht_virt_alloc ht_virtual_allocator::AllocVirtualBlock( u64 requestSzInBytes, u64
 
 void ht_virtual_allocator::FreeVirtualBlock( ht_virt_alloc alloc, u64 threadIdx )
 {
-    if( std::bit_cast<u32x4>( INVALID_HALLOC ) == std::bit_cast<u32x4>( alloc ) ) return;
+    if( ht::all( std::bit_cast<u32x4>( INVALID_HALLOC ) == std::bit_cast<u32x4>( alloc ) ) ) return;
 
     u8*     pAlloc          = std::data( alloc );
     u64     allocSzBytes    = std::size( alloc );

@@ -4,15 +4,16 @@
 #define __HT_MATH_H__
 
 #include <ht_vec_types.h>
-#include "ht_gfx_types.h"
+#include <ht_gfx_types.h>
 
 #include <ht_core_types.h>
 #include <ht_error.h>
 
-
 #include <bit>
 #include <span>
-#include <math.h>
+
+#include <DirectXPackedVector.h>
+namespace DXPacked = DirectX::PackedVector;
 
 constexpr float HT_ALMOST_HALF_PI = 0.995f * DirectX::XM_PIDIV2;
 
@@ -38,178 +39,36 @@ inline float4 DXPackedXMColorToFloat4( DXPacked::XMCOLOR col )
 	};
 }
 
-inline float2 fminf( float2 a, float2 b )
-{
-	return { fminf( a.x,b.x ), fminf( a.y,b.y ) };
-}
-inline float3 fminf( float3 a, float3 b )
-{
-	return { fminf( a.x,b.x ), fminf( a.y,b.y ), fminf( a.z,b.z ) };
-}
-inline float4 fminf( float4 a, float4 b )
-{
-	return { fminf( a.x,b.x ), fminf( a.y,b.y ), fminf( a.z,b.z ), fminf( a.w,b.w ) };
-}
-
-inline float2 fmaxf( float2 a, float2 b )
-{
-	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ) };
-}
-inline float3 fmaxf( float3 a, float3 b )
-{
-	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ) };
-}
-inline float4 fmaxf( float4 a, float4 b )
-{
-	return { fmaxf( a.x,b.x ), fmaxf( a.y,b.y ), fmaxf( a.z,b.z ), fmaxf( a.w,b.w ) };
-}
-
-namespace hpk
-{
-    inline float3 floorf( float3 v ) { return { std::floorf( v.x ), std::floorf( v.y ), std::floorf( v.z ) }; }
-    inline float3 ceilf( float3 v ) { return { std::ceilf( v.x ), std::ceilf( v.y ), std::ceilf( v.z ) }; }
-    inline float3 roundf( float3 v ) { return { std::roundf( v.x ), std::roundf( v.y ), std::roundf( v.z ) }; }
-}
-
-constexpr i16x2 imin( i16x2 a, i16x2 b ) { return { std::min( a.x, b.x ), std::min( a.y, b.y ) }; }
-constexpr i16x2 imax( i16x2 a, i16x2 b ) { return { std::max( a.x, b.x ), std::max( a.y, b.y ) }; }
-constexpr i32x2 imin( i32x2 a, i32x2 b ) { return { std::min( a.x, b.x ), std::min( a.y, b.y ) }; }
-constexpr i32x2 imax( i32x2 a, i32x2 b ) { return { std::max( a.x, b.x ), std::max( a.y, b.y ) }; }
-
-constexpr float3 CrossProd( float3 a, float3 b )
-{
-	return  { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y  *b.x };
-}
-
-constexpr float DotProd( float2 a, float2 b ) { return a.x * b.x + a.y * b.y; }
-constexpr float DotProd( float3 a, float3 b ) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-constexpr float DotProd( float4 a, float4 b ) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
-constexpr i64 DotProd( i32x2 a, i32x2 b ) { return i64( a.x ) * b.x + i64( a.y ) * b.y; }
-constexpr u32 DotProd( u16x2 a, u16x2 b ) { return a.x * b.x + a.y * b.y; }
-constexpr i32 DotProd( i16x2 a, i16x2 b ) { return a.x * b.x + a.y * b.y; }
-
-inline float3 Normalize( float3 v )
-{
-	float len = std::sqrt( DotProd( v, v ) );
-	return ( len > 0.0f ) ? float3{ v.x / len, v.y / len, v.z / len } : float3{};
-}
-
-constexpr float FSignOf( float x )
-{
-	return x < 0.0f ? -1.0f : 1.0f;
-}
+constexpr float FSignOf( float x ) { return x < 0.0f ? -1.0f : 1.0f; }
 
 // AABB
 
-template<typename Vec>
+template<typename vec_t>
 struct aabb_t
 {
-	Vec min;
-	Vec max;
+	vec_t min;
+	vec_t max;
 };
 
-inline float3 AabbCenter( const aabb_t<float3> aabb )
-{
-	return {
-		( aabb.max.x + aabb.min.x ) * 0.5f,
-		( aabb.max.y + aabb.min.y ) * 0.5f,
-		( aabb.max.z + aabb.min.z ) * 0.5f
-	};
-}
-
-inline float3 AabbHalfExtent( const aabb_t<float3> aabb )
-{
-	return {
-		( aabb.max.x - aabb.min.x ) * 0.5f,
-		( aabb.max.y - aabb.min.y ) * 0.5f,
-		( aabb.max.z - aabb.min.z ) * 0.5f
-	};
-}
+inline float3 AabbCenter( const aabb_t<float3> aabb ) { return ( aabb.max + aabb.min ) * 0.5f; }
+inline float3 AabbHalfExtent( const aabb_t<float3> aabb ) { return ( aabb.max - aabb.min ) * 0.5f; }
 
 inline aabb_t<float3> ComputeAabb( std::span<const float3> vertices )
 {
 	float3 min = vertices[ 0 ];
 	float3 max = vertices[ 0 ];
 
-	for( u64 vi = 1; vi < std::size( vertices ); ++vi )
+	for( float3 vtx : vertices )
 	{
-		min.x = std::min( min.x, vertices[ vi ].x );
-		min.y = std::min( min.y, vertices[ vi ].y );
-		min.z = std::min( min.z, vertices[ vi ].z );
-
-		max.x = std::max( max.x, vertices[ vi ].x );
-		max.y = std::max( max.y, vertices[ vi ].y );
-		max.z = std::max( max.z, vertices[ vi ].z );
+		min = ht::min( min, vtx );
+		max = ht::max( max, vtx );
 	}
 	return { .min = min, .max = max };
 }
 
-inline aabb_t<float2> ComputeAabb( std::span<const float2> vertices )
+HT_FORCEINLINE aabb_t<float3> MergeAabbPair( const aabb_t<float3>& a, const aabb_t<float3>& b )
 {
-	float2 min = vertices[ 0 ];
-	float2 max = vertices[ 0 ];
-
-	for( u64 vi = 1; vi < std::size( vertices ); ++vi )
-	{
-		min.x = std::min( min.x, vertices[ vi ].x );
-		min.y = std::min( min.y, vertices[ vi ].y );
-
-		max.x = std::max( max.x, vertices[ vi ].x );
-		max.y = std::max( max.y, vertices[ vi ].y );
-	}
-	return { .min = min, .max = max };
-}
-
-inline aabb_t<float3> MergeAabbPair( const aabb_t<float3>& a, const aabb_t<float3>& b )
-{
-	return {
-		.min = {
-			std::min( a.min.x, b.min.x ),
-			std::min( a.min.y, b.min.y ),
-			std::min( a.min.z, b.min.z ),
-		},
-		.max = {
-			std::max( a.max.x, b.max.x ),
-			std::max( a.max.y, b.max.y ),
-			std::max( a.max.z, b.max.z ),
-		}
-	};
-}
-
-aabb_t<float3> MergeAabbsMultiple( const std::ranges::forward_range auto& aabbs )
-{
-	aabb_t<float3> out = {
-		.min = { FLT_MAX, FLT_MAX, FLT_MAX },
-		.max = { -FLT_MAX, -FLT_MAX, -FLT_MAX },
-	};
-
-	for( const aabb_t<float3>& box : aabbs )
-	{
-		out = MergeAabbPair( out, { .min = box.min, .max = box.max } );
-	}
-
-	return out;
-}
-
-aabb_t<float3> MergeAabbs( const std::ranges::forward_range auto& aabbs )
-{
-	const u64 meshletCount = std::size( aabbs );
-
-	HT_ASSERT( meshletCount );
-	if( 1 == meshletCount )
-	{
-		return { .min = aabbs[ 0 ].min, .max = aabbs[ 0 ].max };
-	}
-
-	if( 2 == meshletCount )
-	{
-		return MergeAabbPair(
-			{ .min = aabbs[ 0 ].min, .max = aabbs[ 0 ].max },
-			{ .min = aabbs[ 1 ].min, .max = aabbs[ 1 ].max }
-		);
-	}
-
-	return MergeAabbsMultiple( aabbs );
+	return { .min = ht::min( a.min, b.min ), .max = ht::max( a.max, b.max ) };
 }
 
 inline aabb_t<float3> TransformAABB( 
@@ -221,14 +80,14 @@ inline aabb_t<float3> TransformAABB(
 ) {
 	using namespace DirectX;
 
-	XMVECTOR xmMin = XMLoadFloat3( &min );
-	XMVECTOR xmMax = XMLoadFloat3( &max );
+	XMVECTOR xmMin = DX_XMLoadFloat3( min );
+	XMVECTOR xmMax = DX_XMLoadFloat3( max );
 
 	XMVECTOR xmCenter = XMVectorScale( XMVectorAdd( xmMax, xmMin ), 0.5f );
 	XMVECTOR xmExtent = XMVectorScale( XMVectorSubtract( xmMax, xmMin ), 0.5f );
 
-	XMMATRIX xmTRS = XMMatrixAffineTransformation(
-		XMLoadFloat3( &s ), XMVectorZero(), XMLoadFloat4( &r ), XMLoadFloat3( &t ) );
+	XMMATRIX xmTRS = XMMatrixAffineTransformation( DX_XMLoadFloat3( s ), XMVectorZero(),
+	    DX_XMLoadFloat4( r ), XMLoadFloat3( &t ) );
 
 	XMVECTOR xmNewCenter = XMVector3Transform( xmCenter, xmTRS );
 	XMVECTOR xmNewExtent = XMVector3Transform( xmExtent, xmTRS );
@@ -239,7 +98,7 @@ inline aabb_t<float3> TransformAABB(
 	return { .min = DX_XMStoreFloat3( xmNewMin ), .max = DX_XMStoreFloat3( xmNewMax ) };
 }
 
-__forceinline aabb_t<float3> TransformAABB( 
+HT_FORCEINLINE aabb_t<float3> TransformAABB(
 	const aabb_t<float3>&   aabb,
 	const float3&			t, 
 	const float4&			r, 
@@ -268,8 +127,8 @@ TransformBoxVertices(
 
 	for( u64 ci = 0; ci < 8; ++ci )
 	{
-		XMFLOAT4& outCorner = boxCorners[ ci ];
-		XMVECTOR transformedCorner = XMVector4Transform( XMLoadFloat4( &outCorner ), transf );
+		float4& outCorner = boxCorners[ ci ];
+		XMVECTOR transformedCorner = XMVector4Transform( DX_XMLoadFloat4( outCorner ), transf );
 		outCorner = DX_XMStoreFloat4( transformedCorner );
 	}
 }
@@ -323,12 +182,6 @@ constexpr float Unorm8ToF32( u8 c )
 	return float( c ) * INV_RANGE;
 }
 
-inline u64 FloorPowOf2( u64 size )
-{
-	// NOTE: use Hacker's Delight for bit-trickery
-	constexpr u64 ONE_LEFT_MOST = u64( 1ULL << ( sizeof( u64 ) * 8 - 1 ) );
-	return ( size ) ? ONE_LEFT_MOST >> __lzcnt64( size ) : 0;
-}
 inline u32 GetImgMipCount( u32 width, u32 height )
 {
 	// NOTE: 1 + floor( log2 () ) == bit_width
@@ -341,7 +194,7 @@ struct sincos
 	float cos;
 };
 
-__forceinline sincos DX_XMScalarSinCos( float rads )
+HT_FORCEINLINE sincos DX_XMScalarSinCos( float rads )
 {
 	float sin;
 	float cos;
@@ -414,48 +267,6 @@ inline float4x3 TrsToFloat4x3RowMaj( float3 t, float4 q, float3 s )
 	return DX_XMStoreFloat4x3( m );
 }
 
-inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs )
-{
-	return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s );
-}
-
-constexpr u32 PcgHash32( u32 input )
-{
-	u32 state = input * 747796405u + 2891336453u;
-	u32 word = ( ( state >> ( ( state >> 28u ) + 4u ) ) ^ state ) * 277803737u;
-	return ( word >> 22u ) ^ word;
-}
-
-constexpr u64 SplitmixHash64( u64 input )
-{
-	input = ( input ^ ( input >> 30 ) ) * 0xbf58476d1ce4e5b9ull;
-	input = ( input ^ ( input >> 27 ) ) * 0x94d049bb133111ebull;
-	return input ^ ( input >> 31 );
-}
-
-// NOTE: from https://github.com/bryc/code/blob/master/jshash/PRNGs.md#splitmix32
-constexpr u32 SplitmixHash32( u32 input )
-{
-    input += 0x9e3779b9;
-    input = ( input ^ ( input >> 16 ) ) * 0x85ebca6b;
-    input = ( input ^ ( input >> 13 ) ) * 0xc2b2ae35;
-    return input ^ ( input >> 16 );
-}
-
-// NOTE: doesn't produce good hash patterns, it's a great remap tho
-constexpr u64 FibRemap( u64 input, u64 bitWidthOfDstRangePow2 )
-{
-	// NOTE: 0x9E3779B97F4A7C15 == 2 ^ 64 / fibGoldenRatio
-	// NOTE: almost like a modulo + we take as many bits as needed for out range
-	return ( input * 0x9E3779B97F4A7C15ull ) >> ( 64 - bitWidthOfDstRangePow2 );
-}
-
-// PMF ~ 1 / k^2 on [ min, max ].  a = 1.0f/ min, ab = a - 1.0f / ( max + 1 )
-constexpr u32 PowDistroCDF( u32 h, float a, float ab, u32 max )
-{
-	float u = float( h >> 8 ) * 0x1p-24f;
-	u32 k = u32( 1.0f / ( a - u * ab ) );
-	return ( k > max ) ? max : k;
-}
+inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs ) { return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s ); }
 
 #endif // !__HT_MATH_H__

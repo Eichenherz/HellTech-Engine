@@ -22,7 +22,7 @@ constexpr float3 WORLD_FWD	= { 0.0f,  0.0f, -1.0f };
 constexpr float3 WORLD_LEFT = { -1.0f, 0.0f,  0.0f };
 constexpr float3 WORLD_UP	= { 0.0f,  1.0f,  0.0f };
 
-constexpr bool IS_WORLD_RH = CrossProd( WORLD_FWD, WORLD_LEFT ) == WORLD_UP;
+constexpr bool IS_WORLD_RH = ht::all( ht::cross( WORLD_FWD, WORLD_LEFT ) == WORLD_UP );
 static_assert( IS_WORLD_RH, "Current convention is RH !!! But basis doesn't match" );
 // -----------------------------------------------------------------------------
 

@@ -5,6 +5,7 @@
 
 #include <new>
 #include <bit>
+#include <span>
 #include <immintrin.h>
 
 #include <ht_core_types.h>
@@ -53,24 +54,6 @@ constexpr bool IsMultipleOfPow2( u64 num, u64 div )
 constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 
 #define CACHE_ALIGN alignas( CACHE_LINE_SZ )
-
-consteval u32 MurmurHash32( std::string_view s )
-{
-    u32 seed = 0x9E3779B9u;
-
-    for( char c : s )
-    {
-        u32 k = u8( c );
-
-        k *= 0xcc9e2d51u;
-        k = ( k << 15 ) | ( k >> 17 ) ; // 32-bit left rotation by 15
-        k *= 0x1b873593u;
-
-        seed ^= k;
-    }
-
-    return seed;
-}
 
 constexpr u64 BIT_NPOS = ~u64{ 0 };
 constexpr u32 BIT_NPOS_32 = ~u32{ 0 };
@@ -222,7 +205,7 @@ template<typename T>
 concept IVEC_T = std::signed_integral<decltype( T::y )>;
 
 template<UINT_T morton_t, UINT_T comp_t>
-inline morton_t MortonEncode2D( comp_t x, comp_t y )
+morton_t MortonEncode2D( comp_t x, comp_t y )
 {
     static_assert( 2 * sizeof( comp_t ) <= sizeof( morton_t ) );
 
@@ -231,10 +214,10 @@ inline morton_t MortonEncode2D( comp_t x, comp_t y )
 }
 
 template<UINT_T morton_t, UVEC_T vec_t>
-inline morton_t MortonEncode2D( vec_t v ) { return MortonEncode2D<morton_t>( v.x, v.y ); }
+morton_t MortonEncode2D( vec_t v ) { return MortonEncode2D<morton_t>( v.x, v.y ); }
 
 template<UVEC_T vec_t, UINT_T morton_t>
-inline vec_t MortonDecode2D( morton_t m )
+vec_t MortonDecode2D( morton_t m )
 {
     using comp_t = std::remove_cvref_t<decltype( vec_t{}.x )>;
     static_assert( 2 * sizeof( comp_t ) <= sizeof( morton_t ) );

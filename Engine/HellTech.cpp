@@ -21,8 +21,8 @@
 #include <ankerl/unordered_dense.h>
 
 //==================CONSTEXPR===================//
-constexpr float YAW_SIGN   = FSignOf( DotProd( CrossProd( WORLD_UP,    WORLD_FWD ), -WORLD_LEFT ) );
-constexpr float PITCH_SIGN = FSignOf( DotProd( CrossProd( -WORLD_LEFT, WORLD_FWD ), -WORLD_UP ) );
+constexpr float YAW_SIGN   = FSignOf( ht::dot( ht::cross( WORLD_UP,    WORLD_FWD ), -WORLD_LEFT ) );
+constexpr float PITCH_SIGN = FSignOf( ht::dot( ht::cross( -WORLD_LEFT, WORLD_FWD ), -WORLD_UP ) );
 //==============================================//
 
 //===================GLOBALS====================//
@@ -81,9 +81,9 @@ struct virtual_camera
 	{
 		using namespace DirectX;
 
-		XMMATRIX xmProj     = XMLoadFloat4x4A( &proj );
-		XMMATRIX xmView     = XMLoadFloat4x4A( &view );
-		XMMATRIX xmPrevView = XMLoadFloat4x4A( &prevView );
+		XMMATRIX xmProj     = DX_XMLoadFloat4x4A( proj );
+		XMMATRIX xmView     = DX_XMLoadFloat4x4A( view );
+		XMMATRIX xmPrevView = DX_XMLoadFloat4x4A( prevView );
 
 		float4x4 proj4x4    = DX_XMStoreFloat4x4A( xmProj );
 
@@ -97,7 +97,7 @@ struct virtual_camera
 			.zNear			= zNear,
 			// NOTE: this must not be negative for LH coords
 			.camViewDir		= camViewDir,
-			.lodTarget		= ( 2.0f / proj( 1, 1 ) ) * ( 1.0f / float( viewportDim.y ) )
+			.lodTarget		= ( 2.0f / proj[ 1 ][ 1 ] ) * ( 1.0f / float( viewportDim.y ) )
 		};
 	}
 };
@@ -494,7 +494,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 	view_data views[]       = { mainActiveCam.GetViewData(), dbgViewData };
 
 	float4x4 frustumMat     = DX_XMStoreFloat4x4A(
-	    FrustumMatrixFromViewProj( XMLoadFloat4x4A( &dbgViewData.mainViewProj ) ) );
+	    FrustumMatrixFromViewProj( DX_XMLoadFloat4x4A( dbgViewData.mainViewProj ) ) );
 
 	imGuiCtx.UpdateTimeAndInputState( ( float ) elapsedTime, inputState );
 

@@ -55,13 +55,13 @@ void DrawCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
 	if( visible )
 	{
-        float   distSq    = SqDistCamToAabbInObjSpace( currentInst.toWorld, currentMesh.aabbMin, currentMesh.aabbMax,
+        float   distSq      = SqDistCamToAabbInObjSpace( currentInst.toWorld, currentMesh.aabbMin, currentMesh.aabbMax,
                                                         currentInst.scale, cam.worldPos );
-        float   threshold = distSq * cam.lodTarget * cam.lodTarget;
-        float3  errSqLod3 = currentMesh.lod4Err.yzw * currentMesh.lod4Err.yzw;
-        u32x4   lods4     = UnpackLODMeshletCount( currentMesh );
+        float   threshold   = distSq * cam.lodTarget * cam.lodTarget;
+        float3  errSqLod13  = currentMesh.lod4Err.yzw * currentMesh.lod4Err.yzw;
+        u32x4   lods4       = UnpackLODMeshletCount( currentMesh );
 
-        u32x2   lodOffsetCount = SelectOffsetAndCountFromLod4( errSqLod3, threshold, lods4 );
+        u32x2   lodOffsetCount = SelectOffsetAndCountFromLod4( errSqLod13, threshold, lods4 );
 
         u32     lodMltOffst = bool( pushBlock.enableLod ) ? lodOffsetCount.x : 0;
         u32     lodMltCount = bool( pushBlock.enableLod ) ? lodOffsetCount.y : lods4.x;

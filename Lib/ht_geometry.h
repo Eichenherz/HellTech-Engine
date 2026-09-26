@@ -174,8 +174,8 @@ constexpr box_triangle_indices GenerateBoxTriIndices()
 constexpr float3 BOX_MIN = { -0.5f, -0.5f, -0.5f };
 constexpr float3 BOX_MAX = { 0.5f,  0.5f,  0.5f };
 
-static_assert( float3{ -0.5f, -0.5f, -0.5f } == BOX_MIN );
-static_assert( float3{ 0.5f,  0.5f,  0.5f } == BOX_MAX );
+static_assert( ht::all( float3{ -0.5f, -0.5f, -0.5f } == BOX_MIN ) );
+static_assert( ht::all( float3{ 0.5f,  0.5f,  0.5f } == BOX_MAX ) );
 
 
 #endif // !__HT_GEOMETRY_H__

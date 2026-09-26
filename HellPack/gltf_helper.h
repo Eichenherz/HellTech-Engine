@@ -95,7 +95,7 @@ inline packed_trs GltfGetTRSFromExtGpuInst( const cgltf_node& node, u64 instIdx 
 	for( const cgltf_attribute& a : std::span{ node.mesh_gpu_instancing.attributes, node.mesh_gpu_instancing.attributes_count } )
 	{
 		if( !std::strcmp( a.name, "TRANSLATION" ) ) cgltf_accessor_read_float( a.data, instIdx, &trs.t.x, 3 );
-		if( !std::strcmp( a.name, "ROTATION" ) )    cgltf_accessor_read_float( a.data, instIdx, &trs.r.x, 4 );
+		if( !std::strcmp( a.name, "ROTATION" ) )    cgltf_accessor_read_float( a.data, instIdx, ( float* ) &trs.r, 4 );
 		if( !std::strcmp( a.name, "SCALE" ) )       cgltf_accessor_read_float( a.data, instIdx, &trs.s.x, 3 );
 	}
 	return trs;

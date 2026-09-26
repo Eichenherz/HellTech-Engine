@@ -5,41 +5,7 @@
 #include <Windows.h>
 
 #include <ht_error.h>
-
-
-inline bool Win32IsHandleValid( HANDLE h ) { return INVALID_HANDLE_VALUE != h; }
-
-inline void Win32WriteLastErr( LPTSTR lpsLineFile )
-{
-    constexpr DWORD FORMAT_MSG_FLAGS = FORMAT_MESSAGE_FROM_SYSTEM
-        | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK;
-
-    char	msg[ 2048 ] = {};
-    DWORD	dwErr		= GetLastError();
-
-    char*   pErrStr = std::format_to_n( msg, std::size( msg ) - 1, "{}", lpsLineFile ).out;
-    DWORD	bytesFormatted = FormatMessageA( FORMAT_MSG_FLAGS, nullptr, dwErr, 0,
-        pErrStr, DWORD( std::end( msg ) - pErrStr ), nullptr );
-
-    if( 0 == bytesFormatted )
-    {
-        std::memset( msg, 0, std::size( msg ) );
-        std::format_to_n( msg, std::size( msg ) - 1,
-            "{} {} formated 0 bytes, exited with: {}", lpsLineFile, __func__, GetLastError() );
-    }
-
-    return SysErrMsgBox( msg );
-}
-
-#define WIN_CHECK( winExpr )												\
-do{																			\
-    constexpr char WIN_ERR_STR[] = RUNTIME_ERR_LINE_FILE_STR"\nERR: ";		\
-    if( !bool( winExpr ) )													\
-    {																		\
-        Win32WriteLastErr( ( LPSTR ) WIN_ERR_STR );							\
-        std::abort();														\
-    }																		\
-}while( 0 )
+#include "win32_err.h"
 
 
 static LONG WINAPI WinExceptionHandler( EXCEPTION_POINTERS* pException )
@@ -55,17 +21,16 @@ static LONG WINAPI WinExceptionHandler( EXCEPTION_POINTERS* pException )
     // NOTE: for C++ try catch or other things that we're not interested in
     if( NTSTATUS_SEVERITY_ERROR != ( pRecord->ExceptionCode & NTSTATUS_CLASS_MASK ) ) return EXCEPTION_CONTINUE_SEARCH;
 
-    if( !IsDebuggerPresent() )
-    {
-        HtPrintErrAndDie( EXCEPTION_FORMAT_STR, ( u32 ) pRecord->ExceptionCode,
-        ( u64 ) pRecord->ExceptionAddress, ( u64 ) pRecord->ExceptionInformation[ 0 ],
-        ( u64 ) pRecord->ExceptionInformation[ 1 ] );
-    }
-
     char msg[ 2048 ] = {};
     std::format_to_n( msg, std::size( msg ) - 1, EXCEPTION_FORMAT_STR,
         ( u32 ) pRecord->ExceptionCode, ( u64 ) pRecord->ExceptionAddress,
         ( u64 ) pRecord->ExceptionInformation[ 0 ], ( u64 ) pRecord->ExceptionInformation[ 1 ] );
+
+    if( !IsDebuggerPresent() )
+    {
+        SysErrMsgBox( msg );
+        std::abort();
+    }
 
     i32 retVal = MessageBoxA( nullptr, msg, "SEH",
         MB_RETRYCANCEL | MB_ICONERROR | MB_APPLMODAL );
@@ -74,8 +39,8 @@ static LONG WINAPI WinExceptionHandler( EXCEPTION_POINTERS* pException )
 
     std::abort();
 }
-
-static const bool EXCEPTION_HANDLER_HOOKED = ( AddVectoredExceptionHandler( 1, WinExceptionHandler ), true );
+// NOTE: can't be first if we have clang and clang-asan
+static const bool EXCEPTION_HANDLER_HOOKED = ( AddVectoredExceptionHandler( 0, WinExceptionHandler ), true );
 
 // ---------------------------------------------------------------------------------------------------------------
 #include <ht_memory.h>

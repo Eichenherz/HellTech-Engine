@@ -3,8 +3,10 @@
 #ifndef __HT_GFX_TYPES_H__
 #define __HT_GFX_TYPES_H__
 
-#include "ht_core_types.h"
-#include "ht_vec_types.h"
+#include <ht_core_types.h>
+#include <ht_vec_types.h>
+#include <ht_hash.h>
+#include <ht_macros.h>
 
 struct packed_trs
 {
@@ -21,11 +23,10 @@ struct vertex_attrs
 	u8		tanSign;
 };
 
-struct world_node
-{
+HT_DEF_STRUCT_W_HASH( world_node,
 	packed_trs	toWorld;
 	u64			meshHash;
-};
+);
 
 enum alpha_mode : u8
 {

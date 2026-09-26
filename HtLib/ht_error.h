@@ -8,7 +8,6 @@
 #include <ht_macros.h>
 
 #include <format>
-#include <cstdlib>
 
 constexpr u64 HT_LOG_BUFFER_SIZE = 2048;
 

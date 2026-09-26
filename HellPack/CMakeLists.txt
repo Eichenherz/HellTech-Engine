@@ -4,7 +4,7 @@
 # The target is created under the root's directory-level add_compile_options /
 # link_libraries, so it inherits those flags and CommonDeps at creation;
 # both are wiped from its properties below and the root's RelWithDebInfo flag set
-# ( HT_MSVC_* ) is applied unconditionally, in every config.
+# ( HT_CL_* ) is applied unconditionally, in every config.
 # ----------------------------------------------------------------------------
 # NOTE: zstd's own CMake is never used — its lib .c files are compiled straight into HellPack3rdParty.
 #       No dictBuilder, no legacy formats. The amd64 .S Huffman loop is GCC/Clang only; MSVC takes the C path.
@@ -38,6 +38,16 @@ set(HT_ZSTD_SOURCES
     ${HT_ZSTD_DIR}/decompress/zstd_decompress_block.c
 )
 
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    enable_language(ASM)
+    list(APPEND HT_ZSTD_SOURCES ${HT_ZSTD_DIR}/decompress/huf_decompress_amd64.S)
+    set(HT_ZSTD_ASM_DEF "")
+    set(HT_ZSTD_GNUC_FLAG /clang:-fgnuc-version=4.2.1)
+else()
+    set(HT_ZSTD_ASM_DEF ZSTD_DISABLE_ASM)
+    set(HT_ZSTD_GNUC_FLAG "")
+endif()
+
 add_library(HellPack3rdParty STATIC
     3rdPartyTU.cpp
     3rdPartyTU2.cpp
@@ -47,23 +57,25 @@ add_library(HellPack3rdParty STATIC
 set_target_properties(HellPack3rdParty PROPERTIES
     COMPILE_OPTIONS ""
     LINK_LIBRARIES  ""
+    MSVC_DEBUG_INFORMATION_FORMAT ""
 )
 set_source_files_properties(${HT_ZSTD_SOURCES}
-    PROPERTIES COMPILE_DEFINITIONS "XXH_NAMESPACE=ZSTD_;ZSTD_MULTITHREAD;ZSTD_LEGACY_SUPPORT=0;ZSTD_DISABLE_ASM"
+    PROPERTIES COMPILE_DEFINITIONS "XXH_NAMESPACE=ZSTD_;ZSTD_MULTITHREAD;ZSTD_LEGACY_SUPPORT=0;${HT_ZSTD_ASM_DEF}"
+               COMPILE_OPTIONS "${HT_ZSTD_GNUC_FLAG}"
 )
 target_link_libraries(HellPack3rdParty PRIVATE ThirdPartyIncludes)
 if(MSVC)
-    # NOTE: Debug STL ABI must match the exe's TUs — see HT_MSVC_DEBUG_ABI_DEFS in the root.
+    # NOTE: Debug STL ABI must match the exe's TUs — see HT_CL_DEBUG_ABI_DEFS in the root.
     target_compile_definitions(HellPack3rdParty PRIVATE
-        "$<$<CONFIG:Debug>:${HT_MSVC_DEBUG_ABI_DEFS}>"
+        "$<$<CONFIG:Debug>:${HT_CL_DEBUG_ABI_DEFS}>"
     )
     # Full optimization + full debug info ( /Zi /Zo ) in EVERY config — the root's RelWithDebInfo set.
     # NOTE: no /GL — LTCG objects can't link into a non-LTCG Debug exe.
     #       /O2 /Ot explicit: they must override the /Od that CMAKE_CXX_FLAGS_DEBUG carries.
     target_compile_options(HellPack3rdParty PRIVATE
-        ${HT_MSVC_COMMON_FLAGS}
-        /O2 /Ot ${HT_MSVC_OPT_FLAGS}
-        ${HT_MSVC_OPT_DBGINFO_FLAGS}
+        ${HT_CL_COMMON_FLAGS}
+        /O2 /Ot ${HT_CL_OPT_FLAGS}
+        ${HT_CL_OPT_DBGINFO_FLAGS}
         /analyze-
     )
 endif()
@@ -89,8 +101,13 @@ target_link_libraries(HellPack PRIVATE HellPack3rdParty)
 
 if(MSVC)
     # ASan in Debug, only on HellPack.cpp — the HtLib .cpps stay uninstrumented.
-    # Mixed TUs link thanks to HT_MSVC_DEBUG_ABI_DEFS ( via CommonDeps ).
+    # Mixed TUs link thanks to HT_CL_DEBUG_ABI_DEFS ( via CommonDeps ).
     set_source_files_properties(HellPack.cpp
         PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:/fsanitize=address>"
     )
+    target_link_options(HellPack PRIVATE "$<$<CONFIG:Debug>:${HT_CL_ASAN_LINK_FLAGS}>")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        add_custom_command(TARGET HellPack POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HT_CLANG_RT_DIR}/clang_rt.asan_dynamic-x86_64.dll" "$<TARGET_FILE_DIR:HellPack>")
+    endif()
 endif()

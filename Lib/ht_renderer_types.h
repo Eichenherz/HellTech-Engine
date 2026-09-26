@@ -378,7 +378,7 @@ struct record_dbg_draw_params
 	u32 vertexOffset;
 };
 
-CONSTEXPR u32x2  MIP0_TILE_SIZE = u32x2( 32, 32 );
+CONSTEXPR u32x2  MIP0_TILE_SIZE = { 32, 32 };
 
 struct downsampler_params
 {

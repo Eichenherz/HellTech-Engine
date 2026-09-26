@@ -124,8 +124,8 @@ inline mlt_quantized_grid HpkMakeMltQuantizedGrid( aabb_t<float3> meshletAabb )
 
     float   invGridFactor   = 1.0f / float( gridStep );
 
-	float3 snappedAabbMin = hpk::floorf( meshletAabb.min * ( float ) gridStep );
-    float3 snappedAabbMax = hpk::ceilf( meshletAabb.max * ( float ) gridStep );
+	float3 snappedAabbMin = ht::floor( meshletAabb.min * ( float ) gridStep );
+    float3 snappedAabbMax = ht::ceil( meshletAabb.max * ( float ) gridStep );
 
 	u32x3 mltBitDepthPerAxis = {
 		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( snappedAabbMax.x - snappedAabbMin.x ) ),
@@ -194,7 +194,7 @@ inline bool HpkDecodeVerifyQuantized( float3 pos, u32x3 encPos, const mlt_quanti
 	    HpkMaxQuantError( pos.z, grid.gridQuantMaxErr )
 	};
 
-	return quantErr <= maxQuantErr;
+	return ht::all( quantErr <= maxQuantErr );
 }
 
 #endif // !__HP_ENCODING_H__

@@ -1216,7 +1216,7 @@ struct tone_mapping_pass
 		const vk_image&			dstImg,
 		desc_hndl32				hdrColDesc,
 		desc_hndl32				sdrColDesc,
-		DirectX::XMUINT2		hdrTrgSize
+		u32x2					hdrTrgSize
 	) {
 		HT_ASSERT( ( hdrTrgSize.x == dstImg.width ) && ( hdrTrgSize.y == dstImg.height ) );
 
@@ -1271,8 +1271,8 @@ struct depth_pyramid_pass
 
 		pow2DownsamplerPipeline = pVkCtx->CreateComputePipeline( pow2DownsamplerShader );
 
-		u16 hzbWidth    = ( u16 ) FloorPowOf2( srcWidth );
-		u16 hzbHeight   = ( u16 ) FloorPowOf2( srcHeight );
+		u16 hzbWidth    = std::bit_floor( srcWidth );
+		u16 hzbHeight   = std::bit_floor( srcHeight );
 
 		constexpr VkImageUsageFlags hiZUsg =
 			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |

@@ -58,8 +58,9 @@ consteval u32 HpkHashEntryNameSzAlignment( std::string_view fieldName )
     u32 szAlignHash     = SplitmixHash32( ( u32( sizeof( elem_t ) ) << 16 ) | u32( alignof( elem_t ) ) );
     return fieldNameHash ^ szAlignHash;
 }
-
 #define HPK_X_LAYOUT_HASH( T, n ) ^ HpkHashEntryNameSzAlignment<T>( #T "|" #n "|" )
+
+
 
 struct hpk_mesh_relative_view
 {

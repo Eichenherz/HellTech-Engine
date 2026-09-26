@@ -1,135 +1,74 @@
+#pragma once
+
 #ifndef __HELL_PACK_H__
 #define __HELL_PACK_H__
 
 #include <ht_core_types.h>
-#include <ht_error.h>
-#include "ht_gfx_types.h"
-#include <ht_math.h>
+#include <ht_gfx_types.h>
+#include <ht_hash.h>
+#include <ht_macros.h>
 
-#include "ht_renderer_types.h"
+/*
+ *---------------------------------------------------------------------------------------
+ *                                  HELL_PACK LAYOUT
+ *---------------------------------------------------------------------------------------
+ *  0th byte
+ *  [ DATA ]....[ { MESH_DESC }{ LODs } ][ { SECTOR_DESC }{ NODE_PAYLOAD } ][ FOOTER ]
+ *                      A                                       |
+ *                      |_________________HASH__________________|
+ */
+constexpr char  HPK_MAGIC[]         = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
 
-#include <span>
-#include <vector>
-#include <ht_array.h>
+HT_DEF_STRUCT_W_HASH( hpk_file_footer,
+    u64     magic;
+    u64     fileFormatVersion;
+    u64     contentVersion;
 
-#include "range_utils.h"
+    u64     firstNodeOffsetInBytes;
+    u64     nodeCount;
 
-struct bit_stream
+    u64     firstMeshDescOffsetInBytes;
+    u64     meshDescCount;
+
+    u64     firstLodDescOffsetInBytes;
+    u64     lodDescCount;
+);
+
+HT_DEF_STRUCT_W_HASH( hpk_lod_desc,
+    u64 fileOffsetInBytes     = ~0ull;
+    u64 storedSzInBytes       = 0;
+    u64 posSzInBytes     : 32 = 0;
+    u64 normalsSzInBytes : 32 = 0;
+    u64 idxBuffSzInBytes : 32 = 0;
+    u64 mltsSzInBytes    : 32 = 0;
+);
+
+inline bool HpkIsLodCompressed( const hpk_lod_desc& lod )
 {
-	borrowed_array<u64>	qwords;
-	u64					cursorInBits = 0;  // NOTE: lsb
+    u64 contentSzInBytes = lod.posSzInBytes + lod.normalsSzInBytes + lod.idxBuffSzInBytes + lod.mltsSzInBytes;
+    return lod.storedSzInBytes != contentSzInBytes;
+}
 
-	const u64* begin() const { return std::data( qwords ); }
-	const u64* end()   const { return std::data( qwords ) + std::size( qwords ); }
+HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,
+    u64     hashed           = 0;
+    float3  aabbMin          = {};
+    float3  aabbMax          = {};
+    float4  lodErrs          = {};
+    u64     firstLod : 56    = 0;
+    u64     lodCount : 8     = 0;
+);
 
-    void Reset() { qwords.resize( 0 ); cursorInBits = 0; }
+HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
+    u64     firstNode : 32;
+    u64     nodeCount : 32;
+    i32x2   idx;
+);
 
-	void AppendBits( u32 inBitStream, u32 bitDepth )
-	{
-		HT_ASSERT( bitDepth < 64 );
-		u64     bitStream           = u64( inBitStream ) & ( ( 1ull << bitDepth ) - 1 );
-
-		u64     qwBucket            = cursorInBits >> 6;
-		u32     bitOffset           = cursorInBits & 63;
-		u32     howManyBitWillFit   = 64 - bitOffset;
-		bool    carryOver           = bitDepth > howManyBitWillFit;
-
-		if( u64 sz = std::size( qwords ); sz <= ( qwBucket + u64( carryOver ) ) )
-		{
-			qwords.resize( sz + 64, 0 );
-		}
-
-		qwords[ qwBucket ] |= bitStream << bitOffset;
-	    if( carryOver )
-	    {
-	        qwords[ qwBucket + 1 ] |= ( bitStream >> howManyBitWillFit );
-	    }
-
-		cursorInBits += bitDepth;
-	}
-};
-
-using index_t = u8;
-
-constexpr char HELLPACK_MESH_DIR[] = "Mesh/";
-
-// TODO: how to enforce these are dds ?
-constexpr char HELLPACK_TEX_DIR[] = "Tex/";
-
-
-// TODO: do we need bigger files ?
-template<typename T>
-struct hpk_relative_ref
-{
-	u64 offsetInBytes 	: 32;
-	u64 sizeInBytes 	: 32;
-};
-
-template<typename T> struct hpk_view_of { using type = T; };
-template<CONTIGUOUS_RANGE_T R> struct hpk_view_of<R> { using type = std::span<const std::ranges::range_value_t<R>>; };
-
-/*	X( std::vector<packed_vtx_attr>, vertexAttrs				) \ */
-#define HPK_MESH_ASSET( X )										  \
-	X( bit_stream,                   vtxPosBitstream			) \
-	X( std::vector<oct16x2>,         vtxNormals				    ) \
-	X( std::vector<index_t>,         indices					) \
-	X( std::vector<gpu_meshlet>,     meshlets					) \
-	X( aabb_t<float3>,               aabb						) \
-	X( float4,                       lodErrors					) \
-	X( u32x2,                        packed16x4_lodMltCounts	)
-
-struct hpk_mesh_view;
-
-struct hpk_mesh_asset
-{
-	using view_t = hpk_mesh_view;
-
-#define X( T, n ) T n;
-	HPK_MESH_ASSET( X )
-#undef X
-};
-
-struct hpk_mesh_view
-{
-#define X( T, n ) hpk_view_of<T>::type n;
-	HPK_MESH_ASSET( X )
-#undef X
-};
-
-
-#define HPK_LEVEL_ASSET( X )					  \
-	X( std::vector<world_node>,		nodes		) //\
-	//X( std::vector<material_desc>,  materials	)
-
-struct hpk_level_view;
-
-struct hpk_level_asset
-{
-	using view_t = hpk_level_view;
-
-#define X( T, n ) T n;
-	HPK_LEVEL_ASSET( X )
-#undef X
-};
-
-struct hpk_level_view
-{
-#define X( T, n ) hpk_view_of<T>::type n;
-	HPK_LEVEL_ASSET( X )
-#undef X
-};
-
-struct hellpack_texture_asset
-{
-	std::span<u8> ddsData;
-};
-
-using hellpack_blob = std::vector<u8>;
-
-template<typename HPK_ASSET_T>
-hellpack_blob HpkSerializeAsset( const HPK_ASSET_T& a );
-template<typename HPK_ASSET_T>
-HPK_ASSET_T::view_t HpkDeserializeAsset( std::span<const u8> fileBlob );
+constexpr u64 HPK_FORMAT_VERSION  = hpk_file_footer_LAYOUT_HASH
+    ^ hpk_lod_desc_LAYOUT_HASH
+    ^ hpk_mesh_desc_LAYOUT_HASH
+    ^ hpk_sector_desc_LAYOUT_HASH;
+constexpr u64 HPK_CONTENT_VERSION = world_node_LAYOUT_HASH;
 
 
 #endif // !__HELL_PACK_H__

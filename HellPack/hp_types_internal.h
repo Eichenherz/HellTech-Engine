@@ -112,7 +112,7 @@ struct ankerl_hash_as_bytes
 	}
 };
 
-constexpr bool operator==( const packed_trs& a, const packed_trs& b ) { return ( a.t == b.t ) && ( a.r == b.r ) && ( a.s == b.s ); }
+constexpr bool operator==( const packed_trs& a, const packed_trs& b ) { return ht::all( a.t == b.t ) && ht::all( a.r == b.r ) && ht::all( a.s == b.s ); }
 constexpr bool operator==( const raw_node& a, const raw_node& b ) { return ( a.meshHash == b.meshHash ) && ( a.toWorld == b.toWorld ); }
 
 template<> struct ankerl::unordered_dense::hash<raw_node> : ankerl_hash_as_bytes<raw_node> {};
@@ -132,7 +132,7 @@ struct triangle_pos
 
 constexpr bool operator==( const triangle_pos& a, const triangle_pos& b )
 {
-	return ( a.v0 == b.v0 ) && ( a.v1 == b.v1 ) &&  ( a.v2 == b.v2 );
+	return ht::all( a.v0 == b.v0 ) && ht::all( a.v1 == b.v1 ) && ht::all( a.v2 == b.v2 );
 }
 
 template<TRIVIAL_T T>
