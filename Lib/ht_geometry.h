@@ -3,20 +3,20 @@
 #ifndef __HT_GEOMETRY_H__
 #define __HT_GEOMETRY_H__
 
-#include "ht_core_types.h"
-#include "../HtLib/ht_vec_types.h"
+#include <ht_core_types.h>
+#include <ht_vec_types.h>
 #include <ht_math.h>
 
 #include <array>
 
 template<typename Index>
-inline constexpr void ReverseTriangleWinding( Index* indices, u64 count )
+constexpr void ReverseTriangleWinding( Index* indices, u64 count )
 {
 	assert( count % 3 == 0 );
 	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
 }
 // TODO: improve ?
-inline void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vector<u32>& idxData, u64 numIters )
+inline void GenerateIcosphere( std::vector<float3>& vtxData, std::vector<u32>& idxData, u64 numIters )
 {
 	using namespace DirectX;
 
@@ -44,11 +44,11 @@ inline void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vec
 
 	//if constexpr( worldLeftHanded ) ReverseTriangleWinding( triangles, std::size( triangles ) );
 
-	std::vector<XMFLOAT3> vtxCache;
+	std::vector<float3> vtxCache;
 	std::vector<u32> idxCache;
 
 	vtxCache = { std::begin( vertices ), std::end( vertices ) };
-	idxData = { std::begin( triangles ),std::end( triangles ) };
+	idxData = { std::begin( triangles ), std::end( triangles ) };
 
 	//vtxCache.reserve( ICOSAHEDRON_VTX_NUM * ( 1ull << numIters ) );
 	idxCache.reserve( 3 * ICOSAHEDRON_FACE_NUM * ( 1ull << ( 2 * numIters ) ) );
@@ -63,19 +63,19 @@ inline void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vec
 			u32 i1 = idxData[ t + 1 ];
 			u32 i2 = idxData[ t + 2 ];
 
-			XMVECTOR v0 = XMLoadFloat3( &vtxCache[ i0 ] );
-			XMVECTOR v1 = XMLoadFloat3( &vtxCache[ i1 ] );
-			XMVECTOR v2 = XMLoadFloat3( &vtxCache[ i2 ] );
-			XMFLOAT3 m01, m12, m20;
-			XMStoreFloat3( &m01, XMVector3Normalize( XMVectorAdd( v0, v1 ) ) );
-			XMStoreFloat3( &m12, XMVector3Normalize( XMVectorAdd( v1, v2 ) ) );
-			XMStoreFloat3( &m20, XMVector3Normalize( XMVectorAdd( v2, v0 ) ) );
+			float3 v0 = vtxCache[ i0 ];
+			float3 v1 = vtxCache[ i1 ];
+			float3 v2 = vtxCache[ i2 ];
+
+			v0 = ht::normalize( v0 + v1 );
+			v1 = ht::normalize( v1 + v2 );
+			v2 = ht::normalize( v2 + v0 );
 
 			u32 idxOffset = ( u32 ) std::size( vtxCache ) - 1;
 
-			vtxCache.push_back( m01 );
-			vtxCache.push_back( m12 );
-			vtxCache.push_back( m20 );
+			vtxCache.push_back( v0 );
+			vtxCache.push_back( v1 );
+			vtxCache.push_back( v2 );
 
 			if constexpr( true )//!worldLeftHanded )
 			{
@@ -118,7 +118,7 @@ inline void GenerateIcosphere( std::vector<DirectX::XMFLOAT3>& vtxData, std::vec
 		idxData = idxCache;
 	}
 
-	vtxData = std::move( vtxCache );
+	vtxData = MOV( vtxCache );
 }
 
 

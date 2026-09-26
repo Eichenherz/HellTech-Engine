@@ -25,65 +25,43 @@ constexpr bool IsStructZero( const T& inStruct )
     return 0 == memCmpRes;
 }
 
-template<typename T>
-constexpr void ZeroStruct( T& inStruct )
-{
-    std::memset( &inStruct, 0, sizeof( inStruct ) );
-}
+constexpr void ZeroStruct( auto& inStruct ) { std::memset( &inStruct, 0, sizeof( inStruct ) ); }
 
-constexpr bool IsPowOf2( u64 addr )
-{
-    return !( addr & ( addr - 1 ) );
-}
+constexpr bool IsPowOf2( u64 addr ) { return !( addr & ( addr - 1 ) ); }
 constexpr u64 FwdAlignPot( u64 addr, u64 alignment )
 {
     HT_ASSERT( IsPowOf2( alignment ) );
     return ( addr + ( alignment - 1 ) ) & ~( alignment - 1 );
 }
+constexpr bool IsAlignedToPot( u64 addr, u64 alignment ) { return !( addr & ( alignment - 1 ) ); }
 // NOTE: works for any alignment, not just power-of-2 (e.g. struct strides like 44)
-constexpr u64 FwdAlignGeneric( u64 addr, u64 alignment )
-{
-    return ( ( addr + alignment - 1 ) / alignment ) * alignment;
-}
+constexpr u64 FwdAlignGeneric( u64 addr, u64 align ) { return ( ( addr + align - 1 ) / align ) * align; }
 constexpr bool IsMultipleOfPow2( u64 num, u64 div )
 {
     HT_ASSERT( IsPowOf2( div ) );
     return 0 == ( num & ( div - 1 ) );
 }
 
-constexpr u64 CACHE_LINE_SZ = std::hardware_destructive_interference_size;
+constexpr u64 HT_CACHE_LINE_SZ = std::hardware_destructive_interference_size;
 
-#define CACHE_ALIGN alignas( CACHE_LINE_SZ )
+#define HT_CACHE_ALIGN alignas( HT_CACHE_LINE_SZ )
 
 constexpr u64 BIT_NPOS = ~u64{ 0 };
 constexpr u32 BIT_NPOS_32 = ~u32{ 0 };
 
 // NOTE: mask 0b0010'0111 + 1 -> 0b0010'1000 & ~mask -> 0b0000'1000
-constexpr u64 FirstUnsetMask64( u64 mask )
-{
-    return ~mask & ( mask + 1 );
-}
-
+constexpr u64 FirstUnsetMask64( u64 mask ) { return ~mask & ( mask + 1 ); }
 // NOTE: mask 0b0011'0100, -mask 0b1100'1100, AND -> 0b0000'0100
 // NOTE: 1 bit run case; 0 for an empty mask
-constexpr u64 FirstSetMask64( u64 mask )
-{
-    return mask & ( 0ull - mask );
-}
+constexpr u64 FirstSetMask64( u64 mask ) { return mask & ( 0ull - mask ); }
 
 // NOTE: bit_floor is 1 << Log2Floor( mask ), ie lzcnt/ bsr
 // mask 0b0011'0100, top 1 sits at idx 5, so 1 << 5 -> 0b0010'0000
 // 0 for an empty mask
-constexpr u64 LastSetMask64( u64 mask )
-{
-    return std::bit_floor( mask );
-}
+constexpr u64 LastSetMask64( u64 mask ) { return std::bit_floor( mask ); }
 
 // NOTE: 0b11 * lowest bit ( 0b0000'0010 ) -> 0b0000'0110, mul by a pow2 == shl by its idx
-constexpr u64 First2BitRunMask64( u64 mask )
-{
-    return 0b11ull * FirstSetMask64( mask &= mask >> 1 );
-}
+constexpr u64 First2BitRunMask64( u64 mask ) { return 0b11ull * FirstSetMask64( mask &= mask >> 1 ); }
 
 // NOTE: 0b111 * 0b0000'1000 -> 0b0011'1000
 constexpr u64 First3BitRunMask64( u64 mask )
@@ -230,5 +208,11 @@ vec_t MortonDecode2D( morton_t m )
 
 template<UINT_T U>
 constexpr U SIGN_BIT = ~( U( ~0 ) >> 1 );
+
+constexpr u32 GetImgMipCount( u32 width, u32 height )
+{
+    // NOTE: 1 + floor( log2 () ) == bit_width
+    return ( u32 ) std::bit_width( std::max( width, height ) );
+}
 
 #endif // !__HT_UTILS_H__

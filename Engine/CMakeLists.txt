@@ -35,6 +35,9 @@ target_link_libraries(Engine PRIVATE
     Vulkan::Vulkan
     "$ENV{VULKAN_SDK}/Lib/dxcompiler.lib"
 )
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_link_libraries(Engine PRIVATE "${HT_CLANG_RT_DIR}/clang_rt.builtins-x86_64.lib")
+endif()
 
 
 # No incremental linking for Debug  (LinkIncremental=false in Engine.vcxproj Debug)

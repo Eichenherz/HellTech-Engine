@@ -19,6 +19,8 @@ using float3	= DirectX::XMFLOAT3;
 
 #if defined(__clang__)
 
+using u8x4		= u8 __attribute__( ( ext_vector_type( 4 ) ) );
+
 using i16x2		= i16 __attribute__( ( ext_vector_type( 2 ) ) );
 
 using u16x2		= u16 __attribute__( ( ext_vector_type( 2 ) ) );
@@ -37,6 +39,8 @@ using float2	= float __attribute__( ( ext_vector_type( 2 ) ) );
 using float3a	= float __attribute__( ( ext_vector_type( 3 ) ) );
 using float4	= float __attribute__( ( ext_vector_type( 4 ) ) );
 
+using quat4		= float4;
+
 using bool32x2	= i32 __attribute__( ( ext_vector_type( 2 ) ) );
 using bool32x3	= i32 __attribute__( ( ext_vector_type( 3 ) ) );
 using bool32x4	= i32 __attribute__( ( ext_vector_type( 4 ) ) );
@@ -48,6 +52,7 @@ using float4x4 	= float __attribute__( ( matrix_type( 4, 4 ) ) );
 template<typename T>
 struct ht_proxy { T v; };
 
+static_assert( TRIVIAL_T<u8x4> );
 static_assert( TRIVIAL_T<i16x2> );
 static_assert( TRIVIAL_T<u16x2> );
 static_assert( TRIVIAL_T<u16x4> );
@@ -94,6 +99,8 @@ namespace ht
 	constexpr auto round( auto v ) { return __builtin_elementwise_round( v ); }
 	constexpr auto trunc( auto v ) { return __builtin_elementwise_trunc( v ); }
 	constexpr auto sqrt( auto v ) { return __builtin_elementwise_sqrt( v ); }
+	constexpr auto sin( auto v ) { return __builtin_elementwise_sin( v ); }
+	constexpr auto cos( auto v ) { return __builtin_elementwise_cos( v ); }
 	constexpr auto fma( auto a, auto b, auto c ) { return __builtin_elementwise_fma( a, b, c ); }
 	constexpr auto copysign( auto mag, auto sgn ) { return __builtin_elementwise_copysign( mag, sgn ); }
 	constexpr auto add_sat( auto a, auto b ) { return __builtin_elementwise_add_sat( a, b ); }
@@ -101,6 +108,35 @@ namespace ht
 
 	constexpr auto hmin( auto v ) { return __builtin_reduce_min( v ); }
 	constexpr auto hmax( auto v ) { return __builtin_reduce_max( v ); }
+
+	template<typename dst_vec_t>
+	constexpr dst_vec_t vec_cast( auto v ) { return __builtin_convertvector( v, dst_vec_t ); }
+
+	template<typename> struct mat_dims;
+	template<u32 R, u32 C> struct mat_dims<float __attribute__( ( matrix_type( R, C ) ) )>
+	{
+	    static constexpr u32 ROWS = R, COLS = C;
+	};
+
+	template<typename MAT_T>
+	HT_FORCEINLINE MAT_T load_col_maj( const float* p )
+	{
+		return __builtin_matrix_column_major_load( p, mat_dims<MAT_T>::ROWS, mat_dims<MAT_T>::COLS, mat_dims<MAT_T>::ROWS );
+	}
+
+	HT_FORCEINLINE auto mat_row( const auto& m, u32 i )
+	{
+		constexpr u32 COLS = mat_dims<std::remove_cvref_t<decltype( m )>>::COLS;
+
+		float __attribute__( ( ext_vector_type( COLS ) ) ) row = {};
+		for( u32 c = 0; c < COLS; ++c ) row[ c ] = m[ i ][ c ];
+		return row;
+	}
+
+	HT_FORCEINLINE void mat_row( auto& m, u32 i, auto row )
+	{
+		for( u32 c = 0; c < __builtin_vectorelements( row ); ++c ) m[ i ][ c ] = row[ c ];
+	}
 }
 
 #else
@@ -151,6 +187,12 @@ constexpr auto operator-( dx_vec3_t auto a, decltype( a ) b )
     V r = V{ a.x, a.y, a.z } - V{ b.x, b.y, b.z };
     return decltype( a ){ r.x, r.y, r.z };
 }
+constexpr auto operator*( dx_vec3_t auto a, decltype( a ) b )
+{
+    using V = ht_ext_vec3_t<decltype( a )>;
+    V r = V{ a.x, a.y, a.z } * V{ b.x, b.y, b.z };
+    return decltype( a ){ r.x, r.y, r.z };
+}
 constexpr auto operator*( dx_vec3_t auto a, decltype( a.x ) scalar )
 {
     using V = ht_ext_vec3_t<decltype( a )>;
@@ -189,6 +231,18 @@ namespace ht
 		float len = std::sqrt( ht::dot( va, va ) );
 		float3a r = ( len > 0.0f ) ? va / len : float3a{};
 		return { r.x, r.y, r.z };
+	}
+
+	constexpr float3a mul( float3a v, float3x3 m )
+	{
+		float3a r0 = { m[ 0 ][ 0 ], m[ 0 ][ 1 ], m[ 0 ][ 2 ] };
+		float3a r1 = { m[ 1 ][ 0 ], m[ 1 ][ 1 ], m[ 1 ][ 2 ] };
+		float3a r2 = { m[ 2 ][ 0 ], m[ 2 ][ 1 ], m[ 2 ][ 2 ] };
+		return ht::fma( v.xxx, r0, ht::fma( v.yyy, r1, v.zzz * r2 ) );
+	}
+	constexpr float3 mul( float3 v, float3x3 m )
+	{
+	    float3a r = ht::mul( float3a{ v.x, v.y, v.z }, m ); return { r.x, r.y, r.z };
 	}
 }
 

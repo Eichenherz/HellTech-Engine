@@ -63,15 +63,13 @@ inline void BuildBasisFromNormalDuffFrisvad( float3 n, float3& oTan, float3& oBi
 // NOTE: must use reconstructed normal not original
 inline float EncodeTanToAngle( float3 decodedNormal, float3 t )
 {
-	using namespace DirectX;
-
 	float3 tanRef, bitanRef; BuildBasisFromNormalDuffFrisvad( decodedNormal, tanRef, bitanRef );
 
 	float cosA  = t.x * tanRef.x + t.y * tanRef.y + t.z * tanRef.z;
 	float sinA  = t.x * bitanRef.x  + t.y * bitanRef.y  + t.z * bitanRef.z;
 	float angle = std::atan2f( sinA, cosA );  // [-π, π]
 
-	return angle * XM_1DIVPI; // [-1, 1] for snorm
+	return angle * std::numbers::inv_pi_v<float>; // [-1, 1] for snorm
 }
 
 static_assert( ( 2 * BIT_DEPTH_OCT_N + BIT_DEPTH_TAN_A + BIT_DEPTH_BTAN_S ) == BitCount<u32>() );
