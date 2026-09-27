@@ -307,9 +307,9 @@ std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena )
     return { ( u8* ) mem, szInBytes };
 }
 
-constexpr DWORD MakeGenericAccessFlags( file_perm_flags openFlags )
+constexpr DWORD MakeGenericAccessFlags( file_perm_t openFlags )
 {
-    using enum file_perm_bits;
+    using enum file_perm_t;
 	DWORD access = 0;
 
 	if( openFlags & READ ) { access |= GENERIC_READ; }
@@ -321,18 +321,18 @@ constexpr DWORD MakeGenericAccessFlags( file_perm_flags openFlags )
 
 	return access;
 }
-constexpr DWORD MakeFileMappingFlags( file_perm_flags openFlags )
+constexpr DWORD MakeFileMappingFlags( file_perm_t openFlags )
 {
-    using enum file_perm_bits;
+    using enum file_perm_t;
 	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return PAGE_READWRITE; }
 	if( openFlags & READ ) return PAGE_READONLY;
 	if( openFlags & WRITE ) return PAGE_WRITECOPY;
 
 	return 0;
 }
-constexpr DWORD MakeMapViewFlags( file_perm_flags openFlags )
+constexpr DWORD MakeMapViewFlags( file_perm_t openFlags )
 {
-    using enum file_perm_bits;
+    using enum file_perm_t;
 	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return FILE_MAP_ALL_ACCESS; }
 	if( openFlags & READ ) return FILE_MAP_READ;
 	if( openFlags & WRITE ) return FILE_MAP_WRITE;
@@ -340,9 +340,9 @@ constexpr DWORD MakeMapViewFlags( file_perm_flags openFlags )
 	return 0;
 }
 
-constexpr DWORD MakeCreateFlags( file_create_flags createFlags )
+constexpr DWORD MakeCreateFlags( file_create_t createFlags )
 {
-	using enum file_create_flags;
+	using enum file_create_t;
 	switch( createFlags )
 	{
 	case CREATE:			return CREATE_NEW;
@@ -353,17 +353,18 @@ constexpr DWORD MakeCreateFlags( file_create_flags createFlags )
 	return 0;
 }
 
-constexpr DWORD MakeAccessFlags( file_access_flags accessFlags )
+constexpr DWORD MakeAccessFlags( file_access_t accessFlags )
 {
-	using enum file_access_flags;
+	using enum file_access_t;
 	switch( accessFlags )
 	{
-	case SEQUENTIAL:	return FILE_FLAG_SEQUENTIAL_SCAN;
-	case RANDOM:		return FILE_FLAG_RANDOM_ACCESS;
-	case CONCURRENT:	return FILE_FLAG_OVERLAPPED;
+	case SEQUENTIAL:	        return FILE_FLAG_SEQUENTIAL_SCAN;
+	case RANDOM:		        return FILE_FLAG_RANDOM_ACCESS;
+	case CONCURRENT:	        return FILE_FLAG_OVERLAPPED;
+	case CONCURRENT_UNBUFFERED:	return FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING;
 	}
 
-	HT_ASSERT( 0 && "Wrong falgs" );
+	HT_ASSERT( 0 && "Wrong flags" );
 	return 0;
 }
 
@@ -379,9 +380,9 @@ u64 mmap_file::Timestamp() const
 
 mmap_file SysCreateMmapFile(
 	const char*				path,
-	file_perm_flags	permissionFlags,
-	file_create_flags		createFlags,
-	file_access_flags		accessFlags
+	file_perm_t		permissionFlags,
+	file_create_t		createFlags,
+	file_access_t		accessFlags
 ) {
 	DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
 	DWORD dwCreateFlags			= MakeCreateFlags( createFlags );
@@ -398,8 +399,6 @@ mmap_file SysCreateMmapFile(
 	WIN_CHECK( hFileMapping );
 
 	u64		qwFileSize	= WinGetFileSizeInBytes( hFile );
-	WIN_CHECK( qwFileSize );
-
 	u8* pData			= ( u8* ) MapViewOfFile( hFileMapping, dwDataViewAccess, 0,
 		0, qwFileSize );
 	WIN_CHECK( pData );
@@ -422,12 +421,13 @@ void SysDestroyMmapFile( mmap_file* mmapFile )
 	}
 }
 
-u64 ht_os_create_file(
-    const char* filePath,
-    file_perm_flags permissionFlags,
-    file_create_flags createFlags,
-    file_access_flags accessFlags )
-{
+void* ht_os_create_file(
+    const char*         filePath,
+    file_perm_t  permissionFlags,
+    file_create_t   createFlags,
+    file_access_t   accessFlags,
+    void*               hCompletionPort
+) {
     DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
     DWORD dwCreateFlags			= MakeCreateFlags( createFlags );
     DWORD dwAccessFlags			= MakeAccessFlags( accessFlags );
@@ -437,10 +437,40 @@ u64 ht_os_create_file(
         dwCreateFlags, dwAccessFlags, nullptr );
     WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
 
-    return ( u64 ) hFile;
+    if( hCompletionPort )
+    {
+        WIN_CHECK( CreateIoCompletionPort( hFile, hCompletionPort, 0, 0 ) );
+    }
+
+    return hFile;
 }
 
-void SysWriteFileConcurrentBlocking( u64 hFile, u64 offsetInBytes, std::span<const u8> bytes )
+std::span<const u8> HtOsCreateROFileMapping( void* hFile )
+{
+    HANDLE  hFileMapping = CreateFileMappingA( hFile, nullptr, PAGE_READONLY,
+        0, 0, nullptr );
+    WIN_CHECK( hFileMapping );
+    defer { WIN_CHECK( CloseHandle( hFileMapping ) ); };
+
+    u64     qwFileSize	= WinGetFileSizeInBytes( hFile );
+    u8*     pData		= ( u8* ) MapViewOfFile( hFileMapping, FILE_MAP_READ, 0,
+        0, qwFileSize );
+    WIN_CHECK( pData );
+
+    return { pData, qwFileSize };
+}
+
+void HtOSUnmapView( std::span<const u8> view ) { WIN_CHECK( UnmapViewOfFile( std::data( view ) ) ); }
+
+void* HtOsCreateIOCompletionPort( u64 maxWorkerThreads )
+{
+    HANDLE hIOCompletionPort = CreateIoCompletionPort( INVALID_HANDLE_VALUE, nullptr,
+        0, maxWorkerThreads );
+    WIN_CHECK( hIOCompletionPort );
+    return hIOCompletionPort;
+}
+
+void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes )
 {
     HT_ASSERT( std::size( bytes ) <= MAXDWORD );
 
@@ -448,21 +478,71 @@ void SysWriteFileConcurrentBlocking( u64 hFile, u64 offsetInBytes, std::span<con
     WIN_CHECK( hEvent );
     defer { WIN_CHECK( CloseHandle( hEvent ) ); };
     
-    OVERLAPPED ov   = {
+    OVERLAPPED overlapped   = {
         .Offset       = ( DWORD ) offsetInBytes,
         .OffsetHigh   = ( DWORD ) ( offsetInBytes >> 32 ),
         .hEvent       = hEvent
     };
     
-    if( !WriteFile( ( HANDLE ) hFile, std::data( bytes ), DWORD( std::size( bytes ) ),
-        nullptr, &ov ) )
+    if( !WriteFile( hFile, std::data( bytes ), DWORD( std::size( bytes ) ),
+        nullptr, &overlapped ) )
     {
         WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
     }
 
     DWORD writtenInBytes = 0;
-    WIN_CHECK( GetOverlappedResult( ( HANDLE ) hFile, &ov, &writtenInBytes, TRUE ) );
+    WIN_CHECK( GetOverlappedResult( hFile, &overlapped, &writtenInBytes, TRUE ) );
     HT_ASSERT( std::size( bytes ) == writtenInBytes );
+}
+
+void SysReadFileAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq )
+{
+    static_assert( sizeof( OVERLAPPED ) <= sizeof( ht_os_io_request ) );
+    static_assert( alignof( OVERLAPPED ) <= alignof( ht_os_io_request ) );
+
+    HT_ASSERT( hFile && std::data( outBytes ) && std::size( outBytes ) );
+    HT_ASSERT( IsAlignedToPot( ( u64 ) std::data( outBytes ), OS_UNBUFFERED_IO_MEM_ALIGNMENT ) );
+    HT_ASSERT( IsAlignedToPot( std::size( outBytes ), OS_UNBUFFERED_IO_MEM_ALIGNMENT ) );
+    HT_ASSERT( IsAlignedToPot( offsetInBytes, OS_UNBUFFERED_IO_MEM_ALIGNMENT ) );
+
+    OVERLAPPED* pOverlapped = ( OVERLAPPED* ) pIOReq;
+    *pOverlapped = {
+        .Offset       = ( DWORD ) offsetInBytes,
+        .OffsetHigh   = ( DWORD ) ( offsetInBytes >> 32 ),
+    };
+
+    if( !ReadFile( hFile, std::data( outBytes ), std::size( outBytes ),
+        nullptr, pOverlapped ) )
+    {
+        WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
+    }
+}
+
+ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs )
+{
+    OVERLAPPED_ENTRY    entries[ OS_MAX_ASYNC_IO_REQS_IN_FLIGHT ] = {};
+    ULONG               entryCount = 0;
+    if( !GetQueuedCompletionStatusEx( hPort, entries, std::size( entries ), &entryCount,
+        waitInMilliSecs, FALSE ) )
+    {
+        WIN_CHECK( WAIT_TIMEOUT == GetLastError() );
+    }
+
+    std::span cmplOverlapped = { entries, entryCount };
+    for( const OVERLAPPED_ENTRY& cov : cmplOverlapped )
+    {
+        WIN_CHECK( !cov.lpOverlapped->Internal );
+    }
+
+    auto LmbdToHtReq = []( const OVERLAPPED_ENTRY& cov ) HT_LAMBDA_FORCEINLINE -> ht_os_io_completion
+    {
+        return {
+            .pReq = ( ht_os_io_request* ) cov.lpOverlapped,
+            .numBytesTransferred = cov.dwNumberOfBytesTransferred
+        };
+    };
+
+    return { std::from_range, cmplOverlapped | std::views::transform( LmbdToHtReq ) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

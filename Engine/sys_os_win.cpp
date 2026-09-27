@@ -20,8 +20,8 @@
 
 
 //===================GLOBALS====================//
-u64                         gNumCores           = 0;
-job_system_ctx*             pJobSys	            = nullptr;
+u64                         g_NumCores          = 0;
+job_system_ctx*             g_pJobSys	        = nullptr;
 thread_local thread_ctx*    pThreadCtx          = nullptr;
 linear_arena*               pPersistentArena    = nullptr;
 //==============================================//
@@ -48,6 +48,15 @@ static u64 SysGetPhysicalCoreCount()
         physicalCoreCount++;
     }
     return physicalCoreCount;
+}
+
+static bool SysHasAVX2()
+{
+#if defined(__clang__)
+    return __builtin_cpu_supports( "avx2" );
+#else
+#error "SysHasAVX2 not impl"
+#endif
 }
 
 static void SysOsCreateConsole()
@@ -92,8 +101,7 @@ static void Win32ProcessRawInput( const RAWINPUT& ri, ht_input_state& inputState
 	{
 		if( !( ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE ) )
 		{
-			inputState.mouseDx += ri.data.mouse.lLastX;
-			inputState.mouseDy += ri.data.mouse.lLastY;
+			inputState.dPosMouse += { ri.data.mouse.lLastX, ri.data.mouse.lLastY };
 		}
 
 		USHORT usButtonFlags = ri.data.mouse.usButtonFlags;
@@ -177,9 +185,9 @@ UINT WINAPI Win32ThreadLoop( LPVOID lpParam )
 
 	for( ;; )
 	{
-		SysSemaphoreWait( pJobSys->sema, INFINITE );
+		SysSemaphoreWait( g_pJobSys->sema, INFINITE );
 
-		for( job_t job = {}; pJobSys->queue.TryPop( job ); )
+		for( job_t job = {}; g_pJobSys->queue.TryPop( job ); )
 		{
 		    ht_mem_scope jobScope = { pThreadCtx->scratchArenas[ 0 ] };
 			job.PfnJob( job.payload, &pThreadCtx->scratchArenas[ 0 ] );
@@ -205,7 +213,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	}
 #endif //_DEBUG
 
-	WIN_CHECK( DirectX::XMVerifyCPUSupport() );
+	HT_ASSERT( SysHasAVX2() );
 
 	SYSTEM_INFO sysInfo = {};
 	GetSystemInfo( &sysInfo );
@@ -218,7 +226,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 		.cbSize			= sizeof( WNDCLASSEX ),
 		.lpfnWndProc	= MainWndProc,
 		.hInstance		= hInst,
-		.hCursor		= LoadCursor( NULL, IDC_ARROW ),
+		.hCursor		= LoadCursor( nullptr, IDC_ARROW ),
 		.lpszClassName	= ENGINE_NAME
 	};
 	WIN_CHECK( RegisterClassExA( &wc ) );
@@ -234,8 +242,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect( &wr, windowStyle, FALSE );
-	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left, wr.top,
-		wr.right - wr.left, wr.bottom - wr.top, NULL, NULL, hInst, NULL );
+	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left, wr.top, wr.right - wr.left,
+	    wr.bottom - wr.top, nullptr, nullptr, hInst, nullptr );
 	WIN_CHECK( INVALID_HANDLE_VALUE != hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
@@ -262,9 +270,9 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
     persistentArena  = { g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ) };
     pPersistentArena    = &persistentArena;
 
-    gNumCores            = SysGetPhysicalCoreCount();
+    g_NumCores            = SysGetPhysicalCoreCount();
 
-    threadCtxArray      = ArenaNewArray<thread_ctx>( persistentArena, gNumCores );
+    threadCtxArray      = ArenaNewArray<thread_ctx>( persistentArena, g_NumCores );
     for( thread_ctx& tctx : threadCtxArray )
     {
         tctx.scratchArenas = {
@@ -275,10 +283,10 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
     pThreadCtx	        = &threadCtxArray[ 0 ];
 
     // Init Job System
-    pJobSys             = ArenaNew<job_system_ctx>( persistentArena );
-    HT_ASSERT( nullptr != pJobSys );
+    g_pJobSys             = ArenaNew<job_system_ctx>( persistentArena );
+    HT_ASSERT( nullptr != g_pJobSys );
 
-    std::span threads   = ArenaNewArray<sys_thread>( persistentArena, gNumCores );
+    std::span threads   = ArenaNewArray<sys_thread>( persistentArena, g_NumCores );
     for( u64 ti = 1; ti < std::size( threads ); ++ti )
     {
         fixed_wstring<16> name = { L"Thread #{}", ti };

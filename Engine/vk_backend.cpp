@@ -642,7 +642,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	constexpr u32 MAX_QUERY_COUNT = 1024;
 
 	return {
-	    .resourceDeletionQueue  = { ArenaNewArray<vk_resc_deletion>( *pPersistentArena, 128 ) },
+	    .rscDeletionQueue  = { ArenaNewArray<vk_resc_deletion>( *pPersistentArena, 128 ) },
         .descDeletionQueue      = { ArenaNewArray<vk_desc_deletion>( *pPersistentArena, 128 ) },
 		.descBindingSlots		= MOV( bindingSlots ),
 	    .descPendingUpdates     = { ArenaNewArray<vk_descriptor_write>( *pPersistentArena, 1'000 ) },
@@ -674,24 +674,26 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 
 constexpr u64 GPU_CACHELINE_SZ_IN_BYTES = 128;
 
+#define GPU_CACHE_ALIGN( szInBytes ) FwdAlignPot( szInBytes, GPU_CACHELINE_SZ_IN_BYTES )
+
 vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
     if( buffInfo.isAtomic ) HT_ASSERT( buffInfo.sizeInBytes <= GPU_CACHELINE_SZ_IN_BYTES );
-    // TODO: find a better flag ?
-    u64 szInBytes = buffInfo.isAtomic ?
-        FwdAlignPot( buffInfo.sizeInBytes, GPU_CACHELINE_SZ_IN_BYTES ) : buffInfo.sizeInBytes;
+
     // TODO: do this once at creation ?
     u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
 
+    bool isVkConcurrentRsc = VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode;
+
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size			        = szInBytes,
+	    // TODO: find a better flag ?
+		.size			        = buffInfo.isAtomic ? GPU_CACHE_ALIGN( buffInfo.sizeInBytes ) : buffInfo.sizeInBytes,
 		.usage			        = buffInfo.usageFlags,
 	    // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
 		.sharingMode	        = buffInfo.sharingMode,
-	    .queueFamilyIndexCount  =
-	        ( VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode ) ? ( u32 ) std::size( queueFamIdxCount ) : 0,
-	    .pQueueFamilyIndices    = ( VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode ) ? queueFamIdxCount : 0
+	    .queueFamilyIndexCount  = isVkConcurrentRsc ? ( u32 ) std::size( queueFamIdxCount ) : 0,
+	    .pQueueFamilyIndices    = isVkConcurrentRsc ? queueFamIdxCount : nullptr
 	};
 
 	VkMemoryPropertyFlags       memPropFlags    = VkChooseMemoryPropertiesFromBufferUsage( buffInfo.usage );
@@ -1035,7 +1037,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 
 	// NOTE: since it's queue-like, we always start at begin() 
 	// and advance until there's an entry not deletable this frame
-	for( auto it = std::begin( resourceDeletionQueue ); std::end( resourceDeletionQueue ) != it; )
+	for( auto it = std::begin( rscDeletionQueue ); std::end( rscDeletionQueue ) != it; )
 	{
 		vk_resc_deletion& rsc = *it;
 		if( frameSubmitsDone <= rsc.frameTimelineVal ) break;
@@ -1048,7 +1050,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 			vkDestroyImageView( device, rsc.img.view, 0 );
 			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.mem );
 		}
-		it = resourceDeletionQueue.erase( it );
+		it = rscDeletionQueue.erase( it );
 	}
 	for( auto it = std::begin( descDeletionQueue ); std::end( descDeletionQueue ) != it; )
 	{

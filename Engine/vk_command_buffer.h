@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef __VK_COMMAND_BUFFER_H__
 #define __VK_COMMAND_BUFFER_H__
 
@@ -122,10 +124,7 @@ struct vk_scoped_timestamp
 		vkCmdWriteTimestamp2( cmdBuff, stageBegin, queryPool, queryIdx );
 	}
 
-	~vk_scoped_timestamp()
-	{
-		vkCmdWriteTimestamp2( cmdBuff, stageEnd, queryPool, queryIdx + 1 );
-	}
+	~vk_scoped_timestamp() { vkCmdWriteTimestamp2( cmdBuff, stageEnd, queryPool, queryIdx + 1 ); }
 };
 
 

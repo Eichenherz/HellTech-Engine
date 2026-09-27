@@ -147,7 +147,7 @@ struct vk_context
 	static constexpr u64 NUM_DESC = vk_desc_binding_t::COUNT;
 	// NOTE: we only alloc PERSISTENT resources on other timelines;
 	// only the main GPU timeline is allowed to alloc and free TRANSIENTS
-	borrowed_array<vk_resc_deletion>		resourceDeletionQueue;
+	borrowed_array<vk_resc_deletion>		rscDeletionQueue;
 	borrowed_array<vk_desc_deletion>		descDeletionQueue;
 
 	inline_array<vk_swapchain_image, 6>	    scImgs;
@@ -192,20 +192,11 @@ struct vk_context
 	vk_buffer           CreateBuffer( const buffer_info& buffInfo );
 	vk_image            CreateImage( const image_info& imgInfo );
 
-	void                EnqueueResourceFree( const vk_resc_deletion& rscDeletion )
-	{
-	    resourceDeletionQueue.push_back( rscDeletion );
-	}
-	void                EnqueueDescriptorFree( const vk_desc_deletion& rscDeletion )
-	{
-	    descDeletionQueue.push_back( rscDeletion );
-	}
+	void                PushResourceFree( const vk_resc_deletion& rscDeletion ) { rscDeletionQueue.push_back( rscDeletion ); }
+	void                PushDescriptorFree( const vk_desc_deletion& rscDeletion ) { descDeletionQueue.push_back( rscDeletion ); }
 
 	vk_shader           CreateShaderFromSpirv( std::span<const u8> spvByteCode );
-	void                DestroyShaderModule( VkShaderModule module )
-	{
-	    vkDestroyShaderModule( device, module, nullptr );
-	}
+	void                DestroyShaderModule( VkShaderModule module ) { return vkDestroyShaderModule( device, module, nullptr ); }
 
 	// TODO: depth clamp ?
 	VkPipeline          CreateGfxPipeline(
@@ -226,10 +217,7 @@ struct vk_context
 	VkResult            TimelineTryWaitFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime );
 
 	desc_hndl32         AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo );
-	void                EnqueueDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx )
-	{
-		descDeletionQueue.push_back( { frameIdx, handle } );
-	}
+	void                PushDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx ) { return PushDescriptorFree( { frameIdx, handle } ); }
 
 	void                FlushPendingDescriptorUpdates();
 	void                FlushDeletionQueues( u64 frameIdx );

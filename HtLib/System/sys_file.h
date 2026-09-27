@@ -78,11 +78,11 @@ constexpr u64 OS_UNBUFFERED_IO_MEM_ALIGNMENT    = 4 * KB;
 constexpr u64 OS_MAX_TRANSFER_LEN_IN_BYTES      = 1 * MB;
 
 void* ht_os_create_file(
-    const char*			filePath,
-    file_perm_t	permissionFlags,
+    const char*		filePath,
+    file_perm_t	    permissionFlags,
     file_create_t	createFlags,
     file_access_t	accessFlags,
-    void*               hCompletionPort = nullptr
+    void*           hCompletionPort = nullptr
 );
 
 std::span<const u8> HtOsCreateROFileMapping( void* hFile );
@@ -95,8 +95,7 @@ void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<c
 
 struct HT_CACHE_ALIGN ht_os_io_request
 {
-    alignas( 8 ) u8     opaque[ 32 ]= {};
-    ht_os_io_request*   pNext       = nullptr;
+    alignas( HT_CACHE_LINE_SZ ) u8 opaque[ HT_CACHE_LINE_SZ ] = {};
 };
 
 void SysReadFileAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq );

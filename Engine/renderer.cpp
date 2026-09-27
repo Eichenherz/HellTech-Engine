@@ -22,7 +22,7 @@
 
 #include <ht_array.h>
 #include <ht_fixed_string.h>
-#include "ht_slot_vector.h"
+#include "ht_slot_array.h"
 
 #include "engine_types.h"
 
@@ -310,7 +310,7 @@ struct imgui_pass
 			HT_SYNC_CACHE_FLUSH_MASK_XFER, HT_SYNC_CACHE_INVAL_MASK_GFX,
 			{ fontAtlasImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		pVkCtx->EnqueueResourceFree( vk_resc_deletion{ stagingBuff, frameIdx } );
+		pVkCtx->PushResourceFree( vk_resc_deletion{ stagingBuff, frameIdx } );
 	}
 
 	// NOTE: it's mostly inspired by the official backend code
@@ -341,7 +341,7 @@ struct imgui_pass
 
 		if( refVtxBuff.sizeInBytes < vtxTotalSizeInBytes )
 		{
-			if( VK_NULL_HANDLE != refVtxBuff.hndl ) pVkCtx->EnqueueResourceFree( vk_resc_deletion{ refVtxBuff, frameIdx } );
+			if( VK_NULL_HANDLE != refVtxBuff.hndl ) pVkCtx->PushResourceFree( vk_resc_deletion{ refVtxBuff, frameIdx } );
 			refVtxBuff = pVkCtx->CreateBuffer( {
 			    .usageFlags     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 				.sizeInBytes    = vtxTotalSizeInBytes,
@@ -351,7 +351,7 @@ struct imgui_pass
 
 		if( refIdxBuff.sizeInBytes < idxTotalSizeInBytes )
 		{
-			if( VK_NULL_HANDLE != refIdxBuff.hndl ) pVkCtx->EnqueueResourceFree( vk_resc_deletion{ refIdxBuff, frameIdx } );
+			if( VK_NULL_HANDLE != refIdxBuff.hndl ) pVkCtx->PushResourceFree( vk_resc_deletion{ refIdxBuff, frameIdx } );
 			refIdxBuff = pVkCtx->CreateBuffer( {
 			    .usageFlags     = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
 				.sizeInBytes    = idxTotalSizeInBytes,
@@ -376,14 +376,18 @@ struct imgui_pass
 		float2 move			= { -1.0f - drawData->DisplayPos.x * scale.x, -1.0f - drawData->DisplayPos.y * scale.y };
 		float4 pushConst	= { scale.x, scale.y, move.x, move.y };
 
-		vk_descriptor_info pushDescs[] = { vtxBuff, { fontSampler, fontAtlasImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } };
+		vk_descriptor_info pushDescs[] = { vtxBuff, {
+		    fontSampler, fontAtlasImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL }
+		};
 
 		vk_scoped_label label = { cmdBuff,"Draw Imgui Pass",{} };
 
 		VkRect2D renderArea = VkGetScissor( dstTarget.width, dstTarget.height );
 
 		// NOTE: we need a different viewport since this is drawn directly to the screen
-		VkViewport uiViewport = { 0, 0, ( float ) dstTarget.width, ( float ) dstTarget.height, 0, 1.0f };
+		VkViewport uiViewport = {
+		    0, 0, ( float ) dstTarget.width, ( float ) dstTarget.height, 0, 1.0f
+		};
 		vkCmdSetViewport( cmdBuff, 0, 1, &uiViewport );
 
 		VkRenderingAttachmentInfo dstTargetAttachmentInfo = VkMakeAttachmentInfo(
@@ -414,16 +418,17 @@ struct imgui_pass
 			for( u32 ci = 0u; ci < ( u32 ) cmdList->CmdBuffer.Size; ++ci )
 			{
 				const ImDrawCmd* pCmd = &cmdList->CmdBuffer[ ci ];
+			    float4 clipRect = std::bit_cast<float4>( pCmd->ClipRect );
+
 				// Project scissor/clipping rectangles into framebuffer space
-				float2 clipMin = { ( pCmd->ClipRect.x - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.y - clipOff.y ) * clipScale.y };
-				float2 clipMax = { ( pCmd->ClipRect.z - clipOff.x ) * clipScale.x, ( pCmd->ClipRect.w - clipOff.y ) * clipScale.y };
+				float2 clipMin = ( clipRect.xy - clipOff ) * clipScale;
+				float2 clipMax = ( clipRect.zw - clipOff ) * clipScale;
 
 				// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
-				clipMin = { std::max( clipMin.x, 0.0f ), std::max( clipMin.y, 0.0f ) };
-				clipMax = { std::min( clipMax.x, ( float ) renderArea.extent.width ), 
-					std::min( clipMax.y, ( float ) renderArea.extent.height ) };
+				clipMin = ht::max( clipMin, float2{ 0.0f, 0.0f } );
+				clipMax = ht::min( clipMax, ( float2 ) std::bit_cast<u32x2>( renderArea.extent ) );
 
-				if( clipMax.x < clipMin.x || clipMax.y < clipMin.y ) continue;
+				if( ht::any( clipMax < clipMin ) ) continue;
 
 				VkRect2D scissor = { i32( clipMin.x ), i32( clipMin.y ), u32( clipMax.x - clipMin.x ), u32( clipMax.y - clipMin.y ) };
 				vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
@@ -717,7 +722,7 @@ struct debug_draw_passes
 		{
 			cpuInstView.push_back( {
 				.toWorld	= frustumTransf,
-				.color		= DXPackedXMColorToFloat4( HT_CYAN ),
+				.color		= Unorm8ToF32( HT_CYAN ),
 				.minAabb	= BOX_MIN,
 				.maxAabb	= BOX_MAX
 			} );
@@ -1874,7 +1879,7 @@ struct renderer_context final : renderer_interface
 
 	void        InitBackend( u64 hInst, u64 hWnd ) override;
 
-	HRNDMESH32  AllocMeshComponent( const hpk_mesh_view& mesh ) override;
+	HRNDMESH32  AllocMeshComponent( const hpk_mesh_desc& mesh ) override;
 	bool        PollJobCompletion( atomic_u64* hJobDoneSignal ) override
 	{
 	    // TODO: don't hardcode like this; but we know the upload flow here sooooo
@@ -2022,7 +2027,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
     rendererComponents  = HtMakeSlotArray<ht_mesh_component>( *pPersistentArena, 10'000 );
 }
 
-HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
+HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_desc& mesh )
 {
 	std::span<const u8> mltAsBytes		= AsBytes( mesh.meshlets );
 	std::span<const u8> vtxPosAsBytes	= AsBytes( mesh.vtxPosBitstream );
@@ -2043,9 +2048,9 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 
 	// NOTE: this MUST be in elements bc we use it on the gpu as such
 	gpu_mesh gpuMesh = {
-		.lod4Err					= mesh.lodErrors,
-		.aabbMin					= mesh.aabb.min,
-		.aabbMax					= mesh.aabb.max,
+		.lod4Err					= mesh.lodErrs,
+		.aabbMin					= mesh.aabbMin,
+		.aabbMax					= mesh.aabbMax,
 		.packed16x4_meshletCounts	= mesh.packed16x4_lodMltCounts,
 		.vtxPosOffsetInBytes		= vtxPosAlloc.offset,
 		.vtxAttrsOffset				= vtxAttrAlloc.offset / HtElemStrideInBytes( mesh.vertexAttrs ),
@@ -2061,7 +2066,7 @@ HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_view& mesh )
 		.triAlloc		= idxAlloc
 	};
 
-	return std::bit_cast<u32>( SlotArrayPushEntry( rendererComponents, htMesh ) );
+	return std::bit_cast<u32>( rendererComponents.push_entry( htMesh ) );
 }
 
 void renderer_context::UploadMeshes(

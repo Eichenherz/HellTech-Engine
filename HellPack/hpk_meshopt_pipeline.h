@@ -142,7 +142,7 @@ inline hpk_meshlet MeshoptSimplyfyMeshlet(
     //mlt_attr_vector<float2>	localUVs		= GetMeshletLocalAttrStream( uvs, mltVtx, m.vertex_offset, m.vertex_count );
     mlt_idx_vector			localIdx	    = std::span{ &mltTris[ mlt.triangle_offset ], mlt.triangle_count * 3 };
 
-    mlt_idx_vector32        mltTempLod      = { RASTER_MAX_TRIS_PER_MLT * 3, 0 };
+    mlt_idx_vector32        mltTempLod      = { ht_fill, RASTER_MAX_TRIS_PER_MLT * 3, 0 };
     // NOTE: bc we can't have simplify on u8
     mlt_idx_vector32        mltTempIdx32    = { std::from_range, localIdx | std::views::transform( HtCastTo<u32> ) };
     float                   lodError        = 0.0f;

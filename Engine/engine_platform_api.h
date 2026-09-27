@@ -34,8 +34,7 @@ struct ht_input_state
     // NOTE: includes mouse buttons
     std::bitset<BUTTON_COUNT>   buttonsEndedDown                        = {};
     u16                         buttonsHalfTransitions[ BUTTON_COUNT ]  = {};
-    i32 	                    mouseDx                                 = 0;
-    i32 	                    mouseDy                                 = 0;
+    i32x2 	                    dPosMouse                               = {};
     float2 	                    mousePos                                = {};
 
     bool IsButtonDown( u16 buttonId ) const { return buttonsEndedDown[ buttonId ]; }
@@ -93,8 +92,8 @@ struct alignas( 64 ) thread_ctx
     std::array<linear_arena, 2> scratchArenas = {};
 };
 
-extern u64                      gNumCores;
-extern job_system_ctx*          pJobSys;
+extern u64                      g_NumCores;
+extern job_system_ctx*          g_pJobSys;
 extern thread_local thread_ctx* pThreadCtx;
 // NOTE: this is used to hold the actual engine components; ie thread pool, renderer, etc
 extern linear_arena*            pPersistentArena;
@@ -108,7 +107,7 @@ u64 HtCurrentThreadIdx();
 struct renderer_interface
 {
     virtual void		    InitBackend( u64 hInst, u64 hWnd ) = 0;
-    virtual HRNDMESH32	    AllocMeshComponent( const hpk_mesh_view& ) = 0;
+    virtual HRNDMESH32	    AllocMeshComponent( const hpk_mesh_desc& ) = 0;
     virtual bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) = 0;
     virtual void		    UploadMeshes( atomic_u64*, std::span<const mesh_upload_req>, linear_arena& ) = 0;
     virtual void		    HostFrames( const frame_data&, linear_arena&, gpu_data& ) = 0;

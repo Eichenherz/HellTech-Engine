@@ -219,6 +219,7 @@ concept storage_t = std::ranges::contiguous_range<decltype( S::mem )>
     { s.Grow( reqSzInElems ) }  -> std::same_as<void>;
     { S::CAN_GROW }             -> std::convertible_to<bool>;
     { S::OWNS_ELEMENTS }        -> std::convertible_to<bool>;
+    { s.mem }                   -> std::convertible_to<std::span<ELEM_T>>;
 };
 
 template<typename T, u64 N>

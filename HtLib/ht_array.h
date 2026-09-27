@@ -40,37 +40,7 @@ struct ht_array : STORAGE_T
 
     ht_array() = default;
 
-    ht_array( STORAGE_T srcStorage ) requires ( !STORAGE_T::OWNS_ELEMENTS ) : STORAGE_T{ srcStorage } {}
-
-    template<u64 E> requires ( !STORAGE_T::OWNS_ELEMENTS && !STORAGE_T::CAN_GROW )
-    ht_array( std::span<T, E> srcMem ) : STORAGE_T{ srcMem } {}
-
-    template<typename U, u64 E>
-    requires ( STORAGE_T::OWNS_ELEMENTS && std::same_as<std::remove_const_t<U>, T> )
-    ht_array( std::span<U, E> src ) { this->append_range( src ); }
-
-    ht_array( std::initializer_list<T> il ) requires ( STORAGE_T::OWNS_ELEMENTS ) { this->append_range( il ); }
-
-    ht_array( ht_fill_t, u64 n, const T& v ) requires ( STORAGE_T::OWNS_ELEMENTS ) { this->resize( n, v ); }
-
-    template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T* pSrcArena ) : STORAGE_T{ {}, pSrcArena } { HT_ASSERT( nullptr != pSrcArena ); }
-
-    template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T& srcArena ) : STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } {}
-
-    ht_array( std::from_range_t, std::ranges::input_range auto&& r ) { this->append_range( FWD( r ) ); }
-
-    template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T& srcArena, std::from_range_t, std::ranges::input_range auto&& r ) :
-        STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } { this->append_range( FWD( r ) ); }
-
-    template<arena_t SRC_ARENA_T> requires ( STORAGE_T::CAN_GROW )
-    ht_array( SRC_ARENA_T& srcArena, u64 n ) :
-        STORAGE_T{ {}, &( typename STORAGE_T::arena_type& ) srcArena } { this->resize( n ); }
-
-    template<u64 E> requires ( !STORAGE_T::OWNS_ELEMENTS && !STORAGE_T::CAN_GROW )
-    ht_array( std::span<T, E> srcMem, u64 n ) : STORAGE_T{ srcMem } { this->resize( n ); }
+    ht_array( STORAGE_T srcStorage ) : STORAGE_T{ srcStorage } {}
 
     auto*       data( this auto&& self ) { return ( ht_const_like_ptr<T, decltype( self )> ) std::data( self.mem ); }
 
@@ -169,13 +139,34 @@ template<typename T, typename STORAGE_T>
 inline constexpr bool std::ranges::enable_borrowed_range<ht_array<T, STORAGE_T>> = !STORAGE_T::OWNS_ELEMENTS;
 
 template<TRIVIAL_T T, arena_t ARENA_T = linear_arena>
-using arena_array      = ht_array<T, arena_storage<T, ARENA_T>>;
+struct arena_array : ht_array<T, arena_storage<T, ARENA_T>>
+{
+    arena_array() = default;
+    arena_array( arena_t auto& srcArena ) : arena_array::ht_array{ { {}, &( ARENA_T& ) srcArena } } {}
+    arena_array( arena_t auto& srcArena, std::from_range_t, std::ranges::input_range auto&& r ) :
+        arena_array::ht_array{ { {}, &( ARENA_T& ) srcArena } } { this->append_range( FWD( r ) ); }
+    arena_array( arena_t auto& srcArena, u64 n ) :
+        arena_array::ht_array{ { {}, &( ARENA_T& ) srcArena } } { this->resize( n ); }
+};
 
 template<TRIVIAL_T T>
-using borrowed_array   = ht_array<T, borrowed_storage<T>>;
+struct borrowed_array : ht_array<T, borrowed_storage<T>>
+{
+    borrowed_array() = default;
+    borrowed_array( std::span<T> srcMem ) : borrowed_array::ht_array{ { srcMem } } {}
+    borrowed_array( std::span<T> srcMem, u64 n ) : borrowed_array::ht_array{ { srcMem } } { this->resize( n ); }
+};
 
 template<TRIVIAL_T T, u64 N>
-using inline_array     = ht_array<T, inline_storage<T, N>>;
+struct inline_array : ht_array<T, inline_storage<T, N>>
+{
+    inline_array() = default;
+    template<typename U, u64 E> requires std::same_as<std::remove_const_t<U>, T>
+    inline_array( std::span<U, E> src ) { this->append_range( src ); }
+    inline_array( std::initializer_list<T> il ) { this->append_range( il ); }
+    inline_array( ht_fill_t, u64 n, const T& v ) { this->resize( n, v ); }
+    inline_array( std::from_range_t, std::ranges::input_range auto&& r ) { this->append_range( FWD( r ) ); }
+};
 
 static_assert( TRIVIAL_T<arena_array<u8>> && TRIVIAL_T<borrowed_array<u8>> && TRIVIAL_T<inline_array<u8, 4>> );
 
