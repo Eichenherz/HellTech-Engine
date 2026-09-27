@@ -19,7 +19,6 @@ add_executable(Engine WIN32      # WIN32 = Windows subsystem (not console)
     ${THIRD_PARTY}/imgui/imgui_tables.cpp
     ${THIRD_PARTY}/imgui/imgui_widgets.cpp
     ${THIRD_PARTY}/ImGuiFileDialog/ImGuiFileDialog.cpp
-    ${THIRD_PARTY}/miniz/miniz.c
     ${THIRD_PARTY}/OffsetAllocator/offsetAllocator.cpp
 )
 
@@ -53,7 +52,7 @@ if(MSVC)
         "${CMAKE_CURRENT_SOURCE_DIR}/vk_backend.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/HellTech.cpp"
         TARGET_DIRECTORY Engine
-        PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:/fsanitize=address>"
+        PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:${HT_CL_ASAN_COMPILE_FLAGS}>"
     )
     target_link_options(Engine PRIVATE "$<$<CONFIG:Debug>:${HT_CL_ASAN_LINK_FLAGS}>")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -70,7 +69,6 @@ if(MSVC)
         ${THIRD_PARTY}/imgui/imgui_tables.cpp
         ${THIRD_PARTY}/imgui/imgui_widgets.cpp
         ${THIRD_PARTY}/ImGuiFileDialog/ImGuiFileDialog.cpp
-        ${THIRD_PARTY}/miniz/miniz.c
         TARGET_DIRECTORY Engine
         PROPERTIES COMPILE_OPTIONS "/analyze-"
     )

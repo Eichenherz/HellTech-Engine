@@ -66,7 +66,6 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/ImGuiFileDialog
     ${THIRD_PARTY}/dds
     ${THIRD_PARTY}/unordered_dense/include
-    ${THIRD_PARTY}/miniz
     ${THIRD_PARTY}/bc7enc_rdo
     ${THIRD_PARTY}/meshoptimizer/src
     ${THIRD_PARTY}/cgltf
@@ -94,12 +93,18 @@ if(MSVC)
         set(HT_CL_LTO_COMPILE_FLAG -flto=thin)
         set(HT_CL_LTO_LINK_FLAG "")
         set(HT_CL_DEBUG_DEFS "")
+        set(HT_CL_DEBUG_DBGINFO_FLAGS /Zi -gno-inline-line-tables)
 
         # NOTE: cl's /fsanitize=address embeds the ASan runtime libs in the .obj; clang-cl only adds them when its
         #       own driver links. CMake calls lld-link directly, so pass what `clang-cl -### /MD /fsanitize=address` does.
         get_filename_component(HT_CLANG_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
         string(REGEX MATCH "^[0-9]+" HT_CLANG_MAJOR "${CMAKE_CXX_COMPILER_VERSION}")
         set(HT_CLANG_RT_DIR "${HT_CLANG_BIN_DIR}/../lib/clang/${HT_CLANG_MAJOR}/lib/windows")
+        set(HT_CL_ASAN_COMPILE_FLAGS
+            /fsanitize=address
+            /clang:-fsanitize-address-use-after-return=never
+            -mllvm -asan-realign-stack=16
+        )
         set(HT_CL_ASAN_LINK_FLAGS
             "${HT_CLANG_RT_DIR}/clang_rt.asan_dynamic-x86_64.lib"
             "/INCLUDE:__asan_seh_interceptor"
@@ -113,6 +118,8 @@ if(MSVC)
         set(HT_CL_LTO_COMPILE_FLAG /GL)
         set(HT_CL_LTO_LINK_FLAG /LTCG)
         set(HT_CL_DEBUG_DEFS _DEBUG)
+        set(HT_CL_DEBUG_DBGINFO_FLAGS /Zi)
+        set(HT_CL_ASAN_COMPILE_FLAGS /fsanitize=address)
         set(HT_CL_ASAN_LINK_FLAGS "")
     endif()
 
@@ -164,7 +171,7 @@ if(MSVC)
     # --- compiler ---
     add_compile_options(
         ${HT_CL_COMMON_FLAGS}
-        $<$<CONFIG:Debug>:/Zi>
+        "$<$<CONFIG:Debug>:${HT_CL_DEBUG_DBGINFO_FLAGS}>"
         "$<$<CONFIG:Release,RelWithDebInfo>:${HT_CL_OPT_FLAGS}>"
         $<$<CONFIG:Release,RelWithDebInfo>:${HT_CL_LTO_COMPILE_FLAG}>        # whole-program optimization (pairs with /LTCG)
         "$<$<CONFIG:RelWithDebInfo>:${HT_CL_OPT_DBGINFO_FLAGS}>"
@@ -220,9 +227,9 @@ target_compile_definitions(CommonDeps INTERFACE
 # ============================================================================
 
 add_custom_target(prepare
-    COMMAND cmd /c "\"${CMAKE_SOURCE_DIR}/install_deps.bat\""
+    COMMAND cmd /c "\"${CMAKE_SOURCE_DIR}/clone_deps.bat\""
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Cloning 3rdParty deps and fetching miniz..."
+    COMMENT "Cloning 3rdParty deps..."
     VERBATIM
 )
 

@@ -51,7 +51,6 @@ endif()
 add_library(HellPack3rdParty STATIC
     3rdPartyTU.cpp
     3rdPartyTU2.cpp
-    ${THIRD_PARTY}/miniz/miniz.c
     ${HT_ZSTD_SOURCES}
 )
 set_target_properties(HellPack3rdParty PROPERTIES
@@ -103,7 +102,7 @@ if(MSVC)
     # ASan in Debug, only on HellPack.cpp — the HtLib .cpps stay uninstrumented.
     # Mixed TUs link thanks to HT_CL_DEBUG_ABI_DEFS ( via CommonDeps ).
     set_source_files_properties(HellPack.cpp
-        PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:/fsanitize=address>"
+        PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:${HT_CL_ASAN_COMPILE_FLAGS}>"
     )
     target_link_options(HellPack PRIVATE "$<$<CONFIG:Debug>:${HT_CL_ASAN_LINK_FLAGS}>")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

@@ -130,7 +130,7 @@ struct raw_mesh_desc
 	gltf_attr_stream<float3>	pos;
 	gltf_attr_stream<float3>	normals;
 	gltf_attr_stream<u8>		indices;
-    aabb_t<float3>              aabb;
+    aabb_t<float3a>             aabb;
 	raw_mesh_topology_t			topology;
 };
 
@@ -226,13 +226,16 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
                     iterMeshDesc = rawMeshDescMap.emplace( pPrim, desc ).first;
                 }
 
+                float3a aabbCenter = ( iterMeshDesc->second.aabb.min + iterMeshDesc->second.aabb.max ) * 0.5f;
+                float3a aabbExtent = ( iterMeshDesc->second.aabb.max - iterMeshDesc->second.aabb.min ) * 0.5f;
                 for( u64 ii = 0; ii < instCount; ++ii )
                 {
                     packed_trs instTrs = node.has_mesh_gpu_instancing ?
                         GltfComposePackedTRS( trs, GltfGetTRSFromExtGpuInst( node, ii ) ) : trs;
                     flatNodes.push_back( {
                         .toWorld    = instTrs,
-                        .aabb       = iterMeshDesc->second.aabb,
+                        .aabbCenter = aabbCenter,
+                        .aabbExtent = aabbExtent,
                         .meshHash   = HpkHashMeshName( iterMeshDesc->second.name )
                     } );
                 }

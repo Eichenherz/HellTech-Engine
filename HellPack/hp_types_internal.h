@@ -95,8 +95,9 @@ struct packed_trs;
 
 struct raw_node
 {
-	packed_trs	    toWorld;
-    aabb_t<float3>  aabb;
+	trs_t	        toWorld;
+    float3a         aabbCenter;
+    float3a         aabbExtent;
 	u64			    meshHash;
 };
 

@@ -125,7 +125,7 @@ inline fixed_string<256> CgltfGetBufferFilePath( std::string_view basePath, cons
     return { "{}\\{}", basePath, pAccessor->buffer_view->buffer->uri };
 }
 
-inline aabb_t<float3> CgltfGetPosStreamBounds( const cgltf_primitive& prim )
+inline aabb_t<float3a> CgltfGetPosStreamBounds( const cgltf_primitive& prim )
 {
     const cgltf_accessor* pAccessor = cgltf_find_accessor( &prim, cgltf_attribute_type_position, 0 );
     // NOTE: gltf mandates this attr be present together with its bounds

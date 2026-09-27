@@ -414,24 +414,15 @@ inline void AtomicWait( const std::atomic<u64>& waitAddr, u64 waitVal )
 constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
 constexpr float GRID_INV_SCALE              = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
 
-i16x2 HpkBinNodeTo2DGridSector( const raw_node& node )
+inline i16x2 HpkBinPointTo2DGridSector( float3a ptInWorldCoords )
 {
-    using namespace DirectX;
-
-    XMVECTOR localCenter = XMVectorScale( XMVectorAdd( DX_XMLoadFloat3( node.aabb.min ),
-        DX_XMLoadFloat3( node.aabb.max ) ), 0.5f );
-    XMVECTOR worldCenter = XMVectorAdd( XMVector3Rotate(
-        XMVectorMultiply( localCenter, DX_XMLoadFloat3( node.toWorld.s ) ),
-        DX_XMLoadFloat4( node.toWorld.r ) ),
-        DX_XMLoadFloat3( node.toWorld.t ) );
-
-    XMVECTOR    sector  = XMVectorFloor( XMVectorScale( worldCenter, GRID_INV_SCALE ) );
+    float3a sector  = ht::floor( ptInWorldCoords * GRID_INV_SCALE );
     // NOTE: bc we've exported from gLTF
     // NOTE: + 0.5f bc of the int16 range [-32768, 32767 ] is centered on 0.5f
-    HT_ASSERT( ( std::abs( XMVectorGetX( sector ) + 0.5f ) <= ( float( INT16_MAX ) + 0.5f ) ) &&
-        ( std::abs( XMVectorGetZ( sector ) + 0.5f ) <= ( float( INT16_MAX ) + 0.5f ) ) );
+    constexpr float2 BOUNDS = float2{ float( INT16_MAX ), float( INT16_MAX ) } + float2{ 0.5f, 0.5f };
+    HT_ASSERT( ht::all( ht::abs( sector.xz + float2{ 0.5f, 0.5f } ) <= BOUNDS ) );
 
-    return { ( i16 ) XMVectorGetX( sector ), ( i16 ) XMVectorGetZ( sector ) };
+    return ht::vec_cast<i16x2>( sector.xz );
 }
 
 inline auto GetDirViewOfFiles( std::string_view dir, std::string_view ext )
@@ -536,7 +527,7 @@ static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshD
         // TODO: process points too
         if( raw_mesh_topology_t::POINTS == meshDesc.topology ) continue;
         // NOTE: degenerate geometry
-        if( ht::all( float3{} == ( meshDesc.aabb.max - meshDesc.aabb.min ) ) ) continue;
+        if( ht::all( float3a{} == ( meshDesc.aabb.max - meshDesc.aabb.min ) ) ) continue;
 
         inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> mltsWLod = {};
         {
@@ -609,8 +600,8 @@ static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshD
 
             hpkMeshDescVec.push_back( {
                 .hashed     = meshDesc.meshHash,
-                .aabbMin    = meshDesc.aabb.min,
-                .aabbMax    = meshDesc.aabb.max,
+                .aabbMin    = { meshDesc.aabb.min.x, meshDesc.aabb.min.y, meshDesc.aabb.min.z },
+                .aabbMax    = { meshDesc.aabb.max.x, meshDesc.aabb.max.y, meshDesc.aabb.max.z },
                 .lodErrs    = {
                     pMlts[ 0 ].meshLevelError, pMlts[ 1 ].meshLevelError,
                     pMlts[ 2 ].meshLevelError, pMlts[ 3 ].meshLevelError
@@ -645,51 +636,68 @@ struct hpk_world
 
 hpk_world HpkCountSortNodes( std::span<const raw_node> rawNodes )
 {
-    std::vector<u32> binIDs( std::size( rawNodes ) );
-    i16x2 minSec = { INT16_MAX, INT16_MAX }, maxSec = { INT16_MIN, INT16_MIN };
-    for( auto[ bin, raw ] : std::views::zip( binIDs, rawNodes ) )
+    std::vector<u64> nodeBinKey( std::size( rawNodes ) );
+    i16x2 minSec = { INT16_MAX, INT16_MAX };
+    i16x2 maxSec = { INT16_MIN, INT16_MIN };
+    for( auto[ bin, raw ] : std::views::zip( nodeBinKey, rawNodes ) )
     {
-        i16x2 secID = HpkBinNodeTo2DGridSector( raw );
-        minSec      = ht::min( minSec, secID );
-        maxSec      = ht::max( maxSec, secID );
-        bin         = std::bit_cast<u32>( secID );
+        float3a center  = ht::vec_rot( raw.aabbCenter * raw.toWorld.s, raw.toWorld.r ) + raw.toWorld.t;
+        float   radius  = ht::length( raw.aabbExtent ) * ht::hmax( raw.toWorld.s );
+        HT_ASSERT( radius > 0.0f );
+
+        u64     radBin  = std::bit_cast<u32>( radius ) >> 23;    // NOTE: == floor( log2( float32 ) ) + 127, 0..25
+
+        i16x2   secID   = HpkBinPointTo2DGridSector( center );
+        minSec          = ht::min( minSec, secID );
+        maxSec          = ht::max( maxSec, secID );
+        // NOTE: 255 - to order the nodes big to small
+        bin             = std::bit_cast<u64>( i16x4{ i16( NODE_LOD_BIN_COUNT - 1 - radBin ), secID.x, secID.y, 0 } );
     }
 
-    // NOTE: build histo
     i16x2   gridDim     = maxSec - minSec + i16x2{ 1, 1 };
-    u64     sectorCount = gridDim.x * gridDim.y + 1;
+    u64     sectorCount = gridDim.x * gridDim.y;
+    u64     binCount    = sectorCount * NODE_LOD_BIN_COUNT + 1; // NOTE: bc of the fp32 exp `radius` bins
+    u32x4   binDims     = { 1, NODE_LOD_BIN_COUNT, ( u32 ) NODE_LOD_BIN_COUNT * u32( gridDim.x ), 0 };
 
-    std::vector<u32>                sectorScans( sectorCount, 0 );
-    for( u32& bin : binIDs )
+    std::vector<u32> binHisto( binCount, 0 );
+    for( u64& binKey : nodeBinKey )
     {
-        i16x2 secID = std::bit_cast<i16x2>( bin );
-        bin = ht::dot( secID - minSec, i16x2{ 1, gridDim.x } );
+        i16x4 cell  = std::bit_cast<i16x4>( binKey ) - i16x4{ 0, minSec.x, minSec.y, 0 };
+        binKey      = ht::dot( ht::vec_cast<u32x4>( cell ), binDims );
 
-        ++sectorScans[ bin ];
+        ++binHisto[ binKey ];
     }
 
-    ht::ranges::exclusive_scan( sectorScans, 0u );
+    ht::ranges::exclusive_scan( binHisto, 0u );
 
-    std::vector<hpk_sector_desc>    sectors;
+    std::vector<hpk_sector_desc> sectors;
     sectors.reserve( sectorCount );
-    for( u32 binIdx = 1; binIdx < std::size( sectorScans ); ++binIdx  )
+    auto chunkedEnumerateSpan = std::span{ binHisto }.first( sectorCount * NODE_LOD_BIN_COUNT )
+        | std::views::chunk( NODE_LOD_BIN_COUNT ) | std::views::enumerate;
+    for( auto[ si, binSpan ] : chunkedEnumerateSpan )
     {
-        u64 nodeCount = sectorScans[ binIdx ] - sectorScans[ binIdx - 1 ];
+        u32 secExclOffset       = binSpan[ 0 ];
+        u32 nextSecExclOffset   = *std::end( binSpan )._Myptr;
 
-        if( 0 == nodeCount ) continue;
+        if( secExclOffset == nextSecExclOffset ) continue;
 
-        i32 cellIdx = binIdx - 1;
+        //HT_ASSERT( ( nextSecExclOffset - secExclOffset ) <= UINT16_MAX );
+
+        i32x2 secIdRel = { i32( si % gridDim.x ), i32( si / gridDim.x ) };
+        inline_array<u32, NODE_LOD_BIN_COUNT> lodNodeOffsets = { std::from_range, binSpan |
+            std::views::transform( [ & ]( u32 v ) { return ( u32 ) ( v - secExclOffset ); } ) };
         sectors.push_back( {
-            .firstNodeOffsetInBytes = sectorScans[ binIdx - 1 ] * sizeof( world_node ),
-            .nodeCount              = nodeCount,
-            .idx                    = ht::vec_cast<i32x2>( minSec ) + i32x2{ cellIdx % gridDim.x, cellIdx / gridDim.x }
+            .firstNodeOffsetInBytes = secExclOffset * sizeof( world_node ),
+            .nodeCount              = nextSecExclOffset - secExclOffset,
+            .idx                    = ht::vec_cast<i32x2>( minSec ) + secIdRel,
+            .log2LodNodeOffsets     = *( const hpk_sector_desc::node_lods* ) std::data( lodNodeOffsets )
         } );
     }
 
     std::vector<world_node> worldNodes( std::size( rawNodes ) );
-    for( auto[ node, binId ] : std::views::zip( rawNodes, binIDs ) )
+    for( auto[ node, binId ] : std::views::zip( rawNodes, nodeBinKey ) )
     {
-        worldNodes[ sectorScans[ binId ]++ ] = { .toWorld = node.toWorld, .meshHash = node.meshHash };
+        worldNodes[ binHisto[ binId ]++ ] = { .toWorld = node.toWorld, .meshHash = node.meshHash };
     }
 
     return { .sectors = MOV( sectors ), .nodes = MOV( worldNodes ) };

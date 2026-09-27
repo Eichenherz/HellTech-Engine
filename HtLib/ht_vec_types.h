@@ -22,6 +22,7 @@ using float3	= DirectX::XMFLOAT3;
 using u8x4		= u8 __attribute__( ( ext_vector_type( 4 ) ) );
 
 using i16x2		= i16 __attribute__( ( ext_vector_type( 2 ) ) );
+using i16x4		= i16 __attribute__( ( ext_vector_type( 4 ) ) );
 
 using u16x2		= u16 __attribute__( ( ext_vector_type( 2 ) ) );
 using u16x4		= u16 __attribute__( ( ext_vector_type( 4 ) ) );
@@ -84,6 +85,8 @@ namespace ht
 		else if constexpr( 3 == __builtin_vectorelements( decltype( m ) ) ) return m.x + m.y + m.z;
 		else return m.x + m.y + m.z + m.w;
 	}
+
+	constexpr auto length( auto v ) { return __builtin_elementwise_sqrt( dot( v, v ) ); }
 
 	constexpr auto cross( auto a, auto b )
 	{

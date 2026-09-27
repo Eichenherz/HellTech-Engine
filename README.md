@@ -84,7 +84,6 @@
 - [ImGuiFileDialog](https://github.com/aiekick/ImGuiFileDialog)
 - [VulkanMemoryAllocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
 - [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) 
-- [miniz](https://github.com/richgel999/miniz)
 - [unordered_dense](https://github.com/martinus/unordered_dense)
 - [dds](https://github.com/turanszkij/dds)
 - [OffsetAllocator](https://github.com/sebbbi/OffsetAllocator)

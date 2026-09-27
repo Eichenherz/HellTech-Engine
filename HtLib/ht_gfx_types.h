@@ -8,12 +8,27 @@
 #include <ht_hash.h>
 #include <ht_macros.h>
 
+struct trs_t;
+
 struct packed_trs
 {
 	float3	t;
 	float4	r;
 	float3	s;
+
+	constexpr operator trs_t() const;
 };
+
+struct trs_t
+{
+	float3a	t;
+	quat4	r;
+	float3a	s;
+
+	constexpr operator packed_trs() const { return { .t = { t.x, t.y, t.z }, .r = r, .s = { s.x, s.y, s.z } }; }
+};
+
+constexpr packed_trs::operator trs_t() const { return { .t = { t.x, t.y, t.z }, .r = r, .s = { s.x, s.y, s.z } }; }
 
 struct vertex_attrs
 {

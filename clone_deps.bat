@@ -25,14 +25,6 @@ if %FAILED%==0 (
     echo WARNING: %FAILED% repository/repositories failed to clone.
     exit /b 1
 )
-
-echo.
-echo Fetching miniz...
-call "%~dp0get_miniz.bat"
-if errorlevel 1 (
-    echo ERROR: get_miniz.bat failed.
-    exit /b 1
-)
 exit /b 0
 
 :clone
