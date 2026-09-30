@@ -33,6 +33,11 @@ constexpr u64 FwdAlignPot( u64 addr, u64 alignment )
     HT_ASSERT( IsPowOf2( alignment ) );
     return ( addr + ( alignment - 1 ) ) & ~( alignment - 1 );
 }
+constexpr u64 BwdAlignPot( u64 addr, u64 alignment )
+{
+    HT_ASSERT( IsPowOf2( alignment ) );
+    return addr & ~( alignment - 1 );
+}
 constexpr bool IsAlignedToPot( u64 addr, u64 alignment ) { return !( addr & ( alignment - 1 ) ); }
 // NOTE: works for any alignment, not just power-of-2 (e.g. struct strides like 44)
 constexpr u64 FwdAlignGeneric( u64 addr, u64 align ) { return ( ( addr + align - 1 ) / align ) * align; }
@@ -113,6 +118,13 @@ inline u32 HwRandSeed32()
 {
     u32 seed = 0;
     for( ; 1 != _rdseed32_step( &seed ); );
+    return seed;
+}
+
+inline u64 HwRandSeed64()
+{
+    u64 seed = 0;
+    for( ; 1 != _rdseed64_step( &seed ); );
     return seed;
 }
 

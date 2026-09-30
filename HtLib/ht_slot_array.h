@@ -7,6 +7,8 @@
 #include <ht_error.h>
 #include <ht_array.h>
 
+#include <tuple>
+
 
 // NOTE: this is capped at HT_SLOT_MAX_ENTRIES
 
@@ -105,5 +107,41 @@ borrowed_slot_array<T> HtMakeSlotArray( arena_t auto& arena, u64 slotCount )
 {
     return { ArenaNewArray<ht_array_slot_t<T>>( arena, slotCount ) };
 }
+
+template<typename...> struct ht_no_item {};
+
+template<TRIVIAL_T... COMP_T>
+struct soa_slot_array : borrowed_slot_array<ht_no_item<COMP_T...>>
+{
+    using slot_array_t  = borrowed_slot_array<ht_no_item<COMP_T...>>;
+    using hndl32        = slot_array_t::hndl32;
+
+    std::tuple<std::span<COMP_T>...> components;
+
+    soa_slot_array() = default;
+
+    soa_slot_array( arena_t auto& arena, u64 slotCount ) :
+        slot_array_t{ ArenaNewArray<slot_array_t::value_type>( arena, slotCount ) },
+        components{ ArenaNewArray<COMP_T>( arena, slotCount )... } {}
+
+    hndl32  push_entry( this auto&& self, const COMP_T&... vals )
+    {
+        hndl32 h = self.slot_array_t::push_entry( {} );
+        ( ( std::get<std::span<COMP_T>>( self.components )[ h.slotIdx ] = vals ), ... );
+        return h;
+    }
+
+    template<typename T>
+    auto&   get( this auto&& self, hndl32 h )
+    {
+        self.slot_array_t::operator[]( h );
+        return std::get<std::span<T>>( self.components )[ h.slotIdx ];
+    }
+
+    template<typename T>
+    auto    get( this auto&& self ) { return std::get<std::span<T>>( self.components ).first( std::size( self ) ); }
+    
+    void    remove_entry( this auto&& self, hndl32 h ) { self.slot_array_t::remove_entry( h ); }
+};
 
 #endif // !__HT_SLOT_ARRAY_H__

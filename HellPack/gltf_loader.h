@@ -130,7 +130,8 @@ struct raw_mesh_desc
 	gltf_attr_stream<float3>	pos;
 	gltf_attr_stream<float3>	normals;
 	gltf_attr_stream<u8>		indices;
-    aabb_t<float3a>             aabb;
+    float3a                     aabbCenter;
+    float3a                     aabbExtent;
 	raw_mesh_topology_t			topology;
 };
 
@@ -142,7 +143,8 @@ inline raw_mesh_desc GltfPatchRawMeshDesc( const raw_mesh_desc& in, std::span<co
         .pos        = GltfPatchAttrStream( in.pos, bin ),
         .normals    = GltfPatchAttrStream( in.normals, bin ),
         .indices    = GltfPatchAttrStream( in.indices, bin ),
-        .aabb       = in.aabb,
+        .aabbCenter = in.aabbCenter,
+        .aabbExtent = in.aabbExtent,
         .topology   = in.topology
     };
 }
@@ -159,9 +161,11 @@ inline raw_mesh_desc CgltfParseRawMeshDesc(
     const cgltf_accessor* pPos  = cgltf_find_accessor( &primitive, cgltf_attribute_type_position, 0 );
     const cgltf_accessor* pNorm = cgltf_find_accessor( &primitive, cgltf_attribute_type_normal, 0 );
 
-    hpk_mesh_name name = { "{}_{:.60}_{}_Primitive_{}", originFileName,
-        parentMesh.name ? parentMesh.name : "Mesh", meshIdx, primIdx
+    hpk_mesh_name name = { "{}_{:.32}_Mesh_{}_Prim_{}", originFileName,
+        parentMesh.name ? parentMesh.name : "NONE", meshIdx, primIdx
     };
+
+    aabb_t<float3a> aabb = CgltfGetPosStreamBounds( primitive );
 
     return {
         .name		= name,
@@ -170,7 +174,8 @@ inline raw_mesh_desc CgltfParseRawMeshDesc(
         .pos		= gltf_attr_stream<float3>{ *pPos },
         .normals 	= pNorm             ? gltf_attr_stream<float3>{ *pNorm }    : gltf_attr_stream<float3>{},
         .indices	= primitive.indices ? gltf_attr_stream<u8>{ *primitive.indices } : gltf_attr_stream<u8>{},
-        .aabb       = CgltfGetPosStreamBounds( primitive ),
+        .aabbCenter = ( aabb.max + aabb.min ) * 0.5f,
+        .aabbExtent = ( aabb.max - aabb.min ) * 0.5f,
         .topology   = CgltfPrimitiveTypeToTopology( primitive.type )
     };
 }
@@ -208,6 +213,12 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
     auto LmbdVisitNode = [ & ]( this auto&& PfnSelf, const cgltf_node& node, packed_trs parentTrs ) -> void
     {
         if( CgltfIsNodeHidden( node ) ) return;
+        // NOTE: for caldera instances are clutter basically so we wanna skip them for now
+        if( node.has_mesh_gpu_instancing )
+        {
+            HT_ASSERT( 0 == node.children_count );
+            return;
+        }
 
         packed_trs trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
 
@@ -216,33 +227,37 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
             u64 instCount = node.has_mesh_gpu_instancing ? node.mesh_gpu_instancing.attributes[ 0 ].data->count : 1;
 
             const cgltf_mesh& m = *node.mesh;
-            for( const cgltf_primitive* pPrim = m.primitives; pPrim < ( m.primitives + m.primitives_count ); ++pPrim )
+            for( const cgltf_primitive& prim : HT_CGLTF_SPAN( m.primitives ) )
             {
-                auto iterMeshDesc = rawMeshDescMap.find( pPrim );
+                // NOTE: yes it's for caldera only ! and the stuff we need to render doesn't have this purpose type !
+                if( caldera_prim_purpose_t::NONE != CgltfGetCalderaPrimPurpose( prim ) ) continue;
+
+                auto iterMeshDesc = rawMeshDescMap.find( &prim );
                 if( std::end( rawMeshDescMap ) == iterMeshDesc )
                 {
-                    raw_mesh_desc desc = CgltfParseRawMeshDesc( m, *pPrim, originFileName,
-                        &m - data->meshes, pPrim - m.primitives );
-                    iterMeshDesc = rawMeshDescMap.emplace( pPrim, desc ).first;
+                    raw_mesh_desc desc = CgltfParseRawMeshDesc( m, prim, originFileName,
+                        &m - data->meshes, &prim - m.primitives );
+                    iterMeshDesc = rawMeshDescMap.emplace( &prim, desc ).first;
                 }
 
-                float3a aabbCenter = ( iterMeshDesc->second.aabb.min + iterMeshDesc->second.aabb.max ) * 0.5f;
-                float3a aabbExtent = ( iterMeshDesc->second.aabb.max - iterMeshDesc->second.aabb.min ) * 0.5f;
                 for( u64 ii = 0; ii < instCount; ++ii )
                 {
                     packed_trs instTrs = node.has_mesh_gpu_instancing ?
                         GltfComposePackedTRS( trs, GltfGetTRSFromExtGpuInst( node, ii ) ) : trs;
                     flatNodes.push_back( {
                         .toWorld    = instTrs,
-                        .aabbCenter = aabbCenter,
-                        .aabbExtent = aabbExtent,
+                        .aabbCenter = iterMeshDesc->second.aabbCenter,
+                        .aabbExtent = iterMeshDesc->second.aabbExtent,
                         .meshHash   = HpkHashMeshName( iterMeshDesc->second.name )
                     } );
                 }
             }
         }
 
-        for( const cgltf_node* child : HT_CGLTF_SPAN( node.children ) ) PfnSelf( *child, trs );
+        for( const cgltf_node* child : HT_CGLTF_SPAN( node.children ) )
+        {
+            PfnSelf( *child, trs );
+        }
     };
 
     for( const cgltf_node* root : HT_CGLTF_SPAN( data->scenes[ 0 ].nodes ) )

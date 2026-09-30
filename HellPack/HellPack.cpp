@@ -74,11 +74,11 @@ inline void     MeshoptScratchFree( void* ) {}
 
 struct bit_stream
 {
-    borrowed_array<u64>	qwords;
-    u64					cursorInBits = 0;  // NOTE: lsb
+    borrowed_array<u64>	qwords          = {};
+    u64					cursorInBits    = 0;  // NOTE: lsb
 
     const u64* begin() const { return std::data( qwords ); }
-    const u64* end()   const { return std::data( qwords ) + std::size( qwords ); }
+    const u64* end()   const { return ht::end_ptr( qwords ); }
 
     void Reset() { qwords.resize( 0 ); cursorInBits = 0; }
 
@@ -181,8 +181,8 @@ static std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshl
 	return packedVtxAttrs;
 }
 
-constexpr bool validatePosEncoding = true;
-constexpr bool validateNormalEncoding = true;
+constexpr bool validatePosEncoding      = true;
+constexpr bool validateNormalEncoding   = true;
 
 // NOTE: this is contiguous
 struct hpk_quantized_lod
@@ -192,11 +192,6 @@ struct hpk_quantized_lod
     std::span<gpu_meshlet>  gpuMlts;
     std::span<u8>		    idxBuff;
 };
-
-inline std::span<const u8> HpkGetContiguousLodByteView( const hpk_quantized_lod& lod )
-{
-    return { ( const u8* ) std::data( lod.posBitstream ),  std::to_address( std::end( lod.idxBuff ) ) };
-}
 
 static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshlets, virtual_arena& backingArena )
 {
@@ -274,12 +269,13 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 
     HT_ASSERT( std::ranges::size( posBuff ) && std::size( vtxNormals ) && std::size( idxBuff ) && std::size( gpuMlts ) );
 
-    std::span<u64>          outPos      = { std::data( posBuff.qwords ), posBuff.cursorInBits / 64 };
+    std::span<u64>          outPos      = { std::data( posBuff.qwords ), ( posBuff.cursorInBits + 63 ) / 64 };
     std::span<oct16x2>      outNormals  = HtMemCompact( outPos, vtxNormals );
+
     std::span<gpu_meshlet>  outGpuMlts  = HtMemCompact( outNormals, gpuMlts );
     std::span<u8>           outIdxBuff  = HtMemCompact( outGpuMlts, idxBuff );
 
-    u64 leftoverBytes = backingArena.Mark() - u64( std::to_address( std::end( outIdxBuff ) ) - backingArena.mem );
+    u64 leftoverBytes = backingArena.Mark() - u64( ht::end_ptr( outIdxBuff ) - backingArena.mem );
     backingArena.RewindNBytes( leftoverBytes );
 
     return { .posBitstream = outPos, .vtxNormals = outNormals, .gpuMlts = outGpuMlts, .idxBuff = outIdxBuff };
@@ -408,11 +404,13 @@ materials_jobs PrepareBcnCompressionBatch(
 
 inline void AtomicWait( const std::atomic<u64>& waitAddr, u64 waitVal )
 {
-    for( u64 seenVal; ( seenVal = waitAddr.load( std::memory_order_acquire ) ) < waitVal; ) waitAddr.wait( seenVal );
+    for( ;; )
+    {
+        u64 seenVal = waitAddr.load( std::memory_order_acquire );
+        if( seenVal >= waitVal ) break;
+        waitAddr.wait( seenVal );
+    }
 }
-
-constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
-constexpr float GRID_INV_SCALE              = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
 
 inline i16x2 HpkBinPointTo2DGridSector( float3a ptInWorldCoords )
 {
@@ -500,8 +498,6 @@ struct hpk_virtual_storage : arena_storage<T, virtual_arena>
     }
 };
 
-constexpr u64 ZSTD_COMPRESSION_LEVEL = 19;
-
 static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshDescView, std::span<const u8> binData )
 {
    const u64 jobCount = std::size( rawMeshDescView );
@@ -527,95 +523,97 @@ static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshD
         // TODO: process points too
         if( raw_mesh_topology_t::POINTS == meshDesc.topology ) continue;
         // NOTE: degenerate geometry
-        if( ht::all( float3a{} == ( meshDesc.aabb.max - meshDesc.aabb.min ) ) ) continue;
+        if( ht::all( float3a{} == ( meshDesc.aabbExtent ) ) ) continue;
 
         inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> mltsWLod = {};
         {
             // NOTE: NO tempArena here bc we need it to outlive this scope
             scoped_arena<virtual_arena> inMemScopes[] = { scratchArena, g_ThreadExtLibArena };
 
-            hpk_virt_array<float3> pos     = { scratchArena, std::from_range, GltfTypedView( meshDesc.pos ) };
-            hpk_virt_array<u32>    indices = { scratchArena, std::from_range, GtlfGetIdx32View( meshDesc.indices ) };
-            hpk_virt_array<float3> normals = { scratchArena, std::from_range, GltfTypedView( meshDesc.normals ) };
-
-            if( !std::size( normals ) )
+            auto pos     = borrowed_array<float3>{ scratchArena, std::from_range, GltfTypedView( meshDesc.pos ) };
+            auto indices = borrowed_array<u32>{ scratchArena, std::from_range, GtlfGetIdx32View( meshDesc.indices ) };
+            auto normals = borrowed_array<float3>{ scratchArena, std::size( pos ) };
+            if( std::size( meshDesc.normals ) )
             {
-                normals.resize( std::size( pos ) );GenerateSmoothNormals( pos, indices, normals );
+                HT_ASSERT( std::size( meshDesc.normals ) == std::size( pos ) );
+                std::ranges::copy( GltfTypedView( meshDesc.normals ), std::data( normals ) );
             }
+            else GenerateSmoothNormals( pos, indices, normals );
 
             MeshoptReindexAndOptimizeMesh( pos, normals, indices, scratchArena );
 
-            mltsWLod = MeshoptMakeHpkMeshletsWithLod( pos, normals, indices, LOD_MESH_LEVEL_RATIO, {},
-                    tempArena, scratchArena );
+            mltsWLod = MeshoptMakeHpkMeshletsWithLod( pos, normals, indices, LOD_MESH_LEVEL_RATIO,
+                ht::length( meshDesc.aabbExtent ), meshlet_config{},
+                tempArena, scratchArena );
         }
 
+        virtual_arena& fileWriteArena = tempArena;
+        auto fileWriteBuff = arena_array<u8, virtual_arena>{ fileWriteArena };
+
+        inline_array<hpk_lod_desc, MAX_LOD_LEVELS_COUNT> lodDescs = {};
+        for( const hpk_meshlets_w_lod& mLod : mltsWLod )
         {
-            virtual_arena& fileWriteArena = tempArena;
-            scoped_arena<virtual_arena> inMemScopes[] = { fileWriteArena, scratchArena, g_ThreadExtLibArena };
+            auto memScope2 = scoped_arena{ scratchArena };
 
-            inline_array<hpk_quantized_lod, MAX_LOD_LEVELS_COUNT> quantLods = { std::from_range, mltsWLod |
-                std::views::transform( [ &scratchArena ]( const auto& lodLevel )
+            hpk_quantized_lod quantLod = HpkQuantizeLODLevel( mLod.meshlets, memScope2 );
+
+            std::span<const u8> rawView = {
+                ( const u8* ) std::data( quantLod.posBitstream ), ht::end_ptr( quantLod.idxBuff )
+            };
+            u64 compBound = ZSTD_compressBound( std::size( rawView ) );
+
+            u64 writeOffset = fileWriteBuff.grow_by( compBound );
+            u8* writeDst    = std::data( fileWriteBuff ) + writeOffset;
+
+            u64 compSize = ZSTD_compressCCtx( pZstdCtx, writeDst, compBound, std::data( rawView ),
+                std::size( rawView ), ZSTD_COMPRESSION_LEVEL );
+            ZSTD_CHECK( compSize );
+
+            fileWriteBuff.shrink_by( compBound - compSize );
+
+            if( compSize >= std::size( rawView ) ) // NOTE: no compression needed
             {
-                    return HpkQuantizeLODLevel( lodLevel.meshlets, scratchArena );
-            }) };
-
-            hpk_virt_array<u8> fileWriteBuff = { fileWriteArena };
-            inline_array<hpk_lod_desc, MAX_LOD_LEVELS_COUNT> lodDescs = {};
-            for( const hpk_quantized_lod& quantLod : quantLods )
-            {
-                std::span<const u8> rawView = HpkGetContiguousLodByteView( quantLod );
-                u64 compBound = ZSTD_compressBound( std::size( rawView ) );
-
-                u64 writeOffset = fileWriteBuff.grow_by( compBound );
-                u8* writeDst    = std::data( fileWriteBuff ) + writeOffset;
-
-                u64 compSize = ZSTD_compressCCtx( pZstdCtx, writeDst, compBound,
-                    std::data( rawView ), std::size( rawView ), ZSTD_COMPRESSION_LEVEL );
-                ZSTD_CHECK( compSize );
-
-                fileWriteBuff.shrink_by( compBound - compSize );
-
-                if( compSize >= std::size( rawView ) ) // NOTE: no compression needed
-                {
-                    std::ranges::copy( rawView, writeDst );
-                    fileWriteBuff.shrink_by( compSize - std::size( rawView ) );
-                }
-
-                lodDescs.push_back( {
-                    .fileOffsetInBytes  = writeOffset,
-                    .storedSzInBytes    = ( compSize < std::size( rawView ) ) ? compSize : std::size( rawView ),
-                    .posSzInBytes       = HtRangeSizeInBytes( quantLod.posBitstream ),
-                    .normalsSzInBytes   = HtRangeSizeInBytes( quantLod.vtxNormals ),
-                    .idxBuffSzInBytes   = HtRangeSizeInBytes( quantLod.idxBuff ),
-                    .mltsSzInBytes      = HtRangeSizeInBytes( quantLod.gpuMlts )
-                } );
+                std::ranges::copy( rawView, writeDst );
+                fileWriteBuff.shrink_by( compSize - std::size( rawView ) );
             }
 
-            u64 fileOffsetInBytes = hpkOutFile.WriteBlocking( fileWriteBuff );
-
-            for( hpk_lod_desc& lodDesc : lodDescs ) lodDesc.fileOffsetInBytes += fileOffsetInBytes;
-
-            // NOTE: this is a hack; and we can only index by 0-3 bc we know the lod count
-            const hpk_meshlets_w_lod* pMlts = std::data( mltsWLod );
-
-            hpkMeshDescVec.push_back( {
-                .hashed     = meshDesc.meshHash,
-                .aabbMin    = { meshDesc.aabb.min.x, meshDesc.aabb.min.y, meshDesc.aabb.min.z },
-                .aabbMax    = { meshDesc.aabb.max.x, meshDesc.aabb.max.y, meshDesc.aabb.max.z },
-                .lodErrs    = {
-                    pMlts[ 0 ].meshLevelError, pMlts[ 1 ].meshLevelError,
-                    pMlts[ 2 ].meshLevelError, pMlts[ 3 ].meshLevelError
-                },
-                .firstLod   = std::size( hpkLodDescVec ),
-                .lodCount   = std::size( lodDescs )
+            lodDescs.push_back( {
+                .fileOffsetInBytes  = writeOffset,
+                .storedSzInBytes    = ( compSize < std::size( rawView ) ) ? compSize : std::size( rawView ),
+                .posSzInBytes       = HtRangeSizeInBytes( quantLod.posBitstream ),
+                .normalsSzInBytes   = HtRangeSizeInBytes( quantLod.vtxNormals ),
+                .idxBuffSzInBytes   = HtRangeSizeInBytes( quantLod.idxBuff ),
+                .mltsSzInBytes      = HtRangeSizeInBytes( quantLod.gpuMlts )
             } );
-
-            hpkLodDescVec.append_range( lodDescs );
         }
+
+        u64 fileOffsetInBytes = hpkOutFile.WriteBlocking( fileWriteBuff );
+
+        for( hpk_lod_desc& lodDesc : lodDescs ) lodDesc.fileOffsetInBytes += fileOffsetInBytes;
+
+        // NOTE: this is a hack; and we can only index by 0-3 bc we know the lod count
+        const hpk_meshlets_w_lod* pMlts = std::data( mltsWLod );
+
+        float3a aabbMin = meshDesc.aabbCenter - meshDesc.aabbExtent;
+        float3a aabbMax = meshDesc.aabbCenter + meshDesc.aabbExtent;
+
+        hpkMeshDescVec.push_back( {
+            .hashed     = meshDesc.meshHash,
+            .aabbMin    = { aabbMin.x, aabbMin.y, aabbMin.z },
+            .aabbMax    = { aabbMax.x, aabbMax.y, aabbMax.z },
+            .lodErrs    = {
+                pMlts[ 0 ].meshLevelError, pMlts[ 1 ].meshLevelError,
+                pMlts[ 2 ].meshLevelError, pMlts[ 3 ].meshLevelError
+            },
+            .firstLod   = std::size( hpkLodDescVec ),
+            .lodCount   = std::size( lodDescs )
+        } );
+
+        hpkLodDescVec.append_range( lodDescs );
     }
 
     {
-       std::lock_guard scopedLock{ g_Lock };
+       auto scopedLock = std::lock_guard{ g_Lock };
 
        u64 globalLodOffset = std::size( g_HpkLodDescVec );
        std::ranges::for_each( hpkMeshDescVec, [ = ]( auto& m ) { m.firstLod += globalLodOffset; } );
@@ -630,13 +628,15 @@ static void HpkProcessMeshesParallelJob( std::span<const raw_mesh_desc> rawMeshD
 
 struct hpk_world
 {
-    std::vector<hpk_sector_desc>    sectors;
-    std::vector<world_node>         nodes;
+    borrowed_array<hpk_sector_desc> sectors;
+    std::span<world_node>           nodes;
 };
 
 hpk_world HpkCountSortNodes( std::span<const raw_node> rawNodes )
 {
-    std::vector<u64> nodeBinKey( std::size( rawNodes ) );
+    scoped_arena memScope = { g_ThreadArena[ 0 ] };
+
+    auto nodeBinKey = borrowed_array<u64>{ memScope, std::size( rawNodes ) };
     i16x2 minSec = { INT16_MAX, INT16_MAX };
     i16x2 maxSec = { INT16_MIN, INT16_MIN };
     for( auto[ bin, raw ] : std::views::zip( nodeBinKey, rawNodes ) )
@@ -659,7 +659,7 @@ hpk_world HpkCountSortNodes( std::span<const raw_node> rawNodes )
     u64     binCount    = sectorCount * NODE_LOD_BIN_COUNT + 1; // NOTE: bc of the fp32 exp `radius` bins
     u32x4   binDims     = { 1, NODE_LOD_BIN_COUNT, ( u32 ) NODE_LOD_BIN_COUNT * u32( gridDim.x ), 0 };
 
-    std::vector<u32> binHisto( binCount, 0 );
+    std::span binHisto = ArenaNewArray<u32>( memScope, binCount );
     for( u64& binKey : nodeBinKey )
     {
         i16x4 cell  = std::bit_cast<i16x4>( binKey ) - i16x4{ 0, minSec.x, minSec.y, 0 };
@@ -670,37 +670,37 @@ hpk_world HpkCountSortNodes( std::span<const raw_node> rawNodes )
 
     ht::ranges::exclusive_scan( binHisto, 0u );
 
-    std::vector<hpk_sector_desc> sectors;
-    sectors.reserve( sectorCount );
-    auto chunkedEnumerateSpan = std::span{ binHisto }.first( sectorCount * NODE_LOD_BIN_COUNT )
-        | std::views::chunk( NODE_LOD_BIN_COUNT ) | std::views::enumerate;
-    for( auto[ si, binSpan ] : chunkedEnumerateSpan )
+    borrowed_array sectors = { ArenaNewArray<hpk_sector_desc>( g_ThreadArena[ 1 ], sectorCount ) };
+
+    HT_ASSERT( 0 == ( std::size( binHisto ) - 1 ) % NODE_LOD_BIN_COUNT );
+    std::span secRows = { ( const hpk_sector_desc::node_lods* ) std::data( binHisto ), sectorCount };
+    for( const auto[ si, secBins ] : secRows | std::views::enumerate )
     {
-        u32 secExclOffset       = binSpan[ 0 ];
-        u32 nextSecExclOffset   = *std::end( binSpan )._Myptr;
+        const u32 secExclOffset       = secBins[ 0 ];
+        const u32 nextSecExclOffset   = *ht::end_ptr( secBins );
 
         if( secExclOffset == nextSecExclOffset ) continue;
 
         //HT_ASSERT( ( nextSecExclOffset - secExclOffset ) <= UINT16_MAX );
 
-        i32x2 secIdRel = { i32( si % gridDim.x ), i32( si / gridDim.x ) };
-        inline_array<u32, NODE_LOD_BIN_COUNT> lodNodeOffsets = { std::from_range, binSpan |
-            std::views::transform( [ & ]( u32 v ) { return ( u32 ) ( v - secExclOffset ); } ) };
+        hpk_sector_desc::node_lods lodNodeOffsets = secBins;
+        for( auto& lodOffset : lodNodeOffsets ) { lodOffset -= secExclOffset; }
+
         sectors.push_back( {
             .firstNodeOffsetInBytes = secExclOffset * sizeof( world_node ),
             .nodeCount              = nextSecExclOffset - secExclOffset,
-            .idx                    = ht::vec_cast<i32x2>( minSec ) + secIdRel,
-            .log2LodNodeOffsets     = *( const hpk_sector_desc::node_lods* ) std::data( lodNodeOffsets )
+            .idx                    = ht::vec_cast<i32x2>( minSec ) + i32x2{ i32( si % gridDim.x ), i32( si / gridDim.x ) },
+            .log2LodNodeOffsets     = lodNodeOffsets
         } );
     }
 
-    std::vector<world_node> worldNodes( std::size( rawNodes ) );
-    for( auto[ node, binId ] : std::views::zip( rawNodes, nodeBinKey ) )
+    std::span worldNodes = ArenaNewArray<world_node>( g_ThreadArena[ 1 ], std::size( rawNodes ) );
+    for( const auto[ node, binId ] : std::views::zip( rawNodes, nodeBinKey ) )
     {
         worldNodes[ binHisto[ binId ]++ ] = { .toWorld = node.toWorld, .meshHash = node.meshHash };
     }
 
-    return { .sectors = MOV( sectors ), .nodes = MOV( worldNodes ) };
+    return { .sectors = sectors, .nodes = worldNodes };
 }
 
 i32 main( i32 argc, char** argv  )

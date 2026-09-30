@@ -11,6 +11,9 @@
 #include <array>
 #include <span>
 
+constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
+constexpr float GRID_INV_SCALE              = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
+constexpr u64   ZSTD_COMPRESSION_LEVEL      = 19;
 /*
  *---------------------------------------------------------------------------------------
  *                                  HELL_PACK LAYOUT
@@ -66,8 +69,8 @@ constexpr u64 NODE_LOD_BIN_COUNT = 256;
 HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
     using node_lods = std::array<u32, NODE_LOD_BIN_COUNT>; // TODO: change the size or write dense
 
-    u64     firstNodeOffsetInBytes : 32;
-    u64     nodeCount : 32;
+    u64     firstNodeOffsetInBytes;
+    u64     nodeCount;
     i32x2   idx;
     alignas( 8 )
     node_lods log2LodNodeOffsets; // NOTE: bc we're lazy we'll store the whole sparse set as inclusive scan

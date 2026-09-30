@@ -4,6 +4,7 @@
 #include "ht_core_types.h"
 #include "ht_error.h"
 
+#include <algorithm>
 #include <ranges>
 #include <numeric>
 
@@ -141,6 +142,22 @@ auto HtMemCompact( std::span<U> prev, std::ranges::contiguous_range auto&& src )
 
     std::memmove( pDst, std::ranges::data( src ), HtRangeSizeInBytes( src ) );
     return std::span<T>{ pDst, std::ranges::size( src ) };
+}
+
+constexpr auto HtCopyFullRange( std::ranges::contiguous_range auto&& src, std::ranges::contiguous_range auto&& dst )
+    requires std::same_as<std::ranges::range_value_t<decltype( src )>, std::ranges::range_value_t<decltype( dst )>>
+{
+    HT_ASSERT( std::size( src ) <= std::size( dst ) );
+    std::ranges::copy( src, std::data( dst ) );
+    return std::span{ std::data( dst ), std::size( src ) };
+}
+
+namespace ht
+{
+    HT_FORCEINLINE constexpr auto* end_ptr( std::ranges::contiguous_range auto&& r )
+    {
+        return std::to_address( std::ranges::end( r ) );
+    }
 }
 
 namespace ht::ranges

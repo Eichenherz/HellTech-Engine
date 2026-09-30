@@ -13,6 +13,13 @@ constexpr u32 PcgHash32( u32 input )
     return ( word >> 22u ) ^ word;
 }
 
+constexpr u64 PcgHash64( u64 input )
+{
+    u64 state = input * 6364136223846793005ull + 1442695040888963407ull;
+    u64 word = ( ( state >> ( ( state >> 59u ) + 5u ) ) ^ state ) * 12605985483714917081ull;
+    return ( word >> 43u ) ^ word;
+}
+
 constexpr u64 SplitmixHash64( u64 input )
 {
     input = ( input ^ ( input >> 30 ) ) * 0xbf58476d1ce4e5b9ull;
@@ -79,6 +86,20 @@ consteval u64 MurmurHash64( std::string_view s )
     }
 
     return seed;
+}
+
+// NOTE: `permutation` aware
+constexpr u64 Fnv1aHash64( std::string_view s )
+{
+    u64 h = 0xcbf29ce484222325ull;
+
+    for( char c : s )
+    {
+        h ^= u8( c );
+        h *= 0x100000001b3ull;
+    }
+
+    return h;
 }
 
 #endif //!__HT_HASH_H__

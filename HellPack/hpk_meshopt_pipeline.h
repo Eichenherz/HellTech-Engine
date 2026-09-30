@@ -13,7 +13,10 @@
 
 #include <ht_mem_arena.h>
 #include <ht_array.h>
+#include <ht_math.h>
 #include <range_utils.h>
+
+#include <hell_pack.h>
 
 #include "hp_types_internal.h"
 
@@ -36,12 +39,12 @@ void MeshoptRemapAttributeBufferInplace( R& attrRange, u64 attrElemCount, std::s
 // NOTE: no fetch optimization meshlets emit their own contiguous vertex slices into the global VB,
 // which already gives optimal fetch locality
 static void MeshoptReindexAndOptimizeMesh(
-    arena_array<float3, virtual_arena>&     pos,
-    arena_array<float3, virtual_arena>&     normals,
-    //arena_array<float4, virtual_arena>&   tans,
-    //arena_array<float2, virtual_arena>&   uvs,
-    arena_array<u32, virtual_arena>&        indices,
-    virtual_arena&                          virtualArena
+    borrowed_array<float3>&     pos,
+    borrowed_array<float3>&     normals,
+    //borrowed_array<float4>&   tans,
+    //borrowed_array<float2>&   uvs,
+    borrowed_array<u32>&        indices,
+    virtual_arena&              virtualArena
 ) {
     HT_ASSERT( std::size( pos ) == std::size( normals ) );
 
@@ -57,7 +60,7 @@ static void MeshoptReindexAndOptimizeMesh(
     u64 vtxCount = std::size( pos );
     u64 idxCount = std::size( indices );
 
-    borrowed_array<u32> remap = ArenaNewArray<u32>( scopedArena, vtxCount );
+    auto remap = borrowed_array<u32>{ scopedArena, vtxCount };
     u64 newVtxCount = meshopt_generateVertexRemapMulti( std::data( remap ), std::data( indices ),
         idxCount, vtxCount, attrStreams, std::size( attrStreams ) );
 
@@ -153,8 +156,7 @@ inline hpk_meshlet MeshoptSimplyfyMeshlet(
         sizeof( localPos[ 0 ] ), &localNorm[ 0 ].x,
         sizeof( localNorm[ 0 ] ), HPK_MESHOPT_ATTR_WEIGHTS,
         std::size( HPK_MESHOPT_ATTR_WEIGHTS ), nullptr,
-        u64( ( float ) std::size( localIdx ) * 0.5f ), FLT_MAX,
-        mltLodOpts, &lodError ) );
+        u64( ( float ) std::size( localIdx ) * 0.5f ), FLT_MAX, mltLodOpts, &lodError ) );
 
     return {
         .pos		= MOV( localPos ),
@@ -169,6 +171,9 @@ inline hpk_meshlet MeshoptSimplyfyMeshlet(
     };
 }
 
+constexpr u64   MIN_MLT_COUNT_FOR_LOD_STEP  = 6;
+constexpr float MAX_LOD_STEP_IDX_RATIO      = 0.85f;
+constexpr float LOD_CUTOFF_ANGLE_RATIO      = ht::to_rads( 4.0f / 60.0f ); // NOTE: 1 / 60 is the actual human acuity
 // TODO: if we get meshlet weirdness we'd prolly need to protect some attrs during simplification
 inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMeshletsWithLod(
 	std::span<const float3> pos,
@@ -177,11 +182,12 @@ inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMesh
 	//std::span<const float2> uvs,
 	std::span<const u32>	indices,
 	float					simplificationRatio,
+	float                   meshRadiusInMeters,
 	meshlet_config			cfg,
-	virtual_arena&          arena,
+	virtual_arena&          outArena,
 	virtual_arena&          scratchArena
 ) {
-    HT_ASSERT( &arena != &scratchArena );
+    HT_ASSERT( &outArena != &scratchArena );
 
     constexpr u32 meshLodOpts = meshopt_SimplifyErrorAbsolute | meshopt_SimplifyPermissive
                                         | meshopt_SimplifyPrune | meshopt_SimplifyLockBorder;
@@ -194,43 +200,38 @@ inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMesh
     float                   parentMeshError = 0.0f;
     for( u64 lodIdx = 0; lodIdx < MAX_LOD_LEVELS_COUNT; ++lodIdx )
     {
-        const u64 srcIdxCount = std::size( srcIdxBuff );
-        //const u64 maxMltCount = meshopt_buildMeshletsBound( srcIdxCount, cfg.maxVertices, cfg.maxTriangles );
-        const u64 maxMltCount = meshopt_buildMeshletsBound( srcIdxCount, cfg.maxVertices, cfg.minTriangles );
-        hpk_virt_array<meshopt_Meshlet> meshlets    = { scratch, maxMltCount };
-        hpk_virt_array<u32>             mltVtx      = { scratch, srcIdxCount };
-        hpk_virt_array<u8>              mltTris     = { scratch, srcIdxCount };
+        const u64   srcIdxCount   = std::size( srcIdxBuff );
+        const u64   maxMltCount   = meshopt_buildMeshletsBound( srcIdxCount, cfg.maxVertices, cfg.minTriangles );
+        auto        meshlets      = borrowed_array<meshopt_Meshlet>{ scratch, maxMltCount };
+        auto        mltVtx        = borrowed_array<u32>{ scratch, srcIdxCount };
+        auto        mltTris       = borrowed_array<u8>{ scratch, srcIdxCount };
 
-        //u64 meshletCount = meshopt_buildMeshlets( &meshlets[ 0 ], &mltVtx[ 0 ], &mltTris[ 0 ], &srcIdxBuff[ 0 ],
-        //    srcIdxCount, &pos[ 0 ].x, std::size( pos ),
-        //    sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.maxTriangles,
-        //    cfg.coneWeight );
-        u64 meshletCount = meshopt_buildMeshletsSpatial( &meshlets[ 0 ], &mltVtx[ 0 ], &mltTris[ 0 ], &srcIdxBuff[ 0 ],
-            srcIdxCount, &pos[ 0 ].x, std::size( pos ),
-            sizeof( pos[ 0 ] ), cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles,
-            cfg.fillWeight );
+        meshlets.resize( meshopt_buildMeshletsSpatial( &meshlets[ 0 ], &mltVtx[ 0 ], &mltTris[ 0 ], &srcIdxBuff[ 0 ],
+            srcIdxCount, &pos[ 0 ].x, std::size( pos ), sizeof( pos[ 0 ] ),
+            cfg.maxVertices, cfg.minTriangles, cfg.maxTriangles, cfg.fillWeight ) );
 
-        HT_ASSERT( meshletCount < MAX_MESHLETS_PER_MESH );
+        HT_ASSERT( std::size( meshlets ) < MAX_MESHLETS_PER_MESH );
 
-        const meshopt_Meshlet& last = meshlets[ meshletCount - 1 ];
 
-        meshlets.resize( meshletCount );
-        mltVtx.resize( ( u64 ) last.vertex_offset + last.vertex_count );
-        mltTris.resize( ( u64 ) last.triangle_offset + ( u64 ) last.triangle_count * 3 );
-
-        arena_array<hpk_meshlet, virtual_arena> mltsOut = { arena, std::from_range, meshlets
-        | std::views::transform( [ & ]( const meshopt_Meshlet& m )
+        auto mltsOut = borrowed_array<hpk_meshlet>{ outArena, std::from_range, meshlets | std::views::transform(
+        [ & ]( const meshopt_Meshlet& m )
         {
             return MeshoptSimplyfyMeshlet( m, mltVtx, mltTris, pos, normals, parentMeshError );
         } ) };
 
         lodLevels.emplace_back( mltsOut, parentMeshError );
 
-        if( ( MAX_LOD_LEVELS_COUNT - 1 ) == lodIdx ) break;
+        float viewErrAtLodMeters = LOD_CUTOFF_ANGLE_RATIO * GRID_SECTOR_DIM_IN_METERS * float( lodIdx + 1 );
+
+        const bool stopLodChain = ( viewErrAtLodMeters >= ( 2.0f * meshRadiusInMeters ) ) // NOTE: we need diameter !
+            || ( std::size( mltsOut ) <= MIN_MLT_COUNT_FOR_LOD_STEP )
+            || ( ( MAX_LOD_LEVELS_COUNT - 1 ) == lodIdx );
+
+        if( stopLodChain ) break;
 
         u64 targetIdxCount = u64( simplificationRatio * ( float ) srcIdxCount );
 
-        hpk_virt_array<u32> lod = { scratch, srcIdxCount };
+        auto lod = borrowed_array<u32>{ scratch, srcIdxCount };
         float lodError = 0.0f;
         lod.resize( meshopt_simplifyWithAttributes( &lod[ 0 ], std::data( srcIdxBuff ),
             srcIdxCount, &pos[ 0 ].x, std::size( pos ),
@@ -239,7 +240,9 @@ inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMesh
             std::size( HPK_MESHOPT_ATTR_WEIGHTS ), nullptr, //&locks[ 0 ],
             targetIdxCount, FLT_MAX, meshLodOpts, &lodError ) );
 
-        if( ( std::size( lod ) >= srcIdxCount ) || ( 0 == std::size( lod ) ) ) break;
+        // TODO: we might want to use a diff simplification procedure
+        if( float( std::size( lod ) ) / float( srcIdxCount ) >= MAX_LOD_STEP_IDX_RATIO
+            || 0 == std::size( lod ) ) break;
 
         srcIdxBuff       = lod;
         parentMeshError += lodError;

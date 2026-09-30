@@ -154,7 +154,12 @@ struct borrowed_array : ht_array<T, borrowed_storage<T>>
 {
     borrowed_array() = default;
     borrowed_array( std::span<T> srcMem ) : borrowed_array::ht_array{ { srcMem } } {}
-    borrowed_array( std::span<T> srcMem, u64 n ) : borrowed_array::ht_array{ { srcMem } } { this->resize( n ); }
+    borrowed_array( std::span<T> srcMem, u64 n ) : borrowed_array{ srcMem } { this->resize( n ); }
+    borrowed_array( std::span<T> srcMem, std::from_range_t, std::ranges::input_range auto&& r ) :
+        borrowed_array{ srcMem } { this->append_range( FWD( r ) ); }
+    borrowed_array( arena_t auto& srcArena, u64 n ) : borrowed_array{ ArenaNewArray<T>( srcArena, n ), n } {}
+    borrowed_array( arena_t auto& srcArena, std::from_range_t, std::ranges::sized_range auto&& r ) :
+        borrowed_array{ ArenaNewArray<T>( srcArena, std::ranges::size( r ) ), std::from_range, FWD( r ) } {}
 };
 
 template<TRIVIAL_T T, u64 N>

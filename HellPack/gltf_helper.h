@@ -8,6 +8,8 @@
 
 #include <cgltf.h>
 #include <ht_math.h>
+#include <ht_hash.h>
+#include <range_utils.h>
 
 #include <span>
 #include <print>
@@ -72,6 +74,78 @@ inline bool CgltfIsNodeHidden( const cgltf_node& node )
 	{
 		return !std::strcmp( ext.name, "KHR_node_visibility" ) && std::strstr( ext.data, "false" );
 	} );
+}
+
+inline std::string_view JsonGetFlatValue( std::string_view json, std::string_view key )
+{
+    u64 keyPos = json.find( fixed_string<64>{ "\"{}\"", key } );
+    u64 valBeg = json.find_first_not_of( " \t\r\n:", keyPos + std::size( key ) + 2 );
+    if( '"' == json[ valBeg ] ) return json.substr( valBeg + 1, json.find( '"', valBeg + 1 ) - valBeg - 1 );
+    return json.substr( valBeg, json.find_first_of( ",} \t\r\n", valBeg ) - valBeg );
+}
+
+inline u64 JsonGetFlatU64( std::string_view json, std::string_view key )
+{
+    std::string_view val = JsonGetFlatValue( json, key );
+    u64 x = 0;
+    std::from_chars( std::data( val ), ht::end_ptr( val ), x );
+    return x;
+}
+
+enum class caldera_prim_purpose_t : u8
+{
+    NONE = 0,
+    COLLISION,
+    SHADOW,
+    SKY,
+    DECAL,
+    UNKNOWN
+};
+
+inline caldera_prim_purpose_t CgltfGetCalderaPrimPurpose( const cgltf_primitive& prim )
+{
+    using enum caldera_prim_purpose_t;
+    for( const cgltf_extension& ext : HT_CGLTF_SPAN( prim.extensions ) )
+    {
+        if( "CALDERA_primitive_purpose" != std::string_view{ ext.name } ) continue;
+
+        switch( Fnv1aHash64( JsonGetFlatValue( ext.data, "purpose" ) ) )
+        {
+        case Fnv1aHash64( "collision" ): return COLLISION;
+        case Fnv1aHash64( "shadow" ):    return SHADOW;
+        case Fnv1aHash64( "sky" ):       return SKY;
+        case Fnv1aHash64( "decal" ):     return DECAL;
+        }
+        return UNKNOWN;
+    }
+    return NONE;
+}
+
+struct caldera_player_samples
+{
+    const cgltf_accessor*   time    = nullptr;
+    const cgltf_accessor*   life    = nullptr;
+    const cgltf_accessor*   opacity = nullptr;
+    const cgltf_accessor*   color   = nullptr;
+};
+
+inline caldera_player_samples CgltfGetCalderaPlayerSamples( const cgltf_data* data, const cgltf_node& node )
+{
+    std::span<const cgltf_extension> exts = HT_CGLTF_SPAN( node.extensions );
+    auto iterExt = std::ranges::find_if( exts,
+    []( const cgltf_extension& ext )
+    {
+        return "CALDERA_player_samples" == std::string_view{ ext.name };
+    } );
+    if( std::end( exts ) == iterExt ) return {};
+
+    std::string_view payload = iterExt->data;
+    return {
+        .time       = data->accessors + JsonGetFlatU64( payload, "time" ),
+        .life       = data->accessors + JsonGetFlatU64( payload, "life" ),
+        .opacity    = data->accessors + JsonGetFlatU64( payload, "opacity" ),
+        .color      = data->accessors + JsonGetFlatU64( payload, "color" )
+    };
 }
 
 constexpr raw_mesh_topology_t CgltfPrimitiveTypeToTopology( cgltf_primitive_type gltfPrimType )

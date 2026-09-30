@@ -113,7 +113,10 @@ struct ankerl_hash_as_bytes
 	}
 };
 
-constexpr bool operator==( const packed_trs& a, const packed_trs& b ) { return ht::all( a.t == b.t ) && ht::all( a.r == b.r ) && ht::all( a.s == b.s ); }
+constexpr bool operator==( const packed_trs& a, const packed_trs& b )
+{
+    return ht::all( a.t == b.t ) && ht::all( a.r == b.r ) && ht::all( a.s == b.s );
+}
 constexpr bool operator==( const raw_node& a, const raw_node& b ) { return ( a.meshHash == b.meshHash ) && ( a.toWorld == b.toWorld ); }
 
 template<> struct ankerl::unordered_dense::hash<raw_node> : ankerl_hash_as_bytes<raw_node> {};
@@ -160,12 +163,9 @@ constexpr u64   LODS_PER_MESHLET = 2; // NOTE: includes the src/lod0
 
 struct hpk_meshlets_w_lod
 {
-    arena_array<hpk_meshlet, virtual_arena>	meshlets        = {};
-    float									meshLevelError  = FLT_MAX;
+    borrowed_array<hpk_meshlet>	meshlets        = {};
+    float						meshLevelError  = FLT_MAX;
 };
-
-template<typename T>
-using hpk_virt_array = arena_array<T, virtual_arena>;
 
 using hpk_mesh_name = fixed_string<128>;
 
