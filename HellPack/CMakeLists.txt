@@ -63,6 +63,7 @@ set_source_files_properties(${HT_ZSTD_SOURCES}
                COMPILE_OPTIONS "${HT_ZSTD_GNUC_FLAG}"
 )
 target_link_libraries(HellPack3rdParty PRIVATE ThirdPartyIncludes)
+target_include_directories(HellPack3rdParty PRIVATE "${CMAKE_SOURCE_DIR}/HtLib")
 if(MSVC)
     # NOTE: Debug STL ABI must match the exe's TUs — see HT_CL_DEBUG_ABI_DEFS in the root.
     target_compile_definitions(HellPack3rdParty PRIVATE

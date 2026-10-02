@@ -28,7 +28,7 @@ struct gltf_attr_stream
 	std::span<const u8>	bytes				= {};
 	u64					count				= 0;
 	u64					byteOffset			= 0;
-	u64					strideInBytes		= sizeof( T );
+	u64					strideInBytes		= 0;
 
 	gltf_attr_stream() = default;
 
@@ -183,7 +183,6 @@ inline raw_mesh_desc CgltfParseRawMeshDesc(
 struct gltf_loader
 {
     cgltf_data* data = nullptr;
-
 };
 
 inline const cgltf_data* CgltfLoadMetadataFromRawBytes( std::span<const u8> rawBytes, const cgltf_options& options )
@@ -191,7 +190,6 @@ inline const cgltf_data* CgltfLoadMetadataFromRawBytes( std::span<const u8> rawB
     cgltf_data* data = nullptr;
     HT_ASSERT( cgltf_result_success == cgltf_parse( &options, std::data( rawBytes ), std::size( rawBytes ), &data ) );
     HT_ASSERT( cgltf_result_success == cgltf_validate( data ) );
-    //HT_ASSERT( cgltf_result_success == cgltf_load_buffers( &options, data, nullptr ) );
     HT_ASSERT( 1 == data->scenes_count );
     return data;
 }
@@ -207,18 +205,19 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
     std::vector<raw_node> flatNodes;
     flatNodes.reserve( data->nodes_count );
 
-    ankerl::unordered_dense::map<const cgltf_primitive*, raw_mesh_desc> rawMeshDescMap;
-    rawMeshDescMap.reserve( data->meshes_count * 4 ); // NOTE: this is just a best guess
+    auto meshPrimOffset = std::vector<u64>( data->meshes_count );
+    u64  primCount      = 0;
+    for( u64 mi = 0; mi < data->meshes_count; ++mi )
+    {
+        meshPrimOffset[ mi ] = primCount;
+        primCount           += data->meshes[ mi ].primitives_count;
+    }
+
+    auto rawMeshDescBuff = std::vector<raw_mesh_desc>( primCount );
 
     auto LmbdVisitNode = [ & ]( this auto&& PfnSelf, const cgltf_node& node, packed_trs parentTrs ) -> void
     {
         if( CgltfIsNodeHidden( node ) ) return;
-        // NOTE: for caldera instances are clutter basically so we wanna skip them for now
-        if( node.has_mesh_gpu_instancing )
-        {
-            HT_ASSERT( 0 == node.children_count );
-            return;
-        }
 
         packed_trs trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
 
@@ -227,17 +226,18 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
             u64 instCount = node.has_mesh_gpu_instancing ? node.mesh_gpu_instancing.attributes[ 0 ].data->count : 1;
 
             const cgltf_mesh& m = *node.mesh;
-            for( const cgltf_primitive& prim : HT_CGLTF_SPAN( m.primitives ) )
+            u64 meshIdx = &m - data->meshes;
+
+            for( const auto[ primIdx, prim ] : HT_CGLTF_SPAN( m.primitives ) | std::views::enumerate )
             {
                 // NOTE: yes it's for caldera only ! and the stuff we need to render doesn't have this purpose type !
                 if( caldera_prim_purpose_t::NONE != CgltfGetCalderaPrimPurpose( prim ) ) continue;
 
-                auto iterMeshDesc = rawMeshDescMap.find( &prim );
-                if( std::end( rawMeshDescMap ) == iterMeshDesc )
+                u64 primGlobIdx     = meshPrimOffset[ meshIdx ] + primIdx;
+                raw_mesh_desc& desc = rawMeshDescBuff[ primGlobIdx ];
+                if( IsStructZero( desc ) )
                 {
-                    raw_mesh_desc desc = CgltfParseRawMeshDesc( m, prim, originFileName,
-                        &m - data->meshes, &prim - m.primitives );
-                    iterMeshDesc = rawMeshDescMap.emplace( &prim, desc ).first;
+                    desc = CgltfParseRawMeshDesc( m, prim, originFileName, meshIdx, primIdx );
                 }
 
                 for( u64 ii = 0; ii < instCount; ++ii )
@@ -246,9 +246,10 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
                         GltfComposePackedTRS( trs, GltfGetTRSFromExtGpuInst( node, ii ) ) : trs;
                     flatNodes.push_back( {
                         .toWorld    = instTrs,
-                        .aabbCenter = iterMeshDesc->second.aabbCenter,
-                        .aabbExtent = iterMeshDesc->second.aabbExtent,
-                        .meshHash   = HpkHashMeshName( iterMeshDesc->second.name )
+                        .aabbCenter = desc.aabbCenter,
+                        .aabbExtent = desc.aabbExtent,
+                        .meshHash   = HpkHashMeshName( desc.name ),
+                        .meshID     = primGlobIdx
                     } );
                 }
             }
@@ -267,7 +268,7 @@ inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::
 
     return {
         .nodes      = MOV( flatNodes ),
-        .meshDesc   = { std::from_range, rawMeshDescMap | std::views::values }
+        .meshDesc   = MOV( rawMeshDescBuff )
     };
 }
 

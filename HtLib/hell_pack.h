@@ -11,6 +11,8 @@
 #include <array>
 #include <span>
 
+#include "range_utils.h"
+
 constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
 constexpr float GRID_INV_SCALE              = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
 constexpr u64   ZSTD_COMPRESSION_LEVEL      = 19;
@@ -33,6 +35,9 @@ HT_DEF_STRUCT_W_HASH( hpk_file_footer,
     u64     firstSectorsOffsetInBytes;
     u64     sectorsCount;
 
+    u64     firstNodeOffsetInBytes;
+    u64     nodeCount;
+
     u64     firstMeshDescOffsetInBytes;
     u64     meshDescCount;
 
@@ -41,7 +46,7 @@ HT_DEF_STRUCT_W_HASH( hpk_file_footer,
 );
 
 HT_DEF_STRUCT_W_HASH( hpk_lod_desc,
-    u64 fileOffsetInBytes     = ~0ull;
+    u64 fileOffsetInBytes     = 0; // TODO: theoretically we can't have zero offsets for these; would mean empty file
     u64 storedSzInBytes       = 0;
     u64 posSzInBytes     : 32 = 0;
     u64 normalsSzInBytes : 32 = 0;
@@ -69,7 +74,7 @@ constexpr u64 NODE_LOD_BIN_COUNT = 256;
 HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
     using node_lods = std::array<u32, NODE_LOD_BIN_COUNT>; // TODO: change the size or write dense
 
-    u64     firstNodeOffsetInBytes;
+    u64     firstNodeIdx;
     u64     nodeCount;
     i32x2   idx;
     alignas( 8 )
@@ -81,6 +86,7 @@ HT_DEF_STRUCT_W_HASH( hpk_file_view,
     using view_t = std::span<const T>;
 
     view_t<hpk_sector_desc> sectors             = {};
+    view_t<world_node>      nodes               = {};
     view_t<hpk_mesh_desc>   meshes              = {};
     view_t<hpk_lod_desc>    lods                = {};
 );
@@ -93,20 +99,25 @@ constexpr u64 HPK_CONTENT_VERSION = hpk_file_view_LAYOUT_HASH;
 
 inline hpk_file_view HpkGetFileView( std::span<const u8> mem )
 {
-    hpk_file_footer hpkFooter = *( ( const hpk_file_footer* ) std::end( mem )._Myptr - 1 );
+    hpk_file_footer hpkFooter = *( ( const hpk_file_footer* ) ht::end_ptr( mem ) - 1 );
     HT_ASSERT( std::bit_cast<u64>( HPK_MAGIC ) == hpkFooter.magic );
     HT_ASSERT( HPK_FORMAT_VERSION == hpkFooter.fileFormatVersion );
     HT_ASSERT( HPK_CONTENT_VERSION == hpkFooter.contentVersion );
 
+    const u8* pData =  std::data( mem );
+
     return {
         .sectors    = {
-            ( const hpk_sector_desc* ) ( std::data( mem ) + hpkFooter.firstSectorsOffsetInBytes ), hpkFooter.sectorsCount
+            ( const hpk_sector_desc* ) ( pData + hpkFooter.firstSectorsOffsetInBytes ), hpkFooter.sectorsCount
+        },
+        .nodes      = {
+            ( const world_node* ) ( pData + hpkFooter.firstNodeOffsetInBytes ), hpkFooter.nodeCount
         },
         .meshes     = {
-            ( const hpk_mesh_desc* ) ( std::data( mem ) + hpkFooter.firstMeshDescOffsetInBytes ), hpkFooter.meshDescCount
+            ( const hpk_mesh_desc* ) ( pData + hpkFooter.firstMeshDescOffsetInBytes ), hpkFooter.meshDescCount
         },
         .lods       = {
-            ( const hpk_lod_desc* ) ( std::data( mem ) + hpkFooter.firstLodDescOffsetInBytes ), hpkFooter.lodDescCount
+            ( const hpk_lod_desc* ) ( pData + hpkFooter.firstLodDescOffsetInBytes ), hpkFooter.lodDescCount
         }
     };
 }

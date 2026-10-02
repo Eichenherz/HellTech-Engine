@@ -1,8 +1,9 @@
 #ifndef __RANGE_UTILS_H__
 #define __RANGE_UTILS_H__
 
-#include "ht_core_types.h"
-#include "ht_error.h"
+#include <ht_core_types.h>
+#include <ht_error.h>
+#include <ht_utils.h>
 
 #include <algorithm>
 #include <ranges>
@@ -83,13 +84,6 @@ inline byte_view MakeByteView( const u8* pData, u64 sizeInBytes )
 	return { pData, sizeInBytes };
 }
 
-auto PermutedView(
-	const std::ranges::random_access_range auto& src,
-	const std::ranges::random_access_range auto& remap 
-) {
-	return remap | std::views::transform( [ & ] ( auto oldIdx ) { return src[ ( u32 ) oldIdx ]; } );
-}
-
 inline bool ByteEqual( std::span<const u8> a, std::span<const u8> b )
 {
 	bool sizeEq = std::size( a ) == std::size( b );
@@ -98,6 +92,9 @@ inline bool ByteEqual( std::span<const u8> a, std::span<const u8> b )
 
 template<typename R>
 concept CONTIGUOUS_RANGE_T = std::ranges::contiguous_range<R>;
+
+template<typename T>
+concept KV_QSORT_ELEM_T = std::is_arithmetic_v<T> && ( 4 == sizeof( T ) || 8 == sizeof( T ) );
 
 template<typename R, typename T>
 concept CONTIGUOUS_TYPED_RANGE_T = CONTIGUOUS_RANGE_T<R> && std::same_as<std::ranges::range_value_t<R>, T>;
@@ -110,6 +107,26 @@ bool RangeHasDuplicates( const R& range, Set& seenElems, KeyFn keyFn = {} )
 		if( !seenElems.insert( std::invoke( keyFn, elem ) ).second ) return true;
 	}
 	return false;
+}
+
+namespace ht
+{
+    HT_FORCEINLINE constexpr auto* end_ptr( std::ranges::contiguous_range auto&& r )
+    {
+        return std::to_address( std::ranges::end( r ) );
+    }
+
+    constexpr auto permuted_view(
+        const std::ranges::random_access_range auto& src,
+        const std::ranges::random_access_range auto& remap
+    ) {
+        return remap | std::views::transform( [ &src ]( auto oldIdx ) HT_LAMBDA_FORCEINLINE -> decltype( auto )
+        {
+            return src[ ( u64 ) oldIdx ];
+        } );
+    }
+
+    void kv_qsort( KV_QSORT_ELEM_T auto* keys, KV_QSORT_ELEM_T auto* vals, u64 count );
 }
 
 template<typename T>
@@ -137,7 +154,7 @@ auto HtMemCompact( std::span<U> prev, std::ranges::contiguous_range auto&& src )
 {
     using T = std::ranges::range_value_t<decltype( src )>;
 
-    T* pDst = ( T* ) FwdAlignPot( u64( std::to_address( std::end( prev ) ) ), alignof( T ) );
+    T* pDst = ( T* ) FwdAlignPot( u64( ht::end_ptr( prev ) ), alignof( T ) );
     HT_ASSERT( ( const void* ) pDst <= ( const void* ) std::ranges::data( src ) );
 
     std::memmove( pDst, std::ranges::data( src ), HtRangeSizeInBytes( src ) );
@@ -150,14 +167,6 @@ constexpr auto HtCopyFullRange( std::ranges::contiguous_range auto&& src, std::r
     HT_ASSERT( std::size( src ) <= std::size( dst ) );
     std::ranges::copy( src, std::data( dst ) );
     return std::span{ std::data( dst ), std::size( src ) };
-}
-
-namespace ht
-{
-    HT_FORCEINLINE constexpr auto* end_ptr( std::ranges::contiguous_range auto&& r )
-    {
-        return std::to_address( std::ranges::end( r ) );
-    }
 }
 
 namespace ht::ranges
@@ -178,6 +187,24 @@ namespace ht::ranges
     {
         auto beg = std::ranges::begin( range );
         return std::exclusive_scan( beg, std::ranges::end( range ), beg, MOV( init ), op );
+    }
+
+    template<
+        std::ranges::common_range R,
+        std::output_iterator<std::ranges::range_value_t<R>> OutIt,
+        typename T, typename BinOp = std::plus<>>
+    constexpr OutIt inclusive_scan( R&& range, OutIt dest, T init, BinOp op = {} )
+    {
+        return std::inclusive_scan(
+            std::ranges::begin( range ), std::ranges::end( range ), dest, op, MOV( init ) );
+    }
+
+    template<std::ranges::common_range R, typename T, typename BinOp = std::plus<>>
+        requires std::ranges::forward_range<R> && std::invocable<BinOp&, T, std::ranges::range_reference_t<R>>
+    constexpr auto inclusive_scan( R&& range, T init, BinOp op = {} )
+    {
+        auto beg = std::ranges::begin( range );
+        return std::inclusive_scan( beg, std::ranges::end( range ), beg, op, MOV( init ) );
     }
 }
 

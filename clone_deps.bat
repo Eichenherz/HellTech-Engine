@@ -16,6 +16,8 @@ call :clone "3rdParty/ImGuiFileDialog"          "https://github.com/aiekick/ImGu
 call :clone "3rdParty/minunit"                  "https://github.com/kattkieru/minunit.git"
 call :clone "3rdParty/OffsetAllocator"          "https://github.com/sebbbi/OffsetAllocator.git"
 call :clone "3rdParty/fb_zstd"                  "https://github.com/facebook/zstd.git"
+call :clone "3rdParty/x86-simd-sort"            "https://github.com/intel/x86-simd-sort.git"
+
 
 
 echo.

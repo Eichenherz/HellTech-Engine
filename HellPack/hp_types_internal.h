@@ -99,6 +99,7 @@ struct raw_node
     float3a         aabbCenter;
     float3a         aabbExtent;
 	u64			    meshHash;
+    u64             meshID;
 };
 
 template<TRIVIAL_T T>
@@ -117,7 +118,10 @@ constexpr bool operator==( const packed_trs& a, const packed_trs& b )
 {
     return ht::all( a.t == b.t ) && ht::all( a.r == b.r ) && ht::all( a.s == b.s );
 }
-constexpr bool operator==( const raw_node& a, const raw_node& b ) { return ( a.meshHash == b.meshHash ) && ( a.toWorld == b.toWorld ); }
+constexpr bool operator==( const raw_node& a, const raw_node& b )
+{
+    return ( a.meshHash == b.meshHash ) && ( a.toWorld == b.toWorld );
+}
 
 template<> struct ankerl::unordered_dense::hash<raw_node> : ankerl_hash_as_bytes<raw_node> {};
 
@@ -172,6 +176,17 @@ using hpk_mesh_name = fixed_string<128>;
 inline u64 HpkHashMeshName( const hpk_mesh_name& name )
 {
     return ankerl::unordered_dense::hash<std::string_view>{}( name );
+}
+
+inline i16x2 HpkBinPointTo2DGridSector( float3a ptInWorldCoords )
+{
+    float3a sector  = ht::floor( ptInWorldCoords * GRID_INV_SCALE );
+    // NOTE: bc we've exported from gLTF
+    // NOTE: + 0.5f bc of the int16 range [-32768, 32767 ] is centered on 0.5f
+    constexpr float2 BOUNDS = float2{ float( INT16_MAX ), float( INT16_MAX ) } + float2{ 0.5f, 0.5f };
+    HT_ASSERT( ht::all( ht::abs( sector.xz + float2{ 0.5f, 0.5f } ) <= BOUNDS ) );
+
+    return ht::vec_cast<i16x2>( sector.xz );
 }
 
 #endif // !__HP_TYPES_INTERNAL_H__
