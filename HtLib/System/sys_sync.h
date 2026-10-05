@@ -40,12 +40,19 @@ enum sys_thread_signal : i64
 
 using atomic_u64 = volatile u64;
 
-// NOTE for cas 128
+#ifdef __clang__
+// NOTE: this is more symbolic; don't need volatile bc it won't work for "atomic-volatile rw" like on a reg u64
+// ( intel has vmovdqa, 16 byte vec loads ); so to get portable non torn reads is a CAS which will fix it anyways
+enum class atomic_u128 : u128 {};
+static_assert( 16 == alignof( atomic_u128 ) );
+#else
+
 struct alignas( 16 ) atomic_u128
 {
     volatile u64 lo;
     volatile u64 hi;
 };
+#endif
 
 enum class sys_fence_t
 {

@@ -16,6 +16,10 @@ using i16   = int16_t;
 using i32   = int32_t;
 using i64   = int64_t;
 
+#ifdef __clang__ // NOTE: bc it gives us logical, bitwise and arithmetic operators for "free"
+using u128  = unsigned __int128;
+using i128  = __int128;
+#else
 struct alignas( 16 ) u128
 {
     u64 lo;
@@ -23,6 +27,7 @@ struct alignas( 16 ) u128
 
     bool operator==( const u128& ) const = default;
 };
+#endif
 
 template<typename T>
 struct alignas( 16 ) tagged_ptr

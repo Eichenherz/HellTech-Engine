@@ -24,9 +24,9 @@ static ht_virtual_allocator* pHtAllocator = nullptr;
 // if pool is too full we're gonna hammer on the OOM recycling path
 // NOTE: we need to draw from a distro bc uniform will have us alloc
 // larger stuff more often which gets us to "TOO FULL"
-// NOTE: 1 / k^2 over [ 1, 4 ] means a mean footprint of ~1.46 blocks, so
-// 8 * 64 * 1.46 = ~749 live blocks against a 1024 block pool, ~73% full
-constexpr u64 MAX_POOL_SIZE     = 64 * MB;
+// NOTE: 1 / ( k * ( k + 1 ) ) over [ 1, 64 ] means a mean footprint of ~3.82 blocks, so
+// 8 * 64 * 3.82 = ~1955 live blocks against a 2560 block pool, ~76% full
+constexpr u64 MAX_POOL_SIZE     = 160 * MB;
 constexpr u64 THREAD_WORK_ITEMS = 64;
 
 // NOTE: the chunk map is ours, not the one HtMakeVirtualAllocator hands out. Its 8 GB of bins
@@ -39,7 +39,7 @@ static std::array<ht_virtual_chunk, STRESS_CHUNK_COUNT> stressChunkMap = {};
 
 // NOTE: the block path caps out here, anything past it comes straight from the OS as a dedicated
 // alloc and takes no bits, which is not what this test is hammering
-constexpr u64   MAX_FOOTPRINT_IN_BLOCKS = MAX_BIN_ALLOC_SZ_IN_BLOCKS;
+constexpr u64   MAX_FOOTPRINT_IN_BLOCKS = BLOCKS_PER_BIN;
 constexpr float POW_DISTRO_A            = 1.0f;
 constexpr float POW_DISTRO_AB           = 1.0f - 1.0f / ( MAX_FOOTPRINT_IN_BLOCKS + 1.0f );
 
@@ -100,7 +100,7 @@ u32 ThreadMainLoop( void* pData )
             std::swap( allocs[ itemIdx ], allocs[ allocCount - 1 ] );
 
             const tagged_alloc victim = allocs[ --allocCount ];
-            HT_ASSERT( std::size( victim.alloc ) <= ( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES ) );
+            HT_ASSERT( std::size( victim.alloc ) <= ( BLOCKS_PER_BIN * BLOCK_SZ_IN_BYTES ) );
             // NOTE: every block carries the stamp, so a stranger landing anywhere in the run trips
             for( u64 blockIdx = 0, blockCount = std::size( victim.alloc ) / BLOCK_SZ_IN_BYTES;
                 blockIdx < blockCount; ++blockIdx )
@@ -108,8 +108,7 @@ u32 ThreadMainLoop( void* pData )
                 HT_ASSERT( victim.stamp == *( stamp_t* )(
                     std::data( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
             }
-            // NOTE: intentionally use thread 0 to force contention
-            pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
+            pHtAllocator->FreeVirtualBlock( victim.alloc );
             threadStats[ threadIdx ].frees++;
         }
         else
@@ -124,7 +123,7 @@ u32 ThreadMainLoop( void* pData )
                 if( 0 != allocCount )
                 {
                     const tagged_alloc victim = allocs[ --allocCount ];
-                    HT_ASSERT( std::size( victim.alloc ) <= ( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES ) );
+                    HT_ASSERT( std::size( victim.alloc ) <= ( BLOCKS_PER_BIN * BLOCK_SZ_IN_BYTES ) );
 
                     for( u64 blockIdx = 0, blockCount = std::size( victim.alloc ) / BLOCK_SZ_IN_BYTES;
                         blockIdx < blockCount; ++blockIdx )
@@ -132,14 +131,16 @@ u32 ThreadMainLoop( void* pData )
                         HT_ASSERT( victim.stamp == *( stamp_t* )(
                             std::data( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
                     }
-                    pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
+                    pHtAllocator->FreeVirtualBlock( victim.alloc );
                     threadStats[ threadIdx ].frees++;
                 }
                 threadStats[ threadIdx ].oom++;
                 continue;
             }
 
-            HT_ASSERT( std::size( alloc ) <= ( MAX_BIN_ALLOC_SZ_IN_BLOCKS * BLOCK_SZ_IN_BYTES ) );
+            HT_ASSERT( footprint == std::size( alloc ) );
+            HT_ASSERT( ( std::data( alloc ) >= pHtAllocator->pMemBase ) &&
+                ( ( std::data( alloc ) + std::size( alloc ) ) <= ( pHtAllocator->pMemBase + MAX_POOL_SIZE ) ) );
             stamp_t stamp = { .loopCount = threadStats[ threadIdx ].iters, .threadIdx = threadIdx };
             for( u64 blockIdx = 0; blockIdx < ( std::size( alloc ) / BLOCK_SZ_IN_BYTES ); ++blockIdx )
             {
@@ -158,7 +159,7 @@ u32 ThreadMainLoop( void* pData )
         {
             HT_ASSERT( victim.stamp == *( stamp_t* )( std::data( victim.alloc ) + blockIdx * BLOCK_SZ_IN_BYTES ) );
         }
-        pHtAllocator->FreeVirtualBlock( victim.alloc, 0 );
+        pHtAllocator->FreeVirtualBlock( victim.alloc );
         threadStats[ threadIdx ].frees++;
     }
 

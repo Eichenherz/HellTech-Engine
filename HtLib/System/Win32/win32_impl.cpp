@@ -124,8 +124,8 @@ u128 SysAtomicCas128( atomic_u128* pAddr, u128 exchange, u128 comparand )
 #error "Impl this"
 #endif
 
-	InterlockedCompareExchange128( ( win32_atomic64* ) pAddr, ( __int64 ) exchange.hi,
-	    ( __int64 ) exchange.lo, ( __int64* ) &comparand );
+	InterlockedCompareExchange128( ( win32_atomic64* ) pAddr, ( ( __int64* ) &exchange )[ 1 ],
+	    ( ( __int64* ) &exchange )[ 0 ], ( __int64* ) &comparand );
 
 	return comparand;
 }
