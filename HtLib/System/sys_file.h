@@ -12,12 +12,13 @@
 
 #include <ht_array.h>
 
-std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena );
+std::span<u8> SysReadFileBinary( const char* path, arena_t auto& arena );
 
 enum class file_perm_t : u64
 {
 	READ = 1,
-	WRITE = 1 << 1
+	WRITE = 1 << 1,
+	DELETABLE = 1 << 2
 };
 
 constexpr file_perm_t operator|( file_perm_t a, file_perm_t b )
@@ -84,6 +85,8 @@ void* ht_os_create_file(
     file_access_t	accessFlags,
     void*           hCompletionPort = nullptr
 );
+void ht_os_close_file( void* hFile );
+void ht_delete_file_by_handle( void* hFile );
 
 std::span<const u8> HtOsCreateROFileMapping( void* hFile );
 void HtOSUnmapView( std::span<const u8> view );

@@ -291,7 +291,7 @@ static u64 WinGetFileSizeInBytes( HANDLE hFile )
     return largeInt.QuadPart;
 }
 
-std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena )
+std::span<u8> SysReadFileBinary( const char* path, arena_t auto& arena )
 {
     HANDLE hFile = CreateFileA( path, GENERIC_READ, FILE_SHARE_READ, nullptr,
         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr );
@@ -307,6 +307,11 @@ std::span<u8> SysReadFileBinary( const char* path, linear_arena& arena )
     return { ( u8* ) mem, szInBytes };
 }
 
+template std::span<u8> SysReadFileBinary<linear_arena>( const char*, linear_arena& );
+template std::span<u8> SysReadFileBinary<virtual_arena>( const char*, virtual_arena& );
+template std::span<u8> SysReadFileBinary<scoped_arena<linear_arena>>( const char*, scoped_arena<linear_arena>& );
+template std::span<u8> SysReadFileBinary<scoped_arena<virtual_arena>>( const char*, scoped_arena<virtual_arena>& );
+
 constexpr DWORD MakeGenericAccessFlags( file_perm_t openFlags )
 {
     using enum file_perm_t;
@@ -318,6 +323,7 @@ constexpr DWORD MakeGenericAccessFlags( file_perm_t openFlags )
 	{
 		access = GENERIC_ALL;
 	}
+	if( openFlags & DELETABLE ) { access |= DELETE; }
 
 	return access;
 }
@@ -422,11 +428,11 @@ void SysDestroyMmapFile( mmap_file* mmapFile )
 }
 
 void* ht_os_create_file(
-    const char*         filePath,
-    file_perm_t  permissionFlags,
+    const char*     filePath,
+    file_perm_t     permissionFlags,
     file_create_t   createFlags,
     file_access_t   accessFlags,
-    void*               hCompletionPort
+    void*           hCompletionPort
 ) {
     DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
     DWORD dwCreateFlags			= MakeCreateFlags( createFlags );
@@ -443,6 +449,13 @@ void* ht_os_create_file(
     }
 
     return hFile;
+}
+
+void ht_os_close_file( void* hFile ) { WIN_CHECK( CloseHandle( hFile ) ); }
+void ht_delete_file_by_handle( void* hFile )
+{
+    FILE_DISPOSITION_INFO_EX info = { .Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS };
+    WIN_CHECK( SetFileInformationByHandle( hFile, FileDispositionInfoEx, &info, sizeof( info ) ) );
 }
 
 std::span<const u8> HtOsCreateROFileMapping( void* hFile )

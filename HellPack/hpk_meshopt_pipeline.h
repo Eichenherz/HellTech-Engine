@@ -104,9 +104,9 @@ struct meshlet_config
 {
     //float   coneWeight		= 0.8f;
     float	fillWeight		= 0.5f;
-    u16		maxVertices		= RASTER_MAX_VTX_PER_MLT;
-    u16		minTriangles	= RASTER_MAX_TRIS_PER_MLT / 4;
-    u16		maxTriangles	= RASTER_MAX_TRIS_PER_MLT;
+    u16		maxVertices		= MAX_VTX_PER_MLT;
+    u16		minTriangles	= MAX_TRIS_PER_MLT / 4;
+    u16		maxTriangles	= MAX_TRIS_PER_MLT;
 };
 
 template<TRIVIAL_T T>
@@ -135,8 +135,8 @@ inline hpk_meshlet MeshoptSimplyfyMeshlet(
 ) {
     constexpr u32 mltLodOpts = meshopt_SimplifyLockBorder | meshopt_SimplifyErrorAbsolute | meshopt_SimplifyPermissive;
 
-    HT_ASSERT( ( mlt.vertex_count <= u32( RASTER_MAX_VTX_PER_MLT ) )
-        && ( mlt.triangle_count <= u32( RASTER_MAX_TRIS_PER_MLT ) ) );
+    HT_ASSERT( ( mlt.vertex_count <= u32( MAX_VTX_PER_MLT ) )
+        && ( mlt.triangle_count <= u32( MAX_TRIS_PER_MLT ) ) );
 
     meshopt_optimizeMeshlet( &mltVtx[ mlt.vertex_offset ], &mltTris[ mlt.triangle_offset ], mlt.triangle_count, mlt.vertex_count );
 
@@ -145,7 +145,7 @@ inline hpk_meshlet MeshoptSimplyfyMeshlet(
     //mlt_attr_vector<float2>	localUVs		= GetMeshletLocalAttrStream( uvs, mltVtx, m.vertex_offset, m.vertex_count );
     mlt_idx_vector			localIdx	    = std::span{ &mltTris[ mlt.triangle_offset ], mlt.triangle_count * 3 };
 
-    mlt_idx_vector32        mltTempLod      = { ht_fill, RASTER_MAX_TRIS_PER_MLT * 3, 0 };
+    mlt_idx_vector32        mltTempLod      = { ht_fill, MAX_TRIS_PER_MLT * 3, 0 };
     // NOTE: bc we can't have simplify on u8
     mlt_idx_vector32        mltTempIdx32    = { std::from_range, localIdx | std::views::transform( HtCastTo<u32> ) };
     float                   lodError        = 0.0f;

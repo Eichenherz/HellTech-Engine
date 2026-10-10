@@ -144,10 +144,10 @@ constexpr bool operator==( const triangle_pos& a, const triangle_pos& b )
 }
 
 template<TRIVIAL_T T>
-using mlt_attr_vector = inline_array<T, RASTER_MAX_VTX_PER_MLT>;
+using mlt_attr_vector = inline_array<T, MAX_VTX_PER_MLT>;
 
-using mlt_idx_vector = inline_array<u8, RASTER_MAX_TRIS_PER_MLT * 3>;
-using mlt_idx_vector32 = inline_array<u32, RASTER_MAX_TRIS_PER_MLT * 3>;
+using mlt_idx_vector = inline_array<u8, MAX_TRIS_PER_MLT * 3>;
+using mlt_idx_vector32 = inline_array<u32, MAX_TRIS_PER_MLT * 3>;
 
 struct hpk_meshlet
 {

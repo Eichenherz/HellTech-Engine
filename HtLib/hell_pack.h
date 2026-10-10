@@ -21,10 +21,11 @@ constexpr u64   ZSTD_COMPRESSION_LEVEL      = 19;
  *                                  HELL_PACK LAYOUT
  *---------------------------------------------------------------------------------------
  *  0th byte
- *  [ DATA ]....[ { MESH_DESC }{ LODs } ][ { SECTOR_DESC }{ NODE_PAYLOAD } ][ FOOTER ]
- *                      A                                       |
- *                      |_________________HASH__________________|
+ *  [ { All LOD0 }{ All LOD1 }{ All LOD2 }{ All LOD3 }...{ LOD_DESC }{ MESH_DESC }{ NODES }{ SECTOR_DESC } FOOTER ]
+ *                                                                          A          |
+ *                                                                          |___HASH___|
  */
+// NOTE: .hpk format is an unaligned byte dump, so in order to properly read it must be (mem)copied first
 constexpr char  HPK_MAGIC[]         = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
 
 HT_DEF_STRUCT_W_HASH( hpk_file_footer,
@@ -61,12 +62,13 @@ inline bool HpkIsLodCompressed( const hpk_lod_desc& lod )
 }
 
 HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,
-    u64     hashed           = 0;
-    float3  aabbMin          = {};
-    float3  aabbMax          = {};
-    float4  lodErrs          = {};
-    u64     firstLod : 56    = 0;
-    u64     lodCount : 8     = 0;
+    u64     hashed          = 0;
+    float3  aabbMin         = {};
+    float3  aabbMax         = {};
+    float4  lodErrs         = {};
+    u64     firstLod : 56   = 0;
+    u64     lodCount : 8    = 0;
+    u64     padding         = 0;
 );
 
 constexpr u64 NODE_LOD_BIN_COUNT = 256;
@@ -74,11 +76,12 @@ constexpr u64 NODE_LOD_BIN_COUNT = 256;
 HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
     using node_lods = std::array<u32, NODE_LOD_BIN_COUNT>; // TODO: change the size or write dense
 
-    u64     firstNodeIdx;
-    u64     nodeCount;
-    i32x2   idx;
+    u64         firstNodeIdx;
+    u64         nodeCount;
     alignas( 8 )
-    node_lods log2LodNodeOffsets; // NOTE: bc we're lazy we'll store the whole sparse set as inclusive scan
+    node_lods   log2LodNodeOffsets; // NOTE: bc we're lazy we'll store the whole sparse set as inclusive scan
+    i16x2       id;
+    u32         padding = 0;
 );
 
 HT_DEF_STRUCT_W_HASH( hpk_file_view,
@@ -142,8 +145,8 @@ struct hpk_sector_desc_key
     using is_transparent = void;
     using is_avalanching = void;
 
-    static u64 Key( i32x2 idx ) { return std::bit_cast<u64>( idx ); }
-    static u64 Key( const hpk_sector_desc& d ) { return Key( d.idx ); }
+    static u64 Key( i16x2 id ) { return std::bit_cast<u32>( id ); }
+    static u64 Key( const hpk_sector_desc& d ) { return Key( d.id ); }
 
     u64  operator()( const auto& v ) const { return ankerl::unordered_dense::hash<u64>{}( Key( v ) ); }
     bool operator()( const auto& a, const auto& b ) const { return Key( a ) == Key( b ); }
