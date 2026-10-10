@@ -33,8 +33,7 @@ struct ring_buffer : STORAGE_T
     ring_buffer() = default;
     ring_buffer( decltype( STORAGE_T::mem ) srcMem );
 
-    template<typename U> requires std::assignable_from<T&, U>
-    bool TryPush( this auto&& self, U&& v );
+    bool TryPush( this auto&& self, auto&& v ) requires std::assignable_from<T&, decltype( v )>;
     bool TryPop( this auto&& self, T& out );
     bool TryPopIf( this auto&& self, T& out, auto&& PfnIsPoppable );
 };
@@ -46,8 +45,7 @@ ring_buffer<T, STORAGE_T, Sync_T>::ring_buffer( decltype( STORAGE_T::mem ) srcMe
 }
 
 template<typename T, storage_t<T> STORAGE_T, typename Sync_T>
-template<typename U> requires std::assignable_from<T&, U>
-bool ring_buffer<T, STORAGE_T, Sync_T>::TryPush( this auto&& self, U&& v )
+bool ring_buffer<T, STORAGE_T, Sync_T>::TryPush( this auto&& self, auto&& v ) requires std::assignable_from<T&, decltype( v )>
 {
     self.lock.Acquire();
     defer{ self.lock.Release(); };
@@ -101,25 +99,27 @@ struct mpmc_slot_t
 };
 
 template<TRIVIAL_T T, storage_t<mpmc_slot_t<T>> STORAGE_T>
-struct lockless_ring_buffer : STORAGE_T
+struct lockless_mpmc_queue : STORAGE_T
 {
     static_assert( IsPow2StaticCapacity<STORAGE_T>() );
 
     alignas( 64 ) atomic_u64 head = 0;
     alignas( 64 ) atomic_u64 tail = 0;
 
-    lockless_ring_buffer() = default;
-    lockless_ring_buffer( decltype( STORAGE_T::mem ) srcMem );
+    lockless_mpmc_queue() = default;
+    lockless_mpmc_queue( decltype( STORAGE_T::mem ) srcMem ) : STORAGE_T{ srcMem }
+    {
+        HT_ASSERT( IsPowOf2( std::size( this->mem ) ) );
+    }
+
+    bool TryEmplace( this auto&& self, auto&&... args );
+    bool TryPush( this auto&& self, const auto& val ) { return self.TryEmplace( val ); }
+    bool TryPopIf( this auto&& self, auto& out, auto&& PfnIsPoppable );
+    bool TryPop( this auto&& self, auto& out ) { return self.TryPopIf( out, []( const auto& ){ return true; } ); }
 };
 
 template<TRIVIAL_T T, storage_t<mpmc_slot_t<T>> STORAGE_T>
-lockless_ring_buffer<T, STORAGE_T>::lockless_ring_buffer( decltype( STORAGE_T::mem ) srcMem ) : STORAGE_T{ srcMem }
-{
-    HT_ASSERT( IsPowOf2( std::size( this->mem ) ) );
-}
-
-template <typename... Args>
-bool MpmcRingbuffTryEmplace( auto& self, Args &&...args )
+bool lockless_mpmc_queue<T, STORAGE_T>::TryEmplace( this auto&& self, auto&&... args )
 {
     u64 head = SysAtomicRead64<sys_fence_t::ACQ>( &self.head );
     for( ;; )
@@ -145,9 +145,8 @@ bool MpmcRingbuffTryEmplace( auto& self, Args &&...args )
     }
 }
 
-bool MpmcRingbuffTryPush( auto& self, const auto& val ) { return MpmcRingbuffTryEmplace( self, val ); }
-
-bool MpmcRingbuffTryPopIf( auto& self, auto& out, auto&& PfnIsPoppable )
+template<TRIVIAL_T T, storage_t<mpmc_slot_t<T>> STORAGE_T>
+bool lockless_mpmc_queue<T, STORAGE_T>::TryPopIf( this auto&& self, auto& out, auto&& PfnIsPoppable )
 {
     u64 tail = SysAtomicRead64<sys_fence_t::ACQ>( &self.tail );
     for( ;; )
@@ -174,15 +173,10 @@ bool MpmcRingbuffTryPopIf( auto& self, auto& out, auto&& PfnIsPoppable )
     }
 }
 
-bool MpmcRingbuffTryPop( auto& self, auto& out )
-{
-    return MpmcRingbuffTryPopIf( self, out, []( const auto& ){ return true; } );
-}
-
 template<TRIVIAL_T T, u64 N>
-using fixed_mpmc_ringbuff = lockless_ring_buffer<T, inline_storage<mpmc_slot_t<T>, N>>;
+using fixed_mpmc_ringbuff = lockless_mpmc_queue<T, inline_storage<mpmc_slot_t<T>, N>>;
 
 template<TRIVIAL_T T>
-using mpmc_ringbuff = lockless_ring_buffer<T, borrowed_storage<mpmc_slot_t<T>>>;
+using mpmc_ringbuff = lockless_mpmc_queue<T, borrowed_storage<mpmc_slot_t<T>>>;
 
 #endif // !__HT_RING_BUFFER_H__

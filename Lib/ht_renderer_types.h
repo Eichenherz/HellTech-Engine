@@ -89,20 +89,27 @@ CONSTEXPR u64 MAX_MESHLETS_PER_MESH = ~u16( 0 );
 
 // NOTE: we can pack x4 bc we know the exact count of LODs; this is tailored to 4 lods only !!!!
 
-struct gpu_mesh
+struct gpu_mesh_bounds
 {
 	float4	lod4Err; // NOTE: monotonically increasing x -> w
-
 	float3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
 	float3	aabbMax;
-
-	u32x2	packed16x4_meshletCounts;
-
-	u32		vtxPosOffsetInBytes;
-	u32		vtxAttrsOffset;
-	u32		idxOffset;
-	u32		meshletOffset;
 };
+
+struct gpu_mesh_lod
+{
+    u32		vtxPosOffsetInBytes;
+    u32		vtxAttrsOffset;
+    u32		idxOffset;
+    u32		meshletOffset;
+};
+
+struct gpu_mesh_residency
+{
+    gpu_mesh_lod lods[ 4 ];
+};
+
+// NOTE: gpu_mesh_bounds & gpu_mesh_residency will be parallel arrays
 
 #ifndef __cplusplus
 u32x4 UnpackLODMeshletCount( in gpu_mesh m )
@@ -113,9 +120,9 @@ u32x4 UnpackLODMeshletCount( in gpu_mesh m )
 }
 #endif
 
-CONSTEXPR u64 RASTER_MAX_VTX_PER_MLT	= 64;
-CONSTEXPR u64 RASTER_MAX_TRIS_PER_MLT	= 128;
-CONSTEXPR u64 RASTER_MLT_MAX_INDEX		= 1ull << 12;
+CONSTEXPR u64 MAX_VTX_PER_MLT	= 64;
+CONSTEXPR u64 MAX_TRIS_PER_MLT	= 128;
+CONSTEXPR u64 MLT_MAX_INDEX		= 1ull << 12;
 // NOTE: this 2 level LOD scheme is inspired by https://x.com/zeuxcg/status/1810841187433205817
 
 // NOTE: we will pack the data in the triangle buffer as such
@@ -145,7 +152,7 @@ u32x3 UnpackMeshletVtxAndLodIdxCount( in gpu_meshlet mlt )
 #endif
 
 STATIC_ASSERT( 48 == sizeof( gpu_meshlet ), "Size mismatch!" );
-STATIC_ASSERT( ( 1ull << 12) == RASTER_MLT_MAX_INDEX, "The max mltidx convention is broken" );
+STATIC_ASSERT( ( 1ull << 12) == MLT_MAX_INDEX, "The max mltidx convention is broken" );
 
 struct dispatch_command
 {

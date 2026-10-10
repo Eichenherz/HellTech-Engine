@@ -136,7 +136,7 @@ inline image_info ImageInfoFromDds( const dds::Header& h, const char* nameStr )
 		.format        = VkFromatFromDdsDxgi( h.format() ),
 		.createFlags   = h.is_cubemap() ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u,
 		.type          = imgType,
-		.usgFlags      = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.usgFlags      = image_usage::XFER_DST | image_usage::SAMPLED,
 		.width         = ( u16 ) h.width(),
 		.height        = ( u16 ) h.height(),
 		.layerCount    = ( u8 ) h.array_size(),
@@ -183,21 +183,6 @@ constexpr VkClearColorValue GetVBufferClearValue()
 	clearVal.uint32[ 3 ] = ~u32( 0 );
 
 	return clearVal;
-}
-
-inline VkMemoryPropertyFlags VkChooseMemoryPropertiesFromBufferUsage( buffer_usage usage )
-{
-	using enum buffer_usage;
-	switch( usage )
-	{
-		case GPU_ONLY: return VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-		case HOST_VISIBLE: return
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-		case STAGING: return VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-	}
-
-    HT_ASSERT( 0 && "Unknown memory type" );
-	return 0;
 }
 
 // NOTE: from Sascha Willems

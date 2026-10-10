@@ -121,7 +121,7 @@ struct soa_slot_array : borrowed_slot_array<ht_no_item<COMP_T...>>
     soa_slot_array() = default;
 
     soa_slot_array( arena_t auto& arena, u64 slotCount ) :
-        slot_array_t{ ArenaNewArray<slot_array_t::value_type>( arena, slotCount ) },
+        slot_array_t{ ArenaNewArray<typename slot_array_t::value_type>( arena, slotCount ) },
         components{ ArenaNewArray<COMP_T>( arena, slotCount )... } {}
 
     hndl32  push_entry( this auto&& self, const COMP_T&... vals )

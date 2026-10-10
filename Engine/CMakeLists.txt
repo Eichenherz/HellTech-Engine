@@ -18,7 +18,7 @@ add_executable(Engine WIN32      # WIN32 = Windows subsystem (not console)
     ${THIRD_PARTY}/imgui/imgui_draw.cpp
     ${THIRD_PARTY}/imgui/imgui_tables.cpp
     ${THIRD_PARTY}/imgui/imgui_widgets.cpp
-    ${THIRD_PARTY}/ImGuiFileDialog/ImGuiFileDialog.cpp
+    #${THIRD_PARTY}/ImGuiFileDialog/ImGuiFileDialog.cpp
     ${THIRD_PARTY}/OffsetAllocator/offsetAllocator.cpp
 )
 
@@ -68,7 +68,7 @@ if(MSVC)
         ${THIRD_PARTY}/imgui/imgui_draw.cpp
         ${THIRD_PARTY}/imgui/imgui_tables.cpp
         ${THIRD_PARTY}/imgui/imgui_widgets.cpp
-        ${THIRD_PARTY}/ImGuiFileDialog/ImGuiFileDialog.cpp
+        #${THIRD_PARTY}/ImGuiFileDialog/ImGuiFileDialog.cpp
         TARGET_DIRECTORY Engine
         PROPERTIES COMPILE_OPTIONS "/analyze-"
     )

@@ -442,10 +442,11 @@ static auto HpkProcessGltfs( std::string_view dir )
         std::string gltfPath = e.path().string();
         std::println( stdout, "Processing {}\n", gltfPath );
 
-        mmap_file rawGltfBytes = SysCreateMmapFile( gltfPath.c_str(),
-            file_perm_t::READ, file_create_t::OPEN_IF_EXISTS,
-            file_access_t::SEQUENTIAL );
-        defer { SysDestroyMmapFile( &rawGltfBytes ); };
+        void* hGltf = ht_os_create_file( gltfPath.c_str(), file_perm_t::READ,
+            file_create_t::OPEN_IF_EXISTS, file_access_t::SEQUENTIAL );
+        std::span<const u8> rawGltfBytes = HtOsCreateROFileMapping( hGltf );
+        defer { HtOSUnmapView( rawGltfBytes ); ht_os_close_file( hGltf ); };
+
 
         scoped_arena<virtual_arena> scopedArenas[] = { g_ThreadArena[ 0 ], g_ThreadExtLibArena };
 
@@ -454,7 +455,7 @@ static auto HpkProcessGltfs( std::string_view dir )
             .memory = { .alloc_func = CgltfArenaAlloc, .free_func = CgltfArenaFree },
             .file   = { .read = HtCgltfFileRead, .release = HtCgltfFileRelease }
         };
-        const cgltf_data* pGltf = CgltfLoadMetadataFromRawBytes( rawGltfBytes.dataView, options );
+        const cgltf_data* pGltf = CgltfLoadMetadataFromRawBytes( rawGltfBytes, options );
 
         auto[ nodes, meshDescVec ] = CgltfProcessDrawablesHierarchy(
             pGltf, SysPathStem( gltfPath ) );
@@ -854,12 +855,12 @@ i32 main( i32 argc, char** argv  )
 
 
         auto dirIt = fs::directory_iterator{ dir };
-        auto binEntry = std::ranges::find_if( dirIt, LmbdIsFileWithExt( ".bin" ) );
+        auto binFile = std::ranges::find_if( dirIt, LmbdIsFileWithExt( ".bin" ) );
 
-        if( std::ranges::end( dirIt ) == binEntry ) HpkExitWithMsg( "No bin in dir\n" );
+        if( std::ranges::end( dirIt ) == binFile ) HpkExitWithMsg( "No bin in dir\n" );
 
-        mmap_file rawGltfBinData = SysCreateMmapFile( binEntry->path().string().c_str(), file_perm_t::READ,
-            file_create_t::OPEN_IF_EXISTS, file_access_t::RANDOM );
+        std::span<const u8> gltfBinMMapped = HtOsCreateROFileMapping( ht_os_create_file( binFile->path().string().c_str(),
+            file_perm_t::READ, file_create_t::OPEN_IF_EXISTS, file_access_t::RANDOM ) );
 
 
         auto hpkMeshesOut   = std::vector<hpk_mesh_desc>( std::size( sortedMeshes ), {} );
@@ -889,7 +890,7 @@ i32 main( i32 argc, char** argv  )
         for( u64 _ : std::views::iota( 0ull, g_ThreadCount ) )
         {
             std::thread{ HpkProcessMeshesParallelJob, tmpDir, std::span{ meshBatches },
-                rawGltfBinData.dataView, std::span{ hpkMeshBatches }, std::span{ hpkLODs }
+                gltfBinMMapped, std::span{ hpkMeshBatches }, std::span{ hpkLODs }
             }.detach();
         }
         AtomicWait( g_AtomicWorkerCounter, g_ThreadCount );

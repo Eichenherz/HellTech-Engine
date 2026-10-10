@@ -3,6 +3,8 @@
 
 #include "DEFS_WIN32_NO_BS.h"
 #include <Windows.h>
+#include <winioctl.h>
+#include <ioringapi.h>
 
 #include <ht_error.h>
 #include "win32_err.h"
@@ -291,7 +293,7 @@ static u64 WinGetFileSizeInBytes( HANDLE hFile )
     return largeInt.QuadPart;
 }
 
-std::span<u8> SysReadFileBinary( const char* path, arena_t auto& arena )
+std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena )
 {
     HANDLE hFile = CreateFileA( path, GENERIC_READ, FILE_SHARE_READ, nullptr,
         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr );
@@ -307,10 +309,10 @@ std::span<u8> SysReadFileBinary( const char* path, arena_t auto& arena )
     return { ( u8* ) mem, szInBytes };
 }
 
-template std::span<u8> SysReadFileBinary<linear_arena>( const char*, linear_arena& );
-template std::span<u8> SysReadFileBinary<virtual_arena>( const char*, virtual_arena& );
-template std::span<u8> SysReadFileBinary<scoped_arena<linear_arena>>( const char*, scoped_arena<linear_arena>& );
-template std::span<u8> SysReadFileBinary<scoped_arena<virtual_arena>>( const char*, scoped_arena<virtual_arena>& );
+template std::span<u8> SysReadWholeFile<linear_arena>( const char*, linear_arena& );
+template std::span<u8> SysReadWholeFile<virtual_arena>( const char*, virtual_arena& );
+template std::span<u8> SysReadWholeFile<scoped_arena<linear_arena>>( const char*, scoped_arena<linear_arena>& );
+template std::span<u8> SysReadWholeFile<scoped_arena<virtual_arena>>( const char*, scoped_arena<virtual_arena>& );
 
 constexpr DWORD MakeGenericAccessFlags( file_perm_t openFlags )
 {
@@ -364,75 +366,22 @@ constexpr DWORD MakeAccessFlags( file_access_t accessFlags )
 	using enum file_access_t;
 	switch( accessFlags )
 	{
-	case SEQUENTIAL:	        return FILE_FLAG_SEQUENTIAL_SCAN;
-	case RANDOM:		        return FILE_FLAG_RANDOM_ACCESS;
-	case CONCURRENT:	        return FILE_FLAG_OVERLAPPED;
-	case CONCURRENT_UNBUFFERED:	return FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING;
+	case SEQUENTIAL:	    return FILE_FLAG_SEQUENTIAL_SCAN;
+	case RANDOM:		    return FILE_FLAG_RANDOM_ACCESS;
+	case CONCURRENT:	    return FILE_FLAG_OVERLAPPED;
+	case RAW_CONCURRENT:    return FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING;
 	}
 
 	HT_ASSERT( 0 && "Wrong flags" );
 	return 0;
 }
 
-u64 mmap_file::Timestamp() const
-{
-	FILETIME fileTime = {};
-	WIN_CHECK( SUCCEEDED( GetFileTime( ( HANDLE ) hFile, nullptr, nullptr,
-	    &fileTime ) ) );
-
-	ULARGE_INTEGER timestamp = { .LowPart = fileTime.dwLowDateTime, .HighPart = fileTime.dwHighDateTime };
-	return u64( timestamp.QuadPart );
-}
-
-mmap_file SysCreateMmapFile(
-	const char*				path,
-	file_perm_t		permissionFlags,
-	file_create_t		createFlags,
-	file_access_t		accessFlags
-) {
-	DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
-	DWORD dwCreateFlags			= MakeCreateFlags( createFlags );
-	DWORD dwAccessFlags			= MakeAccessFlags( accessFlags );
-	DWORD dwFileMappingAccess	= MakeFileMappingFlags( permissionFlags );
-	DWORD dwDataViewAccess		= MakeMapViewFlags( permissionFlags );
-
-	HANDLE hFile		= CreateFileA( path, dwPermissionFlags, FILE_SHARE_READ,
-		nullptr, dwCreateFlags, dwAccessFlags, nullptr );
-	WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
-
-	HANDLE hFileMapping = CreateFileMappingA( hFile, 0, dwFileMappingAccess,
-		0, 0, nullptr );
-	WIN_CHECK( hFileMapping );
-
-	u64		qwFileSize	= WinGetFileSizeInBytes( hFile );
-	u8* pData			= ( u8* ) MapViewOfFile( hFileMapping, dwDataViewAccess, 0,
-		0, qwFileSize );
-	WIN_CHECK( pData );
-
-	return {
-		.hFile			= ( u64 ) hFile,
-		.hFileMapping	= ( u64 ) hFileMapping,
-		.dataView		= { pData, qwFileSize }
-	};
-}
-
-void SysDestroyMmapFile( mmap_file* mmapFile )
-{
-	if( mmapFile )
-	{
-		UnmapViewOfFile( std::data( mmapFile->dataView ) );
-		CloseHandle( ( HANDLE ) mmapFile->hFileMapping );
-		CloseHandle( ( HANDLE ) mmapFile->hFile );
-		mmapFile = nullptr;
-	}
-}
 
 void* ht_os_create_file(
     const char*     filePath,
     file_perm_t     permissionFlags,
     file_create_t   createFlags,
-    file_access_t   accessFlags,
-    void*           hCompletionPort
+    file_access_t   accessFlags
 ) {
     DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
     DWORD dwCreateFlags			= MakeCreateFlags( createFlags );
@@ -443,9 +392,21 @@ void* ht_os_create_file(
         dwCreateFlags, dwAccessFlags, nullptr );
     WIN_CHECK( INVALID_HANDLE_VALUE != hFile );
 
-    if( hCompletionPort )
+    if( file_access_t::RAW_CONCURRENT == accessFlags )
     {
-        WIN_CHECK( CreateIoCompletionPort( hFile, hCompletionPort, 0, 0 ) );
+        FS_BPIO_INPUT   bypassIOInput   = { .Operation = FS_BPIO_OP_ENABLE };
+        FS_BPIO_OUTPUT  bypassIOOutput  = {};
+        OVERLAPPED      overlapped      = {}; // NOTE: we are the first owners so no event needed
+        if( !DeviceIoControl( hFile, FSCTL_MANAGE_BYPASS_IO, &bypassIOInput,
+            sizeof( bypassIOInput ),&bypassIOOutput, sizeof( bypassIOOutput ),
+            nullptr, &overlapped ) )
+        {
+            WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
+        }
+
+        DWORD bytesReturned = 0;
+        WIN_CHECK( GetOverlappedResult( hFile, &overlapped, &bytesReturned, TRUE ) );
+        HT_ASSERT( 0 == bypassIOOutput.Enable.OpStatus );
     }
 
     return hFile;
@@ -475,14 +436,6 @@ std::span<const u8> HtOsCreateROFileMapping( void* hFile )
 
 void HtOSUnmapView( std::span<const u8> view ) { WIN_CHECK( UnmapViewOfFile( std::data( view ) ) ); }
 
-void* HtOsCreateIOCompletionPort( u64 maxWorkerThreads )
-{
-    HANDLE hIOCompletionPort = CreateIoCompletionPort( INVALID_HANDLE_VALUE, nullptr,
-        0, maxWorkerThreads );
-    WIN_CHECK( hIOCompletionPort );
-    return hIOCompletionPort;
-}
-
 void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes )
 {
     HT_ASSERT( std::size( bytes ) <= MAXDWORD );
@@ -506,6 +459,27 @@ void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<c
     DWORD writtenInBytes = 0;
     WIN_CHECK( GetOverlappedResult( hFile, &overlapped, &writtenInBytes, TRUE ) );
     HT_ASSERT( std::size( bytes ) == writtenInBytes );
+}
+
+u64 SysReadNBytesFromFileBlocking( void* hFile, u64 offsetInBytes, std::span<u8> bytes )
+{
+    std::ranges::fill( bytes, 0 );
+
+    OVERLAPPED overlapped = {
+        .Offset       = ( DWORD ) offsetInBytes,
+        .OffsetHigh   = ( DWORD ) ( offsetInBytes >> 32 ),
+    };
+
+    if( !ReadFile( hFile, std::data( bytes ), std::size( bytes ),
+        nullptr, &overlapped ) )
+    {
+        WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
+    }
+
+    DWORD readByteCount = 0;
+    WIN_CHECK( GetOverlappedResult( hFile, &overlapped, &readByteCount, TRUE ) );
+
+    return readByteCount;
 }
 
 void SysReadFileAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq )
@@ -558,12 +532,22 @@ ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs )
     return { std::from_range, cmplOverlapped | std::views::transform( LmbdToHtReq ) };
 }
 
+u64 SysGetFileTimestamp( void* hFile )
+{
+    FILETIME fileTime = {};
+    WIN_CHECK( SUCCEEDED( GetFileTime( hFile, nullptr, nullptr, &fileTime ) ) );
+
+    ULARGE_INTEGER timestamp = { .LowPart = fileTime.dwLowDateTime, .HighPart = fileTime.dwHighDateTime };
+    return u64( timestamp.QuadPart );
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------------------------------------------
 #define THREAD_CALLING_CONV WINAPI
 #include <System/sys_thread.h>
 // ---------------------------------------------------------------------------------------------------------------
+
 sys_thread SysCreateThread( u64	stackSize, PfnSysThreadProc ThreadProc, void* pData, const wchar_t* name )
 {
 	DWORD threadId = 0;
@@ -591,6 +575,7 @@ void SysNameThread( u64 hThread, const wchar_t* name )
 // ---------------------------------------------------------------------------------------------------------------
 #include <System/sys_timer.h>
 // ---------------------------------------------------------------------------------------------------------------
+
 u64 SysGetCpuFreq()
 {
 	LARGE_INTEGER freq;
@@ -608,6 +593,7 @@ u64 SysTicks()
 // ---------------------------------------------------------------------------------------------------------------
 #include <System/sys_std_streams.h>
 // ---------------------------------------------------------------------------------------------------------------
+
 void SysWriteToStdStream( const char* str, sys_stream_t streamType )
 {
 	HANDLE hStream = INVALID_HANDLE_VALUE;
@@ -620,4 +606,80 @@ void SysErrMsgBox( const char* str )
 {
 	MessageBoxA( nullptr, str, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
 }
+// ---------------------------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------------------------
+#include <System/sys_io_ring.h>
+// ---------------------------------------------------------------------------------------------------------------
+
+void* SysMakeIoRing( u64 maxRequests, std::span<void *const> hFiles, std::span<const std::span<u8>> readBuffers )
+{
+    IORING_CAPABILITIES ioRingCaps = {};
+    WIN_CHECK( SUCCEEDED( QueryIoRingCapabilities( &ioRingCaps ) ) );
+
+    HIORING hIORing = nullptr;
+    WIN_CHECK( SUCCEEDED( CreateIoRing( ioRingCaps.MaxVersion, {}, maxRequests,
+        2 * maxRequests, &hIORing ) ) );
+
+    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterFileHandles( hIORing, std::size( hFiles ), &hFiles[ 0 ], 0 ) ) );
+
+    inline_array<IORING_BUFFER_INFO, 8> ioRingBuffInfos = {};
+    for( const std::span<u8> buff : readBuffers )
+    {
+        HT_ASSERT( UINT32_MAX >= std::size( buff ) );
+        ioRingBuffInfos.push_back( {
+            .Address = &buff[ 0 ],
+            .Length = ( u32 ) std::size( buff )
+        } );
+    }
+
+    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterBuffers( hIORing, ( UINT32 ) std::size( ioRingBuffInfos ),
+        &ioRingBuffInfos[ 0 ], 0 ) ) );
+
+    // NOTE: win internals says that those buffers will dangle is we don't submit here
+    WIN_CHECK( SUCCEEDED( SubmitIoRing( hIORing, IORING_SUBMIT_WAIT_ALL, INFINITE, nullptr ) ) );
+
+    return hIORing;
+}
+
+bool SysTryPushIoRingRequest(
+    void*   hIORing,
+    u64     fileIdx,
+    u64     readBuffIdx,
+    u32     readBuffOffset,
+    u64     fileOffset,
+    u32     readSize
+) {
+    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( fileIdx ),
+        IoRingBufferRefFromIndexAndOffset( readBuffIdx, readBuffOffset ),
+        readSize, fileOffset, 0, IOSQE_FLAGS_NONE );
+
+    if( IORING_E_SUBMISSION_QUEUE_FULL == res ) return false;
+
+    WIN_CHECK( SUCCEEDED( res ) );
+
+    return true;
+}
+
+u64 SysIoRingSubmit( void* hIORing, u64 waitInMs )
+{
+    u32 subsInQueue = 0;
+    HRESULT res = SubmitIoRing( ( HIORING ) hIORing, 0, waitInMs, &subsInQueue );
+    //if( IORING_E_WAIT_TIMEOUT == res ) return false;
+
+    WIN_CHECK( SUCCEEDED( res ) );
+
+    return subsInQueue;
+}
+
+bool SysIoRingPollCompletion( void* hIORing, u32 completionIdx )
+{
+    IORING_CQE ioRingCQE = {};
+    if( S_OK == PopIoRingCompletion( ( HIORING ) hIORing, &ioRingCQE ) )
+    {
+        WIN_CHECK( SUCCEEDED( ioRingCQE.ResultCode ) );
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------------------------------------------

@@ -672,53 +672,42 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	};
 }
 
-constexpr u64 GPU_CACHELINE_SZ_IN_BYTES = 128;
-
 #define GPU_CACHE_ALIGN( szInBytes ) FwdAlignPot( szInBytes, GPU_CACHELINE_SZ_IN_BYTES )
 
 vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
-    if( buffInfo.isAtomic ) HT_ASSERT( buffInfo.sizeInBytes <= GPU_CACHELINE_SZ_IN_BYTES );
-
-    // TODO: do this once at creation ?
     u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
 
     bool isVkConcurrentRsc = VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode;
 
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-	    // TODO: find a better flag ?
-		.size			        = buffInfo.isAtomic ? GPU_CACHE_ALIGN( buffInfo.sizeInBytes ) : buffInfo.sizeInBytes,
-		.usage			        = buffInfo.usageFlags,
+		.size			        = buffInfo.sizeInBytes,
+		.usage			        = ( VkBufferUsageFlags ) buffInfo.usageFlags,
 	    // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
 		.sharingMode	        = buffInfo.sharingMode,
 	    .queueFamilyIndexCount  = isVkConcurrentRsc ? ( u32 ) std::size( queueFamIdxCount ) : 0,
 	    .pQueueFamilyIndices    = isVkConcurrentRsc ? queueFamIdxCount : nullptr
 	};
 
-	VkMemoryPropertyFlags       memPropFlags    = VkChooseMemoryPropertiesFromBufferUsage( buffInfo.usage );
-	VmaAllocationCreateFlags    allocFlags      =
-		VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT;
-	// TODO: do we do random access ?
-	if( memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
-	{
-		allocFlags |= VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-	}
+	VkMemoryPropertyFlags memPropFlags  = ( VkMemoryPropertyFlags ) buffInfo.memProps;
+    // TODO: do we do random access ?
+	VmaAllocationCreateFlags allocFlags = ( memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT ) ?
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT : 0;
+
 	VmaAllocationCreateInfo allocCreateInfo = {
-		.flags = allocFlags,
+		.flags = allocFlags | VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT,
 		.usage = VMA_MEMORY_USAGE_AUTO,
 		//.requiredFlags = memPropFlags,
 	};
 
-	VkBuffer            vkBuffer;
-	VmaAllocation       mem;
-	VmaAllocationInfo   allocInfo;
-	VK_CHECK( vmaCreateBuffer( allocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &mem, &allocInfo ) );
+	VkBuffer            vkBuffer    = nullptr;
+	VmaAllocation       mem         = nullptr;
+	VmaAllocationInfo   allocInfo   = {};
+	VK_CHECK( vmaCreateBufferWithAlignment( allocator, &bufferCreateInfo, &allocCreateInfo,
+	    buffInfo.alignment, &vkBuffer, &mem, &allocInfo ) );
 
-	if( buffInfo.name )
-	{
-		VkDbgNameObj( vkBuffer, device, buffInfo.name );
-	}
+	if( buffInfo.name ) { VkDbgNameObj( vkBuffer, device, buffInfo.name ); }
 
 	VkDeviceAddress devicePointer = 0;
 	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT )
@@ -731,8 +720,10 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 		HT_ASSERT( devicePointer );
 	}
 
+    HT_ASSERT( IsAlignedToPot( ( u64 ) allocInfo.pMappedData, buffInfo.alignment ? buffInfo.alignment : 1 ) );
+
 	return {
-		.mem			= mem,
+		.alloc			= mem,
 		.hndl			= vkBuffer,
 		.sizeInBytes	= bufferCreateInfo.size,
 		.hostVisible	= ( u8* ) allocInfo.pMappedData,
@@ -743,7 +734,7 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
-	VkCheckFormatProperties( gpu, imgInfo.usgFlags, imgInfo.format );
+	VkCheckFormatProperties( gpu, ( VkImageUsageFlags ) imgInfo.usgFlags, imgInfo.format );
 
 	VkImageCreateInfo imageInfo = {
 		.sType			= VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -755,7 +746,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 		.arrayLayers	= imgInfo.layerCount,
 		.samples		= VK_SAMPLE_COUNT_1_BIT,
 		.tiling			= VK_IMAGE_TILING_OPTIMAL,
-		.usage			= imgInfo.usgFlags,
+		.usage			= ( VkImageUsageFlags ) imgInfo.usgFlags,
 		.sharingMode	= VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout	= VK_IMAGE_LAYOUT_UNDEFINED
 	};
@@ -775,7 +766,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 		VK_IMAGE_VIEW_TYPE_2D, 0, imageInfo.arrayLayers );
 
 	return {
-		.mem			= mem,
+		.alloc			= mem,
 		.hndl			= img,
 		.view			= vkImgView,
 		.createFlags	= imageInfo.flags,
@@ -1043,12 +1034,12 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		if( frameSubmitsDone <= rsc.frameTimelineVal ) break;
 		if( vk_resource_type::BUFFER ==  rsc.type )
 		{
-			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.mem );
+			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.alloc );
 		}
 		else if( vk_resource_type::IMAGE == rsc.type )
 		{
 			vkDestroyImageView( device, rsc.img.view, 0 );
-			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.mem );
+			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.alloc );
 		}
 		it = rscDeletionQueue.erase( it );
 	}

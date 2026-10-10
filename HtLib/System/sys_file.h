@@ -12,7 +12,9 @@
 
 #include <ht_array.h>
 
-std::span<u8> SysReadFileBinary( const char* path, arena_t auto& arena );
+constexpr u64 RAW_FILE_READ_ALIGNMENT = 4 << 10;
+
+std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena );
 
 enum class file_perm_t : u64
 {
@@ -39,40 +41,8 @@ enum class file_access_t : u64
 	SEQUENTIAL,
 	RANDOM,
 	CONCURRENT,
-	CONCURRENT_UNBUFFERED
+	RAW_CONCURRENT
 };
-
-struct mmap_file
-{
-	using iterator          = u8*;
-	using const_iterator    = const u8*;
-
-	u64				hFile			= ~u64{};
-	u64				hFileMapping	= ~u64{};
-	std::span<u8>	dataView		= {};
-
-
-	 iterator		begin()			{ return data(); }
-	 iterator		end()			{ return data() + size(); }
-
-	 const_iterator	cbegin() const	{ return data(); }
-	 const_iterator	cend()   const	{ return data() + size(); }
-
-	 u64			size() const	{ return std::size( dataView ); }
-	 u8*			data()			{ return std::data( dataView ); }
-	 const u8*		data() const	{ return std::data( dataView ); }
-
-	u64				Timestamp() const;
-};
-
-mmap_file SysCreateMmapFile(
-	const char*				path,
-	file_perm_t		permissionFlags,
-	file_create_t		createFlags,
-	file_access_t		accessFlags
-);
-
-void SysDestroyMmapFile( mmap_file* mmapFile );
 
 constexpr u64 OS_MAX_ASYNC_IO_REQS_IN_FLIGHT    = 16;
 constexpr u64 OS_UNBUFFERED_IO_MEM_ALIGNMENT    = 4 * KB;
@@ -82,8 +52,7 @@ void* ht_os_create_file(
     const char*		filePath,
     file_perm_t	    permissionFlags,
     file_create_t	createFlags,
-    file_access_t	accessFlags,
-    void*           hCompletionPort = nullptr
+    file_access_t	accessFlags
 );
 void ht_os_close_file( void* hFile );
 void ht_delete_file_by_handle( void* hFile );
@@ -91,10 +60,10 @@ void ht_delete_file_by_handle( void* hFile );
 std::span<const u8> HtOsCreateROFileMapping( void* hFile );
 void HtOSUnmapView( std::span<const u8> view );
 
-void* HtOsCreateIOCompletionPort( u64 maxWorkerThreads );
-
 // NOTE: hFile must have been opened with file_access_flags::CONCURRENT, else the kernel serializes per handle
 void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes );
+
+u64 SysReadNBytesFromFileBlocking( void* hFile, u64 offsetInBytes, std::span<u8> bytes );
 
 struct HT_CACHE_ALIGN ht_os_io_request
 {
@@ -113,6 +82,8 @@ using ht_io_comp_array = inline_array<ht_os_io_completion, OS_MAX_ASYNC_IO_REQS_
 ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs );
 
 using sys_path = fixed_string<SYS_MAX_PATH_LEN>;
+
+u64	SysGetFileTimestamp( void* hFile );
 
 constexpr std::string_view SysPathFileName( std::string_view path )
 {

@@ -90,8 +90,8 @@ struct vk_resc_deletion
 	vk_resource_type	type;
 
 	vk_resc_deletion() = default;
-	vk_resc_deletion( const vk_buffer& b, u64 counter ) : buff{ b }, type{ b.TYPE }, frameTimelineVal{ counter } {}
-	vk_resc_deletion( const vk_image& i, u64 counter ) : img{ i }, type{ i.TYPE }, frameTimelineVal{ counter } {}
+	vk_resc_deletion( const vk_buffer& b, u64 counter ) : frameTimelineVal{ counter }, buff{ b }, type{ b.TYPE }  {}
+	vk_resc_deletion( const vk_image& i, u64 counter ) : frameTimelineVal{ counter }, img{ i }, type{ i.TYPE }  {}
 };
 
 struct vk_desc_binding
@@ -217,7 +217,10 @@ struct vk_context
 	VkResult            TimelineTryWaitFor( const vk_timeline& timeline, u64 maxDiffAllowed, u64 waitTime );
 
 	desc_hndl32         AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo );
-	void                PushDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx ) { return PushDescriptorFree( { frameIdx, handle } ); }
+	void                PushDescriptorIdxFree( desc_hndl32 handle, u64 frameIdx )
+	{
+	    return PushDescriptorFree( { frameIdx, handle } );
+	}
 
 	void                FlushPendingDescriptorUpdates();
 	void                FlushDeletionQueues( u64 frameIdx );

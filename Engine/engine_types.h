@@ -5,14 +5,12 @@
 
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
-#include "hell_pack.h"
+#include <hell_pack.h>
 #include "ht_renderer_types.h"
 
 #include <ht_fixed_string.h>
 #include <ht_array.h>
 #include <ht_math.h>
-
-#include <System/sys_sync.h>
 
 // CONVENTIONS -----------------------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -49,13 +47,6 @@ struct mesh_upload_req
 struct mesh_upload_resp
 {
 	HRNDMESH32	hSlot;
-};
-
-struct tex_upload
-{
-	vfs_path	filepath; // NOTE: we'll use as a name for the gpu resource
-	byte_view	ddsTex;
-	// dst slot
 };
 
 struct instance_desc

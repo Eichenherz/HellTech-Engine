@@ -22,22 +22,48 @@ enum class vk_resource_type : u8
 
 constexpr u32 MAX_MIP_LEVELS = 12;
 
-enum class buffer_usage : u8
+enum class buffer_usage : u64
 {
-	GPU_ONLY,
-	STAGING,
-	HOST_VISIBLE
+    INVALID         = 0,
+	XFER_SRC	    = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+	XFER_DST	    = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+	STORAGE			= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+	INDEX			= VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+	INDIRECT		= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+	BDA	            = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+};
+
+constexpr buffer_usage operator|( buffer_usage a, buffer_usage b ) { return ( buffer_usage ) ( ( u64 ) a | ( u64 ) b ); }
+
+enum class buffer_mem_props : u32
+{
+    INVALID         = 0,
+	GPU_ONLY		= VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	STAGING			= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+	HOST_VISIBLE	= GPU_ONLY | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
 };
 
 struct buffer_info
 {
-	const char*         name;
-	VkBufferUsageFlags  usageFlags;
+	const char*         name        = nullptr;
+	buffer_usage        usageFlags  = {};
     VkSharingMode       sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	u64                 sizeInBytes;
-	buffer_usage        usage;
-    bool                isAtomic = false;
+	u64                 sizeInBytes = 0;
+	buffer_mem_props    memProps    = {};
+    u64                 alignment   = 0; // NOTE: 0 means VMA will default to the required API minAlignment
 };
+
+enum class image_usage : u32
+{
+	XFER_SRC		= VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+	XFER_DST		= VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+	SAMPLED			= VK_IMAGE_USAGE_SAMPLED_BIT,
+	STORAGE			= VK_IMAGE_USAGE_STORAGE_BIT,
+	COLOR_TARGET	= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+	DEPTH_TARGET	= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+};
+
+constexpr image_usage operator|( image_usage a, image_usage b ) { return ( image_usage ) ( ( u32 ) a | ( u32 ) b ); }
 
 struct image_info
 {
@@ -45,7 +71,7 @@ struct image_info
 	VkFormat			format;
 	VkImageCreateFlags  createFlags;
 	VkImageType         type;
-	VkImageUsageFlags	usgFlags;
+	image_usage			usgFlags;
 	u16					width;
 	u16					height;
 	u8					layerCount;
@@ -56,7 +82,7 @@ struct vk_buffer
 {
     static constexpr vk_resource_type TYPE = vk_resource_type::BUFFER;
 
-	VmaAllocation		mem;
+	VmaAllocation		alloc;
 	VkBuffer			hndl;
 	u64					sizeInBytes; 
 	u8*					hostVisible;
@@ -76,16 +102,13 @@ std::span<const T> VkBufferHostView( const vk_buffer& vkBuff )
 	return { ( const T* ) vkBuff.hostVisible, vkBuff.sizeInBytes / sizeof( T ) };
 }
 
-inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b )
-{
-	return VkDescriptorBufferInfo{ b.hndl, 0, b.sizeInBytes };
-}
+inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b ) { return { b.hndl, 0, b.sizeInBytes }; }
 
 struct vk_image
 {
     static constexpr vk_resource_type TYPE = vk_resource_type::IMAGE;
 
-	VmaAllocation		mem;
+	VmaAllocation		alloc;
 	VkImage				hndl;
 	VkImageView			view;
 	VkImageCreateFlags  createFlags;
@@ -106,7 +129,7 @@ constexpr VkImageAspectFlags VkSelectAspectMaskFromFormat( VkFormat imgFormat )
 	return ( imgFormat == VK_FORMAT_D32_SFLOAT ) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
-__forceinline VkImageSubresourceRange VkFullResource( const vk_image& img ) 
+HT_FORCEINLINE VkImageSubresourceRange VkFullResource( const vk_image& img )
 {
 	return {
 		.aspectMask		= VkSelectAspectMaskFromFormat( img.format ),
@@ -127,8 +150,7 @@ __forceinline VkImageSubresourceLayers VkFullResourceLayers( const vk_image& img
 	};
 }
 
-inline VkImageView
-VkMakeImgView(
+inline VkImageView VkMakeImgView(
 	VkDevice		vkDevice,
 	VkImage			vkImg,
 	VkFormat		imgFormat,
@@ -154,7 +176,7 @@ VkMakeImgView(
 	};
 
 	VkImageView view;
-	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, 0, &view ) );
+	VK_CHECK( vkCreateImageView( vkDevice, &viewInfo, nullptr, &view ) );
 
 	return view;
 }
@@ -218,5 +240,16 @@ struct vk_descriptor_write
 	desc_hndl32			hndl;
 };
 
+
+// NOTE: clear depth to 0 bc we	use RevZ
+constexpr VkClearValue DEPTH_CLEAR_VAL	= {};
+constexpr VkClearValue RT_CLEAR_VAL		= {};
+
+enum render_target_op : u32
+{
+    LOAD		= VK_ATTACHMENT_LOAD_OP_LOAD,
+    LOAD_CLEAR	= VK_ATTACHMENT_LOAD_OP_CLEAR,
+    STORE		= VK_ATTACHMENT_STORE_OP_STORE
+};
 
 #endif // !__VK_RESOURCES_H__

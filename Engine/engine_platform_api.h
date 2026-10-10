@@ -69,20 +69,35 @@ inline ht_input_state HTReinitInputState( const ht_input_state& inputState )
 }
 
 using PFN_Job = void ( * )( void*, linear_arena* );
-struct job_t
+struct ht_job_t
 {
-    PFN_Job PfnJob;
-    void*   payload;
+    PFN_Job             PfnJob  = nullptr;
+    std::array<u8, 56>  payload = {};
+
+    ht_job_t() = default;
+    ht_job_t( auto lmbd )
+    {
+        using lmbd_t = decltype( lmbd );
+
+        static_assert( std::is_trivially_copyable_v<lmbd_t> && std::is_trivially_destructible_v<lmbd_t> );
+        static_assert( sizeof( lmbd ) <= sizeof( payload ) && alignof( lmbd_t ) <= alignof( ht_job_t ) );
+
+        PfnJob = []( void* payload, linear_arena* pArena ) { ( *( lmbd_t* ) payload )( pArena ); };
+        std::memcpy( std::data( payload ), &lmbd, sizeof( lmbd ) );
+    }
+
+    void operator()( linear_arena* pArena = nullptr ) { return PfnJob( std::data( payload ), pArena ); }
 };
 
-struct alignas( 64 ) job_system_ctx
+// TODO: make it into ht_job_queue that inherits a queue/ringbuff type basically
+struct job_system_ctx
 {
-    sys_semaphore		    sema;
-    ringbuff_w_lock<job_t>	queue;
+    sys_semaphore		        sema;
+    ringbuff_w_lock<ht_job_t>   queue;
 
     job_system_ctx();
 
-    void SubmitJob( job_t job );
+    void SubmitJob( ht_job_t job );
 };
 
 struct alignas( 64 ) thread_ctx
@@ -107,10 +122,11 @@ u64 HtCurrentThreadIdx();
 struct renderer_interface
 {
     virtual void		    InitBackend( u64 hInst, u64 hWnd ) = 0;
-    virtual HRNDMESH32	    AllocMeshComponent( const hpk_mesh_desc& ) = 0;
+    virtual HRNDMESH32	    AllocMeshSlot( const hpk_mesh_desc&, const hpk_lod_desc& ) = 0;
     virtual bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) = 0;
     virtual void		    UploadMeshes( atomic_u64*, std::span<const mesh_upload_req>, linear_arena& ) = 0;
     virtual void		    HostFrames( const frame_data&, linear_arena&, gpu_data& ) = 0;
+    virtual std::span<u8>   GetDmaBuffer() = 0;
 };
 
 renderer_interface* MakeRenderer( linear_arena& );

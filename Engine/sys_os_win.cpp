@@ -18,6 +18,8 @@
 
 #include <System/Win32/win32_kbd_scancodes.h>
 
+#include "System/sys_file.h"
+
 
 //===================GLOBALS====================//
 u64                         g_NumCores          = 0;
@@ -28,6 +30,8 @@ linear_arena*               pPersistentArena    = nullptr;
 
 static u64 SysGetPhysicalCoreCount()
 {
+    using WIN_LOGICAL_CORE_INFO = SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+
     constexpr LOGICAL_PROCESSOR_RELATIONSHIP relType = RelationProcessorCore;
 
     ht_mem_scope memScope = { *pPersistentArena };
@@ -36,14 +40,13 @@ static u64 SysGetPhysicalCoreCount()
     GetLogicalProcessorInformationEx( relType, nullptr, &buffSzInBytes );
     WIN_CHECK( ERROR_INSUFFICIENT_BUFFER == GetLastError() );
 
-    std::span buff = ArenaNewArray<u8>( *pPersistentArena, buffSzInBytes );
-    WIN_CHECK( GetLogicalProcessorInformationEx(
-            relType, ( SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX* ) std::data( buff ), &buffSzInBytes ) );
+    u8* buff = ( u8* ) pPersistentArena->Alloc( buffSzInBytes, 1 );
+    WIN_CHECK( GetLogicalProcessorInformationEx( relType, ( WIN_LOGICAL_CORE_INFO* ) buff, &buffSzInBytes ) );
 
     u64 physicalCoreCount = 0;
     for( DWORD byteOffset = 0; byteOffset < buffSzInBytes; )
     {
-        const auto& infoEx = *( SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX* ) ( std::data( buff ) + byteOffset );
+        const WIN_LOGICAL_CORE_INFO& infoEx = *( WIN_LOGICAL_CORE_INFO* ) ( buff + byteOffset );
         byteOffset += infoEx.Size;
         physicalCoreCount++;
     }
@@ -129,10 +132,7 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		case WM_CLOSE: case WM_DESTROY:  PostQuitMessage( 0 ); break;
 		case WM_MOUSEMOVE:
 		{
-			globalHtInputState.mousePos = {
-			    ( float ) GET_X_LPARAM( lParam ),
-			    ( float ) GET_Y_LPARAM( lParam )
-			};
+			globalHtInputState.mousePos = { ( float ) GET_X_LPARAM( lParam ), ( float ) GET_Y_LPARAM( lParam ) };
 			break;
 		}
 		
@@ -148,17 +148,11 @@ LRESULT CALLBACK MainWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 				break;
 			}
 
-		    std::span scratchPad = {
-			    ( u8* ) pThreadCtx->scratchArenas[ 1 ].Alloc( size, alignof( RAWINPUT ) ), size
-			};
+		    void* scratchMem = pThreadCtx->scratchArenas[ 1 ].Alloc( size, alignof( RAWINPUT ) );
 
-			if( -1 == GetRawInputData( hri, RID_INPUT, std::data( scratchPad ), &size, cbHeaderSz ) )
-			{
-				break;
-			}
+			if( -1 == GetRawInputData( hri, RID_INPUT, scratchMem, &size, cbHeaderSz ) ) break;
 
-			const RAWINPUT& ri = *( const RAWINPUT* ) std::data( scratchPad );
-			Win32ProcessRawInput( ri, globalHtInputState );
+			Win32ProcessRawInput( *( const RAWINPUT* ) scratchMem, globalHtInputState );
 
 			break;
 		}
@@ -187,17 +181,17 @@ UINT WINAPI Win32ThreadLoop( LPVOID lpParam )
 	{
 		SysSemaphoreWait( g_pJobSys->sema, INFINITE );
 
-		for( job_t job = {}; g_pJobSys->queue.TryPop( job ); )
+		for( ht_job_t job = {}; g_pJobSys->queue.TryPop( job ); )
 		{
 		    ht_mem_scope jobScope = { pThreadCtx->scratchArenas[ 0 ] };
-			job.PfnJob( job.payload, &pThreadCtx->scratchArenas[ 0 ] );
+			job( &pThreadCtx->scratchArenas[ 0 ] );
 		}
 	}
 
 	return 0;
 }
 
-INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
+INT32 WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 {
 	SysOsCreateConsole();
 
@@ -208,7 +202,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	    char workingDir[ MAX_PATH ] = {};
 	    WIN_CHECK( 0 != GetCurrentDirectoryA( std::size( workingDir ), workingDir ) );
 
-	    fixed_string<512> workingDirMsg = { "WorkingDir: {}\n", workingDir };
+	    auto workingDirMsg = sys_path{ "WorkingDir: {}\n", workingDir };
 	    SysWriteToStdStream( ( const char* ) workingDirMsg, sys_stream_t::OUTPUT );
 	}
 #endif //_DEBUG
@@ -244,7 +238,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 	AdjustWindowRect( &wr, windowStyle, FALSE );
 	HWND hWnd = CreateWindow( wc.lpszClassName, WINDOW_TITLE, windowStyle, wr.left, wr.top, wr.right - wr.left,
 	    wr.bottom - wr.top, nullptr, nullptr, hInst, nullptr );
-	WIN_CHECK( INVALID_HANDLE_VALUE != hWnd );
+	WIN_CHECK( hWnd );
 
 	ShowWindow( hWnd, SW_SHOWDEFAULT );
 
@@ -270,7 +264,7 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
     persistentArena  = { g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ) };
     pPersistentArena    = &persistentArena;
 
-    g_NumCores            = SysGetPhysicalCoreCount();
+    g_NumCores          = SysGetPhysicalCoreCount();
 
     threadCtxArray      = ArenaNewArray<thread_ctx>( persistentArena, g_NumCores );
     for( thread_ctx& tctx : threadCtxArray )
@@ -299,24 +293,27 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
 	// NOTE: t0 = double( UINT64( 1ULL << 32 ) ) -> precision mostly const for the next ~136 years;
 	// NOTE: double gives time precision of 1 uS
-	bool			isRunning		= true;
-	const double	ticksPerSecond  = 1.0 / double( SysGetCpuFreq() );
+	bool	isRunning		= true;
+	double	ticksPerSecond  = 1.0 / double( SysGetCpuFreq() );
 	//constexpr double	dt = 0.01;
 	//double				t = double( UINT64( 1ULL << 32 ) );
 	//double				accumulator = 0;
-	u64				currentTicks	= SysTicks();
+	u64		currentTicks	= SysTicks();
 
 	while( isRunning )
 	{
-	    ht_mem_scope    memScope    = { pThreadCtx->scratchArenas[ 0 ] };
+	    ht_mem_scope<linear_arena> memScopes[] = {
+	        pThreadCtx->scratchArenas[ 0 ],
+	        pThreadCtx->scratchArenas[ 1 ]
+	    };
 
-		const u64		newTicks	= SysTicks();
-		const double	elapsedTime = double( newTicks - currentTicks ) * ticksPerSecond;
-		currentTicks				= newTicks;
+		u64		newTicks	= SysTicks();
+		double	elapsedTime = double( newTicks - currentTicks ) * ticksPerSecond;
+		currentTicks		= newTicks;
 		//accumulator += elapsedTime;
 
-		globalHtInputState			= HTReinitInputState( globalHtInputState );
-		isRunning					= SysPumpUserInput();
+		globalHtInputState	= HTReinitInputState( globalHtInputState );
+		isRunning			= SysPumpUserInput();
 
 		pHelltech->RunLoop( elapsedTime, isRunning, pThreadCtx->scratchArenas[ 0 ], globalHtInputState );
 	}

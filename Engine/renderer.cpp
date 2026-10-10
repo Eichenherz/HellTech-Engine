@@ -59,9 +59,10 @@ struct offset_allocator_t
 		return *this;
 	}
 
-	offset_alloc_t		Alloc( u32 size )
+	offset_alloc_t		Alloc( u32 sizeInBytes )
 	{
-		OffsetAllocator::Allocation alloc = mAlloc.allocate( size );
+	    HT_ASSERT( sizeInBytes );
+		OffsetAllocator::Allocation alloc = mAlloc.allocate( sizeInBytes );
 		HT_ASSERT( OffsetAllocator::Allocation::NO_SPACE != alloc.offset );
 		return alloc;
 	}
@@ -71,13 +72,14 @@ struct offset_allocator_t
 static vk_context* pVkCtx = nullptr;
 
 //====================CONSTS====================//
-constexpr u64 				MAX_FIF					= vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
-constexpr u64 				MAX_TRIANGLES_IN_SCENE	= 10'000'000;
-constexpr u64 				MAX_VERTICES_IN_SCENE	= 5'000'000;
-constexpr u64 				MAX_MESHLETS_IN_SCENE	= 100'000;
-constexpr u64 				MAX_INSTANCES_IN_SCENE	= 10'000;
-constexpr VkCullModeFlags	HT_CULL_MODE			= IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
-constexpr VkFrontFace		HT_FRONT_FACE			= IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+constexpr u64 				MAX_FIF					        = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
+constexpr u64 				MAX_TRIANGLES_IN_SCENE	        = 10'000'000;
+constexpr u64 				MAX_VERTICES_IN_SCENE	        = 5'000'000;
+constexpr u64 				MAX_MESHLETS_IN_SCENE	        = 100'000;
+constexpr u64 				MAX_INSTANCES_IN_SCENE	        = 10'000;
+constexpr VkCullModeFlags	HT_CULL_MODE			        = IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
+constexpr VkFrontFace		HT_FRONT_FACE			        = IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+constexpr u64               HT_GPU_CACHELINE_SZ_IN_BYTES    = 128;
 //==============================================//
 // TODO: cvars
 //====================CVARS=====================//
@@ -107,8 +109,8 @@ struct ht_gpu_frame_profiler
     // NOTE: these are 2 per query so we need std::size * 2
 	borrowed_array<timestamp_query>    timedZonesQueries       = {};
 	borrowed_array<pipestats_query>    pipelineStatsQueries    = {};
-	vk_buffer						    timestampQueryBuff      = {};
-	vk_buffer						    pipelineStatsQueryBuff  = {};
+	vk_buffer						   timestampQueryBuff      = {};
+	vk_buffer						   pipelineStatsQueryBuff  = {};
 
 	void ReadbackQueries( borrowed_array<ht_timed_zone>& timedGpuZones, borrowed_array<ht_pipeline_stats>& pipelinesStats )
 	{
@@ -204,15 +206,15 @@ static ht_gpu_frame_profiler HtMakeGpuFrameProfiler()
 	    .pipelineStatsQueries   = { ArenaNewArray<pipestats_query>( *pDebugArena, 128 ) },
 		.timestampQueryBuff     = pVkCtx->CreateBuffer( {
 			.name			= "Buff_ReadbackTimestampQueries",
-			.usageFlags		= VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.usageFlags		= buffer_usage::XFER_DST,
 			.sizeInBytes	= pVkCtx->timestampQueryPool.GetSizeInSlots() * sizeof( u64 ),
-			.usage			= buffer_usage::HOST_VISIBLE
+			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} ),
 		.pipelineStatsQueryBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_ReadbackTimestampQueries",
-			.usageFlags		= VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.usageFlags		= buffer_usage::XFER_DST,
 			.sizeInBytes	= pVkCtx->pplnStatsQueryPool.GetSizeInSlots() * sizeof( u64 ),
-			.usage			= buffer_usage::HOST_VISIBLE
+			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} )
 	};
 }
@@ -242,17 +244,6 @@ HT_FORCEINLINE ht_gpu_frame_profiler *const HtGetGpuFrameProfiler()
 	} while( 0 )
 
 #include "ht_renderer_types.h"
-
-// NOTE: clear depth to 0 bc we	use RevZ
-constexpr VkClearValue DEPTH_CLEAR_VAL	= {};
-constexpr VkClearValue RT_CLEAR_VAL		= {};
-
-enum render_target_op : u32
-{
-	LOAD		= VK_ATTACHMENT_LOAD_OP_LOAD,
-	LOAD_CLEAR	= VK_ATTACHMENT_LOAD_OP_CLEAR,
-	STORE		= VK_ATTACHMENT_STORE_OP_STORE
-};
 
 
 struct imgui_pass
@@ -285,7 +276,7 @@ struct imgui_pass
 			.name		= "Img_ImGuiFonts",
 			.format		= VK_FORMAT_R8G8B8A8_UNORM,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			.usgFlags	= image_usage::SAMPLED | image_usage::XFER_DST,
 			.width		= ( u16 ) width,
 			.height		= ( u16 ) height,
 			.layerCount = 1,
@@ -295,9 +286,9 @@ struct imgui_pass
 		u64 sizeInBytes = width * height * 4;
 
 		vk_buffer stagingBuff = pVkCtx->CreateBuffer( {
-			.usageFlags		= VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			.usageFlags		= buffer_usage::XFER_SRC,
 			.sizeInBytes	= sizeInBytes,
-			.usage			= buffer_usage::STAGING
+			.memProps		= buffer_mem_props::STAGING
 		} );
 
 		std::memcpy( stagingBuff.hostVisible, pixels, sizeInBytes );
@@ -343,9 +334,9 @@ struct imgui_pass
 		{
 			if( VK_NULL_HANDLE != refVtxBuff.hndl ) pVkCtx->PushResourceFree( vk_resc_deletion{ refVtxBuff, frameIdx } );
 			refVtxBuff = pVkCtx->CreateBuffer( {
-			    .usageFlags     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			    .usageFlags     = buffer_usage::STORAGE,
 				.sizeInBytes    = vtxTotalSizeInBytes,
-			    .usage          = buffer_usage::HOST_VISIBLE
+			    .memProps       = buffer_mem_props::HOST_VISIBLE
 			} );
 		}
 
@@ -353,30 +344,17 @@ struct imgui_pass
 		{
 			if( VK_NULL_HANDLE != refIdxBuff.hndl ) pVkCtx->PushResourceFree( vk_resc_deletion{ refIdxBuff, frameIdx } );
 			refIdxBuff = pVkCtx->CreateBuffer( {
-			    .usageFlags     = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			    .usageFlags     = buffer_usage::INDEX,
 				.sizeInBytes    = idxTotalSizeInBytes,
-			    .usage          = buffer_usage::HOST_VISIBLE
+			    .memProps       = buffer_mem_props::HOST_VISIBLE
 			} );
-		}
-
-		const vk_buffer& vtxBuff = refVtxBuff;
-		const vk_buffer& idxBuff = refIdxBuff;
-
-		ImDrawVert* vtxDst	= ( ImDrawVert* ) vtxBuff.hostVisible;
-		ImDrawIdx* idxDst	= ( ImDrawIdx* ) idxBuff.hostVisible;
-		for( const ImDrawList* cmdList : drawData->CmdLists )
-		{
-			std::memcpy( vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof( imgui_vertex ) );
-			std::memcpy( idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof( index_t ) );
-			vtxDst += cmdList->VtxBuffer.Size;
-			idxDst += cmdList->IdxBuffer.Size;
 		}
 
 		float2 scale		= { 2.0f / drawData->DisplaySize.x, 2.0f / drawData->DisplaySize.y };
 		float2 move			= { -1.0f - drawData->DisplayPos.x * scale.x, -1.0f - drawData->DisplayPos.y * scale.y };
 		float4 pushConst	= { scale.x, scale.y, move.x, move.y };
 
-		vk_descriptor_info pushDescs[] = { vtxBuff, {
+		vk_descriptor_info pushDescs[] = { refVtxBuff, {
 		    fontSampler, fontAtlasImg.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL }
 		};
 
@@ -404,21 +382,24 @@ struct imgui_pass
 		vkCmdBindPipeline( cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
 		vkCmdPushDescriptorSetWithTemplateKHR( cmdBuff, descTemplate, pipelineLayout, 0, pushDescs );
 		vkCmdPushConstants( cmdBuff, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( pushConst ), &pushConst );
-		vkCmdBindIndexBuffer( cmdBuff, idxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
+		vkCmdBindIndexBuffer( cmdBuff, refIdxBuff.hndl, 0, VK_INDEX_TYPE_UINT16 );
 
 		// ( 0, 0 ) unless using multi-viewports
 		float2 clipOff = { drawData->DisplayPos.x, drawData->DisplayPos.y };
 		// ( 1, 1 ) unless using retina display which are often (2,2)
 		float2 clipScale = { drawData->FramebufferScale.x, drawData->FramebufferScale.y };
 
-		u32 vtxOffset = 0, idxOffset = 0;
-		for( u32 li = 0u; li < ( u32 ) drawData->CmdListsCount; ++li )
+	    auto vtxDst	= borrowed_array{ VkBufferHostView<ImDrawVert>( refVtxBuff ) };
+	    auto idxDst	= borrowed_array{ VkBufferHostView<ImDrawIdx>( refIdxBuff ) };
+
+		for( const ImDrawList* cmdList : drawData->CmdLists )
 		{
-			const ImDrawList* cmdList = drawData->CmdLists[ li ];
-			for( u32 ci = 0u; ci < ( u32 ) cmdList->CmdBuffer.Size; ++ci )
+		    vtxDst.append_range( cmdList->VtxBuffer );
+		    idxDst.append_range( cmdList->IdxBuffer );
+
+			for( const ImDrawCmd& imCmd : cmdList->CmdBuffer )
 			{
-				const ImDrawCmd* pCmd = &cmdList->CmdBuffer[ ci ];
-			    float4 clipRect = std::bit_cast<float4>( pCmd->ClipRect );
+			    float4 clipRect = std::bit_cast<float4>( imCmd.ClipRect );
 
 				// Project scissor/clipping rectangles into framebuffer space
 				float2 clipMin = ( clipRect.xy - clipOff ) * clipScale;
@@ -430,13 +411,14 @@ struct imgui_pass
 
 				if( ht::any( clipMax < clipMin ) ) continue;
 
-				VkRect2D scissor = { i32( clipMin.x ), i32( clipMin.y ), u32( clipMax.x - clipMin.x ), u32( clipMax.y - clipMin.y ) };
+				VkRect2D scissor = { i32( clipMin.x ), i32( clipMin.y ),
+				    u32( clipMax.x - clipMin.x ), u32( clipMax.y - clipMin.y ) };
 				vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
-				vkCmdDrawIndexed( cmdBuff, pCmd->ElemCount, 1, pCmd->IdxOffset + idxOffset, pCmd->VtxOffset + vtxOffset, 0 );
+				vkCmdDrawIndexed( cmdBuff, imCmd.ElemCount, 1,
+				    imCmd.IdxOffset + std::size( idxDst ), imCmd.VtxOffset + std::size( vtxDst ),
+				    0 );
 			}
-			idxOffset += cmdList->IdxBuffer.Size;
-			vtxOffset += cmdList->VtxBuffer.Size;
 		}
 	}
 };
@@ -522,9 +504,9 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
     scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
 
 	vk_shader vtx = pVkCtx->CreateShaderFromSpirv(
-	    SysReadFileBinary( "bin/SpirV/vertex_ImGuiVsMain.spirv", tempArena ) );
+	    SysReadWholeFile( "bin/SpirV/vertex_ImGuiVsMain.spirv", tempArena ) );
 	vk_shader frag = pVkCtx->CreateShaderFromSpirv(
-	    SysReadFileBinary( "bin/SpirV/pixel_ImGuiPsMain.spirv", tempArena ) );
+	    SysReadWholeFile( "bin/SpirV/pixel_ImGuiPsMain.spirv", tempArena ) );
 
 	defer {
 		pVkCtx->DestroyShaderModule( vtx.module );
@@ -595,9 +577,9 @@ struct debug_draw_passes
 	    scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
 
 		vk_shader vtx = pVkCtx->CreateShaderFromSpirv(
-		    SysReadFileBinary( "bin/SpirV/vertex_DbgBoxVsMain.spirv", tempArena ) );
+		    SysReadWholeFile( "bin/SpirV/vertex_DbgBoxVsMain.spirv", tempArena ) );
 		vk_shader frag = pVkCtx->CreateShaderFromSpirv(
-		    SysReadFileBinary( "bin/SpirV/pixel_ColPassPsMain.spirv", tempArena ) );
+		    SysReadWholeFile( "bin/SpirV/pixel_ColPassPsMain.spirv", tempArena ) );
 
 		defer {
 			pVkCtx->DestroyShaderModule( vtx.module );
@@ -637,50 +619,48 @@ struct debug_draw_passes
 		//	1, rndCfg.desiredDepthFormat, triDrawPipelineState );
 
 		vk_shader recordDbgDraw = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_RecordDbgDrawCsMain.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_RecordDbgDrawCsMain.spirv", tempArena ) );
 		defer {  pVkCtx->DestroyShaderModule( recordDbgDraw.module ); };
 
 		compRecordDbgDraw = pVkCtx->CreateComputePipeline( recordDbgDraw );
 
-		constexpr VkBufferUsageFlags usgFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 		drawCountBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgDrawCount",
-			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT | buffer_usage::XFER_DST,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-		    .usage			= buffer_usage::GPU_ONLY,
-            .isAtomic       = true
-
+		    .memProps		= buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 
 		drawCmdsBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgDraws",
-			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT,
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( draw_instanced_indexed_indirect ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 
 		gpuInstBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgGpuInst",
-			.usageFlags		= usgFlags,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		gpuInstBuffIdx = pVkCtx->AllocDescriptorIdx( gpuInstBuff );
 
 		gpuInstCountBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgGpuInstCount",
-			.usageFlags		= usgFlags | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT | buffer_usage::XFER_DST,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-		    .usage			= buffer_usage::GPU_ONLY,
-            .isAtomic       = true
+		    .memProps		= buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		gpuInstCountBuffIdx = pVkCtx->AllocDescriptorIdx( gpuInstCountBuff );
 
 		cpuInstBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgCpuInst",
-			.usageFlags		= usgFlags,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
-			.usage			= buffer_usage::HOST_VISIBLE
+			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} );
 		cpuInstView = { VkBufferHostView<dbg_aabb_instance>( cpuInstBuff ) };
 	}
@@ -691,16 +671,16 @@ struct debug_draw_passes
 		// NOTE: arbitrary sizes chosen
 		vtxBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgVtx",
-			.usageFlags		=  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			.usageFlags		=  buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= 500 * sizeof( dbg_vertex ),
-			.usage			= buffer_usage::HOST_VISIBLE
+			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} );
 
 		idxBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgIdx",
-			.usageFlags		= VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			.usageFlags		= buffer_usage::INDEX | buffer_usage::BDA,
 			.sizeInBytes	= 2000 * sizeof( dbg_index_t ),
-			.usage			= buffer_usage::HOST_VISIBLE
+			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} );
 
 		std::memcpy( vtxBuff.hostVisible, std::data( unitCube ), BYTE_COUNT( unitCube ) );
@@ -881,24 +861,24 @@ struct culling_pass
 	{
 		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
 
-		vk_shader instCull = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+		vk_shader instCull = pVkCtx->CreateShaderFromSpirv( SysReadWholeFile(
 			"bin/SpirV/compute_DrawCullCsMain.spirv", tempArena ) );
 		instCullPass = pVkCtx->CreateComputePipeline( instCull );
 
-		vk_shader instExp = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+		vk_shader instExp = pVkCtx->CreateShaderFromSpirv( SysReadWholeFile(
 			"bin/SpirV/compute_ExpandDrawsCsMain.spirv", tempArena ) );
 		instExpansionPass = pVkCtx->CreateComputePipeline( instExp );
 
 		vk_shader dispatcher = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_IndirectDispatcherCsMain.spirv", tempArena ) );
 		indirectDispatchPass = pVkCtx->CreateComputePipeline( dispatcher );
 
 		vk_shader meshletCs = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_MeshletCullCsMain.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_MeshletCullCsMain.spirv", tempArena ) );
 		meshletCullPass = pVkCtx->CreateComputePipeline( meshletCs );
 
 		vk_shader initCs = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_CsMainCullingInit.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_CsMainCullingInit.spirv", tempArena ) );
 		cullingInitPass = pVkCtx->CreateComputePipeline( initCs );
 
 		defer {
@@ -909,111 +889,108 @@ struct culling_pass
 			pVkCtx->DestroyShaderModule( initCs.module );
 		};
 
-		constexpr VkBufferUsageFlags usgStorageAndBDA = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-			| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-
 		drawCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DrawCount",
-			.usageFlags 	= usgStorageAndBDA | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+			.usageFlags 	= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT,
 			.sizeInBytes 	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY,
-		    .isAtomic       = true
+			.memProps		= buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		drawCounterIdx = pVkCtx->AllocDescriptorIdx( drawCounter );
 
 		drawCmds = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DrawCmds",
-			.usageFlags		= usgStorageAndBDA | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT ,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT ,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_command ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		drawCmdsIdx = pVkCtx->AllocDescriptorIdx( drawCmds );
 
 		drawData = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DrawData",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_cmd_data ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		drawDataIdx = pVkCtx->AllocDescriptorIdx( drawData );
 
 		dispatchIndirect = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DispatchIndirect",
-			.usageFlags		= usgStorageAndBDA | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT,
 			.sizeInBytes	= 1 * sizeof( dispatch_command ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		dispatchIndirectIdx = pVkCtx->AllocDescriptorIdx( dispatchIndirect );
 
 		visibleInstances = pVkCtx->CreateBuffer( {
 			.name			= "Buff_VisibleInstances",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( visible_instance ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 
 		visibleInstIdx = pVkCtx->AllocDescriptorIdx( visibleInstances );
 
 		visibleInstCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_VisibleInstCounter",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY,
-            .isAtomic       = true
+			.memProps		= buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 
 		visibleInstCounterIdx = pVkCtx->AllocDescriptorIdx( visibleInstCounter );
 
 		occludedInstances = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedInstances",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( u32 ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 
 		occludedInstIdx = pVkCtx->AllocDescriptorIdx( occludedInstances );
 
 		occludedInstancesCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedInstCounter",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-		    .usage			= buffer_usage::GPU_ONLY,
-            .isAtomic       = true
+		    .memProps		= buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		occludedInstCounterIdx = pVkCtx->AllocDescriptorIdx( occludedInstancesCounter );
 
 		// NOTE: these are hard capped
 		meshletsToProcessBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_MeshletsToProcess",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		meshletsToProcessIdx = pVkCtx->AllocDescriptorIdx( meshletsToProcessBuff );
 
 		meshletsToProcessCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_MeshletsToProcessCount",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-		    .usage			= buffer_usage::GPU_ONLY,
-            .isAtomic       = true
+		    .memProps		= buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		meshletsToProcessCounterIdx = pVkCtx->AllocDescriptorIdx( meshletsToProcessCounter );
 
 		occludedMeshlets = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedMeshlets",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
-			.usage			= buffer_usage::GPU_ONLY
+			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		occludedMeshletsIdx = pVkCtx->AllocDescriptorIdx( occludedMeshlets );
 
 		occludedMeshletsCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedMeshletsCount",
-			.usageFlags		= usgStorageAndBDA,
+			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 			.sizeInBytes	= 1 * sizeof( u32 ),
-		    .usage			= buffer_usage::GPU_ONLY,
-            .isAtomic       = true
+		    .memProps		= buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		occludedMeshletsCounterIdx = pVkCtx->AllocDescriptorIdx( occludedMeshletsCounter );
 	}
@@ -1142,11 +1119,11 @@ struct tone_mapping_pass
 		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
 
 		vk_shader avgLum = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_AvgLuminanceCsMain.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_AvgLuminanceCsMain.spirv", tempArena ) );
 		compAvgLumPipe = pVkCtx->CreateComputePipeline( avgLum );
 
 		vk_shader toneMapper = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_TonemappingGammaCsMain.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_TonemappingGammaCsMain.spirv", tempArena ) );
 		compTonemapPipe = pVkCtx->CreateComputePipeline( toneMapper );
 
 		defer {
@@ -1154,29 +1131,27 @@ struct tone_mapping_pass
 			pVkCtx->DestroyShaderModule( toneMapper.module );
 		};
 
-		VkBufferUsageFlags usageFlags = 
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 		averageLuminanceBuffer = pVkCtx->CreateBuffer( {
 			.name = "Buff_AvgLum",
-			.usageFlags = usageFlags,
+			.usageFlags = buffer_usage::STORAGE | buffer_usage::XFER_DST,
 			.sizeInBytes = 1 * sizeof( float ),
-			.usage = buffer_usage::GPU_ONLY
+			.memProps = buffer_mem_props::GPU_ONLY
 		} );
 		avgLumIdx = pVkCtx->AllocDescriptorIdx( averageLuminanceBuffer );
 
 		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
 			.name = "Buff_TonemappingAtomicWgCounter",
-			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.usageFlags = buffer_usage::STORAGE | buffer_usage::XFER_DST,
 			.sizeInBytes = 1 * sizeof( u32 ),
-			.usage = buffer_usage::GPU_ONLY
+			.memProps = buffer_mem_props::GPU_ONLY
 		} );
 		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
 
 		luminanceHistogramBuffer = pVkCtx->CreateBuffer( {
 			.name = "Buff_LumHisto",
-			.usageFlags = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.usageFlags = buffer_usage::STORAGE | buffer_usage::XFER_DST,
 			.sizeInBytes = 4 * sizeof( u64 ),
-			.usage = buffer_usage::GPU_ONLY } ); 
+			.memProps = buffer_mem_props::GPU_ONLY } ); 
 		lumHistoIdx = pVkCtx->AllocDescriptorIdx( luminanceHistogramBuffer );
 	}
 
@@ -1265,13 +1240,13 @@ struct depth_pyramid_pass
 		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
 
 		vk_shader downsampler = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_Pow2DownSamplerCsMain.spirv", tempArena ) );
 		defer { pVkCtx->DestroyShaderModule( downsampler.module ); };
 
 		multiPassPipeline = pVkCtx->CreateComputePipeline( downsampler );
 
 		vk_shader pow2DownsamplerShader = pVkCtx->CreateShaderFromSpirv(
-			SysReadFileBinary( "bin/SpirV/compute_DownsamplerCsMain.spirv", tempArena ) );
+			SysReadWholeFile( "bin/SpirV/compute_DownsamplerCsMain.spirv", tempArena ) );
 		defer { pVkCtx->DestroyShaderModule( pow2DownsamplerShader.module ); };
 
 		pow2DownsamplerPipeline = pVkCtx->CreateComputePipeline( pow2DownsamplerShader );
@@ -1279,15 +1254,11 @@ struct depth_pyramid_pass
 		u16 hzbWidth    = std::bit_floor( srcWidth );
 		u16 hzbHeight   = std::bit_floor( srcHeight );
 
-		constexpr VkImageUsageFlags hiZUsg =
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
 		image_info hzbInfo = {
 			.name		= "Img_HZB",
 			.format		= VK_FORMAT_R32_SFLOAT,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= hiZUsg,
+			.usgFlags	= image_usage::SAMPLED | image_usage::STORAGE | image_usage::XFER_SRC | image_usage::XFER_DST,
 			.width		= hzbWidth,
 			.height		= hzbHeight,
 			.layerCount = 1,
@@ -1307,10 +1278,10 @@ struct depth_pyramid_pass
 
 		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
 			.name           = "Buff_DownsamplerAtomicWgCounter",
-			.usageFlags     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.usageFlags     = buffer_usage::STORAGE | buffer_usage::XFER_DST,
 			.sizeInBytes    = 1 * sizeof( u32 ),
-		    .usage          = buffer_usage::GPU_ONLY,
-            .isAtomic       = true
+		    .memProps       = buffer_mem_props::GPU_ONLY,
+		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
 
@@ -1467,7 +1438,7 @@ struct vbuffer_pass
 			.name		= "Img_VBufferTarget",
 			.format		= VBUFF_FORMAT,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.usgFlags	= image_usage::COLOR_TARGET | image_usage::SAMPLED,
 			.width		= width,
 			.height		= height,
 			.layerCount = 1,
@@ -1479,9 +1450,9 @@ struct vbuffer_pass
 		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
 
 		vk_shader vtx = pVkCtx->CreateShaderFromSpirv(
-		    SysReadFileBinary( "bin/SpirV/vertex_VBufferVsMain.spirv", tempArena ) );
+		    SysReadWholeFile( "bin/SpirV/vertex_VBufferVsMain.spirv", tempArena ) );
 		vk_shader frag = pVkCtx->CreateShaderFromSpirv(
-		    SysReadFileBinary( "bin/SpirV/pixel_VBufferPsMain.spirv", tempArena ) );
+		    SysReadWholeFile( "bin/SpirV/pixel_VBufferPsMain.spirv", tempArena ) );
 
 		defer {
 			pVkCtx->DestroyShaderModule( vtx.module );
@@ -1506,10 +1477,10 @@ struct vbuffer_pass
 		    depthFormat, vbuffState, pVkCtx->globalPipelineLayout );
 
 		vk_shader comp = pVkCtx->CreateShaderFromSpirv(
-				SysReadFileBinary( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv", tempArena ) );
+				SysReadWholeFile( "bin/SpirV/compute_VBufferDbgDrawCsMain.spirv", tempArena ) );
 		compDbgHashTriToScPipeline = pVkCtx->CreateComputePipeline( comp );
 		vk_shader lambert = pVkCtx->CreateShaderFromSpirv(
-				SysReadFileBinary( "bin/SpirV/compute_LambertianClayCsMain.spirv", tempArena ) );
+				SysReadWholeFile( "bin/SpirV/compute_LambertianClayCsMain.spirv", tempArena ) );
 		compLambertianClay = pVkCtx->CreateComputePipeline( lambert );
 
 		defer {
@@ -1621,7 +1592,7 @@ struct fwd_pass
 	{
 		scoped_arena tempArena = { pThreadCtx->scratchArenas[ 0 ] };
 
-		vk_shader vtxDepth = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+		vk_shader vtxDepth = pVkCtx->CreateShaderFromSpirv( SysReadWholeFile(
 				"bin/SpirV/vertex_DepthPrepassVsMain.spirv", tempArena ) );
 
 		vk_gfx_pso_config depthPrepassState = {
@@ -1641,9 +1612,9 @@ struct fwd_pass
 		gfxDepthPrepass = pVkCtx->CreateGfxPipeline( shaderStagesDepth, dynamicStatesDepth, {},
 		    depthFormat, depthPrepassState, pVkCtx->globalPipelineLayout );
 
-		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+		vk_shader vtx = pVkCtx->CreateShaderFromSpirv( SysReadWholeFile(
 				"bin/SpirV/vertex_MeshletPassVsMain.spirv", tempArena ) );
-		vk_shader frag = pVkCtx->CreateShaderFromSpirv( SysReadFileBinary(
+		vk_shader frag = pVkCtx->CreateShaderFromSpirv( SysReadWholeFile(
 			"bin/SpirV/pixel_MeshletClayPassPsMain.spirv", tempArena ) );
 
 		vk_gfx_pso_config gfxState = {
@@ -1752,13 +1723,12 @@ struct fwd_pass
 	}
 };
 
-struct ht_mesh_component
+struct ht_mesh_alloc_t
 {
-	gpu_mesh					desc;
-	offset_alloc_t 				mltAlloc;
-	offset_alloc_t 				vtxPosAlloc;
-	offset_alloc_t 				vtxAttrsAlloc;
-	offset_alloc_t 				triAlloc;
+    offset_alloc_t hMlt;
+    offset_alloc_t hVtxPos;
+    offset_alloc_t hVtxAttrs;
+    offset_alloc_t hIdx;
 };
 
 struct virtual_frame
@@ -1766,40 +1736,45 @@ struct virtual_frame
 	VkSemaphore                 canGetImgSema;
 	vk_buffer	                viewData;
 
-	vk_buffer					gpuMeshTable;
-	//vk_buffer					gpuMaterialSlotBuff;
+	vk_buffer					gpuMeshBoundsBuff;
+	vk_buffer                   gpuMeshResidencyTable;
 
 	vk_buffer                   gpuInstances;
 
 	desc_hndl32                 viewDataIdx;
-	desc_hndl32					gpuMeshTableDesc;
-	//desc_hndl32				gpuMaterialSlotBuffDesc;
+	desc_hndl32					gpuMeshBoundsDesc;
+    desc_hndl32					gpuMeshResidencyTableDesc;
 
 	desc_hndl32                 instDesc;
-
-	u32                         fifIdx; // NOTE: for debug
 };
 
 static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 {
-	constexpr VkBufferUsageFlags usg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 	fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
 
 	vk_buffer viewData = pVkCtx->CreateBuffer( {
 		.name			= std::data( name ),
-		.usageFlags		= usg,
+		.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 		.sizeInBytes	= sizeInBytes,
-		.usage			= buffer_usage::HOST_VISIBLE
+		.memProps		= buffer_mem_props::HOST_VISIBLE
 	} );
 
 	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 1024;
-	fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
+	fixed_string<64> meshBoundsName = { "Buff_VirtualFrame_MeshBounds{}", fifIdx };
+    fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshResidencyTable{}", fifIdx };
 
-	vk_buffer gpuMeshTable = pVkCtx->CreateBuffer( {
+    vk_buffer gpuMeshBoundsBuff = pVkCtx->CreateBuffer( {
+        .name			= std::data( meshBoundsName ),
+        .usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
+        .sizeInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh_bounds ),
+        .memProps		= buffer_mem_props::HOST_VISIBLE
+    } );
+
+	vk_buffer gpuMeshResidencyTable = pVkCtx->CreateBuffer( {
 		.name			= std::data( meshTableName ),
-		.usageFlags		= usg,
-		.sizeInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh ),
-		.usage			= buffer_usage::HOST_VISIBLE
+		.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
+		.sizeInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh_residency ),
+		.memProps		= buffer_mem_props::HOST_VISIBLE
 	} );
 
 	constexpr u64 DEFAULT_INST_COUNT = 10'000;
@@ -1807,20 +1782,21 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 
 	vk_buffer gpuInstances = pVkCtx->CreateBuffer( {
 		.name			= std::data( instName ),
-		.usageFlags		= usg,
+		.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
 		.sizeInBytes	= DEFAULT_INST_COUNT * sizeof( instance_desc ),
-		.usage			= buffer_usage::HOST_VISIBLE
+		.memProps		= buffer_mem_props::HOST_VISIBLE
 	} );
 
 	return {
-		.canGetImgSema		= pVkCtx->CreateBinarySemaphore(),
-		.viewData			= viewData,
-		.gpuMeshTable		= gpuMeshTable,
-		.gpuInstances		= gpuInstances,
-		.viewDataIdx		= pVkCtx->AllocDescriptorIdx( viewData ),
-		.gpuMeshTableDesc	= pVkCtx->AllocDescriptorIdx( gpuMeshTable ),
-		.instDesc			= pVkCtx->AllocDescriptorIdx( gpuInstances ),
-		.fifIdx				= fifIdx,
+		.canGetImgSema		        = pVkCtx->CreateBinarySemaphore(),
+		.viewData			        = viewData,
+		.gpuMeshBoundsBuff		    = gpuMeshBoundsBuff,
+	    .gpuMeshResidencyTable      = gpuMeshResidencyTable,
+		.gpuInstances		        = gpuInstances,
+		.viewDataIdx		        = pVkCtx->AllocDescriptorIdx( viewData ),
+		.gpuMeshBoundsDesc	        = pVkCtx->AllocDescriptorIdx( gpuMeshBoundsBuff ),
+	    .gpuMeshResidencyTableDesc  = pVkCtx->AllocDescriptorIdx( gpuMeshResidencyTable ),
+		.instDesc			        = pVkCtx->AllocDescriptorIdx( gpuInstances )
 	};
 }
 
@@ -1831,7 +1807,8 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 // but the engine only issues the available instances and only valid data is accessed.
 struct renderer_context final : renderer_interface
 {
-	using mesh_hndl32 = borrowed_slot_array<ht_mesh_component>::hndl32;
+    using ht_mesh_components = soa_slot_array<gpu_mesh_bounds, gpu_mesh_residency, ht_mesh_alloc_t>;
+	using HMESH32 = ht_mesh_components::hndl32;
 
 	alignas( 8 ) vk_renderer_config         config = {};
 
@@ -1842,8 +1819,8 @@ struct renderer_context final : renderer_interface
 	debug_draw_passes						dbgPass;
 	vbuffer_pass							vBuffPass;
 	fwd_pass								fwdPass;
-	// NOTE: will hold all the renderer components, both available and pending upload
-	borrowed_slot_array<ht_mesh_component>	rendererComponents;
+
+	ht_mesh_components	                    meshComponents;
 
 	std::array<virtual_frame, MAX_FIF>	    vrtFrames;
 
@@ -1877,28 +1854,30 @@ struct renderer_context final : renderer_interface
 	const u32								framesInFlight = MAX_FIF;
 
 
-	void        InitBackend( u64 hInst, u64 hWnd ) override;
+	void            InitBackend( u64 hInst, u64 hWnd ) override;
 
-	HRNDMESH32  AllocMeshComponent( const hpk_mesh_desc& mesh ) override;
-	bool        PollJobCompletion( atomic_u64* hJobDoneSignal ) override
+	HRNDMESH32      AllocMeshSlot( const hpk_mesh_desc& mesh, const hpk_lod_desc& lod ) override;
+	bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) override
 	{
 	    // TODO: don't hardcode like this; but we know the upload flow here sooooo
 	    return VkGetTimelineSemaValue( pVkCtx->device, pVkCtx->copyQueue.timelineSema ) >=
 	        SysAtomicRead64<sys_fence_t::ACQ>( hJobDoneSignal );
 	}
-	void        UploadMeshes( atomic_u64* hJobDoneSignal,
-	    std::span<const mesh_upload_req> meshAssets, linear_arena& arena ) override;
+	void            UploadMeshes( atomic_u64* hJobDoneSignal, std::span<const mesh_upload_req> meshAssets,
+	                                linear_arena& arena ) override;
 
-	void        HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData ) override;
+	void            HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData ) override;
 
-	u32         UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData ); /* numValidInstances */
-	void        CreateGlobalTargets( u16 width, u16 height )
+    std::span<u8>   GetDmaBuffer() override { return VkBufferHostView<u8>( stagingBuff ); }
+
+	u32             UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData ); /* numValidInstances */
+	void            CreateGlobalTargets( u16 width, u16 height )
 	{
 		depthTarget = pVkCtx->CreateImage( {
 			.name		= "Img_DepthTarget",
 			.format		= config.DEPTH_FORMAT,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.usgFlags	= image_usage::DEPTH_TARGET | image_usage::SAMPLED,
 			.width		= width,
 			.height		= height,
 			.layerCount = 1,
@@ -1907,14 +1886,11 @@ struct renderer_context final : renderer_interface
 
 		depthSrv = pVkCtx->AllocDescriptorIdx( { depthTarget.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL } );
 
-		constexpr VkImageUsageFlags colorUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-	        | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-
 		colorTarget = pVkCtx->CreateImage( {
 			.name		= "Img_ColorTarget",
 			.format		= config.desiredColorFormat,
 			.type		= VK_IMAGE_TYPE_2D,
-			.usgFlags	= colorUsageFlags,
+			.usgFlags	= image_usage::COLOR_TARGET | image_usage::SAMPLED | image_usage::STORAGE | image_usage::XFER_SRC,
 			.width		= width,
 			.height		= height,
 			.layerCount = 1,
@@ -1934,9 +1910,9 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	pVkCtx = ArenaMake<vk_context>( *pPersistentArena, VkMakeContext( hInst, hWnd, config ) );
 
 	globalData = pVkCtx->CreateBuffer( {
-		.usageFlags		= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		.usageFlags		= buffer_usage::STORAGE,
 		.sizeInBytes	= sizeof( global_data ),
-		.usage			= buffer_usage::HOST_VISIBLE
+		.memProps		= buffer_mem_props::HOST_VISIBLE
 	} );
 	globalDataIdx = pVkCtx->AllocDescriptorIdx( globalData );
 	// NOTE: this is a workaround, must be first so we match idx 0
@@ -1951,46 +1927,44 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 	stagingBuff = pVkCtx->CreateBuffer( {
 		.name			= "StagingBuff",
-		.usageFlags		= VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		.usageFlags		= buffer_usage::XFER_SRC,
 		.sizeInBytes	= 256 * MB,
-		.usage			= buffer_usage::STAGING
+		.memProps		= buffer_mem_props::STAGING,
+	    .alignment      = RAW_FILE_READ_ALIGNMENT // NOTE: this is necessary if we use this as the io ring dst too
 	} );
 
-	constexpr VkBufferUsageFlags megaBuffUsg = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuMeshletBuff",
-		.usageFlags		= megaBuffUsg,
+		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( gpu_meshlet ),
-		.usage			= buffer_usage::GPU_ONLY,
-
+		.memProps		= buffer_mem_props::GPU_ONLY,
 	} );
 	megaGpuVtxAttrsBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuVtxAttrsBuff",
-		.usageFlags		= megaBuffUsg,
+		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		.sizeInBytes	= MAX_VERTICES_IN_SCENE * sizeof( packed_vtx_attr ),
-		.usage			= buffer_usage::GPU_ONLY
+		.sizeInBytes	= MAX_VERTICES_IN_SCENE * sizeof( oct16x2 ),
+		.memProps		= buffer_mem_props::GPU_ONLY
 	} );
 	megaGpuVtxPosBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuVtxPosBuff",
-		.usageFlags		= megaBuffUsg,
+		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		// NOTE: to u32 bc we'll unpack via that in the shader
 		.sizeInBytes	= FwdAlignPot( MAX_VERTICES_IN_SCENE * sizeof( u32x3 ), sizeof( u32 ) ),
-		.usage			= buffer_usage::GPU_ONLY
+		.memProps		= buffer_mem_props::GPU_ONLY
 	} );
-	HT_ASSERT( FwdAlignPot( megaGpuVtxPosBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuVtxPosBuff.sizeInBytes );
+	HT_ASSERT( IsAlignedToPot( megaGpuVtxPosBuff.sizeInBytes, sizeof( u32 ) ) );
 
 	megaGpuIdxBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuIdxBuff",
-		.usageFlags		= megaBuffUsg | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA | buffer_usage::INDEX,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
 		// bounds accesses, essentially we'll read garbage data safely
 		.sizeInBytes	= FwdAlignPot( 3 * MAX_TRIANGLES_IN_SCENE * sizeof( index_t ), sizeof( u32 ) ),
-		.usage			= buffer_usage::GPU_ONLY
+		.memProps		= buffer_mem_props::GPU_ONLY
 	} );
 	HT_ASSERT( FwdAlignPot( megaGpuIdxBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuIdxBuff.sizeInBytes );
 
@@ -2024,49 +1998,37 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		globalHtGpuFrameProfiler[ fifIdx ]  = HtMakeGpuFrameProfiler();
 	}
 
-    rendererComponents  = HtMakeSlotArray<ht_mesh_component>( *pPersistentArena, 10'000 );
+    meshComponents = ht_mesh_components{ *pPersistentArena, 5'000 };
 }
 
-HRNDMESH32 renderer_context::AllocMeshComponent( const hpk_mesh_desc& mesh )
+HRNDMESH32 renderer_context::AllocMeshSlot( const hpk_mesh_desc& mesh, const hpk_lod_desc& lod )
 {
-	std::span<const u8> mltAsBytes		= AsBytes( mesh.meshlets );
-	std::span<const u8> vtxPosAsBytes	= AsBytes( mesh.vtxPosBitstream );
-	std::span<const u8> vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs );
-	std::span<const u8> idxAsBytes		= AsBytes( mesh.indices );
+    gpu_mesh_bounds gpuMeshBounds = { .lod4Err = mesh.lodErrs, .aabbMin	= mesh.aabbMin, .aabbMax = mesh.aabbMax };
 
-	HT_ASSERT( std::size( mltAsBytes ) && std::size( vtxPosAsBytes )
-	    && std::size( vtxAttrsAsBytes ) && std::size( idxAsBytes ) );
+    ht_mesh_alloc_t meshAlloc = {
+        .hMlt       = meshletAllocator.Alloc( lod.mltsSzInBytes ),
+        .hVtxPos    = vtxPosAllocator.Alloc( lod.posSzInBytes ),
+        .hVtxAttrs  = vtxAttrsAllocator.Alloc( lod.normalsSzInBytes ),
+        .hIdx       = idxAllocator.Alloc( lod.idxBuffSzInBytes )
+    };
 
-	offset_alloc_t mltAlloc		= meshletAllocator.Alloc( ( u32 ) std::size( mltAsBytes ) );
-	offset_alloc_t vtxPosAlloc	= vtxPosAllocator.Alloc( ( u32 ) std::size( vtxPosAsBytes ) );
-	offset_alloc_t vtxAttrAlloc	= vtxAttrsAllocator.Alloc( ( u32 ) std::size( vtxAttrsAsBytes ) );
-	offset_alloc_t idxAlloc		= idxAllocator.Alloc( ( u32 ) std::size( idxAsBytes ) );
+	// TODO: move in the offset allocator and type it
+	HT_ASSERT( !( meshAlloc.hMlt.offset % sizeof( gpu_meshlet ) ) && !( meshAlloc.hVtxAttrs.offset % sizeof( oct16x2 ) ) );
 
-	// NOTE: since we alloc elements of the same type, the allocator MUST preserve the stride. Sanity check
-	HT_ASSERT( 0 == ( mltAlloc.offset % HtElemStrideInBytes( mesh.meshlets ) ) );
-	HT_ASSERT( 0 == ( vtxAttrAlloc.offset % HtElemStrideInBytes( mesh.vertexAttrs ) ) );
 
-	// NOTE: this MUST be in elements bc we use it on the gpu as such
-	gpu_mesh gpuMesh = {
-		.lod4Err					= mesh.lodErrs,
-		.aabbMin					= mesh.aabbMin,
-		.aabbMax					= mesh.aabbMax,
-		.packed16x4_meshletCounts	= mesh.packed16x4_lodMltCounts,
-		.vtxPosOffsetInBytes		= vtxPosAlloc.offset,
-		.vtxAttrsOffset				= vtxAttrAlloc.offset / HtElemStrideInBytes( mesh.vertexAttrs ),
-		.idxOffset					= idxAlloc.offset / HtElemStrideInBytes( mesh.indices ),
-		.meshletOffset				= mltAlloc.offset / HtElemStrideInBytes( mesh.meshlets ),
+    // NOTE: this MUST be in elements bc we use it on the gpu as such
+    gpu_mesh_residency gpuMeshRes = {
+        .lods = { {}, {}, {},
+            gpu_mesh_lod{
+                .vtxPosOffsetInBytes = meshAlloc.hVtxPos.offset,
+                .vtxAttrsOffset		 = meshAlloc.hVtxAttrs.offset / ( u32 ) sizeof( oct16x2 ),
+                .idxOffset			 = meshAlloc.hIdx.offset,
+                .meshletOffset		 = meshAlloc.hMlt.offset / ( u32 ) sizeof( gpu_meshlet ),
+            }
+        }
 	};
 
-	ht_mesh_component htMesh = {
-		.desc			= gpuMesh,
-		.mltAlloc		= mltAlloc,
-		.vtxPosAlloc	= vtxPosAlloc,
-		.vtxAttrsAlloc	= vtxAttrAlloc,
-		.triAlloc		= idxAlloc
-	};
-
-	return std::bit_cast<u32>( rendererComponents.push_entry( htMesh ) );
+	return std::bit_cast<u32>( meshComponents.push_entry( gpuMeshBounds, gpuMeshRes, meshAlloc ) );
 }
 
 void renderer_context::UploadMeshes(
@@ -2080,17 +2042,13 @@ void renderer_context::UploadMeshes(
 
 	u64 copyCmdCount = std::size( meshUploadReqs );
 
-	arena_array<VkBufferCopy2> mltRegionCopies{ &arena };
-	mltRegionCopies.reserve( copyCmdCount );
-	arena_array<VkBufferCopy2> vtxPosRegionCopies{ &arena };
-	vtxPosRegionCopies.reserve( copyCmdCount );
-	arena_array<VkBufferCopy2> vtxAttrsRegionCopies{ &arena };
-	vtxAttrsRegionCopies.reserve( copyCmdCount );
-	arena_array<VkBufferCopy2> idxRegionCopies{ &arena };
-	idxRegionCopies.reserve( copyCmdCount );
+	auto mltRegionCopies        = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, copyCmdCount ) };
+    auto vtxPosRegionCopies     = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, copyCmdCount ) };
+    auto vtxAttrsRegionCopies   = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, copyCmdCount ) };
+    auto idxRegionCopies        = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, copyCmdCount ) };
 
 	auto CopyScaffoldingLambda = [ & ] (
-		arena_array<VkBufferCopy2>& regionCopies,
+		borrowed_array<VkBufferCopy2>& regionCopies,
 		std::span<const u8>			bytesSrc,
 		u32							dstOffsetInBytes
 	){
@@ -2101,12 +2059,12 @@ void renderer_context::UploadMeshes(
 
 	for( const mesh_upload_req& meshUpload : meshUploadReqs )
 	{
-		const ht_mesh_component& htMesh = rendererComponents[ std::bit_cast<mesh_hndl32>( meshUpload.hSlot ) ];
+		//const ht_mesh_component& htMesh = meshComponents[ std::bit_cast<mesh_hndl32>( meshUpload.hSlot ) ];
 
-		CopyScaffoldingLambda( mltRegionCopies, meshUpload.mltAsBytes, htMesh.mltAlloc.offset );
-		CopyScaffoldingLambda( vtxPosRegionCopies, meshUpload.vtxPosAsBytes, htMesh.vtxPosAlloc.offset );
-		CopyScaffoldingLambda( vtxAttrsRegionCopies, meshUpload.vtxAttrsAsBytes, htMesh.vtxAttrsAlloc.offset );
-		CopyScaffoldingLambda( idxRegionCopies, meshUpload.idxAsBytes, htMesh.triAlloc.offset );
+		//CopyScaffoldingLambda( mltRegionCopies, meshUpload.mltAsBytes, htMesh.mltAlloc.offset );
+		//CopyScaffoldingLambda( vtxPosRegionCopies, meshUpload.vtxPosAsBytes, htMesh.vtxPosAlloc.offset );
+		//CopyScaffoldingLambda( vtxAttrsRegionCopies, meshUpload.vtxAttrsAsBytes, htMesh.vtxAttrsAlloc.offset );
+		//CopyScaffoldingLambda( idxRegionCopies, meshUpload.idxAsBytes, htMesh.triAlloc.offset );
 	}
 
 	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdBufferForQueue( vk_queue_t::COPY );
@@ -2125,28 +2083,21 @@ void renderer_context::UploadMeshes(
 
 u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )
 {
-	HT_ASSERT( BYTE_COUNT( frameData.views ) <= thisVFrame.viewData.sizeInBytes );
-	std::memcpy( thisVFrame.viewData.hostVisible, std::data( frameData.views ), BYTE_COUNT( frameData.views ) );
+	HtCopyFullRange( frameData.views, VkBufferHostView<view_data>( thisVFrame.viewData ) );
+	HtCopyFullRange( meshComponents.get<gpu_mesh_bounds>(),
+	    VkBufferHostView<gpu_mesh_bounds>( thisVFrame.gpuMeshBoundsBuff ) );
+	HtCopyFullRange( meshComponents.get<gpu_mesh_residency>(),
+	    VkBufferHostView<gpu_mesh_residency>( thisVFrame.gpuMeshResidencyTable ) );
 
-	borrowed_array<gpu_mesh> gpuMeshTable = VkBufferHostView<gpu_mesh>( thisVFrame.gpuMeshTable );
-	// NOTE: for now we alloc for worst scenario and copy it with invalid slots too, those won't be accessed anyways
-	HT_ASSERT( std::size( rendererComponents ) <= gpuMeshTable.capacity() );
-
-	for( const auto& slot : rendererComponents )
-	{
-		gpuMeshTable.push_back( slot.item.desc );
-	}
 
 	borrowed_array<gpu_instance> gpuInstList = VkBufferHostView<gpu_instance>( thisVFrame.gpuInstances );
-	HT_ASSERT( std::size( frameData.instances ) <= gpuInstList.capacity() );
 
 	for( const instance_desc& sceneNode : frameData.instances )
 	{
-		mesh_hndl32 hMesh = std::bit_cast<mesh_hndl32>( sceneNode.meshIdx );
 		gpuInstList.push_back( {
 			.toWorld	= TrsToFloat4x3RowMaj( sceneNode.transform ),
 			.scale		= sceneNode.transform.s,
-			.meshIdx	= hMesh.slotIdx
+			.meshIdx	= std::bit_cast<HMESH32>( sceneNode.meshIdx ).slotIdx
 		} );
 	}
 
@@ -2162,9 +2113,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 
 	globalCurrentFifIdx                 = currentFrameInFlightIdx;
 
-	VkResult timelineWaitResult         = pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline,
-	    framesInFlight, UINT64_MAX );
-	HT_ASSERT( timelineWaitResult < VK_TIMEOUT );
+    HT_ASSERT( VK_TIMEOUT > pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, ~0ull )  );
 
 	HtGetGpuFrameProfiler()->ReadbackQueries( gpuData.timedZones, gpuData.pipelinesStats );
 
@@ -2225,7 +2174,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 		.dbgGpuInstCountBuff	= dbgPass.gpuInstCountBuff,
 		.instCount				= instCount,
 		.instBuffIdx			= thisVFrame.instDesc,
-		.meshTableIdx			= thisVFrame.gpuMeshTableDesc,
+		.meshTableIdx			= thisVFrame.gpuMeshBoundsDesc,
 		.viewBuffIdx			= thisVFrame.viewDataIdx,
 		.camIdx					= !frameData.dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here ?
 		.hizDesc				= hzbPass.hzbDesc,
@@ -2278,17 +2227,19 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 	};
 	//fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, fwdPassArgs, false, frameData.dbgDrawFlags.drawXRayMode );
 
+    ht_img_layout_transition hzbReadDepth = {
+        depthTarget, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL
+    };
 	thisFrameCmdBuff.CmdBarrier( HT_SYNC_EXEC_MASK_GFX, HT_SYNC_EXEC_MASK_COMP_DST,
-		HT_SYNC_CACHE_FLUSH_MASK_DEPTH_TARGET, HT_SYNC_CACHE_INVAL_MASK_SHADER,
-		{ depthTarget, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL } );
+		HT_SYNC_CACHE_FLUSH_MASK_DEPTH_TARGET, HT_SYNC_CACHE_INVAL_MASK_SHADER, hzbReadDepth );
 	hzbPass.Execute( thisFrameCmdBuff, depthTarget, depthSrv );
 
 	HT_TIMED_ZONE( thisFrameCmdBuff, "GPU Culling 2nd Pass", cullingPass.Execute(
 	    thisFrameCmdBuff, cullPassArgs, true, cullDbgFlags ) );
 
 	//fwdPass.DrawIndexedIndirect( thisFrameCmdBuff, fwdPassArgs, true, frameData.dbgDrawFlags.drawXRayMode );
-	ht_img_layout_transition depthToDrawLate[] = {
-		{ depthTarget, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL }
+	ht_img_layout_transition depthToDrawLate = {
+		depthTarget, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL
 	};
 	thisFrameCmdBuff.CmdBarrier( HT_SYNC_EXEC_MASK_COMP_SRC, HT_SYNC_EXEC_MASK_GFX,
 		HT_SYNC_CACHE_FLUSH_MASK_SHADER, HT_SYNC_CACHE_INVAL_MASK_GFX, depthToDrawLate );
@@ -2306,7 +2257,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 	if( !frameData.dbgDrawFlags.vBuffPixelHash )
 	{
 		vBuffPass.DbgDrawAsLamberitanClay( thisFrameCmdBuff, colorTarget, colorDesc,
-			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx );
+			thisVFrame.instDesc, thisVFrame.gpuMeshBoundsDesc, thisVFrame.viewDataIdx );
 
 		// TODO: tonemapping
 	}
@@ -2319,8 +2270,8 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 	// NOTE: these are conditional
 	dbgPass.AssembleCPUInstanceBuffer( frameData.frustTransf, frameData.dbgDrawFlags.dbgDraw,
 		frameData.dbgDrawFlags.freezeMainView );
-	ht_img_layout_transition colorToDraw[] = {
-		{ colorTarget, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL }
+	ht_img_layout_transition colorToDraw = {
+		colorTarget, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL
 	};
 	thisFrameCmdBuff.CmdBarrier( HT_SYNC_EXEC_MASK_COMP_SRC, HT_SYNC_EXEC_MASK_GFX,
 		HT_SYNC_CACHE_FLUSH_MASK_SHADER, HT_SYNC_CACHE_INVAL_MASK_GFX, colorToDraw );

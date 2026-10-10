@@ -15,27 +15,7 @@
 // TODO: use our own
 #include <ankerl/unordered_dense.h>
 
-
-// NOTE: can't move or copy bc out stack holds pointers + the OS also holds pointers here !
-struct hpk_asset_file
-{
-    using io_req_pool = inline_atomic_stack<ht_os_io_request, OS_MAX_ASYNC_IO_REQS_IN_FLIGHT>;
-
-    void*       hIOPort = nullptr;
-    void*       hFile   = nullptr;
-    io_req_pool reqPool = {};
-
-    hpk_asset_file() = default;
-    hpk_asset_file( const char* filePath, u64 workerCount ) :
-        hIOPort{ HtOsCreateIOCompletionPort( workerCount ) },
-        hFile{ ht_os_create_file( filePath, file_perm_t::READ, file_create_t::OPEN_IF_EXISTS,
-            file_access_t::CONCURRENT_UNBUFFERED, hIOPort ) }
-    {}
-
-    void ReadFile( u64 offsetInBytes, u64 sizeInBytes, linear_arena& refArena ){}
-
-    NO_COPY(); NO_MOVE();
-};
+#include "System/sys_io_ring.h"
 
 
 //==================CONSTEXPR===================//
@@ -48,7 +28,6 @@ static linear_arena g_GameArena     = {};
 static linear_arena g_DebugArena    = {};
 linear_arena*       pGameArena      = nullptr;
 linear_arena*       pDebugArena     = nullptr;
-hpk_asset_file*     pAssetFile      = {};
 //==============================================//
 
 // Virtual camera
@@ -71,8 +50,11 @@ struct virtual_camera
 	float				pitch		= 0.0f;
 	float				yaw			= 0.0f;
 
+    virtual_camera() = default;
+
     virtual_camera( float2 viewportDim, float radsYFov, float zNear, bool isRH ) :
-        proj{ PerspRevZInfFarFromFovAndAspectRatio( radsYFov, viewportDim.x / viewportDim.y, zNear, isRH ) },
+        // NOTE: MUST use () here bc of  clang's float4x4 !!!
+        proj( PerspRevZInfFarFromFovAndAspectRatio( radsYFov, viewportDim.x / viewportDim.y, zNear, isRH ) ),
         viewportDim{ viewportDim }, PfnLookAt{ isRH ? MatLookAtRH : MatLookAtLH }, zNear{ zNear }
     {}
 
@@ -92,7 +74,7 @@ struct virtual_camera
 	}
 };
 
-view_data ViewData( const virtual_camera& virtCam )
+inline view_data ViewData( const virtual_camera& virtCam )
 {
     return {
         .proj			= virtCam.proj,
@@ -157,8 +139,6 @@ inline move_cam_action GetMoveCamAction(
 	float					moveSpeed,
 	float					mouseSensitivity
 ) {
-	using namespace DirectX;
-
 	float3 camMove = {};
 	if( inputState.IsButtonDown( GLOB_ACTION_MAP.fwd ) )    camMove += WORLD_FWD;
 	if( inputState.IsButtonDown( GLOB_ACTION_MAP.left ) )   camMove += WORLD_LEFT;
@@ -184,8 +164,8 @@ inline move_cam_action GetMoveCamAction(
 
 // Job system
 job_system_ctx::job_system_ctx()
-    : queue{ ArenaNewArray<job_t>( *pPersistentArena, 128 ) } {}
-void job_system_ctx::SubmitJob( job_t job )
+    : queue{ ArenaNewArray<ht_job_t>( *pPersistentArena, 128 ) } {}
+void job_system_ctx::SubmitJob( ht_job_t job )
 {
 	HT_ASSERT( queue.TryPush( job ) );
 	SysSemaphoreRelease( sema, 1 );
@@ -262,7 +242,6 @@ struct helltech final : helltech_interface
 	void RunLoop( double elapsedTime, bool isRunning, linear_arena& scratchArena,
 	    const ht_input_state& inputState ) override;
 	void UploadAssets( linear_arena& virtualStack );
-
 };
 
 void ImGuiPrintPipelineStats( const void* pData )
@@ -270,20 +249,34 @@ void ImGuiPrintPipelineStats( const void* pData )
     const borrowed_array<ht_pipeline_stats>& htPipelineStats = *( const borrowed_array<ht_pipeline_stats>* ) pData;
 	for( const ht_pipeline_stats& ps : htPipelineStats )
 	{
-		if( ps.inputAssemblyVtxNum ) ImGuiTxt( fixed_string<128>{ "{} IA vertices : {}",
-			ps.name, ps.inputAssemblyVtxNum } );
-		if( ps.inputAssemblyPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} IA primitives : {}",
-			ps.name, ps.inputAssemblyPrimitiveNum } );
-		if( ps.vsInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} VS invocations : {}",
-			ps.name, ps.vsInvocationNum } );
-		if( ps.clipInvocationNum ) ImGuiTxt( fixed_string<128>{ "{} Clip invocations : {}",
-			ps.name, ps.clipInvocationNum } );
-		if( ps.clipPrimitiveNum ) ImGuiTxt( fixed_string<128>{ "{} Clip primitives : {}",
-			ps.name, ps.clipPrimitiveNum } );
-		if( ps.psInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} PS invocations : {}",
-			ps.name, ps.psInvocationCount } );
-		if( ps.csInvocationCount ) ImGuiTxt( fixed_string<128>{ "{} CS invocations : {}",
-			ps.name, ps.csInvocationCount } );
+		if( ps.inputAssemblyVtxNum )
+		{
+		    ImGuiTxt( fixed_string<128>{ "{} IA vertices : {}", ps.name, ps.inputAssemblyVtxNum } );
+		}
+		if( ps.inputAssemblyPrimitiveNum )
+		{
+		    ImGuiTxt( fixed_string<128>{ "{} IA primitives : {}", ps.name, ps.inputAssemblyPrimitiveNum } );
+		}
+		if( ps.vsInvocationNum )
+		{
+		    ImGuiTxt( fixed_string<128>{ "{} VS invocations : {}", ps.name, ps.vsInvocationNum } );
+		}
+		if( ps.clipInvocationNum )
+		{
+		    ImGuiTxt( fixed_string<128>{ "{} Clip invocations : {}", ps.name, ps.clipInvocationNum } );
+		}
+		if( ps.clipPrimitiveNum )
+		{
+		    ImGuiTxt( fixed_string<128>{ "{} Clip primitives : {}", ps.name, ps.clipPrimitiveNum } );
+		}
+		if( ps.psInvocationCount )
+		{
+		    ImGuiTxt( fixed_string<128>{ "{} PS invocations : {}", ps.name, ps.psInvocationCount } );
+		}
+		if( ps.csInvocationCount )
+		{
+		    ImGuiTxt( fixed_string<128>{ "{} CS invocations : {}", ps.name, ps.csInvocationCount } );
+		}
 	}
 }
 
@@ -337,8 +330,8 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 
 void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 {
-    g_GameArena     = { g_pVirtualAllocator->AllocVirtualBlock( 64 * MB, HtCurrentThreadIdx() ) };
-    g_DebugArena    = { g_pVirtualAllocator->AllocVirtualBlock( 4 * MB, HtCurrentThreadIdx() ) };
+    g_GameArena     = linear_arena{ g_pVirtualAllocator->AllocVirtualBlock( 64 * MB, HtCurrentThreadIdx() ) };
+    g_DebugArena    = linear_arena{ g_pVirtualAllocator->AllocVirtualBlock( 4 * MB, HtCurrentThreadIdx() ) };
     pGameArena      = &g_GameArena;
     pDebugArena     = &g_DebugArena;
 
@@ -352,31 +345,31 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 
 	pRenderer->InitBackend( hInst, hWnd );
 
-	imGuiCtx = { width, height };
+	imGuiCtx = im_gui_ctx{ width, height };
 
 	constexpr char assetFilePath[] = "D:/3d models/caldera.hpk";
-	pAssetFile = ArenaMake<hpk_asset_file>( *pPersistentArena, assetFilePath, g_NumCores );
 
-    std::span<const u8> mem = HtOsCreateROFileMapping( pAssetFile->hFile );
-    defer { HtOSUnmapView( mem ); }; // NOTE: we only do this to save VMem space although prolly not needed
+    std::span ioReadScratch = ArenaNewArray<u8>( *pPersistentArena, 1 * MB );
 
-    hpk_file_view view = HpkGetFileView( mem );
+    void* pHpkFile = ht_os_create_file( assetFilePath, file_perm_t::READ,
+        file_create_t::OPEN_IF_EXISTS, file_access_t::RAW_CONCURRENT );
 
-    secotrsSet  = { std::begin( view.sectors ), std::end( view.sectors ) };
-    meshDescSet = { std::begin( view.meshes ), std::end( view.meshes ) };
-    lodDescSpan = ArenaNewArray<hpk_lod_desc>( *pPersistentArena, std::size( view.sectors ) );
-    std::ranges::copy( view.lods, std::ranges::begin( lodDescSpan ) );
+    void* hIORing = SysMakeIoRing( 1024, std::array{ pHpkFile },
+        std::array{ ioReadScratch, pRenderer->GetDmaBuffer() } );
+
+
 
     // NOTE: arbitrary sized for now
-    drawables       = { ArenaNewArray<instance_desc>( *pGameArena, 10'000 ) };
-    jobCache        = { ArenaNewArray<upload_job_payload*>( *pGameArena, 1'000 ) };
-    timedZones      = { ArenaNewArray<ht_timed_zone>( *pDebugArena, 256 ) };
-    pipelinesStats  = { ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
+    drawables       = borrowed_array{ ArenaNewArray<instance_desc>( *pGameArena, 10'000 ) };
+    jobCache        = borrowed_array{ ArenaNewArray<upload_job_payload*>( *pGameArena, 1'000 ) };
+    timedZones      = borrowed_array{ ArenaNewArray<ht_timed_zone>( *pDebugArena, 256 ) };
+    pipelinesStats  = borrowed_array{ ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
 }
 
 // TODO: revisit this logic
 void helltech::UploadAssets( linear_arena& scratchpadArena )
 {
+    /*
 	ht_mem_scope memScope = { scratchpadArena };
 
 
@@ -397,7 +390,7 @@ void helltech::UploadAssets( linear_arena& scratchpadArena )
 
 		std::span<const u8> rawBytes    = vfs.GetFileByteView( vpath );
 		hpk_mesh_view       mesh        = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
-		HRNDMESH32          hMesh       = pRenderer->AllocMeshComponent( mesh );
+		HRNDMESH32          hMesh       = pRenderer->AllocMeshSlot( mesh );
 
 		pPayload->meshUploads.push_back( {
 			.mltAsBytes			= AsBytes( mesh.meshlets ),
@@ -426,6 +419,7 @@ void helltech::UploadAssets( linear_arena& scratchpadArena )
     jobCache.push_back( pPayload );
 
     g_pJobSys->SubmitJob( { .PfnJob = PfnRendererUploadJob, .payload = jobCache.back() } );
+    */
 }
 
 void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratchArena, const ht_input_state& inputState )
@@ -485,7 +479,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 			drawables.append_range( pPayload->entitiesToPromote );
 		    jobCache.pop_back();
 
-		    g_pVirtualAllocator->FreeVirtualBlock( { ( u8* ) pPayload, pPayload->allocSzInBytes }, 0 );
+		    g_pVirtualAllocator->FreeVirtualBlock( { ( u8* ) pPayload, pPayload->allocSzInBytes } );
 		}
 	}
 
