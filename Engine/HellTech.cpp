@@ -330,7 +330,7 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 
 void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 {
-    g_GameArena     = linear_arena{ g_pVirtualAllocator->AllocVirtualBlock( 64 * MB, HtCurrentThreadIdx() ) };
+    g_GameArena     = linear_arena{ g_pVirtualAllocator->AllocVirtualBlock( 1 * GB, HtCurrentThreadIdx() ) };
     g_DebugArena    = linear_arena{ g_pVirtualAllocator->AllocVirtualBlock( 4 * MB, HtCurrentThreadIdx() ) };
     pGameArena      = &g_GameArena;
     pDebugArena     = &g_DebugArena;
@@ -349,14 +349,42 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 
 	constexpr char assetFilePath[] = "D:/3d models/caldera.hpk";
 
-    std::span ioReadScratch = ArenaNewArray<u8>( *pPersistentArena, 1 * MB );
-
-    void* pHpkFile = ht_os_create_file( assetFilePath, file_perm_t::READ,
+    void* hHpkFile = ht_os_create_file( assetFilePath, file_perm_t::READ,
         file_create_t::OPEN_IF_EXISTS, file_access_t::RAW_CONCURRENT );
 
-    void* hIORing = SysMakeIoRing( 1024, std::array{ pHpkFile },
-        std::array{ ioReadScratch, pRenderer->GetDmaBuffer() } );
+    std::span ioReadBuff = g_pVirtualAllocator->AllocVirtualBlock( 384 * MB, HtCurrentThreadIdx() );
+    defer { g_pVirtualAllocator->FreeVirtualBlock( ioReadBuff ); };
 
+    HT_ASSERT( IsAlignedToPot( ( u64 ) &ioReadBuff[ 0 ], RAW_DISK_SECTOR_ALIGNMENT ) );
+
+    hpk_file_header hpkHeader = {};
+    {
+        u64 readSize = FwdAlignPot( sizeof( hpk_file_header ), RAW_DISK_SECTOR_ALIGNMENT );
+        SysReadNBytesFromFileBlocking( hHpkFile, 0, readSize, ioReadBuff );
+        std::memcpy( &hpkHeader, &ioReadBuff[ 0 ], sizeof( hpk_file_header ) );
+    }
+
+    HT_ASSERT( std::bit_cast<u64>( HPK_MAGIC ) == hpkHeader.magic );
+    HT_ASSERT( HPK_FORMAT_VERSION == hpkHeader.fileFormatVersion );
+    HT_ASSERT( HPK_CONTENT_VERSION == hpkHeader.contentVersion );
+
+    auto sectors    = std::span{ ArenaNewArray<hpk_sector_desc>( *pGameArena, hpkHeader.sectorsCount ) };
+    auto worldNodes = std::span{ ArenaNewArray<world_node>( *pGameArena, hpkHeader.nodeCount ) };
+    auto meshInfos  = std::span{ ArenaNewArray<hpk_mesh_desc>( *pGameArena, hpkHeader.meshDescCount ) };
+    auto lodInfos   = std::span{ ArenaNewArray<hpk_lod_desc>( *pGameArena, hpkHeader.lodDescCount ) };
+
+    auto LmbdRawReadHpkBuff = [ & ]( u64 dataOffsetBytes, u64 dataSzBytes, void* outBuff ) HT_LAMBDA_FORCEINLINE
+    {
+        u64 readStart   = BwdAlignPot( dataOffsetBytes, RAW_DISK_SECTOR_ALIGNMENT );
+        u64 readEnd     = FwdAlignPot( dataOffsetBytes + dataSzBytes, RAW_DISK_SECTOR_ALIGNMENT );
+        SysReadNBytesFromFileBlocking( hHpkFile, readStart, readEnd - readStart, ioReadBuff );
+        std::memcpy( outBuff, &ioReadBuff[ 0 ] + dataOffsetBytes - readStart, dataSzBytes );
+    };
+
+    LmbdRawReadHpkBuff( hpkHeader.firstSectorsOffsetInBytes, BYTE_COUNT( sectors ), &sectors[ 0 ] );
+    LmbdRawReadHpkBuff( hpkHeader.firstNodeOffsetInBytes, BYTE_COUNT( worldNodes ), &worldNodes[ 0 ] );
+    LmbdRawReadHpkBuff( hpkHeader.firstMeshDescOffsetInBytes, BYTE_COUNT( meshInfos ), &meshInfos[ 0 ] );
+    LmbdRawReadHpkBuff( hpkHeader.firstLodDescOffsetInBytes, BYTE_COUNT( lodInfos ), &lodInfos[ 0 ] );
 
 
     // NOTE: arbitrary sized for now

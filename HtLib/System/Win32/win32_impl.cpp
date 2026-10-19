@@ -42,7 +42,9 @@ static LONG WINAPI WinExceptionHandler( EXCEPTION_POINTERS* pException )
     std::abort();
 }
 // NOTE: can't be first if we have clang and clang-asan
-static const bool EXCEPTION_HANDLER_HOOKED = ( AddVectoredExceptionHandler( 0, WinExceptionHandler ), true );
+static ULONG g_StackGuaranteeInBytes = 64 * 1024;
+static const bool EXCEPTION_HANDLER_HOOKED = ( AddVectoredExceptionHandler( 0, WinExceptionHandler ),
+    SetThreadStackGuarantee( &g_StackGuaranteeInBytes ), true );
 
 // ---------------------------------------------------------------------------------------------------------------
 #include <ht_memory.h>
@@ -286,7 +288,7 @@ void SysSemaphoreWait( sys_semaphore sema, u32 millisecs )
 // ---------------------------------------------------------------------------------------------------------------
 #include <System/sys_file.h>
 // ---------------------------------------------------------------------------------------------------------------
-static u64 WinGetFileSizeInBytes( HANDLE hFile )
+u64 SysGetFileSizeInBytes( void* hFile )
 {
     LARGE_INTEGER largeInt;
     WIN_CHECK( GetFileSizeEx( hFile, &largeInt ) );
@@ -300,7 +302,7 @@ std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena )
     HT_ASSERT( INVALID_HANDLE_VALUE != hFile );
     defer { WIN_CHECK( CloseHandle( hFile ) ); };
 
-    u64     szInBytes       = WinGetFileSizeInBytes( hFile );
+    u64     szInBytes       = SysGetFileSizeInBytes( hFile );
     void*   mem             = arena.Alloc( szInBytes, 1 );
     DWORD   readSzInBytes   = 0;
     WIN_CHECK( ReadFile( hFile, mem, ( DWORD ) szInBytes, &readSzInBytes, nullptr ) );
@@ -426,7 +428,7 @@ std::span<const u8> HtOsCreateROFileMapping( void* hFile )
     WIN_CHECK( hFileMapping );
     defer { WIN_CHECK( CloseHandle( hFileMapping ) ); };
 
-    u64     qwFileSize	= WinGetFileSizeInBytes( hFile );
+    u64     qwFileSize	= SysGetFileSizeInBytes( hFile );
     u8*     pData		= ( u8* ) MapViewOfFile( hFileMapping, FILE_MAP_READ, 0,
         0, qwFileSize );
     WIN_CHECK( pData );
@@ -461,17 +463,17 @@ void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<c
     HT_ASSERT( std::size( bytes ) == writtenInBytes );
 }
 
-u64 SysReadNBytesFromFileBlocking( void* hFile, u64 offsetInBytes, std::span<u8> bytes )
+u64 SysReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff )
 {
-    std::ranges::fill( bytes, 0 );
+    u64 buffSzInBytes = std::size( outBuff );
+    HT_ASSERT( buffSzInBytes >= readSzInBytes );
 
     OVERLAPPED overlapped = {
-        .Offset       = ( DWORD ) offsetInBytes,
-        .OffsetHigh   = ( DWORD ) ( offsetInBytes >> 32 ),
+        .Offset       = ( DWORD ) fileOffsetInBytes,
+        .OffsetHigh   = ( DWORD ) ( fileOffsetInBytes >> 32 ),
     };
 
-    if( !ReadFile( hFile, std::data( bytes ), std::size( bytes ),
-        nullptr, &overlapped ) )
+    if( !ReadFile( hFile, &outBuff[ 0 ], readSzInBytes, 0, &overlapped ) )
     {
         WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
     }
@@ -535,7 +537,7 @@ ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs )
 u64 SysGetFileTimestamp( void* hFile )
 {
     FILETIME fileTime = {};
-    WIN_CHECK( SUCCEEDED( GetFileTime( hFile, nullptr, nullptr, &fileTime ) ) );
+    WIN_CHECK( SUCCEEDED( GetFileTime( hFile, 0, 0, &fileTime ) ) );
 
     ULARGE_INTEGER timestamp = { .LowPart = fileTime.dwLowDateTime, .HighPart = fileTime.dwHighDateTime };
     return u64( timestamp.QuadPart );
@@ -612,7 +614,7 @@ void SysErrMsgBox( const char* str )
 #include <System/sys_io_ring.h>
 // ---------------------------------------------------------------------------------------------------------------
 
-void* SysMakeIoRing( u64 maxRequests, std::span<void *const> hFiles, std::span<const std::span<u8>> readBuffers )
+void* SysMakeIoRing( u64 maxRequests, void* hFile, std::span<const std::span<u8>> readBuffers )
 {
     IORING_CAPABILITIES ioRingCaps = {};
     WIN_CHECK( SUCCEEDED( QueryIoRingCapabilities( &ioRingCaps ) ) );
@@ -621,7 +623,7 @@ void* SysMakeIoRing( u64 maxRequests, std::span<void *const> hFiles, std::span<c
     WIN_CHECK( SUCCEEDED( CreateIoRing( ioRingCaps.MaxVersion, {}, maxRequests,
         2 * maxRequests, &hIORing ) ) );
 
-    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterFileHandles( hIORing, std::size( hFiles ), &hFiles[ 0 ], 0 ) ) );
+    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterFileHandles( hIORing, 1, &hFile, 0 ) ) );
 
     inline_array<IORING_BUFFER_INFO, 8> ioRingBuffInfos = {};
     for( const std::span<u8> buff : readBuffers )
@@ -639,20 +641,39 @@ void* SysMakeIoRing( u64 maxRequests, std::span<void *const> hFiles, std::span<c
     // NOTE: win internals says that those buffers will dangle is we don't submit here
     WIN_CHECK( SUCCEEDED( SubmitIoRing( hIORing, IORING_SUBMIT_WAIT_ALL, INFINITE, nullptr ) ) );
 
+    // NOTE: drain the registered reqs
+    for( u64 cmpi = 0; cmpi < 2; cmpi++ )
+    {
+        IORING_CQE ioRingCQE = {};
+        while( S_OK != PopIoRingCompletion( ( HIORING ) hIORing, &ioRingCQE ) ) {}
+        WIN_CHECK( SUCCEEDED( ioRingCQE.ResultCode ) );
+    }
+
     return hIORing;
 }
 
 bool SysTryPushIoRingRequest(
     void*   hIORing,
-    u64     fileIdx,
     u64     readBuffIdx,
     u32     readBuffOffset,
     u64     fileOffset,
     u32     readSize
 ) {
-    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( fileIdx ),
+    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( 0 ),
         IoRingBufferRefFromIndexAndOffset( readBuffIdx, readBuffOffset ),
         readSize, fileOffset, 0, IOSQE_FLAGS_NONE );
+
+    if( IORING_E_SUBMISSION_QUEUE_FULL == res ) return false;
+
+    WIN_CHECK( SUCCEEDED( res ) );
+
+    return true;
+}
+
+bool SysTryPushIoRingRequestWRawBuffer( void* hIORing, void* rawBuffer, u64 fileOffset, u32 readSize )
+{
+    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( 0 ),
+        IoRingBufferRefFromPointer( rawBuffer ), readSize, fileOffset, 0, IOSQE_FLAGS_NONE );
 
     if( IORING_E_SUBMISSION_QUEUE_FULL == res ) return false;
 
@@ -672,12 +693,13 @@ u64 SysIoRingSubmit( void* hIORing, u64 waitInMs )
     return subsInQueue;
 }
 
-bool SysIoRingPollCompletion( void* hIORing, u32 completionIdx )
+bool SysIoRingPollCompletion( void* hIORing )
 {
     IORING_CQE ioRingCQE = {};
     if( S_OK == PopIoRingCompletion( ( HIORING ) hIORing, &ioRingCQE ) )
     {
         WIN_CHECK( SUCCEEDED( ioRingCQE.ResultCode ) );
+        return true;
     }
     return false;
 }

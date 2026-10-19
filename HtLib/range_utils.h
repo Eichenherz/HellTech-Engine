@@ -84,10 +84,11 @@ inline byte_view MakeByteView( const u8* pData, u64 sizeInBytes )
 	return { pData, sizeInBytes };
 }
 
-inline bool ByteEqual( std::span<const u8> a, std::span<const u8> b )
+constexpr bool ByteEqual( const std::ranges::contiguous_range auto& a, const std::ranges::contiguous_range auto& b )
 {
-	bool sizeEq = std::size( a ) == std::size( b );
-	return sizeEq && ( std::memcmp( std::data( a ), std::data( b ), std::size( a ) ) == 0 );
+	auto sizeA = std::size( a ) * sizeof( *std::data( a ) );
+	auto sizeB = std::size( b ) * sizeof( *std::data( b ) );
+	return ( sizeA == sizeB ) && !std::memcmp( std::data( a ), std::data( b ), sizeA );
 }
 
 template<typename R>

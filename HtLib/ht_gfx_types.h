@@ -5,6 +5,7 @@
 
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
+#include <ht_math.h>
 #include <ht_hash.h>
 #include <ht_macros.h>
 
@@ -18,6 +19,23 @@ struct packed_trs
 
 	constexpr operator trs_t() const;
 };
+
+constexpr packed_trs IDENTITY_TRS = {
+    .t = { 0.0f, 0.0f, 0.0f },
+    .r = { 0.0f, 0.0f, 0.0f, 1.0f },
+    .s = { 1.0f, 1.0f, 1.0f }
+};
+
+HT_FORCEINLINE packed_trs GltfComposePackedTRS( packed_trs parent, packed_trs child )
+{
+    return {
+        .t = parent.t + ht::vec_rot( child.t * parent.s, parent.r ),
+        .r = ht::quat_mul( child.r, parent.r ),
+        .s = parent.s * child.s
+    };
+}
+
+inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs ) { return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s ); }
 
 struct trs_t
 {

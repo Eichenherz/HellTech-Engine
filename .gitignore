@@ -23,3 +23,5 @@ CMakePresets.json.user
 .claude/
 
 CLAUDE.md
+/.zig-cache/
+/out/

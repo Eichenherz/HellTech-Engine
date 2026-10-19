@@ -12,7 +12,7 @@
 
 #include <ht_array.h>
 
-constexpr u64 RAW_FILE_READ_ALIGNMENT = 4 << 10;
+constexpr u64 RAW_DISK_SECTOR_ALIGNMENT = 4 << 10;
 
 std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena );
 
@@ -63,7 +63,7 @@ void HtOSUnmapView( std::span<const u8> view );
 // NOTE: hFile must have been opened with file_access_flags::CONCURRENT, else the kernel serializes per handle
 void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes );
 
-u64 SysReadNBytesFromFileBlocking( void* hFile, u64 offsetInBytes, std::span<u8> bytes );
+u64 SysReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff );
 
 struct HT_CACHE_ALIGN ht_os_io_request
 {
@@ -84,6 +84,7 @@ ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs );
 using sys_path = fixed_string<SYS_MAX_PATH_LEN>;
 
 u64	SysGetFileTimestamp( void* hFile );
+u64 SysGetFileSizeInBytes( void* hFile );
 
 constexpr std::string_view SysPathFileName( std::string_view path )
 {

@@ -28,7 +28,7 @@ constexpr u64   ZSTD_COMPRESSION_LEVEL      = 19;
 // NOTE: .hpk format is an unaligned byte dump, so in order to properly read it must be (mem)copied first
 constexpr char  HPK_MAGIC[]         = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
 
-HT_DEF_STRUCT_W_HASH( hpk_file_footer,
+HT_DEF_STRUCT_W_HASH( hpk_file_header,
     u64     magic;
     u64     fileFormatVersion;
     u64     contentVersion;
@@ -74,56 +74,13 @@ HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,
 constexpr u64 NODE_LOD_BIN_COUNT = 256;
 
 HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
-    using node_lods = std::array<u32, NODE_LOD_BIN_COUNT>; // TODO: change the size or write dense
-
     u64         firstNodeIdx;
     u64         nodeCount;
-    alignas( 8 )
-    node_lods   log2LodNodeOffsets; // NOTE: bc we're lazy we'll store the whole sparse set as inclusive scan
-    i16x2       id;
-    u32         padding = 0;
+    i16x4       pkd_secId_2_gridLevel_1_pad_1;
 );
 
-HT_DEF_STRUCT_W_HASH( hpk_file_view,
-    template<typename T>
-    using view_t = std::span<const T>;
-
-    view_t<hpk_sector_desc> sectors             = {};
-    view_t<world_node>      nodes               = {};
-    view_t<hpk_mesh_desc>   meshes              = {};
-    view_t<hpk_lod_desc>    lods                = {};
-);
-
-constexpr u64 HPK_FORMAT_VERSION  = hpk_file_footer_LAYOUT_HASH
-    ^ hpk_lod_desc_LAYOUT_HASH
-    ^ hpk_mesh_desc_LAYOUT_HASH
-    ^ hpk_sector_desc_LAYOUT_HASH;
-constexpr u64 HPK_CONTENT_VERSION = hpk_file_view_LAYOUT_HASH;
-
-inline hpk_file_view HpkGetFileView( std::span<const u8> mem )
-{
-    hpk_file_footer hpkFooter = *( ( const hpk_file_footer* ) ht::end_ptr( mem ) - 1 );
-    HT_ASSERT( std::bit_cast<u64>( HPK_MAGIC ) == hpkFooter.magic );
-    HT_ASSERT( HPK_FORMAT_VERSION == hpkFooter.fileFormatVersion );
-    HT_ASSERT( HPK_CONTENT_VERSION == hpkFooter.contentVersion );
-
-    const u8* pData =  std::data( mem );
-
-    return {
-        .sectors    = {
-            ( const hpk_sector_desc* ) ( pData + hpkFooter.firstSectorsOffsetInBytes ), hpkFooter.sectorsCount
-        },
-        .nodes      = {
-            ( const world_node* ) ( pData + hpkFooter.firstNodeOffsetInBytes ), hpkFooter.nodeCount
-        },
-        .meshes     = {
-            ( const hpk_mesh_desc* ) ( pData + hpkFooter.firstMeshDescOffsetInBytes ), hpkFooter.meshDescCount
-        },
-        .lods       = {
-            ( const hpk_lod_desc* ) ( pData + hpkFooter.firstLodDescOffsetInBytes ), hpkFooter.lodDescCount
-        }
-    };
-}
+constexpr u64 HPK_FORMAT_VERSION    = hpk_file_header_LAYOUT_HASH;
+constexpr u64 HPK_CONTENT_VERSION   = hpk_lod_desc_LAYOUT_HASH ^ hpk_mesh_desc_LAYOUT_HASH ^ hpk_sector_desc_LAYOUT_HASH;
 
 // TODO: use our own
 #include <ankerl/unordered_dense.h>
@@ -146,7 +103,7 @@ struct hpk_sector_desc_key
     using is_avalanching = void;
 
     static u64 Key( i16x2 id ) { return std::bit_cast<u32>( id ); }
-    static u64 Key( const hpk_sector_desc& d ) { return Key( d.id ); }
+    static u64 Key( const hpk_sector_desc& d ) { return Key( d.pkd_secId_2_gridLevel_1_pad_1.xy ); }
 
     u64  operator()( const auto& v ) const { return ankerl::unordered_dense::hash<u64>{}( Key( v ) ); }
     bool operator()( const auto& a, const auto& b ) const { return Key( a ) == Key( b ); }

@@ -9,10 +9,13 @@
     <mapping directory="$PROJECT_DIR$/3rdParty/cgltf" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/dds" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/fb_zstd" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rdParty/glaze" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/imgui" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/meshoptimizer" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/minunit" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rdParty/tinygltf" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/unordered_dense" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/3rdParty/x86-simd-sort" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rdParty/yyjson" vcs="Git" />
   </component>
 </project>

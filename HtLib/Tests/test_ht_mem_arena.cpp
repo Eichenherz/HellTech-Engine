@@ -16,7 +16,7 @@
 
 static constexpr u64        ARENA_CAP = 4096;
 // NOTE: the offset checks only hold when the base is already aligned to what they ask for
-alignas( 256 ) static u8    gArenaBuf[ ARENA_CAP ];
+static u8* const gArenaBuf = ( u8* ) ht_os_virtual_alloc( ARENA_CAP );
 
 struct arena_probe
 {

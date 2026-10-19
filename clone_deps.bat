@@ -17,6 +17,7 @@ call :clone "3rdParty/minunit"                  "https://github.com/kattkieru/mi
 call :clone "3rdParty/OffsetAllocator"          "https://github.com/sebbbi/OffsetAllocator.git"
 call :clone "3rdParty/fb_zstd"                  "https://github.com/facebook/zstd.git"
 call :clone "3rdParty/x86-simd-sort"            "https://github.com/intel/x86-simd-sort.git"
+call :clone "3rdParty/glaze"                   "https://github.com/stephenberry/glaze.git"
 
 
 

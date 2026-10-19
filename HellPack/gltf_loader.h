@@ -1,291 +1,132 @@
 #pragma once
 
-#ifndef __GLTF_LOADER_H__
-#define __GLTF_LOADER_H__
+#ifndef HELLTECH_HPK_GLTF_LOADER_H
+#define HELLTECH_HPK_GLTF_LOADER_H
 
 #include <span>
 #include <ranges>
 
 #include <ht_core_types.h>
 #include <ht_error.h>
-#include <ht_math.h>
 #include <range_utils.h>
 
 #include <ht_fixed_string.h>
+#include <System/sys_file.h>
 
+#include "hpk_gltf_types.h"
 #include "gltf_helper.h"
 #include "hp_types_internal.h"
 
-#include <cgltf.h>
-
-constexpr u64 DEFAULT_SAMPLER_IDX = 0;
-
-
-// NOTE: can't be replaced by a span, this handles interleaved data as well
-template<TRIVIAL_T T>
-struct gltf_attr_stream
-{
-	std::span<const u8>	bytes				= {};
-	u64					count				= 0;
-	u64					byteOffset			= 0;
-	u64					strideInBytes		= 0;
-
-	gltf_attr_stream() = default;
-
-	gltf_attr_stream( std::span<const u8> bytes, u64 count, u64 byteOffset, u64 strideInBytes )
-		: bytes{ bytes }, count{ count }, byteOffset{ byteOffset }, strideInBytes{ strideInBytes } {}
-
-	gltf_attr_stream( const cgltf_accessor& accessor )
-	{
-		HT_ASSERT( !accessor.is_sparse );
-
-		const cgltf_buffer_view* view = accessor.buffer_view;
-		HT_ASSERT( view && view->buffer );
-
-		const cgltf_buffer* buff = view->buffer;
-
-		const u64 numComponents         = cgltf_num_components( accessor.type );
-		const u64 componentSizeInBytes  = cgltf_component_size( accessor.component_type );
-		const u64 elemSize              = numComponents * componentSizeInBytes;
-
-		// NOTE: gltf byteStride==0 means tightly packed ( effective stride == elemSize )
-		const u64 stride = ( view->stride == 0 ) ? elemSize : view->stride;
-
-		// NOTE: If a stride is provided, it must be >= element size
-		HT_ASSERT( stride >= elemSize );
-
-		const u64 baseOffset = view->offset + accessor.offset;
-		HT_ASSERT( baseOffset < buff->size );
-
-		// NOTE: a u8 stream may alias any element type as raw bytes ( deferred index streams )
-		HT_ASSERT( ( sizeof( T ) == elemSize ) || ( 1 == sizeof( T ) ) );
-
-		// NOTE: buff->data is null until cgltf_load_buffers / Bind; the view then just carries the offset
-		const u64 bytesSize = accessor.count ? ( accessor.count - 1 ) * stride + elemSize : 0;
-
-		this->bytes		    = { ( ( const u8* ) buff->data ) + baseOffset, bytesSize };
-		this->count		    = accessor.count;
-		this->byteOffset    = baseOffset;
-		this->strideInBytes = stride;
-	}
-
-	constexpr u64 size() const { return count; }
-};
-
-template<typename To = void, TRIVIAL_T From>
-auto GltfTypedView( const gltf_attr_stream<From>& stream )
-{
-	using elem_t = std::conditional_t<std::is_void_v<To>, From, To>;
-	HT_ASSERT( stream.strideInBytes >= sizeof( elem_t ) );
-	return stream.bytes
-        | std::views::stride( stream.strideInBytes )
-		| std::views::transform( HtReinterpretAs<elem_t> );
-}
-
-template<TRIVIAL_T T>
-gltf_attr_stream<T> GltfPatchAttrStream( const gltf_attr_stream<T>& stream, std::span<const u8> buffer )
-{
-	HT_ASSERT( stream.byteOffset + std::size( stream.bytes ) <= std::size( buffer ) );
-	return {
-		{ std::data( buffer ) + stream.byteOffset, std::size( stream.bytes ) },
-		stream.count,
-		stream.byteOffset,
-		stream.strideInBytes
-	};
-}
-
-template<TRIVIAL_T T>
-gltf_attr_stream<T> CgltfGetDeferredAttrStream( const cgltf_primitive& prim, cgltf_attribute_type type, i32 attrIdx )
-{
-	const cgltf_accessor* pAccessor = cgltf_find_accessor( &prim, type, attrIdx );
-	return pAccessor ? gltf_attr_stream<T>{ *pAccessor } : gltf_attr_stream<T>{};
-}
-
-inline auto GtlfGetIdx32View( const gltf_attr_stream<u8>& idxStream )
-{
-    using pfn_idx32 = u32( * )( const u8& );
-
-    auto emptyView = std::span<const u8>{} | std::views::stride( 1 ) | std::views::transform( pfn_idx32{} );
-
-    if( 0 == std::size( idxStream ) ) return emptyView;
-
-    switch( idxStream.strideInBytes )
-    {
-        case sizeof( u8 ): return idxStream.bytes | std::views::stride( idxStream.strideInBytes )
-            | std::views::transform( pfn_idx32( []( const u8& b ) -> u32 { return HtReinterpretAs<u8>( b ); } ) );
-        case sizeof( u16 ): return idxStream.bytes | std::views::stride( idxStream.strideInBytes )
-            | std::views::transform( pfn_idx32( []( const u8& b ) -> u32 { return HtReinterpretAs<u16>( b ); } ) );
-        case sizeof( u32 ): return idxStream.bytes | std::views::stride( idxStream.strideInBytes )
-            | std::views::transform( pfn_idx32( []( const u8& b ) -> u32 { return HtReinterpretAs<u32>( b ); } ) );
-    }
-
-    HT_ASSERT( 0 && "Wrong stream type" );
-    return emptyView;
-}
-
-struct raw_mesh_desc
-{
-	hpk_mesh_name			    name;
-    u64                         meshHash;
-	gltf_attr_stream<float3>	pos;
-	gltf_attr_stream<float3>	normals;
-	gltf_attr_stream<u8>		indices;
-    float3a                     aabbCenter;
-    float3a                     aabbExtent;
-	raw_mesh_topology_t			topology;
-};
-
-inline raw_mesh_desc GltfPatchRawMeshDesc( const raw_mesh_desc& in, std::span<const u8> bin )
-{
-    return {
-        .name       = in.name,
-        .meshHash   = in.meshHash,
-        .pos        = GltfPatchAttrStream( in.pos, bin ),
-        .normals    = GltfPatchAttrStream( in.normals, bin ),
-        .indices    = GltfPatchAttrStream( in.indices, bin ),
-        .aabbCenter = in.aabbCenter,
-        .aabbExtent = in.aabbExtent,
-        .topology   = in.topology
-    };
-}
-
-inline raw_mesh_desc CgltfParseRawMeshDesc(
-    const cgltf_mesh&       parentMesh,
-    const cgltf_primitive&  primitive,
-    std::string_view        originFileName,
-    u64                     meshIdx,
-    u64                     primIdx
+inline raw_mesh HpkMakeRawMeshFromGltf(
+    const hpk_gltf_data&        gltfData,
+    const hpk_gltf_mesh&        gltfMesh,
+    const hpk_gltf_primitive&   gltfPrim,
+    const hpk_mesh_name&        hpkMeshKeyStr,
+    virtual_arena&              arena
 ) {
-    // TODO: how to export more stuff ?
-    // NOTE: gltf guarantees that all present attr streams have the same element count
-    const cgltf_accessor* pPos  = cgltf_find_accessor( &primitive, cgltf_attribute_type_position, 0 );
-    const cgltf_accessor* pNorm = cgltf_find_accessor( &primitive, cgltf_attribute_type_normal, 0 );
+    // NOTE: gltf mandates that the pos stream be present
+    const hpk_gltf_accessor posAcc = *HpkGetGltfAccessor( gltfData, gltfPrim.attributes.POSITION );
+    HT_ASSERT( ( 3 == std::size( posAcc.min ) ) && ( 3 == std::size( posAcc.max ) ) );
 
-    hpk_mesh_name name = { "{}_{:.32}_Mesh_{}_Prim_{}", originFileName,
-        parentMesh.name ? parentMesh.name : "NONE", meshIdx, primIdx
-    };
-
-    aabb_t<float3a> aabb = CgltfGetPosStreamBounds( primitive );
+    const hpk_gltf_accessor* pIdxAcc = HpkGetGltfAccessor( gltfData, gltfPrim.indices );
+    const hpk_gltf_accessor* pNormAcc = HpkGetGltfAccessor( gltfData, gltfPrim.attributes.NORMAL );
 
     return {
-        .name		= name,
-        .meshHash   = HpkHashMeshName( name ),
-        // NOTE: gltf mandates that the pos stream be present
-        .pos		= gltf_attr_stream<float3>{ *pPos },
-        .normals 	= pNorm             ? gltf_attr_stream<float3>{ *pNorm }    : gltf_attr_stream<float3>{},
-        .indices	= primitive.indices ? gltf_attr_stream<u8>{ *primitive.indices } : gltf_attr_stream<u8>{},
-        .aabbCenter = ( aabb.max + aabb.min ) * 0.5f,
-        .aabbExtent = ( aabb.max - aabb.min ) * 0.5f,
-        .topology   = CgltfPrimitiveTypeToTopology( primitive.type )
+        .name		= hpk_mesh_name{ "{:.96}", std::size( gltfMesh.name ) ? gltfMesh.name : "NONE" },
+        .pos		= borrowed_array<float3>{ arena, std::from_range, hpk_strided_view<float3>{ gltfData, posAcc } },
+        .norm       = pNormAcc ? borrowed_array<float3>{ arena, std::from_range,
+            hpk_strided_view<float3>{ gltfData, *pNormAcc } } : borrowed_array<float3>{},
+        .idxBuff    = pIdxAcc ? HpkGltfUnpackIndices( gltfData, *pIdxAcc, arena ) : borrowed_array<u32>{},
+        .aabbMin    = { posAcc.min[ 0 ], posAcc.min[ 1 ], posAcc.min[ 2 ] },
+        .aabbMax    = { posAcc.max[ 0 ], posAcc.max[ 1 ], posAcc.max[ 2 ] },
+        .hash       = HpkHashMeshKey( hpkMeshKeyStr ),
+        .topology   = HpkGltfPrimTopology( gltfPrim.mode )
     };
 }
 
-struct gltf_loader
-{
-    cgltf_data* data = nullptr;
-};
+inline auto HpkGltfProcessDrawablesHierarchy(
+    const hpk_gltf_data&    data,
+    std::string_view        originFileName,
+    virtual_arena&          outArena,
+    virtual_arena&          tmpArena,
+    auto&&                  PfnVisitPrimFunc
+) {
+    auto tmpScope = scoped_arena{ tmpArena };
 
-inline const cgltf_data* CgltfLoadMetadataFromRawBytes( std::span<const u8> rawBytes, const cgltf_options& options )
-{
-    cgltf_data* data = nullptr;
-    HT_ASSERT( cgltf_result_success == cgltf_parse( &options, std::data( rawBytes ), std::size( rawBytes ), &data ) );
-    HT_ASSERT( cgltf_result_success == cgltf_validate( data ) );
-    HT_ASSERT( 1 == data->scenes_count );
-    return data;
-}
+    std::span meshSeenBitset = ArenaNewArray<u64>( tmpArena, ( std::size( data.meshes ) + 63 ) / 64 );
 
-struct parsed_gltf
-{
-    std::vector<raw_node>       nodes;
-    std::vector<raw_mesh_desc>  meshDesc;
-};
-
-inline parsed_gltf CgltfProcessDrawablesHierarchy( const cgltf_data* data, std::string_view originFileName )
-{
-    std::vector<raw_node> flatNodes;
-    flatNodes.reserve( data->nodes_count );
-
-    auto meshPrimOffset = std::vector<u64>( data->meshes_count );
-    u64  primCount      = 0;
-    for( u64 mi = 0; mi < data->meshes_count; ++mi )
+    //auto flatNodes = arena_array<raw_node, virtual_arena>{ outArena };
+    auto LmbdVisitNode = [ & ]( this auto&& PfnSelf, const hpk_gltf_node& node, packed_trs parentTrs ) -> void
     {
-        meshPrimOffset[ mi ] = primCount;
-        primCount           += data->meshes[ mi ].primitives_count;
-    }
+        if( !node.extensions.KHR_node_visibility.visible ) return;
 
-    auto rawMeshDescBuff = std::vector<raw_mesh_desc>( primCount );
+        packed_trs trs = IDENTITY_TRS;//GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
 
-    auto LmbdVisitNode = [ & ]( this auto&& PfnSelf, const cgltf_node& node, packed_trs parentTrs ) -> void
-    {
-        if( CgltfIsNodeHidden( node ) ) return;
-
-        packed_trs trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
-
-        if( node.mesh )
+        if( const u32 meshIdx = node.mesh; ~0u != meshIdx )
         {
-            u64 instCount = node.has_mesh_gpu_instancing ? node.mesh_gpu_instancing.attributes[ 0 ].data->count : 1;
+            hpk_gltf_mesh mesh = data.meshes[ meshIdx ];
 
-            const cgltf_mesh& m = *node.mesh;
-            u64 meshIdx = &m - data->meshes;
-
-            for( const auto[ primIdx, prim ] : HT_CGLTF_SPAN( m.primitives ) | std::views::enumerate )
+            for( const auto[ primIdx, prim ] : mesh.primitives | std::views::enumerate )
             {
-                // NOTE: yes it's for caldera only ! and the stuff we need to render doesn't have this purpose type !
-                if( caldera_prim_purpose_t::NONE != CgltfGetCalderaPrimPurpose( prim ) ) continue;
+                if( caldera_prim_purpose_t::NONE != prim.extensions.CALDERA_primitive_purpose.purpose ) continue;
 
-                u64 primGlobIdx     = meshPrimOffset[ meshIdx ] + primIdx;
-                raw_mesh_desc& desc = rawMeshDescBuff[ primGlobIdx ];
-                if( IsStructZero( desc ) )
+                hpk_gltf_caldera_shared_mesh calderaShared = prim.extensions.CALDERA_shared_mesh;
+                bool isShared = !IsStructZero( calderaShared );
+
+                auto meshKeyStr = !isShared
+                    ? hpk_mesh_name{ "{}_Mesh_{}_Prim_{}", originFileName, meshIdx, primIdx }
+                    : hpk_mesh_name{ "{}_Mesh_{}_Prim_{}",
+                        calderaShared.parentFile, calderaShared.meshIdx, calderaShared.primIdx
+                    };
+
+                if( !isShared && ( meshSeenBitset[ meshIdx >> 6 ] & ( 1ull << ( meshIdx & 63 ) ) ) )
                 {
-                    desc = CgltfParseRawMeshDesc( m, prim, originFileName, meshIdx, primIdx );
+                    for( u32 lodChainRootIdx : node.extensions.MSFT_lod.ids )
+                    {
+
+                    }
+                    PfnVisitPrimFunc( mesh, prim, meshKeyStr );
                 }
 
+                if( node.extensions.CALDERA_node_place_holder.placeholder ) continue;
+
+                const hpk_gltf_accessor posAcc = *HpkGetGltfAccessor( data, prim.attributes.POSITION );
+                float3a aabbMin = { posAcc.min[ 0 ], posAcc.min[ 1 ], posAcc.min[ 2 ] };
+                float3a aabbMax = { posAcc.max[ 0 ], posAcc.max[ 1 ], posAcc.max[ 2 ] };
+
+                u64 instCount = HpkGltfGetExtGpuInstCount( data, node );
                 for( u64 ii = 0; ii < instCount; ++ii )
                 {
-                    packed_trs instTrs = node.has_mesh_gpu_instancing ?
-                        GltfComposePackedTRS( trs, GltfGetTRSFromExtGpuInst( node, ii ) ) : trs;
-                    flatNodes.push_back( {
-                        .toWorld    = instTrs,
-                        .aabbCenter = desc.aabbCenter,
-                        .aabbExtent = desc.aabbExtent,
-                        .meshHash   = HpkHashMeshName( desc.name ),
-                        .meshID     = primGlobIdx
-                    } );
+                    //flatNodes.push_back( {
+                    //    .toWorld    = GltfComposePackedTRS( trs, HpkGltfGetTRSFromExtGpuInst( data, node, ii ) ),
+                    //    .aabbCenter = ( aabbMax + aabbMin ) * 0.5f,
+                    //    .aabbExtent = ( aabbMax - aabbMin ) * 0.5f,
+                    //    .meshHash   = HpkHashMeshKey( meshKeyStr ),
+                    //} );
                 }
             }
+
+            meshSeenBitset[ meshIdx >> 6 ] |= 1ull << ( meshIdx & 63 );
         }
 
-        for( const cgltf_node* child : HT_CGLTF_SPAN( node.children ) )
+        for( u32 childIdx : node.children )
         {
-            PfnSelf( *child, trs );
+            PfnSelf( data.nodes[ childIdx ], trs );
         }
     };
 
-    for( const cgltf_node* root : HT_CGLTF_SPAN( data->scenes[ 0 ].nodes ) )
+    for( u32 rootIdx : data.scenes[ data.scene ].nodes )
     {
-        LmbdVisitNode( *root, IDENTITY_TRS );
+        LmbdVisitNode( data.nodes[ rootIdx ], IDENTITY_TRS );
     }
 
-    return {
-        .nodes      = MOV( flatNodes ),
-        .meshDesc   = MOV( rawMeshDescBuff )
-    };
+    //return std::tuple{ flatNodes };
 }
 
 /*
-struct [[ depracated ]] gltf_loader
+struct gltf_loader
 {
 	cgltf_data* data = nullptr;
-
-	gltf_loader( const char* filePath )
-	{
-		cgltf_options options = {};
-		HT_ASSERT( cgltf_result_success == cgltf_parse_file( &options, filePath, &data ) );
-		HT_ASSERT( cgltf_result_success == cgltf_validate( data ) );
-		HT_ASSERT( cgltf_result_success == cgltf_load_buffers( &options, data, filePath ) );
-		HT_ASSERT( 1 == data->scenes_count );
-		std::cout << "Successfully loaded the file.\n";
-	}
 
 	// TODO: explicitly enforce the 0th sampler is default convention
 	std::vector<sampler_config> ProcessSamplers() const
@@ -414,4 +255,4 @@ struct [[ depracated ]] gltf_loader
 };
 */
 
-#endif // !__GLTF_LOADER_H__
+#endif // !HELLTECH_HPK_GLTF_LOADER_H

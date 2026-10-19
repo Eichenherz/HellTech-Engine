@@ -8,6 +8,42 @@
             "architecture": "x64",
             "toolset": "host=x64",
             "binaryDir": "${sourceDir}/build"
+        },
+        {
+            "name": "clang-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/${presetName}",
+            "architecture": { "value": "x64", "strategy": "external" },
+            "toolset": { "value": "host=x64", "strategy": "external" },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "D:/Microsoft Visual Studio/18/Insiders/VC/Tools/Llvm/x64/bin/clang-cl.exe",
+                "CMAKE_CXX_COMPILER": "D:/Microsoft Visual Studio/18/Insiders/VC/Tools/Llvm/x64/bin/clang-cl.exe"
+            },
+            "vendor": {
+                "microsoft.com/VisualStudioSettings/CMake/1.0": {
+                    "hostOS": [ "Windows" ],
+                    "intelliSenseMode": "windows-clang-x64"
+                }
+            }
+        },
+        {
+            "name": "clang-debug",
+            "displayName": "clang-cl Debug",
+            "inherits": "clang-base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "clang-relwithdebinfo",
+            "displayName": "clang-cl RelWithDebInfo",
+            "inherits": "clang-base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "clang-release",
+            "displayName": "clang-cl Release",
+            "inherits": "clang-base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
         }
     ],
     "buildPresets": [
@@ -28,6 +64,21 @@
             "displayName": "RelWithDebInfo",
             "configurePreset": "default",
             "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "clang-debug",
+            "displayName": "clang-cl Debug",
+            "configurePreset": "clang-debug"
+        },
+        {
+            "name": "clang-relwithdebinfo",
+            "displayName": "clang-cl RelWithDebInfo",
+            "configurePreset": "clang-relwithdebinfo"
+        },
+        {
+            "name": "clang-release",
+            "displayName": "clang-cl Release",
+            "configurePreset": "clang-release"
         }
     ]
 }

@@ -73,6 +73,7 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/OffsetAllocator
     ${THIRD_PARTY}/fb_zstd/lib
     ${THIRD_PARTY}/x86-simd-sort/src
+    ${CMAKE_SOURCE_DIR}/3rdParty/glaze/include
 )
 # ============================================================================
 # Compiler & linker flags  (MSVC-specific)

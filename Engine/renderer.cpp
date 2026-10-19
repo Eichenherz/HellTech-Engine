@@ -1930,7 +1930,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		.usageFlags		= buffer_usage::XFER_SRC,
 		.sizeInBytes	= 256 * MB,
 		.memProps		= buffer_mem_props::STAGING,
-	    .alignment      = RAW_FILE_READ_ALIGNMENT // NOTE: this is necessary if we use this as the io ring dst too
+	    .alignment      = RAW_DISK_SECTOR_ALIGNMENT // NOTE: this is necessary if we use this as the io ring dst too
 	} );
 
 	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {

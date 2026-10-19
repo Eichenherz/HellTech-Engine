@@ -1,0 +1,377 @@
+<scheme name="_@user_Dark" version="142" parent_scheme="Darcula">
+  <metaInfo>
+    <property name="ide">CLion</property>
+    <property name="ideVersion">2025.3.3.0.0</property>
+    <property name="originalScheme">Dark</property>
+    <property name="partialSave">true</property>
+    <property name="pluginId">com.intellij</property>
+  </metaInfo>
+  <attributes>
+    <option name="HLSL_BLOCK_COMMENT">
+      <value>
+        <option name="FOREGROUND" value="57a64a" />
+      </value>
+    </option>
+    <option name="HLSL_BUILTIN_FUNCTION">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="HLSL_FIELD_ACCESS">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="HLSL_FUNCTION_CALL">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="HLSL_IDENTIFIER">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="HLSL_INSTANCE_METHOD_CALL">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="HLSL_KEYWORD">
+      <value>
+        <option name="FOREGROUND" value="569cd6" />
+      </value>
+    </option>
+    <option name="HLSL_LINE_COMMENT">
+      <value>
+        <option name="FOREGROUND" value="57a64a" />
+      </value>
+    </option>
+    <option name="HLSL_NUMBER">
+      <value>
+        <option name="FOREGROUND" value="94c184" />
+      </value>
+    </option>
+    <option name="HLSL_PREPROCESSOR">
+      <value>
+        <option name="FOREGROUND" value="9b9b9b" />
+      </value>
+    </option>
+    <option name="HLSL_SEMANTIC">
+      <value>
+        <option name="FOREGROUND" value="c77dbb" />
+      </value>
+    </option>
+    <option name="HLSL_STRING">
+      <value>
+        <option name="FOREGROUND" value="c58f74" />
+      </value>
+    </option>
+    <option name="HLSL_STRUCT_NAME">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="HLSL_TYPE">
+      <value>
+        <option name="FOREGROUND" value="569cd6" />
+      </value>
+    </option>
+    <option name="OC.BLOCK_COMMENT">
+      <value>
+        <option name="FOREGROUND" value="57a64a" />
+      </value>
+    </option>
+    <option name="OC.DIRECTIVE">
+      <value>
+        <option name="FOREGROUND" value="9b9b9b" />
+      </value>
+    </option>
+    <option name="OC.FORMAT_TOKEN">
+      <value>
+        <option name="FOREGROUND" value="ffb333" />
+      </value>
+    </option>
+    <option name="OC.FUNCTION">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="OC.FUNCTION_DECLARATION">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="OC.HEADER_PATH">
+      <value>
+        <option name="FOREGROUND" value="c58f74" />
+      </value>
+    </option>
+    <option name="OC.INVALID_STRING_ESCAPE">
+      <value>
+        <option name="FOREGROUND" value="ffb333" />
+        <option name="EFFECT_COLOR" value="fa6675" />
+        <option name="EFFECT_TYPE" value="2" />
+      </value>
+    </option>
+    <option name="OC.KEYWORD">
+      <value>
+        <option name="FOREGROUND" value="569cd6" />
+      </value>
+    </option>
+    <option name="OC.LINE_COMMENT">
+      <value>
+        <option name="FOREGROUND" value="57a64a" />
+      </value>
+    </option>
+    <option name="OC.LOCAL_VARIABLE">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="OC.MACRONAME">
+      <value>
+        <option name="FOREGROUND" value="ff00ff" />
+      </value>
+    </option>
+    <option name="OC.NAMESPACE_LIKE">
+      <value>
+        <option name="FOREGROUND" value="c8c8c8" />
+      </value>
+    </option>
+    <option name="OC.NUMBER">
+      <value>
+        <option name="FOREGROUND" value="94c184" />
+      </value>
+    </option>
+    <option name="OC.PARAMETER">
+      <value>
+        <option name="FOREGROUND" value="ba9342" />
+      </value>
+    </option>
+    <option name="OC.STRING">
+      <value>
+        <option name="FOREGROUND" value="c58f74" />
+      </value>
+    </option>
+    <option name="OC.STRUCT_FIELD">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="OC.STRUCT_LIKE">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="OC.TYPEDEF">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="OC.VALID_STRING_ESCAPE">
+      <value>
+        <option name="FOREGROUND" value="ffb333" />
+      </value>
+    </option>
+    <option name="ZIG_BUILTIN">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_CHAR">
+      <value>
+        <option name="FOREGROUND" value="c58f74" />
+      </value>
+    </option>
+    <option name="ZIG_COMMENT">
+      <value>
+        <option name="FOREGROUND" value="57a64a" />
+      </value>
+    </option>
+    <option name="ZIG_COMMENT_DOC">
+      <value>
+        <option name="FOREGROUND" value="57a64a" />
+      </value>
+    </option>
+    <option name="ZIG_ENUM_DECL">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_ENUM_REF">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_FUNCTION_DECL">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_FUNCTION_DECL_GEN">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_FUNCTION_REF">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_FUNCTION_REF_GEN">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_KEYWORD">
+      <value>
+        <option name="FOREGROUND" value="569cd6" />
+      </value>
+    </option>
+    <option name="ZIG_METHOD_DECL">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_METHOD_DECL_GEN">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_METHOD_REF">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_METHOD_REF_GEN">
+      <value>
+        <option name="FOREGROUND" value="ffff00" />
+      </value>
+    </option>
+    <option name="ZIG_NAMESPACE_DECL">
+      <value>
+        <option name="FOREGROUND" value="c8c8c8" />
+      </value>
+    </option>
+    <option name="ZIG_NAMESPACE_REF">
+      <value>
+        <option name="FOREGROUND" value="c8c8c8" />
+      </value>
+    </option>
+    <option name="ZIG_NUMBER">
+      <value>
+        <option name="FOREGROUND" value="94c184" />
+      </value>
+    </option>
+    <option name="ZIG_PARAMETER">
+      <value>
+        <option name="FOREGROUND" value="ba9342" />
+      </value>
+    </option>
+    <option name="ZIG_PROPERTY_DECL">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="ZIG_PROPERTY_REF">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="ZIG_STRING">
+      <value>
+        <option name="FOREGROUND" value="c58f74" />
+      </value>
+    </option>
+    <option name="ZIG_STRING_ESC_I_C">
+      <value>
+        <option name="FOREGROUND" value="ffb333" />
+        <option name="EFFECT_COLOR" value="fa6675" />
+        <option name="EFFECT_TYPE" value="2" />
+      </value>
+    </option>
+    <option name="ZIG_STRING_ESC_I_U">
+      <value>
+        <option name="FOREGROUND" value="ffb333" />
+        <option name="EFFECT_COLOR" value="fa6675" />
+        <option name="EFFECT_TYPE" value="2" />
+      </value>
+    </option>
+    <option name="ZIG_STRING_ESC_V">
+      <value>
+        <option name="FOREGROUND" value="ffb333" />
+      </value>
+    </option>
+    <option name="ZIG_STRUCT_DECL">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_STRUCT_REF">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_TYPE">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_TYPE_DECL">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_TYPE_DECL_GEN">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_TYPE_PARAM">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_TYPE_PARAM_DECL">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_TYPE_REF">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_TYPE_REF_GEN">
+      <value>
+        <option name="FOREGROUND" value="4ec9b0" />
+      </value>
+    </option>
+    <option name="ZIG_VARIABLE">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="ZIG_VARIABLE_DECL">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="ZIG_VARIABLE_DECL_DEPR">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="ZIG_VARIABLE_REF">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+    <option name="ZIG_VARIABLE_REF_DEPR">
+      <value>
+        <option name="FOREGROUND" value="ec9b0a" />
+      </value>
+    </option>
+  </attributes>
+</scheme>

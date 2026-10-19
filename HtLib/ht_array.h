@@ -132,6 +132,17 @@ void ht_array<T, STORAGE_T>::resize( this ht_array& self, u64 n, const T& v )
     self.elemCount = n;
 }
 
+namespace ht
+{
+    template<TRIVIAL_T T, storage_t<T> STORAGE_T>
+    u64 compact_if( ht_array<T, STORAGE_T>& self, auto pred )
+    {
+        u64 n = std::ranges::size( std::ranges::remove_if( self, pred ) );
+        self.shrink_by( n );
+        return n;
+    }
+}
+
 template<typename S> requires requires { S::CAN_GROW; }
 ht_array( S ) -> ht_array<std::ranges::range_value_t<decltype( S::mem )>, S>;
 

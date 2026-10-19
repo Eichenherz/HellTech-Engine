@@ -7,28 +7,39 @@
 #include <ht_vec_types.h>
 #include <ht_renderer_types.h>
 
-#include <vector>
 #include <ht_fixed_string.h>
 
 #include <ankerl/unordered_dense.h>
 
+using hpk_mesh_name = fixed_string<128>;
+
 enum class raw_mesh_topology_t : u32
 {
+    INVALID = 0,
     MESH,
     POINTS
 };
 
+struct raw_lod
+{
+    borrowed_array<float3>  pos     = {};
+    borrowed_array<float3>  norm    = {};
+    borrowed_array<float4>  tans    = {};
+    borrowed_array<float2>  uvs     = {};
+    borrowed_array<u32>     idxBuff = {};
+};
+
 struct raw_mesh
 {
-	fixed_string<128>   name;
-	std::vector<float3> pos;
-	std::vector<float3> normals;
-	std::vector<float4> tans;
-	std::vector<float2> uvs;
-	std::vector<u32>    indices;
-	aabb_t<float3>		aabb;
-	u32                 materialIdx;
-    raw_mesh_topology_t topology;
+    static constexpr u64 LODS = MAX_LOD_LEVELS_COUNT;
+
+	fixed_string<128>           name        = {};
+    inline_array<raw_lod, LODS> lods        = {};
+    float3a                     aabbMin     = {};
+    float3a                     aabbMax     = {};
+    // NOTE: doesn't have to be the name JUST has to match with the one from raw node
+    u64                         hash        = 0;
+    raw_mesh_topology_t         topology    = {};
 };
 
 enum class image_channels_t : u8
@@ -95,11 +106,11 @@ struct packed_trs;
 
 struct raw_node
 {
+    hpk_mesh_name   name;
 	trs_t	        toWorld;
     float3a         aabbCenter;
     float3a         aabbExtent;
 	u64			    meshHash;
-    u64             meshID;
 };
 
 template<TRIVIAL_T T>
@@ -124,12 +135,6 @@ constexpr bool operator==( const raw_node& a, const raw_node& b )
 }
 
 template<> struct ankerl::unordered_dense::hash<raw_node> : ankerl_hash_as_bytes<raw_node> {};
-
-// NOTE: stupid C++
-struct u32x3_eq
-{
-	bool operator()( const u32x3& a, const u32x3& b ) const { return a == b; }
-};
 
 struct triangle_pos
 {
@@ -167,15 +172,13 @@ constexpr u64   LODS_PER_MESHLET = 2; // NOTE: includes the src/lod0
 
 struct hpk_meshlets_w_lod
 {
-    borrowed_array<hpk_meshlet>	meshlets        = {};
-    float						meshLevelError  = FLT_MAX;
+    std::span<hpk_meshlet>	meshlets        = {};
+    float					meshLevelError  = FLT_MAX;
 };
 
-using hpk_mesh_name = fixed_string<128>;
-
-inline u64 HpkHashMeshName( const hpk_mesh_name& name )
+inline u64 HpkHashMeshKey( const hpk_mesh_name& key )
 {
-    return ankerl::unordered_dense::hash<std::string_view>{}( name );
+    return ankerl::unordered_dense::hash<std::string_view>{}( key );
 }
 
 inline i16x2 HpkBinPointTo2DGridSector( float3a ptInWorldCoords )

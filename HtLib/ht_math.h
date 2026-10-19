@@ -4,12 +4,10 @@
 #define __HT_MATH_H__
 
 #include <ht_vec_types.h>
-#include <ht_gfx_types.h>
 
 #include <ht_core_types.h>
 #include <ht_error.h>
 
-#include <bit>
 #include <span>
 #include <numbers>
 
@@ -255,12 +253,6 @@ inline float4x4 PerspRevZInfFarFromFovAndAspectRatio( float fovYRads, float aspe
 	return proj;
 }
 
-constexpr packed_trs IDENTITY_TRS = {
-	.t = { 0.0f, 0.0f, 0.0f },
-	.r = { 0.0f, 0.0f, 0.0f, 1.0f },
-	.s = { 1.0f, 1.0f, 1.0f }
-};
-
 inline float4x3 TrsToFloat4x3RowMaj( float3 t, float4 q, float3 s )
 {
     float3x3 rot = RotMatFromQuat( q );
@@ -272,7 +264,5 @@ inline float4x3 TrsToFloat4x3RowMaj( float3 t, float4 q, float3 s )
     ht::mat_row( m, 3, float3a{ t.x, t.y, t.z } );
     return m;
 }
-
-inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs ) { return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s ); }
 
 #endif // !__HT_MATH_H__
