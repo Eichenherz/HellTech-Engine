@@ -1,0 +1,5 @@
+command script import "D:/Program Files/Zig/lib/lldb/pretty_printers.py"
+type summary add -F pretty_printers.zig_String_SummaryProvider "[]u8" "[]const u8" "[:0]u8" "[:0]const u8" "?[]u8" "?[]const u8"
+type summary add --category zig.lang --summary-string "${var%x}" "unsigned char *"
+type category enable zig.lang
+type category enable zig.std
