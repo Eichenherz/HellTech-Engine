@@ -349,7 +349,7 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 
 	constexpr char assetFilePath[] = "D:/3d models/caldera.hpk";
 
-    void* hHpkFile = ht_os_create_file( assetFilePath, file_perm_t::READ,
+    void* hHpkFile = ht_os_create_file( assetFilePath, file_permission_t::READ,
         file_create_t::OPEN_IF_EXISTS, file_access_t::RAW_CONCURRENT );
 
     std::span ioReadBuff = g_pVirtualAllocator->AllocVirtualBlock( 384 * MB, HtCurrentThreadIdx() );

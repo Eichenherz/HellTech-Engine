@@ -93,9 +93,10 @@ struct linear_arena
     {
         u64     allocOffset     = ( std::data( alloc ) - mem ) + std::size( alloc ) + HT_ASAN_BORDER;
         bool    canStretch      = allocOffset == offsetInBytes;
-        bool    legalStretch    = ( allocOffset + stretchInBytes + HT_ASAN_BORDER ) <= sizeInBytes;
 
-        if( !canStretch || !legalStretch ) return ~0ull;
+        if( !canStretch ) return ~0ull;
+
+        HT_ASSERT( ( allocOffset + stretchInBytes + HT_ASAN_BORDER ) <= sizeInBytes );
 
         HT_UNPOISON( mem + allocOffset - HT_ASAN_BORDER, HT_ASAN_BORDER + stretchInBytes );
         HT_POISON( mem + allocOffset + stretchInBytes, HT_ASAN_BORDER );
@@ -105,17 +106,17 @@ struct linear_arena
 };
 
 
-template<typename T, arena_t Arena>
-T* ArenaNew( Arena& arena ) { return new ( arena.Alloc( sizeof( T ), alignof( T ) ) ) T; }
+template<typename T>
+T* ArenaNew( arena_t auto& arena ) { return new ( arena.Alloc( sizeof( T ), alignof( T ) ) ) T; }
 
-template<typename T, arena_t Arena, typename... Args>
-T* ArenaMake( Arena& arena, Args&&... args )
+template<typename T>
+T* ArenaMake( arena_t auto& arena, auto&&... args )
 {
 	return new ( arena.Alloc( sizeof( T ), alignof( T ) ) ) T{ FWD( args )... };
 }
 
-template<typename T, arena_t Arena>
-std::span<T> ArenaNewArray( Arena& arena, u64 elemCount )
+template<typename T>
+std::span<T> ArenaNewArray( arena_t auto& arena, u64 elemCount )
 {
 	// NOTE: otherwise C++ adds 8 bytes top of our alloc
 	static_assert( std::is_trivially_destructible_v<T> );
@@ -155,31 +156,46 @@ struct scoped_arena : ht_mem_scope<Arena>
 
 struct virtual_arena : linear_arena
 {
-    static constexpr u64 COMMIT_SZ_IN_BYTES = 2 * MB;
+    static constexpr u64 COMMIT_SZ_IN_BYTES = 32 * MB;
+    static_assert( IsAlignedToPot( COMMIT_SZ_IN_BYTES, OS_COMMIT_PAGE_SIZE_IN_BYTES ) );
+
+    u64 commitedCursor = 0;
 
     virtual_arena() = default;
     virtual_arena( u64 reservedInBytes ) : linear_arena{ ht_os_virtual_reserve( reservedInBytes ), reservedInBytes } {}
+
+    void    Commit( u64 allocEnd )
+    {
+        if( allocEnd <= commitedCursor ) return;
+
+        u64 newCommitedCursor = FwdAlignPot( allocEnd, COMMIT_SZ_IN_BYTES );
+        HT_ASSERT( newCommitedCursor <= sizeInBytes );
+        ht_os_virtual_commit( mem + commitedCursor, newCommitedCursor - commitedCursor );
+        commitedCursor = newCommitedCursor;
+    }
 
     u64     Mark() const { return linear_arena::Mark(); }
     u64     RewindBy( u64 bytes )
     {
         HT_ASSERT( bytes <= offsetInBytes );
-        u64 keepOffset = FwdAlignPot( std::max( offsetInBytes - bytes, 512 * MB ),
-            OS_COMMIT_PAGE_SIZE_IN_BYTES );
-        if( keepOffset < offsetInBytes ) { ht_os_virtual_decommit( mem + keepOffset, offsetInBytes - keepOffset ); }
+        u64 keepOffset = FwdAlignPot( std::max( offsetInBytes - bytes, 512 * MB ), COMMIT_SZ_IN_BYTES );
+        if( keepOffset < commitedCursor )
+        {
+            ht_os_virtual_decommit( mem + keepOffset, commitedCursor - keepOffset );
+            commitedCursor = keepOffset;
+        }
         return linear_arena::RewindBy( bytes );
     }
     void*   Alloc( u64 szInBytes, u64 alignment )
     {
-        u64 currOffset = offsetInBytes;
         void* pMemAlloc = linear_arena::Alloc( szInBytes, alignment );
-        ht_os_virtual_commit( pMemAlloc, offsetInBytes - currOffset );
+        Commit( ( ( u8* ) pMemAlloc - mem ) + szInBytes );
         return pMemAlloc;
     }
     u64     TryStretchAlloc( std::span<u8> alloc, u64 stretchInBytes )
     {
         u64 szStretched = linear_arena::TryStretchAlloc( alloc, stretchInBytes );
-        if( ~0ull != szStretched ) { ht_os_virtual_commit( &alloc[ 0 ], szStretched ); }
+        if( ~0ull != szStretched ) [[ likely ]] { Commit( ( std::data( alloc ) - mem ) + szStretched ); }
         return szStretched;
     }
 };
@@ -203,7 +219,7 @@ struct inline_storage
 
     std::array<T, N>        mem = {};
 
-    void    Grow( this inline_storage&, u64 reqSzInElems ) { HT_ASSERT( reqSzInElems <= N ); }
+    void Grow( this inline_storage&, u64 reqSzInElems ) { HT_ASSERT( reqSzInElems <= N ); }
 };
 
 template<typename T>
@@ -214,7 +230,7 @@ struct borrowed_storage
 
     std::span<T>            mem             = {};
 
-    void    Grow( this borrowed_storage& self, u64 reqSzInElems ) { HT_ASSERT( reqSzInElems <= std::size( self.mem ) ); }
+    void Grow( this borrowed_storage& self, u64 reqSzInElems ) { HT_ASSERT( reqSzInElems <= std::size( self.mem ) ); }
 };
 
 template<TRIVIAL_T T, arena_t ARENA_T = linear_arena>
@@ -228,31 +244,61 @@ struct arena_storage
     std::span<T>            mem             = {};
     ARENA_T*                pArena          = nullptr;
 
-    void    Grow( this arena_storage& self, u64 reqSzInElems );
+    void Grow( this auto& self, u64 reqSzInElems )
+    {
+        HT_ASSERT( self.pArena && ( reqSzInElems > std::size( self.mem ) ) );
+
+        u64 reqSzInBytes = reqSzInElems * sizeof( T );
+
+        if( 0 == std::size( self.mem ) ) [[ unlikely ]]
+        {
+            self.mem = { ( T* ) self.pArena->Alloc( reqSzInBytes, alignof( T ) ), reqSzInElems };
+            return;
+        }
+
+        u64 stretchedSzInBytes  = self.pArena->TryStretchAlloc( AsBytesWritable( self.mem ),
+            reqSzInBytes - HtRangeSizeInBytes( self.mem ) );
+        HT_ASSERT( ~0ull != stretchedSzInBytes );
+
+        self.mem = { std::data( self.mem ), stretchedSzInBytes / sizeof( T ) };
+    }
 };
 
-template<TRIVIAL_T T, arena_t ARENA_T>
-void arena_storage<T, ARENA_T>::Grow( this arena_storage& self, u64 reqSzInElems )
+template<TRIVIAL_T T>
+struct virtual_storage
 {
-    HT_ASSERT( self.pArena && ( reqSzInElems > std::size( self.mem ) ) );
+    static constexpr bool   CAN_GROW        = true;
+    static constexpr bool   OWNS_ELEMENTS   = false;
 
-    u64 reqSzInBytes = reqSzInElems * sizeof( T );
+    virtual_arena           arena           = {};
+    std::span<T>            mem             = {};
 
-    if( 0 == std::size( self.mem ) )
+    virtual_storage() = default;
+    virtual_storage( u64 reservedInBytes ) : arena{ reservedInBytes } {}
+
+    void Grow( this auto&& self, u64 reqSzInElems )
     {
-        self.mem = { ( T* ) self.pArena->Alloc( reqSzInBytes, alignof( T ) ), reqSzInElems };
-        return;
+        u64 reqSzInBytes = reqSzInElems * sizeof( T );
+
+        if( !std::size( self.mem ) ) [[ unlikely ]]
+        {
+            self.mem = { ( T* ) self.arena.Alloc( reqSzInBytes, alignof( T ) ), reqSzInElems };
+            return;
+        }
+
+        u64 stretchedSzInBytes  = self.arena.TryStretchAlloc( AsBytesWritable( self.mem ),
+            reqSzInBytes - HtRangeSizeInBytes( self.mem ) );
+        HT_ASSERT( ~0ull != stretchedSzInBytes );
+
+        self.mem = { std::data( self.mem ), stretchedSzInBytes / sizeof( T ) };
     }
+};
 
-    u64 stretchedSzInBytes  = self.pArena->TryStretchAlloc( AsBytesWritable( self.mem ),
-        reqSzInBytes - HtRangeSizeInBytes( self.mem ) );
-    HT_ASSERT( ~0ull != stretchedSzInBytes );
-
-    self.mem = { std::data( self.mem ), stretchedSzInBytes / sizeof( T ) };
-}
-
-static_assert( storage_t<inline_storage<u8, 4>, u8>
-    && storage_t<borrowed_storage<u8>, u8>
-    && storage_t<arena_storage<u8>, u8> );
+static_assert(
+    storage_t<inline_storage<u8, 4>, u8> &&
+    storage_t<borrowed_storage<u8>, u8> &&
+    storage_t<arena_storage<u8>, u8> &&
+    storage_t<virtual_storage<u8>, u8>
+);
 
 #endif // !__HT_MEM_ARENA_H__

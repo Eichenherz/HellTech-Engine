@@ -11,8 +11,6 @@ namespace fs = std::filesystem;
 #include <format>
 #include <chrono>
 
-#include <dds.h>
-
 #include <ht_core_types.h>
 #include <ht_error.h>
 #include <ht_vec_types.h>
@@ -44,13 +42,15 @@ do{                                                                             
 }while( 0 )
 
 
-static const u64 g_ThreadCount = 4;
+static const u64 g_ThreadCount = 6;
 
-thread_local static virtual_arena g_ThreadArena[ 2 ]    = { { 4 * GB }, { 4 * GB } };
-thread_local static virtual_arena g_ThreadExtLibArena   = { 8 * GB };
+thread_local static std::array g_ThreadArenas = {
+    virtual_arena{ 2 * GB },
+    virtual_arena{ 2 * GB },
+    virtual_arena{ 2 * GB },
+};
 
-static std::atomic<u64> g_AtomicJobsCounter     = 0;
-static std::atomic<u64> g_AtomicWorkerCounter   = 0;
+alignas( HT_CACHE_LINE_SZ ) static std::atomic<u64> g_AtomicJobsCounter = 0;
 
 struct bit_stream
 {
@@ -87,6 +87,7 @@ struct bit_stream
     }
 };
 
+/*
 static std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshlet& mlt )
 {
 	std::vector<packed_vtx_attr> packedVtxAttrs( mlt.vtxCount );
@@ -104,6 +105,7 @@ static std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshl
 
 	return packedVtxAttrs;
 }
+*/
 
 constexpr bool validatePosEncoding      = true;
 constexpr bool validateNormalEncoding   = true;
@@ -220,7 +222,7 @@ struct hpk_file_buffer
     hpk_file_buffer() = default;
     hpk_file_buffer( const sys_path& sysPath ) : hpk_file_buffer{ ( const char* ) sysPath } {}
     hpk_file_buffer( const char* filePath ) : hFile{ ht_os_create_file( filePath,
-        file_perm_t::WRITE | file_perm_t::DELETABLE, file_create_t::OVERWRITE, file_access_t::SEQUENTIAL ) } {}
+        file_permission_t::WRITE | file_permission_t::DELETABLE, file_create_t::OVERWRITE, file_access_t::SEQUENTIAL ) } {}
     hpk_file_buffer( std::string_view filePath ) : hpk_file_buffer{ std::data( filePath ) } {}
 
     u64 WriteBlocking( std::span<const u8> rawBytes )
@@ -240,105 +242,7 @@ inline void HpkFileBufferClose( hpk_file_buffer& fileBuff )
     ht_os_close_file( fileBuff.hFile );
 }
 
-struct compression_job
-{
-	alignas( 8 ) vfs_path	filename;
-	dds_texture				tex;
-	std::span<const u8> 	src;
-	dds::DXGI_FORMAT		fmt;
-	u16						width;
-	u16						height;
-
-	void Execute()
-	{
-		bc_format_t bcnFmt = DxgiToBcFormat( fmt );
-		// NOTE: these allocate memory !
-		bcn_compression_result bcn = CompressRGBA8ToBCn( src, width, height, bcnFmt );
-
-		tex.resize( sizeof( dds::Header ) + std::size( bcn.data ) );
-		dds::write_header( &tex[ 0 ], fmt, width, height );
-		std::memcpy( &tex[ 0 ] + sizeof( dds::Header ), &bcn.data[ 0 ], std::size( bcn.data ) );
-	}
-};
-
-struct materials_jobs
-{
-	std::vector<material_desc>   materials;
-	std::vector<compression_job> jobs;
-};
-
-materials_jobs PrepareBcnCompressionBatch(
-	std::span<const raw_material_info>	rawMaterials,
-	std::span<const raw_image_view>		imageViews
-) {
-	HT_ASSERT( std::size( imageViews ) < u16( INVALID_IDX ) );
-
-	// NOTE: we use indices and vfs_path here bc we're deduping wrt to tinygltf's stuff which is index based
-	ankerl::unordered_dense::set<u16>	jobsSet;
-	std::vector<compression_job>		jobs;
-
-	jobsSet.reserve( std::size( imageViews ) );
-	jobs.reserve( std::size( imageViews ) );
-
-	auto ProcessImageView = [ & ]( u16 idx, dds::DXGI_FORMAT fmt, const vfs_path& filename ) -> u64
-	{
-		if( !IsIndexValid( idx ) ) return {};
-		if( std::cend( jobsSet ) == jobsSet.find( idx ) )
-		{
-			const raw_image_view& imgView = imageViews[ idx ];
-			HT_ASSERT( std::size( imgView.data ) );
-
-			jobsSet.emplace( idx );
-
-			jobs.push_back( {
-				.filename	= filename,
-				.src		= imgView.data,
-				.fmt		= fmt,
-				.width		= imgView.metadata.width,
-				.height		= imgView.metadata.height
-			} );
-		}
-		
-		return std::hash<vfs_path>{}( filename );
-	};
-
-	std::vector<material_desc> materials;
-	materials.reserve( std::size( rawMaterials ) );
-	// NOTE: GLTF conventions
-	for( const raw_material_info& mtrl : rawMaterials )
-	{
-		//ProcessImageView( material.occlusionIdx, bc_format_t::BC7_RGBA );
-		// NOTE: currently not supporting ambient occlusion which must be packed into MR
-		//HT_ASSERT( !IsIndexValid( mtrl.occlusionIdx ) );
-
-		u64 baseColorHash = ProcessImageView( mtrl.baseColorIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { "{}_albedo.dds", mtrl.name } );
-		u64 normalHash = ProcessImageView( mtrl.normalIdx, dds::DXGI_FORMAT_BC5_UNORM, { "{}_normal.dds", mtrl.name } );
-		u64 metallicRoughnessHash = ProcessImageView( mtrl.metallicRoughnessIdx, dds::DXGI_FORMAT_BC7_UNORM, { "{}_mro.dds", mtrl.name } );
-		u64 emissiveHash = ProcessImageView( mtrl.emissiveIdx, dds::DXGI_FORMAT_BC7_UNORM_SRGB, { "{}_emissive.dds", mtrl.name } );
-
-		materials.push_back( {
-			.baseColorHash			= baseColorHash,
-			.metallicRoughnessHash	= metallicRoughnessHash,
-			.normalHash				= normalHash,
-			.emissiveHash			= emissiveHash,
-
-			.baseColFactor			= mtrl.baseColFactor,
-			.emissiveFactor			= mtrl.emissiveFactor,
-			.metallicFactor			= mtrl.metallicFactor,
-			.roughnessFactor		= mtrl.roughnessFactor,
-
-			.alphaCutoff			= mtrl.alphaCutoff,
-
-			.samplerIdx				= mtrl.samplerIdx,
-
-			.alphaMode				= mtrl.alphaMode
-		} );
-	}
-
-	return { .materials = MOV( materials ), .jobs = MOV( jobs ) };
-}
-
-
+// TODO: add one in sys_sync
 inline void AtomicWait( const std::atomic<u64>& waitAddr, u64 waitVal )
 {
     for( ;; )
@@ -354,50 +258,10 @@ inline void HpkExitWithMsg( std::string_view msg )
     std::exit( -1 );
 }
 
-
-template<TRIVIAL_T T>
-struct hpk_virtual_storage : arena_storage<T, virtual_arena>
-{
-    static constexpr bool   CAN_GROW        = true;
-    static constexpr bool   OWNS_ELEMENTS   = false;
-
-    virtual_arena           arena           = {};
-
-    hpk_virtual_storage() = default;
-    hpk_virtual_storage( u64 reservedInBytes ) : arena{ reservedInBytes } {}
-
-    void Grow( this auto&& self, u64 reqSzInElems )
-    {
-        self.pArena = &self.arena;
-        self.arena_storage<T, virtual_arena>::Grow( reqSzInElems );
-    }
-};
-
-template<TRIVIAL_T T>
-struct hpk_virtual_atomic_array
-{
-    T*                  data    = nullptr;
-    std::atomic<u64>    cursor  = 0;
-
-    hpk_virtual_atomic_array() = default;
-    hpk_virtual_atomic_array( u64 reservedInBytes ) : data{ ( T* ) ht_os_virtual_reserve( reservedInBytes ) } {}
-
-    std::span<T> append_range( this auto&& self, CONTIGUOUS_RANGE_T auto&& range )
-    {
-        u64 szRange = std::ranges::size( range );
-        HT_ASSERT( szRange );
-
-        T* pDst = self.data + self.cursor.fetch_add( szRange, std::memory_order_release );
-        ht_os_virtual_commit( pDst, szRange * sizeof( T ) );
-        std::ranges::copy( range, pDst );
-        return { pDst, szRange };
-    }
-};
-
 inline ZSTD_CCtx* HpkMakeZSTDContext()
 {
     u64        zstdSz   = ZSTD_estimateCCtxSize( ZSTD_COMPRESSION_LEVEL );
-    ZSTD_CCtx* pZstdCtx = ZSTD_initStaticCCtx( g_ThreadExtLibArena.Alloc( zstdSz, 8 ), zstdSz );
+    ZSTD_CCtx* pZstdCtx = ZSTD_initStaticCCtx( g_ThreadArenas[ 2 ].Alloc( zstdSz, 8 ), zstdSz );
     HT_ASSERT( pZstdCtx );
     return pZstdCtx;
 }
@@ -414,37 +278,36 @@ inline std::span<u8> HpkZSTDCompress( ZSTD_CCtx *const pZstdCtx, std::span<const
 }
 
 static void HpkProcessMeshesParallelJob(
-    std::string_view                            scratchDir,
-    std::span<sys_path>                         glbFilePaths,
-    hpk_virtual_atomic_array<hpk_mesh_desc>&    outMeshDesc,
-    hpk_virtual_atomic_array<hpk_lod_desc>&     outLODs
+    std::string_view                        scratchDir,
+    std::span<const sys_path>               glbFilePaths,
+    std::span<virtual_array<raw_node>>      hpkNodes,
+    std::span<virtual_array<hpk_mesh_desc>> hpkMeshes,
+    std::span<virtual_array<hpk_lod_desc>>  hpkLODs
 ) {
     constexpr u64 NLOD = MAX_LOD_LEVELS_COUNT;
 
-    virtual_arena& outArena = g_ThreadArena[ 0 ];
-    virtual_arena& tmpArena = g_ThreadArena[ 1 ];
+    virtual_arena& outArena = g_ThreadArenas[ 0 ];
+    virtual_arena& tmpArena = g_ThreadArenas[ 1 ];
 
     for( ;; )
     {
         u64 currJobIdx = g_AtomicJobsCounter.fetch_add( 1, std::memory_order_relaxed );
         if( currJobIdx >= std::size( glbFilePaths ) ) break;
 
-        scoped_arena<virtual_arena> memScopes[] = { outArena, g_ThreadExtLibArena };
+        scoped_arena<virtual_arena> memScopes[] = { outArena, tmpArena };
 
         sys_path currInputFile = glbFilePaths[ currJobIdx ];
 
-        void* hGlb = ht_os_create_file( ( const char* ) currInputFile, file_perm_t::READ,
+        void* hGlb = ht_os_create_file( ( const char* ) currInputFile, file_permission_t::READ,
             file_create_t::OPEN_IF_EXISTS, file_access_t::SEQUENTIAL );
         std::span<const u8> rawGlbBytes = HtOsCreateROFileMapping( hGlb );
         defer { HtOSUnmapView( rawGlbBytes ); ht_os_close_file( hGlb ); };
 
-        hpk_gltf_data gltfData = HpkGltfParseFromBytes( rawGlbBytes, g_ThreadExtLibArena );
+        hpk_gltf_data gltfData = HpkGltfParseFromBytes( rawGlbBytes, tmpArena );
 
-
-
-        //auto meshDescArr = borrowed_array{ ArenaNewArray<hpk_mesh_desc>( scratchArena, gltfPrimBound ) };
-        //auto lods = borrowed_array{ ArenaNewArray<hpk_lod_desc>( scratchArena, gltfPrimBound * MAX_LOD_LEVELS_COUNT ) };
-
+        virtual_array<raw_node>&        outNodes    = hpkNodes[ currJobIdx ];
+        virtual_array<hpk_mesh_desc>&   outMeshes   = hpkMeshes[ currJobIdx ];
+        virtual_array<hpk_lod_desc>&    outLODs     = hpkLODs[ currJobIdx ];
 
         hpk_file_buffer fileBuffs[ NLOD ] = {
             hpk_file_buffer{ sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 0 } },
@@ -455,20 +318,21 @@ static void HpkProcessMeshesParallelJob(
         defer { for( hpk_file_buffer& fileBuff : fileBuffs ) { HpkFileBufferClose( fileBuff ); } };
 
         auto LmbdVisitGltfPrim = [ & ](
-            const hpk_gltf_mesh&        gltfMesh,
+            const hpk_gltf_data&        gltfDataIn,
             const hpk_gltf_primitive&   gltfPrim,
             const hpk_mesh_name&        meshKey
         ) -> void {
-            scoped_arena<virtual_arena> memScopesLmbd[] = { outArena, tmpArena };
+            scoped_arena<virtual_arena> memScopesLmbd[] = { outArena, tmpArena, g_ThreadArenas[ 2 ] };
             // NOTE: gltf can have shared accessors ! BUT that case is uninteresting and i made my pre export do "atomic" prims
-            raw_mesh rawMesh = HpkMakeRawMeshFromGltf( gltfData, gltfMesh, gltfPrim, meshKey, outArena );
+            raw_mesh rawMesh = HpkProcessGltfPrim( gltfDataIn, gltfPrim, meshKey, outArena );
 
-            MeshoptReindexAndOptimizeMesh( rawMesh, tmpArena );
+            MeshoptReindexAndOptimizeMesh( rawMesh.pos, rawMesh.idx, rawMesh.norm, outArena );
 
             float radiusInMeters = ht::length( ( rawMesh.aabbMax - rawMesh.aabbMin ) * 0.5f );
 
-            inline_array<hpk_meshlets_w_lod, NLOD> mltsWLod = MeshoptMakeHpkMeshletsWithLod( rawMesh.pos, rawMesh.norm,
-                rawMesh.idxBuff, LOD_MESH_LEVEL_RATIO, radiusInMeters, meshlet_config{}, outArena, tmpArena );
+            inline_array<hpk_meshlets_w_lod, NLOD> mltsWLod = MeshoptMakeHpkMeshletsWithLodChain( rawMesh.pos,
+                rawMesh.norm, rawMesh.idx, LOD_MESH_LEVEL_RATIO, radiusInMeters, meshlet_config{},
+                outArena, tmpArena );
 
             inline_array<hpk_lod_desc, NLOD> lodInfos = {};
             for( auto[ mLod, fileBuff ] : std::views::zip( mltsWLod, fileBuffs ) )
@@ -478,7 +342,7 @@ static void HpkProcessMeshesParallelJob(
                 hpk_quantized_lod quantLod = HpkQuantizeLODLevel( mLod.meshlets, memScope2 );
 
                 std::span<const u8> rawView = {
-                    ( const u8* ) std::data( quantLod.posBitstream ), ht::end_ptr( quantLod.idxBuff )
+                    ( const u8* ) &quantLod.posBitstream[ 0 ], ht::end_ptr( quantLod.idxBuff )
                 };
 
                 lodInfos.push_back( {
@@ -491,38 +355,45 @@ static void HpkProcessMeshesParallelJob(
                 } );
             }
 
-            // NOTE: this is a hack; and we can only index by 0-3 bc we know the lod count
-            //float4 lodErrs  = { std::data( mltsWLod )[ 0 ].meshLevelError, std::data( mltsWLod )[ 1 ].meshLevelError,
-            //    std::data( mltsWLod )[ 2 ].meshLevelError, std::data( mltsWLod )[ 3 ].meshLevelError };
-
-            //meshDescArr.push_back( {
-            //    .hashed     = rawMesh.hash,
-            //    .aabbMin    = { rawMesh.aabb.min.x, rawMesh.aabb.min.y, rawMesh.aabb.min.z },
-            //    .aabbMax    = { rawMesh.aabb.max.x, rawMesh.aabb.max.y, rawMesh.aabb.max.z },
-            //    .lodErrs    = lodErrs,
-            //    .firstLod   = std::size( lods ),
-            //    .lodCount   = std::size( lodInfos )
-            //} );
-            //lods.append_range( lodInfos );
+            float4 lodErrs = { FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX };
+            for( auto[ lei, lod ] : mltsWLod | std::views::enumerate )
+            {
+                lodErrs[ lei ] = lod.meshLevelError;
+            }
+            outMeshes.push_back( {
+                .hashed     = HpkHashMeshKey( rawMesh.name ),
+                .aabbMin    = { rawMesh.aabbMin.x, rawMesh.aabbMin.y, rawMesh.aabbMin.z },
+                .aabbMax    = { rawMesh.aabbMax.x, rawMesh.aabbMax.y, rawMesh.aabbMax.z },
+                .lodErrs    = lodErrs,
+                .firstLod   = std::size( outLODs ),
+                .lodCount   = std::size( lodInfos )
+            } );
+            outLODs.append_range( lodInfos );
         };
 
-        HpkGltfProcessDrawablesHierarchy( gltfData, currInputFile, outArena, tmpArena, LmbdVisitGltfPrim );
-
-        //u64 lodBase = std::data( outLODs.append_range( lods ) ) - outLODs.data;
-        //for( hpk_mesh_desc& meshDesc : meshDescArr ) { meshDesc.firstLod += lodBase; }
-       // outMeshDesc.append_range( meshDescArr );
-
+        HpkGltfProcessDrawablesHierarchy( gltfData, SysPathFileName( currInputFile ), tmpArena, outNodes,
+            LmbdVisitGltfPrim );
     }
 
-    g_AtomicWorkerCounter.fetch_add( 1, std::memory_order_release );
-    g_AtomicWorkerCounter.notify_all();
-
     // NOTE: to save more mem
-    ht_os_virtual_release( g_ThreadArena[ 0 ].mem );
-    ht_os_virtual_release( g_ThreadArena[ 1 ].mem );
-    ht_os_virtual_release( g_ThreadExtLibArena.mem );
+    ht_os_virtual_release( g_ThreadArenas[ 0 ].mem );
+    ht_os_virtual_release( g_ThreadArenas[ 1 ].mem );
+    ht_os_virtual_release( g_ThreadArenas[ 2 ].mem );
 }
 
+template<typename T>
+constexpr std::vector<T> HpkFlattenAndRelease( std::vector<virtual_array<T>>&& vecOfArrays )
+{
+    std::vector<T> flat = {};
+    for( virtual_array<T>& a : vecOfArrays )
+    {
+        if( !std::size( a ) ) continue;
+
+        flat.append_range( a );
+        ht_os_virtual_release( &a.mem[ 0 ] );
+    }
+    return flat;
+};
 
 auto HpkSortNodes( std::vector<raw_node>&& rawNodes )
 {
@@ -583,35 +454,39 @@ i32 main( i32 argc, char** argv  )
            }
         }
 
-        std::println( stdout, "Running HpkSortNodesAndMeshes" );
+        u64 fileCount = std::size( glbFilePaths );
 
-        //auto[ sortedNodes, sectorsVec ] = HpkSortNodes( MOV( rawNodes ) );
-
-        auto meshes = hpk_virtual_atomic_array<hpk_mesh_desc>{ 1 * GB };
-        auto lods   = hpk_virtual_atomic_array<hpk_lod_desc>{ 1 * GB };
+        auto hpkNodes = std::vector<virtual_array<raw_node>>( fileCount );
+        auto hpkMeshes = std::vector<virtual_array<hpk_mesh_desc>>( fileCount );
+        auto hpkLODs = std::vector<virtual_array<hpk_lod_desc>>( fileCount );
+        for( auto[ n, m, l ]
+            : std::views::zip( hpkNodes, hpkMeshes, hpkLODs ) )
+        {
+            n = {{ 1 * GB }};
+            m = {{ 1 * GB }};
+            l = {{ 1 * GB }};
+        }
 
         auto tmpDir = sys_path{ "{}\\tmpDir", dir };
         std::filesystem::create_directories( ( const char* ) tmpDir );
 
         // NOTE: this is global but our hook call thread local data, so safe
         meshopt_setAllocator(
-            []( size_t szInBytes ) -> void* { return g_ThreadExtLibArena.Alloc( szInBytes, 16 ); },
+            []( size_t szInBytes ) -> void* { return g_ThreadArenas[ 2 ].Alloc( szInBytes, 16 ); },
             []( void* ) {}
         );
 
         std::println( stdout, "Starting HpkProcessMeshesParallel" );
-
-        // TODO: maybe compute the LOD count dynamically; for now we'll do 4 mesh LODs @ 1/4 + 2 mlt LODs ( full + 1/2 )
-        for( u64 _ : std::views::iota( 0ull, g_ThreadCount ) )
         {
-            std::thread{ [ & ]()
-            {
-                return HpkProcessMeshesParallelJob( tmpDir, glbFilePaths, meshes, lods );
-            } }.detach();
-        }
-        AtomicWait( g_AtomicWorkerCounter, g_ThreadCount );
+            std::vector<std::jthread> workers = {};
 
-        /*
+            for( u64 _ : std::views::iota( 0u, g_ThreadCount ) )
+            {
+                workers.emplace_back( HpkProcessMeshesParallelJob, tmpDir, std::span{ glbFilePaths },
+                    std::span{ hpkNodes }, std::span{ hpkMeshes }, std::span{ hpkLODs } );
+            }
+        }
+
         std::println( stdout, "Writing .hkp file" );
 
         auto hpkFileOut = hpk_file_buffer{ cliArgs[ 2 ] }; // TODO: don't hardcode
@@ -620,12 +495,12 @@ i32 main( i32 argc, char** argv  )
 
         for( u64 lodIdx = 0; lodIdx < MAX_LOD_LEVELS_COUNT; ++lodIdx )
         {
-            for( auto[ batchIdx, batch ] : hpkMeshBatches | std::views::enumerate )
+            for( auto[ batchIdx, batch ] : hpkMeshes | std::views::enumerate )
             {
                 auto partPath   = sys_path{ "{}\\__blob_{}_lod_{}.hpk", tmpDir, batchIdx, lodIdx };
                 if( !fs::exists( ( const char* ) partPath ) ) continue;
 
-                void* hPartFile = ht_os_create_file( ( const char* ) partPath, file_perm_t::READ,
+                void* hPartFile = ht_os_create_file( ( const char* ) partPath, file_permission_t::READ,
                     file_create_t::OPEN_IF_EXISTS, file_access_t::SEQUENTIAL );
                 std::span<const u8> partMMapped = HtOsCreateROFileMapping( hPartFile );
                 // NOTE: technically we can leak the handles, but then we won't be able to delete the folder
@@ -635,21 +510,26 @@ i32 main( i32 argc, char** argv  )
                 for( const hpk_mesh_desc& mesh : batch )
                 {
                     if( mesh.lodCount <= lodIdx ) continue;
-                    hpkLODs[ mesh.firstLod + lodIdx ].fileOffsetInBytes += fileOffsetInBytes;
+                    hpkLODs[ batchIdx ][ mesh.firstLod + lodIdx ].fileOffsetInBytes += fileOffsetInBytes;
                 }
             }
         }
-        // NOTE: compact
-        std::erase_if( hpkMeshesOut, IsStructZero<hpk_mesh_desc> );
 
-        auto worldNodes = std::vector{ std::from_range, sortedNodes | std::views::transform(
-        []( const raw_node& raw ) -> world_node
+        std::vector<hpk_lod_desc>   lodDescVec  = HpkFlattenAndRelease( MOV( hpkLODs ) );
+        std::vector<hpk_mesh_desc>  meshDescVec = HpkFlattenAndRelease( MOV( hpkMeshes ) );
+        std::vector<raw_node>       rawNodes    = HpkFlattenAndRelease( MOV( hpkNodes ) );
+
+        std::println( stdout, "Running HpkSortNodesAndMeshes" );
+        auto[ sortedNodes, sectorsVec ] = HpkSortNodes( MOV( rawNodes ) );
+
+        auto worldNodes = std::vector<world_node>( std::size( sortedNodes ) );
+        for( auto[ n, raw ] : std::views::zip( worldNodes, sortedNodes ) )
         {
-            return { .toWorld = raw.toWorld, .meshHash = raw.meshHash };
-        } ) };
+            n = { .toWorld = raw.toWorld, .meshHash = raw.meshHash };
+        }
 
-        u64 lodDescOffset   = hpkFileOut.WriteBlocking( AsBytes( hpkLODs ) );
-        u64 meshDescOffset  = hpkFileOut.WriteBlocking( AsBytes( hpkMeshesOut ) );
+        u64 lodDescOffset   = hpkFileOut.WriteBlocking( AsBytes( lodDescVec ) );
+        u64 meshDescOffset  = hpkFileOut.WriteBlocking( AsBytes( meshDescVec ) );
 
         u64 nodesOffset     = hpkFileOut.WriteBlocking( AsBytes( worldNodes ) );
 
@@ -667,15 +547,15 @@ i32 main( i32 argc, char** argv  )
             .nodeCount                  = std::size( worldNodes ),
 
             .firstMeshDescOffsetInBytes = meshDescOffset,
-            .meshDescCount              = std::size( hpkMeshesOut ),
+            .meshDescCount              = std::size( meshDescVec ),
 
             .firstLodDescOffsetInBytes  = lodDescOffset,
-            .lodDescCount               = std::size( hpkLODs )
+            .lodDescCount               = std::size( lodDescVec )
         };
 
         hpkFileOut.RewindTo( 0 );
         hpkFileOut.WriteBlocking( { ( const u8* ) &fileHeader, sizeof( fileHeader ) } );
-        */
+
         std::chrono::duration<double, std::milli> elapsedMs = std::chrono::steady_clock::now() - timeStart;
         std::println( stdout, "Done in {:.2f} ms", elapsedMs.count() );
 

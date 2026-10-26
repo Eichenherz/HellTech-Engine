@@ -65,7 +65,7 @@ struct ht_array : STORAGE_T
         self.reserve( self.elemCount + 1 ); return self.mem[ self.elemCount++ ] = T{ FWD( args )... };
     }
     void        append_range( this ht_array& self, std::ranges::input_range auto&& r );
-    void        pop_back( this ht_array& self ) { HT_ASSERT( 0 != self.elemCount ); --self.elemCount; }
+    T           pop_back( this ht_array& self ) { HT_ASSERT( 0 != self.elemCount ); return self.mem[ --self.elemCount ]; }
 
     T*          erase( this ht_array& self, const T* pos ) { return self.erase( pos, pos + 1 ); }
     T*          erase( this ht_array& self, const T* first, const T* last );
@@ -184,6 +184,14 @@ struct inline_array : ht_array<T, inline_storage<T, N>>
     inline_array( std::from_range_t, std::ranges::input_range auto&& r ) { this->append_range( FWD( r ) ); }
 };
 
-static_assert( TRIVIAL_T<arena_array<u8>> && TRIVIAL_T<borrowed_array<u8>> && TRIVIAL_T<inline_array<u8, 4>> );
+template<TRIVIAL_T T>
+using virtual_array = ht_array<T, virtual_storage<T>>;
+
+static_assert(
+    TRIVIAL_T<arena_array<u8>> &&
+    TRIVIAL_T<borrowed_array<u8>> &&
+    TRIVIAL_T<inline_array<u8, 4>> &&
+    TRIVIAL_T<virtual_array<u8>>
+);
 
 #endif // !__HT_ARRAY_H__

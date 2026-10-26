@@ -316,9 +316,9 @@ template std::span<u8> SysReadWholeFile<virtual_arena>( const char*, virtual_are
 template std::span<u8> SysReadWholeFile<scoped_arena<linear_arena>>( const char*, scoped_arena<linear_arena>& );
 template std::span<u8> SysReadWholeFile<scoped_arena<virtual_arena>>( const char*, scoped_arena<virtual_arena>& );
 
-constexpr DWORD MakeGenericAccessFlags( file_perm_t openFlags )
+constexpr DWORD MakeGenericAccessFlags( file_permission_t openFlags )
 {
-    using enum file_perm_t;
+    using enum file_permission_t;
 	DWORD access = 0;
 
 	if( openFlags & READ ) { access |= GENERIC_READ; }
@@ -331,18 +331,18 @@ constexpr DWORD MakeGenericAccessFlags( file_perm_t openFlags )
 
 	return access;
 }
-constexpr DWORD MakeFileMappingFlags( file_perm_t openFlags )
+constexpr DWORD MakeFileMappingFlags( file_permission_t openFlags )
 {
-    using enum file_perm_t;
+    using enum file_permission_t;
 	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return PAGE_READWRITE; }
 	if( openFlags & READ ) return PAGE_READONLY;
 	if( openFlags & WRITE ) return PAGE_WRITECOPY;
 
 	return 0;
 }
-constexpr DWORD MakeMapViewFlags( file_perm_t openFlags )
+constexpr DWORD MakeMapViewFlags( file_permission_t openFlags )
 {
-    using enum file_perm_t;
+    using enum file_permission_t;
 	if( ( openFlags & READ ) && ( openFlags & WRITE ) ) { return FILE_MAP_ALL_ACCESS; }
 	if( openFlags & READ ) return FILE_MAP_READ;
 	if( openFlags & WRITE ) return FILE_MAP_WRITE;
@@ -380,10 +380,10 @@ constexpr DWORD MakeAccessFlags( file_access_t accessFlags )
 
 
 void* ht_os_create_file(
-    const char*     filePath,
-    file_perm_t     permissionFlags,
-    file_create_t   createFlags,
-    file_access_t   accessFlags
+    const char*         filePath,
+    file_permission_t   permissionFlags,
+    file_create_t       createFlags,
+    file_access_t       accessFlags
 ) {
     DWORD dwPermissionFlags		= MakeGenericAccessFlags( permissionFlags );
     DWORD dwCreateFlags			= MakeCreateFlags( createFlags );

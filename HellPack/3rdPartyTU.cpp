@@ -1,8 +1,5 @@
 // TODO: rename this to MaxOptimizedTU.cpp
 // NOTE: we need this in order to compile 3rdParty libs OPTIMIZED
-#define STB_IMAGE_IMPLEMENTATION
-#define CGLTF_IMPLEMENTATION
-#include <cgltf.h>
 
 #include <bc7enc.cpp>
 

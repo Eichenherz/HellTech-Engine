@@ -20,26 +20,17 @@ enum class raw_mesh_topology_t : u32
     POINTS
 };
 
-struct raw_lod
-{
-    borrowed_array<float3>  pos     = {};
-    borrowed_array<float3>  norm    = {};
-    borrowed_array<float4>  tans    = {};
-    borrowed_array<float2>  uvs     = {};
-    borrowed_array<u32>     idxBuff = {};
-};
-
 struct raw_mesh
 {
-    static constexpr u64 LODS = MAX_LOD_LEVELS_COUNT;
-
-	fixed_string<128>           name        = {};
-    inline_array<raw_lod, LODS> lods        = {};
-    float3a                     aabbMin     = {};
-    float3a                     aabbMax     = {};
-    // NOTE: doesn't have to be the name JUST has to match with the one from raw node
-    u64                         hash        = 0;
-    raw_mesh_topology_t         topology    = {};
+	fixed_string<128>       name    = {};
+    borrowed_array<float3>  pos     = {};
+    borrowed_array<float3>  norm    = {};
+    //borrowed_array<float4>  tans    = {};
+    //borrowed_array<float2>  uvs     = {};
+    borrowed_array<u32>     idx     = {};
+    float3a                 aabbMin = {};
+    float3a                 aabbMax = {};
+    raw_mesh_topology_t     topo    = {};
 };
 
 enum class image_channels_t : u8
@@ -158,8 +149,8 @@ struct hpk_meshlet
 {
     mlt_attr_vector<float3>	pos		= {};
     mlt_attr_vector<float3>	norm	= {};
-    mlt_attr_vector<float4>	tan 	= {};
-    mlt_attr_vector<float2>	uvs 	= {};
+    //mlt_attr_vector<float4>	tan 	= {};
+    //mlt_attr_vector<float2>	uvs 	= {};
     mlt_idx_vector			indices	= {};
     mlt_idx_vector			idxLod	= {};
 

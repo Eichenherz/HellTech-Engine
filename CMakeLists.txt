@@ -68,7 +68,6 @@ target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/unordered_dense/include
     ${THIRD_PARTY}/bc7enc_rdo
     ${THIRD_PARTY}/meshoptimizer/src
-    ${THIRD_PARTY}/cgltf
     ${THIRD_PARTY}/minunit
     ${THIRD_PARTY}/OffsetAllocator
     ${THIRD_PARTY}/fb_zstd/lib

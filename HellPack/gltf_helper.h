@@ -6,7 +6,6 @@
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
 
-#include <cgltf.h>
 #include <range_utils.h>
 
 #include <span>
@@ -179,7 +178,7 @@ constexpr packed_trs GetTrsFromNode( const hpk_gltf_node& node )
 
 		// NOTE: GLTF stores matrices column-major: mIn[col*4 + row]. DirectXMath uses row-major convention,
 		// so M_dx = M_gltf^T — each GLTF column becomes a DirectXMath row.
-		XMMATRIX m = DX_XMLoadFloat4x4A( *( const float4x4* ) &node.matrix[ 0 ] );
+		XMMATRIX m = XMLoadFloat4x4( ( const XMFLOAT4X4* ) &node.matrix[ 0 ] );
 		XMVECTOR xmT, xmR, xmS;
 		if( !XMMatrixDecompose( &xmS, &xmR, &xmT, m ) )
 		{
@@ -190,9 +189,10 @@ constexpr packed_trs GetTrsFromNode( const hpk_gltf_node& node )
 	}
 
 	return {
-		.t = *( const float3* ) &node.translation[ 0 ],
-		.r = *( const float4* ) &node.rotation[ 0 ],
-		.s = *( const float3* ) &node.scale[ 0 ]
+		.t = { node.translation[ 0 ], node.translation[ 1 ], node.translation[ 2 ] },
+	    // NOTE: bc our float4 is aligned to 16 bytes !
+		.r = { node.rotation[ 0 ], node.rotation[ 1 ], node.rotation[ 2 ], node.rotation[ 3 ] },
+		.s = { node.scale[ 0 ], node.scale[ 1 ], node.scale[ 2 ] }
 	};
 }
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HT_MATH_H__
-#define __HT_MATH_H__
+#ifndef HELLTECH_HTLIB_MATH_H
+#define HELLTECH_HTLIB_MATH_H
 
 #include <ht_vec_types.h>
 
@@ -265,4 +265,4 @@ inline float4x3 TrsToFloat4x3RowMaj( float3 t, float4 q, float3 s )
     return m;
 }
 
-#endif // !__HT_MATH_H__
+#endif // !HELLTECH_HTLIB_MATH_H

@@ -20,13 +20,13 @@
 
 #include "hp_types_internal.h"
 
-meshopt_Stream MeshoptMakeStream( const CONTIGUOUS_RANGE_T auto& range )
+inline meshopt_Stream MeshoptMakeStream( const CONTIGUOUS_RANGE_T auto& range )
 {
     HT_ASSERT( 0 != std::size( range ) );
     return { .data = &range[ 0 ], .size = sizeof( range[ 0 ] ), .stride = sizeof( range[ 0 ] ) };
 }
 
-void MeshoptRemapAttributeBufferInplace( CONTIGUOUS_RANGE_T auto& attrRange, u64 attrElemCount, std::span<const u32> remap )
+inline void MeshoptRemapAttributeBufferInplace( CONTIGUOUS_RANGE_T auto& attrRange, u64 attrElemCount, std::span<const u32> remap )
 {
     HT_ASSERT( 0 != std::size( attrRange ) );
     meshopt_remapVertexBuffer( &attrRange[ 0 ],&attrRange[ 0 ], attrElemCount, sizeof( attrRange[ 0 ] ), &remap[ 0 ] );
@@ -49,46 +49,49 @@ inline borrowed_array<float3> MeshoptMakeNormalsBuffer(
 // NOTE: no fetch optimization meshlets emit their own contiguous vertex slices into the global VB,
 // which already gives optimal fetch locality
 // TODO: maybe use a different arena ????
-static void MeshoptReindexAndOptimizeMesh( raw_mesh& rawMesh, virtual_arena& virtualArena )
-{
-    HT_ASSERT( std::size( rawMesh.pos ) );
+inline void MeshoptReindexAndOptimizeMesh(
+    borrowed_array<float3>& pos,
+    borrowed_array<u32>&    idx,
+    borrowed_array<float3>& norm,
+    virtual_arena&          virtualArena
+) {
+    HT_ASSERT( std::size( pos ) );
 
-    if( !std::size( rawMesh.idxBuff ) )
+    if( !std::size( idx ) )
     {
-        rawMesh.idxBuff = borrowed_array<u32>{ virtualArena, std::from_range, std::views::iota(
-            0u, ( u32 ) std::size( rawMesh.pos ) ) };
+        idx = borrowed_array<u32>{ virtualArena, std::from_range, std::views::iota( 0u, ( u32 ) std::size( pos ) ) };
     }
-    if( !std::size( rawMesh.norm ) )
+    if( !std::size( norm ) )
     {
-        rawMesh.norm = MeshoptMakeNormalsBuffer( rawMesh.pos, rawMesh.idxBuff, virtualArena );
+        norm = MeshoptMakeNormalsBuffer( pos, idx, virtualArena );
     }
 
-    scoped_arena scopedArena = { virtualArena };
+    auto scopedArena = scoped_arena{ virtualArena };
 
     meshopt_Stream attrStreams[] = {
-        MeshoptMakeStream( rawMesh.pos ),
-        MeshoptMakeStream( rawMesh.norm ),
+        MeshoptMakeStream( pos ),
+        MeshoptMakeStream( norm ),
         //MeshoptMakeStream( tans ),
         //MeshoptMakeStream( uvs )
     };
 
-    u64 vtxCount = std::size( rawMesh.pos );
-    u64 idxCount = std::size( rawMesh.idxBuff );
+    u64 vtxCount = std::size( pos );
+    u64 idxCount = std::size( idx );
 
     auto remap = borrowed_array<u32>{ scopedArena, vtxCount };
-    u64 newVtxCount = meshopt_generateVertexRemapMulti( &remap[ 0 ], &rawMesh.idxBuff[ 0 ], idxCount,
+    u64 newVtxCount = meshopt_generateVertexRemapMulti( &remap[ 0 ], &idx[ 0 ], idxCount,
         vtxCount, attrStreams, std::size( attrStreams ) );
 
     HT_ASSERT( newVtxCount <= vtxCount );
-    meshopt_remapIndexBuffer( &rawMesh.idxBuff[ 0 ], &rawMesh.idxBuff[ 0 ], idxCount, &remap[ 0 ] );
+    meshopt_remapIndexBuffer( &idx[ 0 ], &idx[ 0 ], idxCount, &remap[ 0 ] );
 
-    MeshoptRemapAttributeBufferInplace( rawMesh.pos, vtxCount, remap );
-    MeshoptRemapAttributeBufferInplace( rawMesh.norm, vtxCount, remap );
+    MeshoptRemapAttributeBufferInplace( pos, vtxCount, remap );
+    MeshoptRemapAttributeBufferInplace( norm, vtxCount, remap );
     //MeshoptRemapAttributeBufferInplace( tans, vtxCount, remap );
     //MeshoptRemapAttributeBufferInplace( uvs, vtxCount, remap );
 
-    rawMesh.pos.resize( newVtxCount );
-    rawMesh.norm.resize( newVtxCount );
+    pos.resize( newVtxCount );
+    norm.resize( newVtxCount );
     //tans.resize( newVtxCount );
     //uvs.resize( newVtxCount );
 }
@@ -139,7 +142,7 @@ constexpr float HPK_MESHOPT_ATTR_WEIGHTS[]  = {
     HPK_MESHOPT_NORMAL_WEIGHT, HPK_MESHOPT_NORMAL_WEIGHT, HPK_MESHOPT_NORMAL_WEIGHT
 };
 
-inline hpk_meshlet MeshoptSimplyfyMeshlet(
+inline hpk_meshlet MeshoptSimplifyMeshlet(
     const meshopt_Meshlet&  mlt,
     std::span<u32>          mltVtx,
     std::span<u8>           mltTris,
@@ -185,15 +188,13 @@ inline hpk_meshlet MeshoptSimplyfyMeshlet(
     };
 }
 
-constexpr u64   MIN_MLT_COUNT_FOR_LOD_STEP  = 6;
+constexpr u64   MIN_MLT_COUNT_FOR_LOD_STEP  = 4;
 constexpr float MAX_LOD_STEP_IDX_RATIO      = 0.85f;
 constexpr float LOD_CUTOFF_ANGLE_RATIO      = ht::to_rads( 4.0f / 60.0f ); // NOTE: 1 / 60 is the actual human acuity
 // TODO: if we get meshlet weirdness we'd prolly need to protect some attrs during simplification
-inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMeshletsWithLod(
+inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMeshletsWithLodChain(
 	std::span<const float3> pos,
 	std::span<const float3> normals,
-	//std::span<const float4> tan,
-	//std::span<const float2> uvs,
 	std::span<const u32>	indices,
 	float					simplificationRatio,
 	float                   meshRadiusInMeters,
@@ -230,7 +231,7 @@ inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMesh
         std::span mltsOut = ArenaNewArray<hpk_meshlet>( outArena, std::size( meshlets ) );
         for( auto[ meshopMlt, outMlt ] : std::views::zip( meshlets, mltsOut ) )
         {
-           outMlt = MeshoptSimplyfyMeshlet( meshopMlt, mltVtx, mltTris, pos, normals, parentMeshError );
+           outMlt = MeshoptSimplifyMeshlet( meshopMlt, mltVtx, mltTris, pos, normals, parentMeshError );
         }
 
         lodLevels.emplace_back( mltsOut, parentMeshError );

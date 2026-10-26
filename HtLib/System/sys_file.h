@@ -16,18 +16,18 @@ constexpr u64 RAW_DISK_SECTOR_ALIGNMENT = 4 << 10;
 
 std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena );
 
-enum class file_perm_t : u64
+enum class file_permission_t : u64
 {
 	READ = 1,
 	WRITE = 1 << 1,
 	DELETABLE = 1 << 2
 };
 
-constexpr file_perm_t operator|( file_perm_t a, file_perm_t b )
+constexpr file_permission_t operator|( file_permission_t a, file_permission_t b )
 {
-    return file_perm_t( ( u64 ) a | ( u64 ) b );
+    return file_permission_t( ( u64 ) a | ( u64 ) b );
 }
-constexpr bool operator&( file_perm_t a, file_perm_t b ) { return 0 != ( ( u64 ) a & ( u64 ) b ); }
+constexpr bool operator&( file_permission_t a, file_permission_t b ) { return 0 != ( ( u64 ) a & ( u64 ) b ); }
 
 enum class file_create_t : u64
 {
@@ -49,10 +49,10 @@ constexpr u64 OS_UNBUFFERED_IO_MEM_ALIGNMENT    = 4 * KB;
 constexpr u64 OS_MAX_TRANSFER_LEN_IN_BYTES      = 1 * MB;
 
 void* ht_os_create_file(
-    const char*		filePath,
-    file_perm_t	    permissionFlags,
-    file_create_t	createFlags,
-    file_access_t	accessFlags
+    const char*		    filePath,
+    file_permission_t   permissionFlags,
+    file_create_t	    createFlags,
+    file_access_t	    accessFlags
 );
 void ht_os_close_file( void* hFile );
 void ht_delete_file_by_handle( void* hFile );

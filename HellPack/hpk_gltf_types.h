@@ -14,7 +14,7 @@
 #include <span>
 #include <string_view>
 
-enum class caldera_prim_purpose_t : u8 { NONE = 0, COLLISION, SHADOW, SKY, DECAL, UNKNOWN };
+enum class caldera_prim_purpose_t : u8 { NONE = 0, COLLISION, SHADOW, SKY, DECAL, GUIDE, INVISIBLE, INTERPOLATED_PATCH, BRUSH, DEGENERATE, UNKNOWN };
 
 enum class hpk_gltf_geom_type : u8 { NONE = 0, TERRAIN };
 
@@ -41,7 +41,7 @@ struct hpk_gltf_caldera_player_samples
     u32 color   = ~0u;
 };
 
-struct hpk_gltf_caldera_primitive_purpose
+struct hpk_gltf_caldera_mesh_purpose
 {
     caldera_prim_purpose_t purpose = caldera_prim_purpose_t::NONE;
 };
@@ -49,8 +49,8 @@ struct hpk_gltf_caldera_primitive_purpose
 struct hpk_gltf_caldera_shared_mesh
 {
     std::string_view    parentFile  = {};
+    std::string_view    meshName    = {};
     u32                 meshIdx     = 0; // NOTE: theoretically incorrect, but makes no sense to have NO parent fileName
-    u32                 primIdx     = 0;
 };
 
 struct hpk_gltf_caldera_geom_type
@@ -87,24 +87,27 @@ struct hpk_gltf_ext_mesh_gpu_instancing
     }
 };
 
-struct hpk_gltf_msft_lod
-{
-    std::span<const u32> ids = {};
-};
-
 struct hpk_gltf_node_extensions
 {
     hpk_gltf_caldera_player_samples     CALDERA_player_samples      = {};
     hpk_gltf_caldera_node_place_holder  CALDERA_node_place_holder   = {};
     hpk_gltf_khr_node_visibility        KHR_node_visibility         = {};
     hpk_gltf_ext_mesh_gpu_instancing    EXT_mesh_gpu_instancing     = {};
-    hpk_gltf_msft_lod                   MSFT_lod                    = {};
+};
+
+struct hpk_gltf_skin
+{
+    std::string_view        name                = {};
+    u32                     inverseBindMatrices = ~0u;
+    u32                     skeleton            = ~0u;
+    std::span<const u32>    joints              = {};
 };
 
 struct hpk_gltf_node
 {
     std::string_view            name        = {};
     u32                         mesh        = ~0u;
+    u32                         skin        = ~0u;
     std::span<const u32>        children    = {};
     std::array<float, 16>       matrix      = {};
     std::array<float, 3>        translation = { 0.0f, 0.0f, 0.0f };
@@ -125,8 +128,6 @@ struct hpk_gltf_prim_attributes
 
 struct hpk_gltf_prim_extensions
 {
-    hpk_gltf_caldera_primitive_purpose  CALDERA_primitive_purpose   = {};
-    hpk_gltf_caldera_shared_mesh        CALDERA_shared_mesh         = {};
     hpk_gltf_caldera_geom_type          CALDERA_geom_type           = {};
 };
 
@@ -139,10 +140,24 @@ struct hpk_gltf_primitive
     hpk_gltf_prim_extensions    extensions  = {};
 };
 
+struct hpk_gltf_caldera_lods
+{
+    std::string_view                        name    = {};
+    std::span<const std::array<u32, 2>>     lods    = {};
+};
+
+struct hpk_gltf_mesh_extensions
+{
+    hpk_gltf_caldera_shared_mesh    CALDERA_shared_mesh     = {};
+    hpk_gltf_caldera_mesh_purpose   CALDERA_mesh_purpose    = {};
+    hpk_gltf_caldera_lods           CALDERA_lods            = {};
+};
+
 struct hpk_gltf_mesh
 {
     std::string_view                    name        = {};
     std::span<const hpk_gltf_primitive> primitives  = {};
+    hpk_gltf_mesh_extensions            extensions  = {};
 };
 
 struct hpk_gltf_accessor
@@ -178,6 +193,7 @@ struct hpk_gltf_data
     std::span<const hpk_gltf_scene>         scenes      = {};
     std::span<const hpk_gltf_node>          nodes       = {};
     std::span<const hpk_gltf_mesh>          meshes      = {};
+    std::span<const hpk_gltf_skin>          skins       = {};
     std::span<const hpk_gltf_accessor>      accessors   = {};
     std::span<const hpk_gtlf_buffer_view>   bufferViews = {};
     std::span<const u8>                     binChunk    = {};
@@ -203,8 +219,8 @@ template<>
 struct glz::meta<caldera_prim_purpose_t>
 {
     using enum caldera_prim_purpose_t;
-    static constexpr std::array keys = { "collision"sv, "shadow"sv, "sky"sv, "decal"sv };
-    static constexpr std::array value = { COLLISION, SHADOW, SKY, DECAL };
+    static constexpr std::array keys = { "collision"sv, "shadow"sv, "sky"sv, "decal"sv, "guide"sv, "invisible"sv, "interpolated_patch"sv, "brush"sv, "degenerate"sv };
+    static constexpr std::array value = { COLLISION, SHADOW, SKY, DECAL, GUIDE, INVISIBLE, INTERPOLATED_PATCH, BRUSH, DEGENERATE };
 };
 
 template<>
