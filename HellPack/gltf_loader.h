@@ -72,7 +72,7 @@ inline auto HpkGltfProcessDrawablesHierarchy(
             hpk_gltf_mesh mesh = data.meshes[ meshIdx ];
 
             hpk_gltf_caldera_shared_mesh sharedMesh = mesh.extensions.CALDERA_shared_mesh;
-            bool isShared = !IsStructZero( sharedMesh );
+            bool isShared = std::size( sharedMesh.parentFile );
 
             bool processPrims = !isShared && !( meshSeenBitset[ meshIdx / 64 ] & ( 1ull << ( meshIdx & 63 ) ) );
 

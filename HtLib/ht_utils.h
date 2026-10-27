@@ -20,6 +20,8 @@ constexpr float NS_TO_MS = 1.0e-6f;
 template<typename T>
 constexpr bool IsStructZero( const T& inStruct )
 {
+    // NOTE: make the user aware of hidden padding
+    static_assert( std::has_unique_object_representations_v<T> );
     constexpr u8 ZERO_STRUCT_MEM[ sizeof( T ) ] = {};
     i32 memCmpRes = std::memcmp( &inStruct, ZERO_STRUCT_MEM, sizeof( T ) );
     return 0 == memCmpRes;

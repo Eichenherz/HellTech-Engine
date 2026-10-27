@@ -51,6 +51,7 @@ struct hpk_gltf_caldera_shared_mesh
     std::string_view    parentFile  = {};
     std::string_view    meshName    = {};
     u32                 meshIdx     = 0; // NOTE: theoretically incorrect, but makes no sense to have NO parent fileName
+    u32                 padding     = 0; // NOTE: bc Release doesn't init this; // NOTE: won't work if glaze is key strict
 };
 
 struct hpk_gltf_caldera_geom_type

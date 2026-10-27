@@ -147,7 +147,7 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 
 		u32 packed8_12_12_VtxCount_Lod_01_IdxCount = u32( m.vtxCount )
 			| ( u32( std::size( m.indices ) ) << 8 )
-			| ( u32( std::size( m.idxLod ) ) << 20 );
+			| ( u32( std::size( m.idxLod ) ) << 20 ); // TODO: check this !
 
 		HT_ASSERT( ( m.vtxCount < 256 ) &&
 			( std::size( m.idxLod ) < MLT_MAX_INDEX ) &&
@@ -277,6 +277,8 @@ inline std::span<u8> HpkZSTDCompress( ZSTD_CCtx *const pZstdCtx, std::span<const
     return copyMem.subspan( 0, compSize );
 }
 
+//#define HPK_DUMP_DBG
+
 static void HpkProcessMeshesParallelJob(
     std::string_view                        scratchDir,
     std::span<const sys_path>               glbFilePaths,
@@ -317,6 +319,23 @@ static void HpkProcessMeshesParallelJob(
         };
         defer { for( hpk_file_buffer& fileBuff : fileBuffs ) { HpkFileBufferClose( fileBuff ); } };
 
+#ifdef HPK_DUMP_DBG
+
+        auto dumpBuff = hpk_file_buffer{ sys_path{ "{}\\__dump_{}.bin", scratchDir, currJobIdx } };
+        defer { HpkFileBufferClose( dumpBuff ); };
+
+        auto reindexDumpBuff = hpk_file_buffer{ sys_path{ "{}\\__dump_reindex_{}.bin", scratchDir, currJobIdx } };
+        defer { HpkFileBufferClose( reindexDumpBuff ); };
+
+        hpk_file_buffer lodDumpBuffs[ NLOD ] = {
+            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 0 } },
+            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 1 } },
+            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 2 } },
+            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 3 } }
+        };
+        defer { for( hpk_file_buffer& lodDumpBuff : lodDumpBuffs ) { HpkFileBufferClose( lodDumpBuff ); } };
+#endif
+
         auto LmbdVisitGltfPrim = [ & ](
             const hpk_gltf_data&        gltfDataIn,
             const hpk_gltf_primitive&   gltfPrim,
@@ -326,13 +345,33 @@ static void HpkProcessMeshesParallelJob(
             // NOTE: gltf can have shared accessors ! BUT that case is uninteresting and i made my pre export do "atomic" prims
             raw_mesh rawMesh = HpkProcessGltfPrim( gltfDataIn, gltfPrim, meshKey, outArena );
 
+#ifdef HPK_DUMP_DBG
+            dumpBuff.WriteBlocking( AsBytes( rawMesh.pos ) );
+            dumpBuff.WriteBlocking( AsBytes( rawMesh.norm ) );
+            dumpBuff.WriteBlocking( AsBytes( rawMesh.idx ) );
+#endif
+
             MeshoptReindexAndOptimizeMesh( rawMesh.pos, rawMesh.idx, rawMesh.norm, outArena );
+
+#ifdef HPK_DUMP_DBG
+            reindexDumpBuff.WriteBlocking( AsBytes( rawMesh.pos ) );
+            reindexDumpBuff.WriteBlocking( AsBytes( rawMesh.norm ) );
+            reindexDumpBuff.WriteBlocking( AsBytes( rawMesh.idx ) );
+#endif
 
             float radiusInMeters = ht::length( ( rawMesh.aabbMax - rawMesh.aabbMin ) * 0.5f );
 
             inline_array<hpk_meshlets_w_lod, NLOD> mltsWLod = MeshoptMakeHpkMeshletsWithLodChain( rawMesh.pos,
                 rawMesh.norm, rawMesh.idx, LOD_MESH_LEVEL_RATIO, radiusInMeters, meshlet_config{},
                 outArena, tmpArena );
+
+#ifdef HPK_DUMP_DBG
+            for( auto[ mLod, lodDumpBuff ] : std::views::zip( mltsWLod, lodDumpBuffs ) )
+            {
+                lodDumpBuff.WriteBlocking( AsBytes( mLod.meshlets ) );
+                lodDumpBuff.WriteBlocking( AsBytes( std::span{ &mLod.meshLevelError, 1 } ) );
+            }
+#endif
 
             inline_array<hpk_lod_desc, NLOD> lodInfos = {};
             for( auto[ mLod, fileBuff ] : std::views::zip( mltsWLod, fileBuffs ) )
@@ -456,9 +495,9 @@ i32 main( i32 argc, char** argv  )
 
         u64 fileCount = std::size( glbFilePaths );
 
-        auto hpkNodes = std::vector<virtual_array<raw_node>>( fileCount );
-        auto hpkMeshes = std::vector<virtual_array<hpk_mesh_desc>>( fileCount );
-        auto hpkLODs = std::vector<virtual_array<hpk_lod_desc>>( fileCount );
+        auto hpkNodes   = std::vector<virtual_array<raw_node>>( fileCount );
+        auto hpkMeshes  = std::vector<virtual_array<hpk_mesh_desc>>( fileCount );
+        auto hpkLODs    = std::vector<virtual_array<hpk_lod_desc>>( fileCount );
         for( auto[ n, m, l ]
             : std::views::zip( hpkNodes, hpkMeshes, hpkLODs ) )
         {
@@ -497,7 +536,7 @@ i32 main( i32 argc, char** argv  )
         {
             for( auto[ batchIdx, batch ] : hpkMeshes | std::views::enumerate )
             {
-                auto partPath   = sys_path{ "{}\\__blob_{}_lod_{}.hpk", tmpDir, batchIdx, lodIdx };
+                auto partPath = sys_path{ "{}\\__blob_{}_lod_{}.hpk", tmpDir, batchIdx, lodIdx };
                 if( !fs::exists( ( const char* ) partPath ) ) continue;
 
                 void* hPartFile = ht_os_create_file( ( const char* ) partPath, file_permission_t::READ,
@@ -518,6 +557,13 @@ i32 main( i32 argc, char** argv  )
         std::vector<hpk_lod_desc>   lodDescVec  = HpkFlattenAndRelease( MOV( hpkLODs ) );
         std::vector<hpk_mesh_desc>  meshDescVec = HpkFlattenAndRelease( MOV( hpkMeshes ) );
         std::vector<raw_node>       rawNodes    = HpkFlattenAndRelease( MOV( hpkNodes ) );
+
+        u64 firstLod = 0;
+        for( hpk_mesh_desc& mesh : meshDescVec )
+        {
+            mesh.firstLod = firstLod;
+            firstLod += mesh.lodCount;
+        }
 
         std::println( stdout, "Running HpkSortNodesAndMeshes" );
         auto[ sortedNodes, sectorsVec ] = HpkSortNodes( MOV( rawNodes ) );

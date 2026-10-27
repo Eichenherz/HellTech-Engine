@@ -85,7 +85,7 @@ struct hpk_strided_view
         HT_ASSERT( ( strideInBytes >= elemSize ) && ( sizeof( T ) == elemSize ) );
 
         u64 baseOffset = view.byteOffset + accessor.byteOffset;
-        HT_ASSERT( baseOffset < std::size( data.binChunk ) );
+        HT_ASSERT( accessor.count && ( ( baseOffset + ( accessor.count - 1 ) * strideInBytes + elemSize ) <= std::size( data.binChunk ) ) );
 
         this->data          = &data.binChunk[ 0 ] + baseOffset;
         this->elemCount     = accessor.count;

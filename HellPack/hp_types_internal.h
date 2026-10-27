@@ -25,8 +25,6 @@ struct raw_mesh
 	fixed_string<128>       name    = {};
     borrowed_array<float3>  pos     = {};
     borrowed_array<float3>  norm    = {};
-    //borrowed_array<float4>  tans    = {};
-    //borrowed_array<float2>  uvs     = {};
     borrowed_array<u32>     idx     = {};
     float3a                 aabbMin = {};
     float3a                 aabbMax = {};
@@ -127,18 +125,6 @@ constexpr bool operator==( const raw_node& a, const raw_node& b )
 
 template<> struct ankerl::unordered_dense::hash<raw_node> : ankerl_hash_as_bytes<raw_node> {};
 
-struct triangle_pos
-{
-	float3 v0;
-	float3 v1;
-	float3 v2;
-};
-
-constexpr bool operator==( const triangle_pos& a, const triangle_pos& b )
-{
-	return ht::all( a.v0 == b.v0 ) && ht::all( a.v1 == b.v1 ) && ht::all( a.v2 == b.v2 );
-}
-
 template<TRIVIAL_T T>
 using mlt_attr_vector = inline_array<T, MAX_VTX_PER_MLT>;
 
@@ -147,15 +133,13 @@ using mlt_idx_vector32 = inline_array<u32, MAX_TRIS_PER_MLT * 3>;
 
 struct hpk_meshlet
 {
-    mlt_attr_vector<float3>	pos		= {};
-    mlt_attr_vector<float3>	norm	= {};
-    //mlt_attr_vector<float4>	tan 	= {};
-    //mlt_attr_vector<float2>	uvs 	= {};
-    mlt_idx_vector			indices	= {};
-    mlt_idx_vector			idxLod	= {};
-
-    float					lodError = FLT_MAX;
-    u16 					vtxCount = 0;
+    mlt_attr_vector<float3>	pos		    = {};
+    mlt_attr_vector<float3>	norm	    = {};
+    mlt_idx_vector			indices	    = {};
+    mlt_idx_vector			idxLod	    = {};
+    float					lodError    = FLT_MAX;
+    u16 					vtxCount    = 0;
+    u16                     padding     = 0;
 };
 
 constexpr float LOD_MESH_LEVEL_RATIO = 0.25f;

@@ -22,13 +22,14 @@
 
 inline meshopt_Stream MeshoptMakeStream( const CONTIGUOUS_RANGE_T auto& range )
 {
-    HT_ASSERT( 0 != std::size( range ) );
+    HT_ASSERT( std::size( range ) );
     return { .data = &range[ 0 ], .size = sizeof( range[ 0 ] ), .stride = sizeof( range[ 0 ] ) };
 }
 
 inline void MeshoptRemapAttributeBufferInplace( CONTIGUOUS_RANGE_T auto& attrRange, u64 attrElemCount, std::span<const u32> remap )
 {
-    HT_ASSERT( 0 != std::size( attrRange ) );
+    HT_ASSERT( std::size( attrRange ) );
+    HT_ASSERT( ( attrElemCount <= std::size( attrRange ) ) && ( attrElemCount <= std::size( remap ) ) );
     meshopt_remapVertexBuffer( &attrRange[ 0 ],&attrRange[ 0 ], attrElemCount, sizeof( attrRange[ 0 ] ), &remap[ 0 ] );
 }
 
@@ -64,6 +65,9 @@ inline void MeshoptReindexAndOptimizeMesh(
     if( !std::size( norm ) )
     {
         norm = MeshoptMakeNormalsBuffer( pos, idx, virtualArena );
+        pos = borrowed_array<float3>{ virtualArena, std::from_range,
+            idx | std::views::transform( [ &pos ]( u32 i ) { return pos[ i ]; } ) };
+        idx = borrowed_array<u32>{ virtualArena, std::from_range, std::views::iota( 0u, ( u32 ) std::size( norm ) ) };
     }
 
     auto scopedArena = scoped_arena{ virtualArena };
@@ -119,7 +123,6 @@ inline std::vector<u8> MeshoptGenerateVtxUVLocksFromSimplification(
 
 struct meshlet_config
 {
-    //float   coneWeight		= 0.8f;
     float	fillWeight		= 0.5f;
     u16		maxVertices		= MAX_VTX_PER_MLT;
     u16		minTriangles	= MAX_TRIS_PER_MLT / 4;

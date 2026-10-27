@@ -74,7 +74,7 @@ if(MSVC)
     #       /O2 /Ot explicit: they must override the /Od that CMAKE_CXX_FLAGS_DEBUG carries.
     target_compile_options(HellPack3rdParty PRIVATE
         ${HT_CL_COMMON_FLAGS}
-        /O2 /Ot ${HT_CL_OPT_FLAGS}
+        /O2 /Ot ${HT_CL_OPT_FLAGS} /fp:precise
         ${HT_CL_OPT_DBGINFO_FLAGS}
         /analyze-
     )
@@ -97,6 +97,7 @@ add_executable(HellPack
 
 target_include_directories(HellPack PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(HellPack PRIVATE _CONSOLE)
+target_compile_options(HellPack PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/fp:precise>)
 target_link_libraries(HellPack PRIVATE HellPack3rdParty)
 
 if(MSVC)
