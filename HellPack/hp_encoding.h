@@ -112,9 +112,9 @@ struct mlt_quantized_grid
 
 constexpr u64 QUANT_POS_BIT_DEPTH_BOUND = 3 * mlt_quantized_grid::MAX_BIT_DEPTH;
 
-inline mlt_quantized_grid HpkMakeMltQuantizedGrid( aabb_t<float3> meshletAabb )
+inline mlt_quantized_grid HpkMakeMltQuantizedGrid( float3 aabbMin, float3 aabbMax )
 {
-    float3  aabbExt         = ( meshletAabb.max - meshletAabb.min ) * 0.5f;
+    float3  aabbExt         = ( aabbMax - aabbMin ) * 0.5f;
     u32     maxDim          = ( u32 ) std::ceilf( std::max( { aabbExt.x, aabbExt.y, aabbExt.z } ) );
     // NOTE: 23 bc floats have 23 bits for mantissa
     u32     gridResInBits   = std::min( mlt_quantized_grid::MAX_BIT_DEPTH, u32( 23 - std::bit_width( maxDim ) ) );
@@ -122,15 +122,15 @@ inline mlt_quantized_grid HpkMakeMltQuantizedGrid( aabb_t<float3> meshletAabb )
 
     float   invGridFactor   = 1.0f / float( gridStep );
 
-	float3 snappedAabbMin = ht::floor( meshletAabb.min * ( float ) gridStep );
-    float3 snappedAabbMax = ht::ceil( meshletAabb.max * ( float ) gridStep );
+	float3  snappedAabbMin = ht::floor( aabbMin * ( float ) gridStep );
+    float3  snappedAabbMax = ht::ceil( aabbMax * ( float ) gridStep );
 
 	u32x3 mltBitDepthPerAxis = {
 		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( snappedAabbMax.x - snappedAabbMin.x ) ),
 		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( snappedAabbMax.y - snappedAabbMin.y ) ),
 		( u32 ) std::bit_width<u32>( ( u32 ) std::abs( snappedAabbMax.z - snappedAabbMin.z ) )
 	};
-	HT_ASSERT( u32x3{} != mltBitDepthPerAxis );
+	HT_ASSERT( ht::any( u32x3{} != mltBitDepthPerAxis ) );
 
 	return {
 		.quantAabbMin		= snappedAabbMin * invGridFactor,

@@ -1,19 +1,18 @@
 #pragma once
 
-#ifndef __HELL_PACK_H__
-#define __HELL_PACK_H__
+#ifndef HELLTECH_HELL_PACK_H
+#define HELLTECH_HELL_PACK_H
 
 #include <ht_core_types.h>
 #include <ht_gfx_types.h>
 #include <ht_hash.h>
 #include <ht_macros.h>
 
-#include <array>
-#include <span>
 
-#include "range_utils.h"
+#include <range_utils.h>
 
 constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
+constexpr u64   PLAYER_LOAD_RADIUS_METERS   = 3 * GRID_SECTOR_DIM_IN_METERS;
 constexpr float GRID_INV_SCALE              = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
 constexpr u64   ZSTD_COMPRESSION_LEVEL      = 19;
 /*
@@ -25,8 +24,8 @@ constexpr u64   ZSTD_COMPRESSION_LEVEL      = 19;
  *                                                                          A          |
  *                                                                          |___HASH___|
  */
-// NOTE: .hpk format is an unaligned byte dump, so in order to properly read it must be (mem)copied first
-constexpr char  HPK_MAGIC[]         = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
+// NOTE: .hpk format is an unaligned byte dump, so in order to properly read it must be ( mem )copied first
+constexpr char  HPK_MAGIC[ sizeof( u64 ) ] = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
 
 HT_DEF_STRUCT_W_HASH( hpk_file_header,
     u64     magic;
@@ -62,21 +61,19 @@ inline bool HpkIsLodCompressed( const hpk_lod_desc& lod )
 }
 
 HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,
-    u64     hashed          = 0;
-    float3  aabbMin         = {};
-    float3  aabbMax         = {};
-    float4  lodErrs         = {};
-    u64     firstLod : 56   = 0;
-    u64     lodCount : 8    = 0;
-    u64     padding         = 0;
+    u64         hashed          = 0;
+    pkd_fp32x3  aabbMin         = {};
+    pkd_fp32x3  aabbMax         = {};
+    pkd_fp32x4  lodErrs         = {};
+    u64         firstLod : 56   = 0;
+    u64         lodCount : 8    = 0;
+    u64         padding         = 0;
 );
 
-constexpr u64 NODE_LOD_BIN_COUNT = 256;
-
 HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
-    u64         firstNodeIdx;
-    u64         nodeCount;
-    i16x4       pkd_secId_2_gridLevel_1_pad_1;
+    u64     firstNodeIdx    = 0;
+    u64     nodeCount       = 0;
+    i16x2   secID           = {};
 );
 
 constexpr u64 HPK_FORMAT_VERSION    = hpk_file_header_LAYOUT_HASH;
@@ -103,10 +100,10 @@ struct hpk_sector_desc_key
     using is_avalanching = void;
 
     static u64 Key( i16x2 id ) { return std::bit_cast<u32>( id ); }
-    static u64 Key( const hpk_sector_desc& d ) { return Key( d.pkd_secId_2_gridLevel_1_pad_1.xy ); }
+    static u64 Key( const hpk_sector_desc& d ) { return Key( d.secID.xy ); }
 
     u64  operator()( const auto& v ) const { return ankerl::unordered_dense::hash<u64>{}( Key( v ) ); }
     bool operator()( const auto& a, const auto& b ) const { return Key( a ) == Key( b ); }
 };
 
-#endif // !__HELL_PACK_H__
+#endif // !HELLTECH_HELL_PACK_H

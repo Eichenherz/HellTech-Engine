@@ -35,9 +35,9 @@ inline raw_mesh HpkProcessGltfPrim(
 
     return {
         .name    = hpkMeshKeyStr,
-        .pos     = { arena, std::from_range, hpk_strided_view<float3>{ data, posAcc } },
-        .norm    = pNrmAcc ? borrowed_array<float3>{ arena, std::from_range, hpk_strided_view<float3>{ data, *pNrmAcc } }
-            : borrowed_array<float3>{},
+        .pos     = { arena, std::from_range, hpk_strided_view<pkd_fp32x3>{ data, posAcc } },
+        .norm    = pNrmAcc ? borrowed_array<pkd_fp32x3>{ arena, std::from_range, hpk_strided_view<pkd_fp32x3>{ data, *pNrmAcc } }
+            : borrowed_array<pkd_fp32x3>{},
         .idx     = pIdxAcc ? HpkGltfUnpackIndices( data, *pIdxAcc, arena ) : borrowed_array<u32>{},
         .aabbMin = { posAcc.min[ 0 ], posAcc.min[ 1 ], posAcc.min[ 2 ] },
         .aabbMax = { posAcc.max[ 0 ], posAcc.max[ 1 ], posAcc.max[ 2 ] },
@@ -65,7 +65,7 @@ inline auto HpkGltfProcessDrawablesHierarchy(
             && ( caldera_prim_purpose_t::NONE != data.meshes[ node.mesh ].extensions.CALDERA_mesh_purpose.purpose )
          ) return;
 
-        packed_trs trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
+        trs_t trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
 
         if( const u32 meshIdx = node.mesh; ~0u != meshIdx )
         {
@@ -99,8 +99,8 @@ inline auto HpkGltfProcessDrawablesHierarchy(
                 }
 
                 const hpk_gltf_accessor& posAcc = data.accessors[ prim.attributes.POSITION ];
-                float3a aabbMin = { posAcc.min[ 0 ], posAcc.min[ 1 ], posAcc.min[ 2 ] };
-                float3a aabbMax = { posAcc.max[ 0 ], posAcc.max[ 1 ], posAcc.max[ 2 ] };
+                float3 aabbMin = { posAcc.min[ 0 ], posAcc.min[ 1 ], posAcc.min[ 2 ] };
+                float3 aabbMax = { posAcc.max[ 0 ], posAcc.max[ 1 ], posAcc.max[ 2 ] };
 
                 for( u64 ii = 0; ii < instCount; ++ii )
                 {

@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HP_TYPES_INTERNAL_H__
-#define __HP_TYPES_INTERNAL_H__
+#ifndef HELLTECH_HP_TYPES_INTERNAL_H
+#define HELLTECH_HP_TYPES_INTERNAL_H
 
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
@@ -22,13 +22,14 @@ enum class raw_mesh_topology_t : u32
 
 struct raw_mesh
 {
-	fixed_string<128>       name    = {};
-    borrowed_array<float3>  pos     = {};
-    borrowed_array<float3>  norm    = {};
-    borrowed_array<u32>     idx     = {};
-    float3a                 aabbMin = {};
-    float3a                 aabbMax = {};
-    raw_mesh_topology_t     topo    = {};
+	hpk_mesh_name               name    = {};
+    // NOTE: either vec or pkd_ types would be fine but since we're not exactly doing math we're opting for the latter
+    borrowed_array<pkd_fp32x3>  pos     = {};
+    borrowed_array<pkd_fp32x3>  norm    = {};
+    borrowed_array<u32>         idx     = {};
+    float3                      aabbMin = {};
+    float3                      aabbMax = {};
+    raw_mesh_topology_t         topo    = {};
 };
 
 enum class image_channels_t : u8
@@ -79,7 +80,7 @@ struct raw_material_info
 	float		        metallicFactor;
 	float		        roughnessFactor;
 	float		        alphaCutoff;
-	float3		        emissiveFactor;
+	pkd_fp32x3	        emissiveFactor;
 
 	u16 		        baseColorIdx;
 	u16 		        metallicRoughnessIdx;
@@ -95,11 +96,11 @@ struct packed_trs;
 
 struct raw_node
 {
-    hpk_mesh_name   name;
-	trs_t	        toWorld;
-    float3a         aabbCenter;
-    float3a         aabbExtent;
-	u64			    meshHash;
+    hpk_mesh_name   name        = {};
+	trs_t	        toWorld     = {};
+    float3          aabbCenter  = {};
+    float3          aabbExtent  = {};
+	u64			    meshHash    = 0;
 };
 
 template<TRIVIAL_T T>
@@ -133,13 +134,13 @@ using mlt_idx_vector32 = inline_array<u32, MAX_TRIS_PER_MLT * 3>;
 
 struct hpk_meshlet
 {
-    mlt_attr_vector<float3>	pos		    = {};
-    mlt_attr_vector<float3>	norm	    = {};
-    mlt_idx_vector			indices	    = {};
-    mlt_idx_vector			idxLod	    = {};
-    float					lodError    = FLT_MAX;
-    u16 					vtxCount    = 0;
-    u16                     padding     = 0;
+    mlt_attr_vector<pkd_fp32x3>	pos		    = {};
+    mlt_attr_vector<pkd_fp32x3>	norm	    = {};
+    mlt_idx_vector			    indices	    = {};
+    mlt_idx_vector			    idxLod	    = {};
+    float					    lodError    = FLT_MAX;
+    u16 					    vtxCount    = 0;
+    u16                         padding     = 0;
 };
 
 constexpr float LOD_MESH_LEVEL_RATIO = 0.25f;
@@ -156,9 +157,9 @@ inline u64 HpkHashMeshKey( const hpk_mesh_name& key )
     return ankerl::unordered_dense::hash<std::string_view>{}( key );
 }
 
-inline i16x2 HpkBinPointTo2DGridSector( float3a ptInWorldCoords )
+inline i16x2 HpkBinPointTo2DGridSector( float3 ptInWorldCoords )
 {
-    float3a sector  = ht::floor( ptInWorldCoords * GRID_INV_SCALE );
+    float3 sector  = ht::floor( ptInWorldCoords * GRID_INV_SCALE );
     // NOTE: bc we've exported from gLTF
     // NOTE: + 0.5f bc of the int16 range [-32768, 32767 ] is centered on 0.5f
     constexpr float2 BOUNDS = float2{ float( INT16_MAX ), float( INT16_MAX ) } + float2{ 0.5f, 0.5f };
@@ -167,4 +168,4 @@ inline i16x2 HpkBinPointTo2DGridSector( float3a ptInWorldCoords )
     return ht::vec_cast<i16x2>( sector.xz );
 }
 
-#endif // !__HP_TYPES_INTERNAL_H__
+#endif // !HELLTECH_HP_TYPES_INTERNAL_H

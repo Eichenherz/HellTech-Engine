@@ -6,61 +6,15 @@
 # both are wiped from its properties below and the root's RelWithDebInfo flag set
 # ( HT_CL_* ) is applied unconditionally, in every config.
 # ----------------------------------------------------------------------------
-# NOTE: zstd's own CMake is never used — its lib .c files are compiled straight into HellPack3rdParty.
-#       No dictBuilder, no legacy formats. The amd64 .S Huffman loop is GCC/Clang only; MSVC takes the C path.
-set(HT_ZSTD_DIR ${THIRD_PARTY}/fb_zstd/lib)
-set(HT_ZSTD_SOURCES
-    ${HT_ZSTD_DIR}/common/debug.c
-    ${HT_ZSTD_DIR}/common/entropy_common.c
-    ${HT_ZSTD_DIR}/common/error_private.c
-    ${HT_ZSTD_DIR}/common/fse_decompress.c
-    ${HT_ZSTD_DIR}/common/pool.c
-    ${HT_ZSTD_DIR}/common/threading.c
-    ${HT_ZSTD_DIR}/common/xxhash.c
-    ${HT_ZSTD_DIR}/common/zstd_common.c
-    ${HT_ZSTD_DIR}/compress/fse_compress.c
-    ${HT_ZSTD_DIR}/compress/hist.c
-    ${HT_ZSTD_DIR}/compress/huf_compress.c
-    ${HT_ZSTD_DIR}/compress/zstd_compress.c
-    ${HT_ZSTD_DIR}/compress/zstd_compress_literals.c
-    ${HT_ZSTD_DIR}/compress/zstd_compress_sequences.c
-    ${HT_ZSTD_DIR}/compress/zstd_compress_superblock.c
-    ${HT_ZSTD_DIR}/compress/zstd_double_fast.c
-    ${HT_ZSTD_DIR}/compress/zstd_fast.c
-    ${HT_ZSTD_DIR}/compress/zstd_lazy.c
-    ${HT_ZSTD_DIR}/compress/zstd_ldm.c
-    ${HT_ZSTD_DIR}/compress/zstd_opt.c
-    ${HT_ZSTD_DIR}/compress/zstd_preSplit.c
-    ${HT_ZSTD_DIR}/compress/zstdmt_compress.c
-    ${HT_ZSTD_DIR}/decompress/huf_decompress.c
-    ${HT_ZSTD_DIR}/decompress/zstd_ddict.c
-    ${HT_ZSTD_DIR}/decompress/zstd_decompress.c
-    ${HT_ZSTD_DIR}/decompress/zstd_decompress_block.c
-)
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    enable_language(ASM)
-    list(APPEND HT_ZSTD_SOURCES ${HT_ZSTD_DIR}/decompress/huf_decompress_amd64.S)
-    set(HT_ZSTD_ASM_DEF "")
-    set(HT_ZSTD_GNUC_FLAG /clang:-fgnuc-version=4.2.1)
-else()
-    set(HT_ZSTD_ASM_DEF ZSTD_DISABLE_ASM)
-    set(HT_ZSTD_GNUC_FLAG "")
-endif()
-
+# NOTE: zstd's own CMake is never used — its lib .c files are unity-included in 3rdPartyTU2.cpp.
 add_library(HellPack3rdParty STATIC
     3rdPartyTU.cpp
     3rdPartyTU2.cpp
-    ${HT_ZSTD_SOURCES}
 )
 set_target_properties(HellPack3rdParty PROPERTIES
     COMPILE_OPTIONS ""
     LINK_LIBRARIES  ""
     MSVC_DEBUG_INFORMATION_FORMAT ""
-)
-set_source_files_properties(${HT_ZSTD_SOURCES}
-    PROPERTIES COMPILE_DEFINITIONS "XXH_NAMESPACE=ZSTD_;ZSTD_MULTITHREAD;ZSTD_LEGACY_SUPPORT=0;${HT_ZSTD_ASM_DEF}"
-               COMPILE_OPTIONS "${HT_ZSTD_GNUC_FLAG}"
 )
 target_link_libraries(HellPack3rdParty PRIVATE ThirdPartyIncludes)
 target_include_directories(HellPack3rdParty PRIVATE "${CMAKE_SOURCE_DIR}/HtLib")

@@ -31,6 +31,9 @@ typedef uint4		u32x4;
 typedef uint3		u32x3;
 typedef uint2		u32x2;
 
+// NOTE: we're using scalar layout
+typedef float3      pkd_fp32x3;
+
 typedef uint16_t2	u16x2;
 
 //typedef float16_t2	fp16x2;
@@ -51,10 +54,10 @@ struct view_data
 	float4x4	mainView;
 	float4x4	prevView;
 	float4x4	mainViewProj;
-	float4x4	prevViewProj;
-	float3	    worldPos;
+	float4x4    prevViewProj;
+	pkd_fp32x3  worldPos;
 	float		zNear;
-	float3		camViewDir;
+	pkd_fp32x3	camViewDir;
 	float		lodTarget;
 };
 
@@ -77,7 +80,7 @@ struct packed_vtx_attr
 struct gpu_instance
 {
 	float4x3	toWorld;
-	float3		scale;
+	pkd_fp32x3	scale;
 	u32			meshIdx;
 	//u32			mtrlIdx;
 };
@@ -91,9 +94,9 @@ CONSTEXPR u64 MAX_MESHLETS_PER_MESH = ~u16( 0 );
 
 struct gpu_mesh_bounds
 {
-	float4	lod4Err; // NOTE: monotonically increasing x -> w
-	float3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
-	float3	aabbMax;
+	float4	    lod4Err; // NOTE: monotonically increasing x -> w
+	pkd_fp32x3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
+	pkd_fp32x3	aabbMax;
 };
 
 struct gpu_mesh_lod
@@ -129,16 +132,16 @@ CONSTEXPR u64 MLT_MAX_INDEX		= 1ull << 12;
 // ( ..., mlt N tris [ LOD 0, LOD 1 ], mlt N+1 tris[ LOD 0, LOD 1 ], ... )
 struct gpu_meshlet
 {
-	float3	aabbMin;
-	float3	aabbMax;
-	u32		vtxPosOffsetBits;
-	u32		vtxAttrsOffset;
-	u32		idxOffset;
-	u32		packed8888_XYZ_Grid_BitDepth;
+	pkd_fp32x3	aabbMin;
+	pkd_fp32x3	aabbMax;
+	u32		    vtxPosOffsetBits;
+	u32		    vtxAttrsOffset;
+	u32		    idxOffset;
+	u32		    packed8888_XYZ_Grid_BitDepth;
 	// NOTE: packed as: lowest bytes - [ 8 VtxCount | 12 lod0_Idx | 12 lod_1_Idx ] - highest bytes
 	// NOTE: both counts are local: idxOffsetLod1 = idxOffset + LOD0_idxCount
-	u32		packed8_12_12_VtxCount_Lod_01_IdxCount;
-	float	lodError;
+	u32		    packed8_12_12_VtxCount_Lod_01_IdxCount;
+	float	    lodError;
 };
 
 #ifndef __cplusplus
@@ -215,15 +218,15 @@ struct avg_luminance_info
 
 struct dbg_vertex
 {
-	float3 pos;
+	pkd_fp32x3 pos;
 };
 
 struct dbg_aabb_instance
 {
 	float4x4	toWorld; // NOTE: 4x4 so we can cram in the frustum transfrom too
 	float4		color;
-	float3		minAabb;
-	float3		maxAabb;
+	pkd_fp32x3	minAabb;
+	pkd_fp32x3	maxAabb;
 };
 
 struct imgui_vertex

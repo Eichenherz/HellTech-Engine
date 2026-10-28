@@ -33,12 +33,13 @@ inline void MeshoptRemapAttributeBufferInplace( CONTIGUOUS_RANGE_T auto& attrRan
     meshopt_remapVertexBuffer( &attrRange[ 0 ],&attrRange[ 0 ], attrElemCount, sizeof( attrRange[ 0 ] ), &remap[ 0 ] );
 }
 
-inline borrowed_array<float3> MeshoptMakeNormalsBuffer(
-    std::span<const float3> pos,
+// NOTE: either vec or pkd_ types would be fine but since we're not exactly doing math we're opting for the latter
+inline borrowed_array<pkd_fp32x3> MeshoptMakeNormalsBuffer(
+    std::span<const pkd_fp32x3> pos,
     std::span<const u32>    idxBuff,
     virtual_arena&          arena
 ) {
-    auto normals = borrowed_array<float3>{ arena, std::size( idxBuff ) };
+    auto normals = borrowed_array<pkd_fp32x3>{ arena, std::size( idxBuff ) };
 
     meshopt_generateNormals( &normals[ 0 ].x, &idxBuff[ 0 ], std::size( idxBuff ), &pos[ 0 ].x,
         std::size( pos ), sizeof( pos[ 0 ] ), 1.0f /* 1 rad ~= 60 deg */ );
@@ -51,10 +52,10 @@ inline borrowed_array<float3> MeshoptMakeNormalsBuffer(
 // which already gives optimal fetch locality
 // TODO: maybe use a different arena ????
 inline void MeshoptReindexAndOptimizeMesh(
-    borrowed_array<float3>& pos,
-    borrowed_array<u32>&    idx,
-    borrowed_array<float3>& norm,
-    virtual_arena&          virtualArena
+    borrowed_array<pkd_fp32x3>& pos,
+    borrowed_array<u32>&        idx,
+    borrowed_array<pkd_fp32x3>& norm,
+    virtual_arena&              virtualArena
 ) {
     HT_ASSERT( std::size( pos ) );
 
@@ -65,7 +66,7 @@ inline void MeshoptReindexAndOptimizeMesh(
     if( !std::size( norm ) )
     {
         norm = MeshoptMakeNormalsBuffer( pos, idx, virtualArena );
-        pos = borrowed_array<float3>{ virtualArena, std::from_range,
+        pos = borrowed_array<pkd_fp32x3>{ virtualArena, std::from_range,
             idx | std::views::transform( [ &pos ]( u32 i ) { return pos[ i ]; } ) };
         idx = borrowed_array<u32>{ virtualArena, std::from_range, std::views::iota( 0u, ( u32 ) std::size( norm ) ) };
     }
@@ -146,12 +147,12 @@ constexpr float HPK_MESHOPT_ATTR_WEIGHTS[]  = {
 };
 
 inline hpk_meshlet MeshoptSimplifyMeshlet(
-    const meshopt_Meshlet&  mlt,
-    std::span<u32>          mltVtx,
-    std::span<u8>           mltTris,
-    std::span<const float3> pos,
-    std::span<const float3> norm,
-    float                   parentMeshLodErr
+    const meshopt_Meshlet&      mlt,
+    std::span<u32>              mltVtx,
+    std::span<u8>               mltTris,
+    std::span<const pkd_fp32x3> pos,
+    std::span<const pkd_fp32x3> norm,
+    float                       parentMeshLodErr
 ) {
     constexpr u32 mltLodOpts = meshopt_SimplifyLockBorder | meshopt_SimplifyErrorAbsolute | meshopt_SimplifyPermissive;
 
@@ -160,8 +161,8 @@ inline hpk_meshlet MeshoptSimplifyMeshlet(
 
     meshopt_optimizeMeshlet( &mltVtx[ mlt.vertex_offset ], &mltTris[ mlt.triangle_offset ], mlt.triangle_count, mlt.vertex_count );
 
-    mlt_attr_vector<float3>	localPos		= GetMeshletLocalAttrStream( pos, mltVtx, mlt.vertex_offset, mlt.vertex_count );
-    mlt_attr_vector<float3>	localNorm		= GetMeshletLocalAttrStream( norm, mltVtx, mlt.vertex_offset, mlt.vertex_count );
+    mlt_attr_vector<pkd_fp32x3>	localPos	= GetMeshletLocalAttrStream( pos, mltVtx, mlt.vertex_offset, mlt.vertex_count );
+    mlt_attr_vector<pkd_fp32x3>	localNorm   = GetMeshletLocalAttrStream( norm, mltVtx, mlt.vertex_offset, mlt.vertex_count );
     //mlt_attr_vector<float2>	localUVs		= GetMeshletLocalAttrStream( uvs, mltVtx, m.vertex_offset, m.vertex_count );
     mlt_idx_vector			localIdx	    = std::span{ &mltTris[ mlt.triangle_offset ], mlt.triangle_count * 3 };
 
@@ -196,14 +197,14 @@ constexpr float MAX_LOD_STEP_IDX_RATIO      = 0.85f;
 constexpr float LOD_CUTOFF_ANGLE_RATIO      = ht::to_rads( 4.0f / 60.0f ); // NOTE: 1 / 60 is the actual human acuity
 // TODO: if we get meshlet weirdness we'd prolly need to protect some attrs during simplification
 inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMeshletsWithLodChain(
-	std::span<const float3> pos,
-	std::span<const float3> normals,
-	std::span<const u32>	indices,
-	float					simplificationRatio,
-	float                   meshRadiusInMeters,
-	meshlet_config			cfg,
-	virtual_arena&          outArena,
-	virtual_arena&          tmpArena
+	std::span<const pkd_fp32x3> pos,
+	std::span<const pkd_fp32x3> normals,
+	std::span<const u32>	    indices,
+	float					    simplificationRatio,
+	float                       meshRadiusInMeters,
+	meshlet_config			    cfg,
+	virtual_arena&              outArena,
+	virtual_arena&              tmpArena
 ) {
     HT_ASSERT( &outArena != &tmpArena );
 

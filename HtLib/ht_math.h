@@ -28,18 +28,18 @@ namespace ht
 
 	constexpr quat4 quat_mul( quat4 q1, quat4 q2 )
 	{
-		float3a xyz = q2.w * q1.xyz + q1.w * q2.xyz + cross( q2.xyz, q1.xyz );
+		float3 xyz = q2.w * q1.xyz + q1.w * q2.xyz + cross( q2.xyz, q1.xyz );
 		return { xyz.x, xyz.y, xyz.z, q2.w * q1.w - dot( q2.xyz, q1.xyz ) };
 	}
 
-	constexpr float3a vec_rot( float3a v, quat4 q )
-	{
-		float3a t = 2.0f * cross( q.xyz, v );
-		return v + q.w * t + cross( q.xyz, t );
-	}
 	constexpr float3 vec_rot( float3 v, quat4 q )
 	{
-	    float3a r = vec_rot( float3a{ v.x, v.y, v.z }, q );
+		float3 t = 2.0f * cross( q.xyz, v );
+		return v + q.w * t + cross( q.xyz, t );
+	}
+	constexpr pkd_fp32x3 vec_rot( pkd_fp32x3 v, quat4 q )
+	{
+	    float3 r = vec_rot( float3{ v.x, v.y, v.z }, q );
 	    return { r.x, r.y, r.z };
 	}
 }
@@ -69,18 +69,7 @@ constexpr float4 Unorm8ToF32( u8x4 unorm )
 }
 
 // AABB
-
-template<typename vec_t>
-struct aabb_t
-{
-	vec_t min;
-	vec_t max;
-};
-
-inline float3 AabbCenter( const aabb_t<float3> aabb ) { return ( aabb.max + aabb.min ) * 0.5f; }
-inline float3 AabbHalfExtent( const aabb_t<float3> aabb ) { return ( aabb.max - aabb.min ) * 0.5f; }
-
-inline aabb_t<float3> ComputeAabb( std::span<const float3> vertices )
+inline auto ComputeAabb( std::span<const pkd_fp32x3> vertices )
 {
 	float3 min = vertices[ 0 ];
 	float3 max = vertices[ 0 ];
@@ -90,12 +79,12 @@ inline aabb_t<float3> ComputeAabb( std::span<const float3> vertices )
 		min = ht::min( min, vtx );
 		max = ht::max( max, vtx );
 	}
-	return { .min = min, .max = max };
+	return std::tuple{ min, max };
 }
 
-HT_FORCEINLINE aabb_t<float3> MergeAabbPair( const aabb_t<float3>& a, const aabb_t<float3>& b )
+HT_FORCEINLINE auto MergeAabbPair( float3 aMin, float3 aMax, float3 bMin, float3 bMax )
 {
-	return { .min = ht::min( a.min, b.min ), .max = ht::max( a.max, b.max ) };
+	return std::tuple{ ht::min( aMin, bMin ), ht::max( aMax, bMax ) };
 }
 
 #include <immintrin.h>
@@ -147,7 +136,7 @@ HT_FORCEINLINE float2 DX_XMScalarSinCos( float rads )
 	return { sin, cos };
 }
 
-inline float3x3 RotMatFromPitchYawRoll( float3a pitchYawRoll )
+inline float3x3 RotMatFromPitchYawRoll( float3 pitchYawRoll )
 {
     DirectX::XMVECTOR sin, cos; DirectX::XMVectorSinCos( &sin, &cos, ( DirectX::XMVECTOR ) pitchYawRoll.xyzz );
 
@@ -158,44 +147,39 @@ inline float3x3 RotMatFromPitchYawRoll( float3a pitchYawRoll )
     float crsp = cr * sp;
 
     float3x3 m = {};
-    ht::mat_row( m, 0, float3a{ cr * cy + srsp * sy,    sr * cp,    srsp * cy - cr * sy } );
-    ht::mat_row( m, 1, float3a{ crsp * sy - sr * cy,    cr * cp,    sr * sy + crsp * cy } );
-    ht::mat_row( m, 2, float3a{ cp * sy,                -sp,        cp * cy } );
+    ht::mat_row( m, 0, float3{ cr * cy + srsp * sy,    sr * cp,    srsp * cy - cr * sy } );
+    ht::mat_row( m, 1, float3{ crsp * sy - sr * cy,    cr * cp,    sr * sy + crsp * cy } );
+    ht::mat_row( m, 2, float3{ cp * sy,                -sp,        cp * cy } );
     return m;
-}
-
-HT_FORCEINLINE float3x3 RotMatFromPitchYawRoll( float3 pitchYawRoll )
-{
-    return RotMatFromPitchYawRoll( float3a{ pitchYawRoll.x, pitchYawRoll.y, pitchYawRoll.z } );
 }
 
 HT_FORCEINLINE float3x3 RotMatFromPitchYawRoll( float pitch, float yaw, float roll )
 {
-    return RotMatFromPitchYawRoll( float3a{ pitch, yaw, roll } );
+    return RotMatFromPitchYawRoll( float3{ pitch, yaw, roll } );
 }
 
-inline float3x3 RotMatFromQuat( float4 q )
+inline float3x3 RotMatFromQuat( quat4 q )
 {
-    float3a q2 = q.xyz * 2.0f;
+    float3 q2 = q.xyz * 2.0f;
 
     auto[ xx, yy, zz ]  = q.xyz * q2;
     auto[ xy, xz, yz ]  = q.xxy * q2.yzz;
     auto[ wx, wy, wz ]  = q.w * q2;
 
     float3x3 m = {};
-    ht::mat_row( m, 0, float3a{ 1.0f - yy - zz,    xy + wz,            xz - wy } );
-    ht::mat_row( m, 1, float3a{ xy - wz,           1.0f - xx - zz,     yz + wx } );
-    ht::mat_row( m, 2, float3a{ xz + wy,           yz - wx,            1.0f - xx - yy } );
+    ht::mat_row( m, 0, float3{ 1.0f - yy - zz,    xy + wz,            xz - wy } );
+    ht::mat_row( m, 1, float3{ xy - wz,           1.0f - xx - zz,     yz + wx } );
+    ht::mat_row( m, 2, float3{ xz + wy,           yz - wx,            1.0f - xx - yy } );
     return m;
 }
 
-inline float4x4 MatLookToLH( float3a eyePos, float3a eyeDir, float3a upDir )
+inline float4x4 MatLookToLH( float3 eyePos, float3 eyeDir, float3 upDir )
 {
-    float3a r2          = eyeDir / std::sqrt( ht::dot( eyeDir, eyeDir ) );
-    float3a upXr2       = ht::cross( upDir, r2 );
-    float3a r0          = upXr2 / std::sqrt( ht::dot( upXr2, upXr2 ) );
-    float3a r1          = ht::cross( r2, r0 );
-    float3a negEyePos   = -eyePos;
+    float3 r2          = eyeDir / std::sqrt( ht::dot( eyeDir, eyeDir ) );
+    float3 upXr2       = ht::cross( upDir, r2 );
+    float3 r0          = upXr2 / std::sqrt( ht::dot( upXr2, upXr2 ) );
+    float3 r1          = ht::cross( r2, r0 );
+    float3 negEyePos   = -eyePos;
 
     float d0 = ht::dot( r0, negEyePos );
     float d1 = ht::dot( r1, negEyePos );
@@ -211,16 +195,12 @@ inline float4x4 MatLookToLH( float3a eyePos, float3a eyeDir, float3a upDir )
 
 inline float4x4 MatLookAtLH( float3 eyePos, float3 focusPos, float3 upDir )
 {
-    float3a eye     = { eyePos.x, eyePos.y, eyePos.z };
-    float3a focus   = { focusPos.x, focusPos.y, focusPos.z };
-    return MatLookToLH( eye, focus - eye, float3a{ upDir.x, upDir.y, upDir.z } );
+    return MatLookToLH( eyePos, focusPos - eyePos, upDir );
 }
 
 inline float4x4 MatLookAtRH( float3 eyePos, float3 focusPos, float3 upDir )
 {
-    float3a eye     = { eyePos.x, eyePos.y, eyePos.z };
-    float3a focus   = { focusPos.x, focusPos.y, focusPos.z };
-    return MatLookToLH( eye, eye - focus, float3a{ upDir.x, upDir.y, upDir.z } );
+    return MatLookToLH( eyePos, eyePos - focusPos, upDir );
 }
 
 // NOTE: this is useful when we want to draw the frozen frustum
@@ -261,7 +241,7 @@ inline float4x3 TrsToFloat4x3RowMaj( float3 t, float4 q, float3 s )
     ht::mat_row( m, 0, ht::mat_row( rot, 0 ) * s.x );
     ht::mat_row( m, 1, ht::mat_row( rot, 1 ) * s.y );
     ht::mat_row( m, 2, ht::mat_row( rot, 2 ) * s.z );
-    ht::mat_row( m, 3, float3a{ t.x, t.y, t.z } );
+    ht::mat_row( m, 3, t );
     return m;
 }
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HT_VEC_TYPES_H__
-#define __HT_VEC_TYPES_H__
+#ifndef HELLTECH_HT_VEC_TYPES_H
+#define HELLTECH_HT_VEC_TYPES_H
 
 #define _XM_NO_XMVECTOR_OVERLOADS_
 #include <DirectXMath.h>
@@ -12,12 +12,7 @@
 #include <ht_core_types.h>
 #include <ht_macros.h>
 
-
-using i32x3		= DirectX::XMINT3;
-using u32x3		= DirectX::XMUINT3;
-using float3	= DirectX::XMFLOAT3;
-
-#if defined(__clang__)
+#if defined( __clang__ )
 
 using u8x4		= u8 __attribute__( ( ext_vector_type( 4 ) ) );
 
@@ -28,16 +23,16 @@ using u16x2		= u16 __attribute__( ( ext_vector_type( 2 ) ) );
 using u16x4		= u16 __attribute__( ( ext_vector_type( 4 ) ) );
 
 using i32x2		= i32 __attribute__( ( ext_vector_type( 2 ) ) );
-using i32x3a	= i32 __attribute__( ( ext_vector_type( 3 ) ) );
+using i32x3	= i32 __attribute__( ( ext_vector_type( 3 ) ) );
 
 using u32x2		= u32 __attribute__( ( ext_vector_type( 2 ) ) );
-using u32x3a	= u32 __attribute__( ( ext_vector_type( 3 ) ) );
+using u32x3	= u32 __attribute__( ( ext_vector_type( 3 ) ) );
 using u32x4		= u32 __attribute__( ( ext_vector_type( 4 ) ) );
 
 using fp16x2	= u16 __attribute__( ( ext_vector_type( 2 ) ) );
 
 using float2	= float __attribute__( ( ext_vector_type( 2 ) ) );
-using float3a	= float __attribute__( ( ext_vector_type( 3 ) ) );
+using float3	= float __attribute__( ( ext_vector_type( 3 ) ) );
 using float4	= float __attribute__( ( ext_vector_type( 4 ) ) );
 
 using quat4		= float4;
@@ -53,18 +48,47 @@ using float4x4 	= float __attribute__( ( matrix_type( 4, 4 ) ) );
 template<typename T>
 struct ht_proxy { T v; };
 
+// NOTE: clang's vec3 IS 16 bytes aligned; so we need these types for STORING data to files or CPU <-> GPU
+template<typename T, typename V>
+struct pkd_vec3
+{
+	T x, y, z;
+
+	constexpr pkd_vec3() = default;
+	constexpr pkd_vec3( T x, T y, T z ) : x{ x }, y{ y }, z{ z } {}
+	constexpr pkd_vec3( V v ) : x{ v.x }, y{ v.y }, z{ v.z } {}
+	constexpr operator V() const { return { x, y, z }; }
+};
+
+using pkd_i32x3 = pkd_vec3<i32, i32x3>;
+using pkd_u32x3 = pkd_vec3<u32, u32x3>;
+using pkd_fp32x3 = pkd_vec3<float, float3>;
+
+template<typename T, typename V>
+struct pkd_vec4
+{
+	T x, y, z, w;
+
+	constexpr pkd_vec4() = default;
+	constexpr pkd_vec4( T x, T y, T z, T w ) : x{ x }, y{ y }, z{ z }, w{ w } {}
+	constexpr pkd_vec4( V v ) : x{ v.x }, y{ v.y }, z{ v.z }, w{ v.w } {}
+	constexpr operator V() const { return { x, y, z, w }; }
+};
+
+using pkd_fp32x4 = pkd_vec4<float, float4>;
+
 static_assert( TRIVIAL_T<u8x4> );
 static_assert( TRIVIAL_T<i16x2> );
 static_assert( TRIVIAL_T<u16x2> );
 static_assert( TRIVIAL_T<u16x4> );
 static_assert( TRIVIAL_T<i32x2> );
-static_assert( TRIVIAL_T<i32x3a> );
+static_assert( TRIVIAL_T<i32x3> );
 static_assert( TRIVIAL_T<u32x2> );
-static_assert( TRIVIAL_T<u32x3a> );
+static_assert( TRIVIAL_T<u32x3> );
 static_assert( TRIVIAL_T<u32x4> );
 static_assert( TRIVIAL_T<fp16x2> );
 static_assert( TRIVIAL_T<float2> );
-static_assert( TRIVIAL_T<float3a> );
+static_assert( TRIVIAL_T<float3> );
 static_assert( TRIVIAL_T<float4> );
 static_assert( TRIVIAL_T<bool32x2> );
 static_assert( TRIVIAL_T<bool32x3> );
@@ -95,7 +119,10 @@ namespace ht
 
 	constexpr auto min( auto a, auto b ) { return __builtin_elementwise_min( a, b ); }
 	constexpr auto max( auto a, auto b ) { return __builtin_elementwise_max( a, b ); }
-	constexpr auto clamp( auto v, auto lo, auto hi ) { return __builtin_elementwise_min( __builtin_elementwise_max( v, lo ), hi ); }
+	constexpr auto clamp( auto v, auto lo, auto hi )
+	{
+	    return __builtin_elementwise_min( __builtin_elementwise_max( v, lo ), hi );
+	}
 	constexpr auto abs( auto v ) { return __builtin_elementwise_abs( v ); }
 	constexpr auto floor( auto v ) { return __builtin_elementwise_floor( v ); }
 	constexpr auto ceil( auto v ) { return __builtin_elementwise_ceil( v ); }
@@ -132,13 +159,13 @@ namespace ht
 		constexpr u32 COLS = mat_dims<std::remove_cvref_t<decltype( m )>>::COLS;
 
 		float __attribute__( ( ext_vector_type( COLS ) ) ) row = {};
-		for( u32 c = 0; c < COLS; ++c ) row[ c ] = m[ i ][ c ];
+		for( u32 c = 0; c < COLS; ++c ) { row[ c ] = m[ i ][ c ]; }
 		return row;
 	}
 
 	HT_FORCEINLINE void mat_row( auto& m, u32 i, auto row )
 	{
-		for( u32 c = 0; c < __builtin_vectorelements( row ); ++c ) m[ i ][ c ] = row[ c ];
+		for( u32 c = 0; c < __builtin_vectorelements( row ); ++c ) { m[ i ][ c ] = row[ c ]; }
 	}
 }
 
@@ -146,114 +173,32 @@ namespace ht
 #error "HtLib vector types need clang ( ext_vector_type + matrix_type ). Tough luck."
 #endif
 
-template<typename T> struct ht_ext_vec3 {};
-template<> struct ht_ext_vec3<float3> { using type = float3a; };
-template<> struct ht_ext_vec3<i32x3>  { using type = i32x3a; };
-template<> struct ht_ext_vec3<u32x3>  { using type = u32x3a; };
-
-template<typename T>
-using ht_ext_vec3_t = typename ht_ext_vec3<T>::type;
-
-template<typename T>
-concept dx_vec3_t = requires { typename ht_ext_vec3<T>::type; };
-
-constexpr bool32x3 operator==( const float3& a, const float3& b )
-{
-    return float3a{ a.x, a.y, a.z } == float3a{ b.x, b.y, b.z };
-}
-constexpr bool32x3 operator!=( const float3& a, const float3& b )
-{
-    return float3a{ a.x, a.y, a.z } != float3a{ b.x, b.y, b.z };
-}
-constexpr i32x3a operator<=>( const float3& a, const float3& b )
-{
-    float3a va = { a.x, a.y, a.z };
-    float3a vb = { b.x, b.y, b.z };
-    return ( va < vb ) - ( va > vb );
-}
-
-constexpr auto operator-( dx_vec3_t auto v )
-{
-    using V = ht_ext_vec3_t<decltype( v )>;
-    V r = -V{ v.x, v.y, v.z };
-    return decltype( v ){ r.x, r.y, r.z };
-}
-constexpr auto operator+( dx_vec3_t auto a, decltype( a ) b )
-{
-    using V = ht_ext_vec3_t<decltype( a )>;
-    V r = V{ a.x, a.y, a.z } + V{ b.x, b.y, b.z };
-    return decltype( a ){ r.x, r.y, r.z };
-}
-constexpr auto operator-( dx_vec3_t auto a, decltype( a ) b )
-{
-    using V = ht_ext_vec3_t<decltype( a )>;
-    V r = V{ a.x, a.y, a.z } - V{ b.x, b.y, b.z };
-    return decltype( a ){ r.x, r.y, r.z };
-}
-constexpr auto operator*( dx_vec3_t auto a, decltype( a ) b )
-{
-    using V = ht_ext_vec3_t<decltype( a )>;
-    V r = V{ a.x, a.y, a.z } * V{ b.x, b.y, b.z };
-    return decltype( a ){ r.x, r.y, r.z };
-}
-constexpr auto operator*( dx_vec3_t auto a, decltype( a.x ) scalar )
-{
-    using V = ht_ext_vec3_t<decltype( a )>;
-    V r = V{ a.x, a.y, a.z } * scalar;
-    return decltype( a ){ r.x, r.y, r.z };
-}
-constexpr auto& operator+=( dx_vec3_t auto& a, dx_vec3_t auto b ) { return a = a + b; }
-
 namespace ht
 {
-	constexpr auto min( dx_vec3_t auto a, dx_vec3_t auto b )
-	{
-		using V = ht_ext_vec3_t<decltype( a )>;
-		V r = ht::min( V{ a.x, a.y, a.z }, V{ b.x, b.y, b.z } );
-		return decltype( a ){ r.x, r.y, r.z };
-	}
-	constexpr auto max( dx_vec3_t auto a, dx_vec3_t auto b )
-	{
-		using V = ht_ext_vec3_t<decltype( a )>;
-		V r = ht::max( V{ a.x, a.y, a.z }, V{ b.x, b.y, b.z } );
-		return decltype( a ){ r.x, r.y, r.z };
-	}
-
-	constexpr float dot( float3 a, float3 b ) { return ht::dot( float3a{ a.x, a.y, a.z }, float3a{ b.x, b.y, b.z } ); }
 	constexpr i64 dot( i32x2 a, i32x2 b ) { return i64( a.x ) * b.x + i64( a.y ) * b.y; }
 	constexpr u32 dot( u16x2 a, u16x2 b ) { return a.x * b.x + a.y * b.y; }
 	constexpr i32 dot( i16x2 a, i16x2 b ) { return a.x * b.x + a.y * b.y; }
 
-	constexpr float3 floor( float3 v ) { float3a r = ht::floor( float3a{ v.x, v.y, v.z } ); return { r.x, r.y, r.z }; }
-	constexpr float3 ceil( float3 v ) { float3a r = ht::ceil( float3a{ v.x, v.y, v.z } ); return { r.x, r.y, r.z }; }
-	constexpr float3 round( float3 v ) { float3a r = ht::round( float3a{ v.x, v.y, v.z } ); return { r.x, r.y, r.z }; }
-
-	constexpr float3 normalize( float3 v )
+    constexpr float3 normalize( float3 v )
 	{
-		float3a va = { v.x, v.y, v.z };
-		float len = std::sqrt( ht::dot( va, va ) );
-		float3a r = ( len > 0.0f ) ? va / len : float3a{};
-		return { r.x, r.y, r.z };
+	    float len = std::sqrt( ht::dot( v, v ) );
+	    return ( len > 0.0f ) ? v / len : float3{};
 	}
 
-	constexpr float3a mul( float3a v, float3x3 m )
-	{
-		float3a r0 = { m[ 0 ][ 0 ], m[ 0 ][ 1 ], m[ 0 ][ 2 ] };
-		float3a r1 = { m[ 1 ][ 0 ], m[ 1 ][ 1 ], m[ 1 ][ 2 ] };
-		float3a r2 = { m[ 2 ][ 0 ], m[ 2 ][ 1 ], m[ 2 ][ 2 ] };
-		return ht::fma( v.xxx, r0, ht::fma( v.yyy, r1, v.zzz * r2 ) );
-	}
 	constexpr float3 mul( float3 v, float3x3 m )
 	{
-	    float3a r = ht::mul( float3a{ v.x, v.y, v.z }, m ); return { r.x, r.y, r.z };
+		float3 r0 = { m[ 0 ][ 0 ], m[ 0 ][ 1 ], m[ 0 ][ 2 ] };
+		float3 r1 = { m[ 1 ][ 0 ], m[ 1 ][ 1 ], m[ 1 ][ 2 ] };
+		float3 r2 = { m[ 2 ][ 0 ], m[ 2 ][ 1 ], m[ 2 ][ 2 ] };
+		return ht::fma( v.xxx, r0, ht::fma( v.yyy, r1, v.zzz * r2 ) );
 	}
 }
 
-HT_FORCEINLINE float3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
+HT_FORCEINLINE pkd_fp32x3 XM_CALLCONV DX_XMStoreFloat3( DirectX::XMVECTOR v )
 {
 	DirectX::XMFLOAT3 out = {};
 	DirectX::XMStoreFloat3( &out, v );
-	return out;
+	return std::bit_cast<pkd_fp32x3>( out );
 }
 
 HT_FORCEINLINE float4 XM_CALLCONV DX_XMStoreFloat4( DirectX::XMVECTOR v )
@@ -282,9 +227,9 @@ HT_FORCEINLINE DirectX::XMMATRIX XM_CALLCONV DX_XMLoadFloat4x4A( float4x4 m )
 	return DirectX::XMLoadFloat4x4( ( const DirectX::XMFLOAT4X4* ) &m );
 }
 
-HT_FORCEINLINE DirectX::XMVECTOR XM_CALLCONV DX_XMLoadFloat3( float3 v )
+HT_FORCEINLINE DirectX::XMVECTOR XM_CALLCONV DX_XMLoadFloat3( pkd_fp32x3 v )
 {
-	return DirectX::XMLoadFloat3( &v );
+	return DirectX::XMLoadFloat3( ( const DirectX::XMFLOAT3* ) &v );
 }
 
 HT_FORCEINLINE DirectX::XMVECTOR XM_CALLCONV DX_XMLoadFloat4( float4 v )
@@ -293,4 +238,4 @@ HT_FORCEINLINE DirectX::XMVECTOR XM_CALLCONV DX_XMLoadFloat4( float4 v )
 	return DirectX::XMLoadFloat4( &xm );
 }
 
-#endif // !__HT_VEC_TYPES_H__
+#endif // !HELLTECH_HT_VEC_TYPES_H

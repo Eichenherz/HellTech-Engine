@@ -185,14 +185,14 @@ constexpr packed_trs GetTrsFromNode( const hpk_gltf_node& node )
 			std::println( stdout, "WARNING: XMMatrixDecompose failed.\n" );
 			return IDENTITY_TRS;
 		}
-		return { .t = DX_XMStoreFloat3( xmT ), .r = DX_XMStoreFloat4( xmR ), .s = DX_XMStoreFloat3( xmS ) };
+		return { DX_XMStoreFloat3( xmT ), DX_XMStoreFloat4( xmR ), DX_XMStoreFloat3( xmS ) };
 	}
 
 	return {
-		.t = { node.translation[ 0 ], node.translation[ 1 ], node.translation[ 2 ] },
+		{ node.translation[ 0 ], node.translation[ 1 ], node.translation[ 2 ] },
 	    // NOTE: bc our float4 is aligned to 16 bytes !
-		.r = { node.rotation[ 0 ], node.rotation[ 1 ], node.rotation[ 2 ], node.rotation[ 3 ] },
-		.s = { node.scale[ 0 ], node.scale[ 1 ], node.scale[ 2 ] }
+		{ node.rotation[ 0 ], node.rotation[ 1 ], node.rotation[ 2 ], node.rotation[ 3 ] },
+		{ node.scale[ 0 ], node.scale[ 1 ], node.scale[ 2 ] }
 	};
 }
 
@@ -207,12 +207,12 @@ inline packed_trs HpkGltfGetTRSFromExtGpuInst( const hpk_gltf_data& data, const 
 {
 	const hpk_gltf_ext_mesh_gpu_instancing_attributes& attrs = node.extensions.EXT_mesh_gpu_instancing.attributes;
 	return {
-		.t = ( ~0u != attrs.TRANSLATION ) ?
-	        hpk_strided_view<float3>{ data, data.accessors[ attrs.TRANSLATION ] }[ instIdx ] : IDENTITY_TRS.t,
-		.r = ( ~0u != attrs.ROTATION ) ?
-	        hpk_strided_view<float4>{ data, data.accessors[ attrs.ROTATION ] }[ instIdx ] : IDENTITY_TRS.r,
-		.s = ( ~0u != attrs.SCALE ) ?
-	        hpk_strided_view<float3>{ data, data.accessors[ attrs.SCALE ] }[ instIdx ] : IDENTITY_TRS.s
+		( ~0u != attrs.TRANSLATION ) ?
+	        hpk_strided_view<pkd_fp32x3>{ data, data.accessors[ attrs.TRANSLATION ] }[ instIdx ] : IDENTITY_TRS.t,
+		( ~0u != attrs.ROTATION ) ?
+	        hpk_strided_view<pkd_fp32x4>{ data, data.accessors[ attrs.ROTATION ] }[ instIdx ] : IDENTITY_TRS.r,
+		( ~0u != attrs.SCALE ) ?
+	        hpk_strided_view<pkd_fp32x3>{ data, data.accessors[ attrs.SCALE ] }[ instIdx ] : IDENTITY_TRS.s
 	};
 }
 

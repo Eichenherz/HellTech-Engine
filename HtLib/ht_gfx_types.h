@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HT_GFX_TYPES_H__
-#define __HT_GFX_TYPES_H__
+#ifndef HELLTECH_HT_GFX_TYPES_H
+#define HELLTECH_HT_GFX_TYPES_H
 
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
@@ -9,24 +9,16 @@
 #include <ht_hash.h>
 #include <ht_macros.h>
 
-struct trs_t;
-
-struct packed_trs
+struct trs_t
 {
-	float3	t;
-	float4	r;
-	float3	s;
+    float3	t;
+    quat4	r;
+    float3	s;
 
-	constexpr operator trs_t() const;
+    constexpr operator float4x3() const { return TrsToFloat4x3RowMaj( t, r, s ); }
 };
 
-constexpr packed_trs IDENTITY_TRS = {
-    .t = { 0.0f, 0.0f, 0.0f },
-    .r = { 0.0f, 0.0f, 0.0f, 1.0f },
-    .s = { 1.0f, 1.0f, 1.0f }
-};
-
-HT_FORCEINLINE packed_trs GltfComposePackedTRS( packed_trs parent, packed_trs child )
+HT_FORCEINLINE trs_t GltfComposePackedTRS( trs_t parent, trs_t child )
 {
     return {
         .t = parent.t + ht::vec_rot( child.t * parent.s, parent.r ),
@@ -35,18 +27,23 @@ HT_FORCEINLINE packed_trs GltfComposePackedTRS( packed_trs parent, packed_trs ch
     };
 }
 
-inline float4x3 TrsToFloat4x3RowMaj( const packed_trs& trs ) { return TrsToFloat4x3RowMaj( trs.t, trs.r, trs.s ); }
-
-struct trs_t
+struct packed_trs
 {
-	float3a	t;
-	quat4	r;
-	float3a	s;
+    pkd_fp32x3	t;
+    pkd_fp32x4  r;
+    pkd_fp32x3	s;
 
-	constexpr operator packed_trs() const { return { .t = { t.x, t.y, t.z }, .r = r, .s = { s.x, s.y, s.z } }; }
+    constexpr packed_trs() = default;
+    constexpr packed_trs( pkd_fp32x3 t, pkd_fp32x4 r, pkd_fp32x3 s ) : t{ t }, r{ r }, s{ s } {}
+    constexpr packed_trs( const trs_t& v ) : t{ v.t }, r{ v.r }, s{ v.s } {}
+    constexpr operator trs_t() const { return { .t = t, .r = r, .s = s }; }
 };
 
-constexpr packed_trs::operator trs_t() const { return { .t = { t.x, t.y, t.z }, .r = r, .s = { s.x, s.y, s.z } }; }
+constexpr packed_trs IDENTITY_TRS = {
+    { 0.0f, 0.0f, 0.0f },
+    { 0.0f, 0.0f, 0.0f, 1.0f },
+    { 1.0f, 1.0f, 1.0f }
+};
 
 struct vertex_attrs
 {
@@ -116,7 +113,7 @@ struct material_desc
 	u64			emissiveHash;
 
 	float4		baseColFactor;
-	float3		emissiveFactor;
+	pkd_fp32x3	emissiveFactor;
 	float		metallicFactor;
 	float		roughnessFactor;
 	float		alphaCutoff;
@@ -126,4 +123,4 @@ struct material_desc
 	alpha_mode	alphaMode;
 };
 
-#endif // !__HT_GFX_TYPES_H__
+#endif // !HELLTECH_HT_GFX_TYPES_H

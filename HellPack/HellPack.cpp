@@ -93,7 +93,7 @@ static std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshl
 	std::vector<packed_vtx_attr> packedVtxAttrs( mlt.vtxCount );
 	for( u64 vai = 0; vai < mlt.vtxCount; ++vai )
 	{
-		float3 n	= mlt.norm[ vai ];
+		pkd_fp32x3 n = mlt.norm[ vai ];
 		float4 t	= mlt.tan[ vai ];
 		float2 uv	= mlt.uvs[ vai ];
 
@@ -134,11 +134,11 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 
 	for( const hpk_meshlet& m : meshlets )
 	{
-		aabb_t<float3> meshletAabb = ComputeAabb( m.pos );
+		auto[ aabbMin, aabbMax ] = ComputeAabb( m.pos );
         // TODO: why this happens ? and can't we not prevent it ?
-	    if( ht::all( float3{} == ( meshletAabb.max - meshletAabb.min ) ) ) continue;
+	    if( ht::all( float3{} == ( aabbMax - aabbMin ) ) ) continue;
 
-		mlt_quantized_grid mltEncodingGrid = HpkMakeMltQuantizedGrid( meshletAabb );
+		mlt_quantized_grid mltEncodingGrid = HpkMakeMltQuantizedGrid( aabbMin, aabbMax );
 
 		u32 packed8888_XYZ_Grid_BitDepth = mltEncodingGrid.bitDepthPerAxis.x
 			| ( mltEncodingGrid.bitDepthPerAxis.y << 8 )
@@ -164,7 +164,7 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 			.lodError								= m.lodError
 		} );
 
-		for( float3 p : m.pos )
+		for( pkd_fp32x3 p : m.pos )
 		{
 			u32x3 enc = HpkEncodeMltVertexPosition( mltEncodingGrid, p );
 
@@ -175,7 +175,7 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 			//if constexpr( validatePosEncoding ) HT_ASSERT( HpkDecodeVerifyQuantized( p, enc, mltEncodingGrid ) );
 		}
 
-	    for( float3 n : m.norm )
+	    for( pkd_fp32x3 n : m.norm )
 	    {
 	        float2  octN        = EncodeOctaNormal( n );
 	        oct16x2 encNormal   = SnormBits<16>( octN.x ) | ( SnormBits<16>( octN.y ) << 16 );
@@ -401,9 +401,9 @@ static void HpkProcessMeshesParallelJob(
             }
             outMeshes.push_back( {
                 .hashed     = HpkHashMeshKey( rawMesh.name ),
-                .aabbMin    = { rawMesh.aabbMin.x, rawMesh.aabbMin.y, rawMesh.aabbMin.z },
-                .aabbMax    = { rawMesh.aabbMax.x, rawMesh.aabbMax.y, rawMesh.aabbMax.z },
-                .lodErrs    = lodErrs,
+                .aabbMin    = ( pkd_fp32x3 ) rawMesh.aabbMin,
+                .aabbMax    = ( pkd_fp32x3 ) rawMesh.aabbMax,
+                .lodErrs    = ( pkd_fp32x4 ) lodErrs,
                 .firstLod   = std::size( outLODs ),
                 .lodCount   = std::size( lodInfos )
             } );
@@ -436,15 +436,14 @@ constexpr std::vector<T> HpkFlattenAndRelease( std::vector<virtual_array<T>>&& v
 
 auto HpkSortNodes( std::vector<raw_node>&& rawNodes )
 {
-    auto nodeBinKeys = std::vector<u64>( std::size( rawNodes ), {} );
+    auto nodeBinKeys = std::vector<u32>( std::size( rawNodes ), {} );
     for( auto[ raw, key ] : std::views::zip( rawNodes, nodeBinKeys ) )
     {
-        float3a center  = ht::vec_rot( raw.aabbCenter * raw.toWorld.s, raw.toWorld.r ) + raw.toWorld.t;
-        float   radius  = ht::length( raw.aabbExtent * raw.toWorld.s ) * 2.0f;
+        float3 center  = ht::vec_rot( raw.aabbCenter * raw.toWorld.s, raw.toWorld.r ) + raw.toWorld.t;
+        //float   radius  = ht::length( raw.aabbExtent * raw.toWorld.s ) * 2.0f;
 
-        i16     level   = ( i16 ) std::max( 0.0f, std::ceil( std::log2( radius * GRID_INV_SCALE ) ) );
-        i16x2   secID   = HpkBinPointTo2DGridSector( center * std::exp2( -float( level ) ) );
-        key             = std::bit_cast<u64>( i16x4{ secID.x, secID.y, level, 0 } );
+        i16x2   secID   = HpkBinPointTo2DGridSector( center );
+                key     = std::bit_cast<u32>( i16x2{ secID.x, secID.y } );
     }
 
     auto nodeIdxBuff = std::vector<u32>{ std::from_range, std::views::iota( 0u, std::size( rawNodes ) ) };
@@ -454,12 +453,12 @@ auto HpkSortNodes( std::vector<raw_node>&& rawNodes )
     auto sortedNodes = std::vector<raw_node>{ std::from_range, ht::permuted_view( rawNodes, nodeIdxBuff ) };
 
     std::vector<hpk_sector_desc> sectorsVec = {};
-    for( std::span<const u64> secKeyRage : nodeBinKeys | std::views::chunk_by( std::ranges::equal_to{} ) )
+    for( std::span<const u32> secKeyRage : nodeBinKeys | std::views::chunk_by( std::ranges::equal_to{} ) )
     {
         sectorsVec.push_back( {
-            .firstNodeIdx       = u64( &secKeyRage[ 0 ] - &nodeBinKeys[ 0 ] ),
-            .nodeCount          = std::size( secKeyRage ),
-            .pkd_secId_2_gridLevel_1_pad_1 = std::bit_cast<i16x4>( secKeyRage[ 0 ] )
+            .firstNodeIdx   = u64( &secKeyRage[ 0 ] - &nodeBinKeys[ 0 ] ),
+            .nodeCount      = std::size( secKeyRage ),
+            .secID          = std::bit_cast<i16x2>( secKeyRage[ 0 ] )
         } );
     }
 
