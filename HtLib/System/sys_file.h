@@ -63,7 +63,7 @@ void HtOSUnmapView( std::span<const u8> view );
 // NOTE: hFile must have been opened with file_access_flags::CONCURRENT, else the kernel serializes per handle
 void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes );
 
-u64 SysReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff );
+u64 SysRawReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff );
 
 struct HT_CACHE_ALIGN ht_os_io_request
 {

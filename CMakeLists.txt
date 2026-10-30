@@ -90,8 +90,9 @@ if(MSVC)
         set(HT_CL_MP_FLAG "")
         set(HT_CL_ARCH_EXT_FLAGS /clang:-mrdseed)
         set(HT_CL_LANG_EXT_FLAGS /clang:-fenable-matrix /clang:-fmatrix-memory-layout=row-major)
+        set(HT_CL_SWITCH_WARN_FLAGS -Wno-switch)
         set(HT_CL_LTO_COMPILE_FLAG -flto=thin)
-        set(HT_CL_LTO_LINK_FLAG "")
+        set(HT_CL_LTO_LINK_FLAG /mllvm:-enable-matrix)
         set(HT_CL_DEBUG_DEFS "")
         set(HT_CL_DEBUG_DBGINFO_FLAGS /Zi -gno-inline-line-tables)
 
@@ -115,6 +116,7 @@ if(MSVC)
         set(HT_CL_MP_FLAG /MP)
         set(HT_CL_ARCH_EXT_FLAGS "")
         set(HT_CL_LANG_EXT_FLAGS "")
+        set(HT_CL_SWITCH_WARN_FLAGS /wd4061 /wd4062)
         set(HT_CL_LTO_COMPILE_FLAG /GL)
         set(HT_CL_LTO_LINK_FLAG /LTCG)
         set(HT_CL_DEBUG_DEFS _DEBUG)
@@ -135,6 +137,8 @@ if(MSVC)
         /arch:AVX2      # AVX2 intrinsics
         ${HT_CL_ARCH_EXT_FLAGS}
         ${HT_CL_LANG_EXT_FLAGS}
+        # NOTE: we prefer to return from switch cases instead of handling every enum value as the spec nags for
+        ${HT_CL_SWITCH_WARN_FLAGS}
         /sdl-           # no SDL checks: strict /GS, warnings-as-errors bundle, ptr sentinels. Must precede /GS-
         /GS-            # no stack cookies: they land on every function with an inline_array on the stack
         /permissive-    # Conformance mode

@@ -26,7 +26,6 @@
 
 #include "engine_types.h"
 
-#include "ht_geometry.h"
 #include <ht_math.h>
 #include <imgui.h>
 
@@ -394,6 +393,8 @@ struct imgui_pass
 
 		for( const ImDrawList* cmdList : drawData->CmdLists )
 		{
+		    u32 idxBase = ( u32 ) std::size( idxDst );
+		    u32 vtxBase = ( u32 ) std::size( vtxDst );
 		    vtxDst.append_range( cmdList->VtxBuffer );
 		    idxDst.append_range( cmdList->IdxBuffer );
 
@@ -407,7 +408,9 @@ struct imgui_pass
 
 				// Clamp to viewport as vkCmdSetScissor() won't accept values that are off bounds
 				clipMin = ht::max( clipMin, float2{ 0.0f, 0.0f } );
-				clipMax = ht::min( clipMax, ( float2 ) std::bit_cast<u32x2>( renderArea.extent ) );
+				// NOTE: ht_vec_types fuck this
+				clipMax = { std::min( clipMax.x, ( float ) renderArea.extent.width ),
+					std::min( clipMax.y, ( float ) renderArea.extent.height ) };
 
 				if( ht::any( clipMax < clipMin ) ) continue;
 
@@ -416,7 +419,7 @@ struct imgui_pass
 				vkCmdSetScissor( cmdBuff, 0, 1, &scissor );
 
 				vkCmdDrawIndexed( cmdBuff, imCmd.ElemCount, 1,
-				    imCmd.IdxOffset + std::size( idxDst ), imCmd.VtxOffset + std::size( vtxDst ),
+				    imCmd.IdxOffset + idxBase, imCmd.VtxOffset + vtxBase,
 				    0 );
 			}
 		}
@@ -549,8 +552,8 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 struct debug_draw_passes
 {
 	// TODO: where to place these ?
-	static constexpr box_vertices			unitCube	= GenerateDbgBoxFromBounds( BOX_MIN, BOX_MAX );
-	static constexpr box_wireframe_indices	lineVtxBuff = GenerateBoxWireframeIndices();
+	//static constexpr box_vertices			unitCube	= GenerateDbgBoxFromBounds( BOX_MIN, BOX_MAX );
+	//static constexpr box_wireframe_indices	lineVtxBuff = GenerateBoxWireframeIndices();
 	//constexpr box_triangle_indices trisVtxBuff = BoxVerticesAsTriangles( unitCube );
 
 	borrowed_array<dbg_aabb_instance>		cpuInstView = {};
@@ -679,12 +682,12 @@ struct debug_draw_passes
 		idxBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgIdx",
 			.usageFlags		= buffer_usage::INDEX | buffer_usage::BDA,
-			.sizeInBytes	= 2000 * sizeof( dbg_index_t ),
+			.sizeInBytes	= 2000 * sizeof( u16 ),
 			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} );
 
-		std::memcpy( vtxBuff.hostVisible, std::data( unitCube ), BYTE_COUNT( unitCube ) );
-		std::memcpy( idxBuff.hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
+		//std::memcpy( vtxBuff.hostVisible, std::data( unitCube ), BYTE_COUNT( unitCube ) );
+		//std::memcpy( idxBuff.hostVisible, std::data( lineVtxBuff ), BYTE_COUNT( lineVtxBuff ) );
 	}
 
 	void ResetDrawCounters( vk_command_buffer& cmdBuff )
@@ -703,8 +706,8 @@ struct debug_draw_passes
 			cpuInstView.push_back( {
 				.toWorld	= frustumTransf,
 				.color		= Unorm8ToF32( HT_CYAN ),
-				.minAabb	= BOX_MIN,
-				.maxAabb	= BOX_MAX
+				//.minAabb	= BOX_MIN,
+				//.maxAabb	= BOX_MAX
 			} );
 		}
 
@@ -723,11 +726,11 @@ struct debug_draw_passes
 				.gpuInstCountAddr	= gpuInstCountBuff.devicePointer,
 				.dbgDrawCmdsAddr	= drawCmdsBuff.devicePointer,
 				.dbgDrawCountAddr	= drawCountBuff.devicePointer,
-				.indexCount			= ( u32 ) std::size( lineVtxBuff ),
+				//.indexCount			= ( u32 ) std::size( lineVtxBuff ),
 				.firstIndex			= 0,
 				.vertexOffset		= 0
 			};
-			cmdBuff.DispatchCompute( compRecordDbgDraw, pushBlock, { 1, 1, 1 } );
+			cmdBuff.DispatchCompute( compRecordDbgDraw, pushBlock, u32x3{ 1, 1, 1 } );
 		}
 		{
 			VkRenderingAttachmentInfo attInfos[] = {
@@ -784,8 +787,8 @@ struct debug_draw_passes
 			.camIdx			= camIdx.slot
 		};
 		cmdBuff.CmdPushConstants( &pushBlock, sizeof( pushBlock ) );
-		cmdBuff.CmdDrawIndexed( idxBuff, VK_INDEX_TYPE_UINT16, ( u32 ) std::size( lineVtxBuff ),
-			1, 0, 0, 0  );
+		//cmdBuff.CmdDrawIndexed( idxBuff, VK_INDEX_TYPE_UINT16, ( u32 ) std::size( lineVtxBuff ),
+		//	1, 0, 0, 0  );
 	}
 };
 
@@ -1019,7 +1022,7 @@ struct culling_pass
 				.instCount					= args.instCount,
 				.isLatePass					= latePass
 			};
-			cmdBuff.DispatchCompute( cullingInitPass, pushBlock, { 1, 1, 1 } );
+			cmdBuff.DispatchCompute( cullingInitPass, pushBlock, u32x3{ 1, 1, 1 } );
 		}
 		cmdBuff.CmdPipelineMemoryBarriers( std::array{ computeBarrier } );
 		{
@@ -1050,7 +1053,7 @@ struct culling_pass
 				.dispatchCmdBuffIdx = dispatchIndirectIdx.slot,
 				.counterBufferIdx	= visibleInstCounterIdx.slot
 			};
-			cmdBuff.DispatchCompute( indirectDispatchPass, pushBlock, { 1, 1, 1 } );
+			cmdBuff.DispatchCompute( indirectDispatchPass, pushBlock, u32x3{ 1, 1, 1 } );
 		}
 		cmdBuff.CmdPipelineMemoryBarriers( std::array{ computeBarrier } );
 		{
@@ -1069,7 +1072,7 @@ struct culling_pass
 				.dispatchCmdBuffIdx = dispatchIndirectIdx.slot,
 				.counterBufferIdx	= !latePass ? meshletsToProcessCounterIdx.slot : occludedMeshletsCounterIdx.slot
 			};
-			cmdBuff.DispatchCompute( indirectDispatchPass, pushBlock, { 1, 1, 1 } );
+			cmdBuff.DispatchCompute( indirectDispatchPass, pushBlock, u32x3{ 1, 1, 1 } );
 		}
 		cmdBuff.CmdPipelineMemoryBarriers( std::array{ computeBarrier } );
 		{
@@ -1188,7 +1191,7 @@ struct tone_mapping_pass
 		} pushConst = { avgLumInfo, hdrColSrcDesc.slot, lumHistoIdx.slot, atomicWgCounterIdx.slot, avgLumIdx.slot };
 
 		cmdBuff.DispatchCompute( compAvgLumPipe, pushConst,
-			GroupCount( { colTarget.width, colTarget.height, 1 }, compAvgLumPipe.groupSize ) );
+			GroupCount( u32x3{ colTarget.width, colTarget.height, 1 }, compAvgLumPipe.groupSize ) );
 	}
 
 	void TonemappingGammaPass(
@@ -1210,7 +1213,7 @@ struct tone_mapping_pass
 		} pushConst = { hdrColDesc.slot, sdrColDesc.slot, avgLumIdx.slot };
 
 		cmdBuff.DispatchCompute( compTonemapPipe, pushConst,
-			GroupCount( { hdrTrgSize.x, hdrTrgSize.y, 1 }, compTonemapPipe.groupSize ) );
+			GroupCount( u32x3{ hdrTrgSize.x, hdrTrgSize.y, 1 }, compTonemapPipe.groupSize ) );
 	}
 };
 
@@ -1395,7 +1398,7 @@ struct depth_pyramid_pass
 			};
 
 			cmdBuff.DispatchCompute( multiPassPipeline, pushConst,
-				GroupCount( { levelWidth, levelHeight, 1 }, multiPassPipeline.groupSize ) );
+				GroupCount( u32x3{ levelWidth, levelHeight, 1 }, multiPassPipeline.groupSize ) );
 			cmdBuff.CmdPipelineMemoryBarriers( executionBarrier );
 
 			srcWidth    = levelWidth;
@@ -1537,7 +1540,7 @@ struct vbuffer_pass
 			.dstIdx		= dstImgIdx.slot
 		};
 		cmdBuff.DispatchCompute( compDbgHashTriToScPipeline, pushBlock,
-			GroupCount( { vbuffRG32Target.width, vbuffRG32Target.height, 1 },
+			GroupCount( u32x3{ vbuffRG32Target.width, vbuffRG32Target.height, 1 },
 				compDbgHashTriToScPipeline.groupSize ) );
 	}
 
@@ -1562,7 +1565,7 @@ struct vbuffer_pass
 			.camIdx			= viewDataIdx.slot
 		};
 		cmdBuff.DispatchCompute( compLambertianClay, pushBlock,
-			GroupCount( { dstImg.width, dstImg.height, 1 }, compLambertianClay.groupSize ) );
+			GroupCount( u32x3{ dstImg.width, dstImg.height, 1 }, compLambertianClay.groupSize ) );
 	}
 };
 
@@ -1860,6 +1863,9 @@ struct renderer_context final : renderer_interface
 	bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) override
 	{
 	    // TODO: don't hardcode like this; but we know the upload flow here sooooo
+	    // NOTE: device-device deps maybe ? 
+	    // https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#synchronization-semaphores-waiting 
+	    // search: "The second access scope includes all memory access performed by the device"
 	    return VkGetTimelineSemaValue( pVkCtx->device, pVkCtx->copyQueue.timelineSema ) >=
 	        SysAtomicRead64<sys_fence_t::ACQ>( hJobDoneSignal );
 	}
@@ -2095,7 +2101,7 @@ u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_da
 	for( const instance_desc& sceneNode : frameData.instances )
 	{
 		gpuInstList.push_back( {
-			.toWorld	= TrsToFloat4x3RowMaj( sceneNode.transform ),
+			.toWorld	= TrsToFloat4x3RowMaj( sceneNode.transform.t, sceneNode.transform.r, sceneNode.transform.s ),
 			.scale		= sceneNode.transform.s,
 			.meshIdx	= std::bit_cast<HMESH32>( sceneNode.meshIdx ).slotIdx
 		} );

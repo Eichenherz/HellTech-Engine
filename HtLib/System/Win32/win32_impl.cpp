@@ -463,7 +463,7 @@ void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<c
     HT_ASSERT( std::size( bytes ) == writtenInBytes );
 }
 
-u64 SysReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff )
+u64 SysRawReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff )
 {
     u64 buffSzInBytes = std::size( outBuff );
     HT_ASSERT( buffSzInBytes >= readSzInBytes );

@@ -34,6 +34,7 @@ enum class buffer_usage : u64
 };
 
 constexpr buffer_usage operator|( buffer_usage a, buffer_usage b ) { return ( buffer_usage ) ( ( u64 ) a | ( u64 ) b ); }
+constexpr u64 operator&( buffer_usage a, buffer_usage b ) { return ( u64 ) a & ( u64 ) b; }
 
 enum class buffer_mem_props : u32
 {
@@ -82,12 +83,13 @@ struct vk_buffer
 {
     static constexpr vk_resource_type TYPE = vk_resource_type::BUFFER;
 
-	VmaAllocation		alloc;
-	VkBuffer			hndl;
-	u64					sizeInBytes; 
-	u8*					hostVisible;
-	VkDeviceAddress		devicePointer;
-	VkBufferUsageFlags  usgFlags;
+	VmaAllocation		alloc           = nullptr;
+	VkBuffer			hndl            = nullptr;
+	u64					sizeInBytes     = 0;
+	u8*					hostVisible     = nullptr;
+	VkDeviceAddress		devicePointer   = 0;
+    u64                 alignment       = 0;
+    buffer_mem_props    memProps        = {};
 };
 
 template<typename T>

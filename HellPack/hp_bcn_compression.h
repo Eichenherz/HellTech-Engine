@@ -42,11 +42,10 @@ constexpr bc_format_t DxgiToBcFormat( dds::DXGI_FORMAT dxgiFmt )
         case DXGI_FORMAT_BC7_UNORM:
         case DXGI_FORMAT_BC7_UNORM_SRGB:
             return bc_format_t::BC7_RGBA;
-
-        default:
-            HT_ASSERT( 0 && "Unimplement fmt" );
-            return ( bc_format_t ) 0xFF;
     }
+
+    HT_ASSERT( 0 && "Unsupported fmt" );
+    return ( bc_format_t ) 0xFF;
 }
 
 constexpr u32 BCnFormatToBlockSizeInBytes( bc_format_t fmt )
@@ -160,14 +159,8 @@ inline bcn_compression_result CompressRBGA8ToBC5( std::span<const u8> rgba8, u16
 
 inline bcn_compression_result CompressRGBA8ToBCn( std::span<const u8> rgba8, u32 width, u32 height, bc_format_t format ) 
 {
-    if( bc_format_t::BC7_RGBA == format )
-    {
-        return CompressRBGA8ToBC7( rgba8, width, height );
-    }
-    else if( bc_format_t::BC5_RG == format )
-    {
-        return CompressRBGA8ToBC5( rgba8, width, height );
-    }
+    if( bc_format_t::BC7_RGBA == format ) { return CompressRBGA8ToBC7( rgba8, width, height ); }
+    if( bc_format_t::BC5_RG == format ) { return CompressRBGA8ToBC5( rgba8, width, height ); }
     
     HT_ASSERT( false && "Unsupported type" );
     return {};

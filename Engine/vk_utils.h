@@ -155,7 +155,7 @@ inline VkBufferCopy2 MakeVkBufferCopy2( VkDeviceSize srcOffset, VkDeviceSize dst
 }
 
 // TODO: enforce some clearOp ---> clearVals params correctness ?
-inline VkRenderingAttachmentInfo VkMakeAttachmentInfo(
+HT_FORCEINLINE VkRenderingAttachmentInfo VkMakeAttachmentInfo(
 	VkImageView				view,
 	VkAttachmentLoadOp      loadOp,
 	VkAttachmentStoreOp     storeOp,
@@ -186,14 +186,14 @@ constexpr VkClearColorValue GetVBufferClearValue()
 }
 
 // NOTE: from Sascha Willems
-inline u32 VkGetQueueFamilyIndex(
+HT_FORCEINLINE u32 VkGetQueueFamilyIndex(
 	std::span<const VkQueueFamilyProperties>	queueFamProps,
 	VkQueueFlags								queueFlags,
 	VkBool32									mustPresent,
 	VkPhysicalDevice							gpu,
 	VkSurfaceKHR								vkSurf
 ) {
-	if( ( queueFlags & VK_QUEUE_TRANSFER_BIT ) == queueFlags )
+	if( ( queueFlags & VK_QUEUE_TRANSFER_BIT ) && !( queueFlags & ( VK_QUEUE_COMPUTE_BIT | VK_QUEUE_GRAPHICS_BIT ) ) )
 	{
 		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++ )
 		{
@@ -202,18 +202,18 @@ inline u32 VkGetQueueFamilyIndex(
 			bool                    hasCompute  = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
 			bool                    hasGfx      = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
 
-			if( hasTransfer && !hasCompute && !hasGfx ) return qfi;
+			if( hasTransfer && !hasCompute && !hasGfx && ( ( famProps.queueFlags & queueFlags ) == queueFlags ) ) return qfi;
 		}
 	}
 
-	if( ( queueFlags & VK_QUEUE_COMPUTE_BIT ) == queueFlags )
+	if( ( queueFlags & VK_QUEUE_COMPUTE_BIT ) && !( queueFlags & VK_QUEUE_GRAPHICS_BIT ) )
 	{
 		for( u32 qfi = 0; qfi < ( u32 ) std::size( queueFamProps ); qfi++)
 		{
 			VkQueueFamilyProperties famProps    = queueFamProps[ qfi ];
 			bool                    hasCompute  = famProps.queueFlags & VK_QUEUE_COMPUTE_BIT;
 			bool                    hasGfx      = queueFamProps[ qfi ].queueFlags & VK_QUEUE_GRAPHICS_BIT;
-			if( hasCompute && !hasGfx )
+			if( hasCompute && !hasGfx && ( ( famProps.queueFlags & queueFlags ) == queueFlags ) )
 			{
 				if( mustPresent )
 				{
@@ -246,7 +246,7 @@ inline u32 VkGetQueueFamilyIndex(
 	return ~0u;
 }
 
-inline void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
+HT_FORCEINLINE void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags usg, VkFormat format )
 {
 	VkFormatFeatureFlags2 formatFeatures = 0;
 	if( usg & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT )         formatFeatures |= VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT;
@@ -265,7 +265,7 @@ inline void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsageFlags u
 	// Fallback to a different format or use other means of uploading data
 }
 
-inline VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
+HT_FORCEINLINE VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
 {
     VkSemaphoreTypeCreateInfo timelineInfo = {
         .sType			= VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
@@ -283,7 +283,7 @@ inline VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 init
     return timelineSema;
 }
 
-inline VkPipelineLayout VkMakeGlobalPipelineLayout(
+HT_FORCEINLINE VkPipelineLayout VkMakeGlobalPipelineLayout(
     VkDevice							vkDevice,
     VkDescriptorSetLayout				descSetLayout,
     const VkPhysicalDeviceProperties&	props
@@ -307,7 +307,7 @@ inline VkPipelineLayout VkMakeGlobalPipelineLayout(
     return pipelineLayout;
 }
 
-inline u64 VkGetTimelineSemaValue( VkDevice vkDevice, VkSemaphore timelineSema )
+HT_FORCEINLINE u64 VkGetTimelineSemaValue( VkDevice vkDevice, VkSemaphore timelineSema )
 {
     u64 val = 0;
     VK_CHECK( vkGetSemaphoreCounterValue( vkDevice, timelineSema, &val ) );
@@ -323,5 +323,45 @@ inline VkSemaphoreSubmitInfo VkGetSemaSubmit( VkSemaphore sema, VkPipelineStageF
         .stageMask  = stageMask,
     };
 }
+
+HT_FORCEINLINE VmaAllocation VmaAllocMemForBuff(
+    VkDevice            vkDevice,
+    VkBuffer            hndl,
+    u64                 allocSzInBytes,
+    u64                 alignment,
+    buffer_mem_props    memProps,
+    VmaAllocator        vmaAllocator
+) {
+    VkMemoryRequirements buffMemReqs = {};
+    vkGetBufferMemoryRequirements( vkDevice, hndl, &buffMemReqs );
+
+    VkMemoryRequirements memReqs = {
+        .size           = std::max( allocSzInBytes, buffMemReqs.size ),
+        .alignment      = std::max( buffMemReqs.alignment, alignment ),
+        .memoryTypeBits = buffMemReqs.memoryTypeBits
+    };
+
+    VmaAllocationCreateInfo allocCreateInfo = {
+        .flags          = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT,
+        .usage          = VMA_MEMORY_USAGE_UNKNOWN,
+        .requiredFlags  = ( VkMemoryPropertyFlags ) memProps,
+    };
+
+    VmaAllocation vmaAlloc = nullptr;
+    VK_CHECK( vmaAllocateMemory( vmaAllocator, &memReqs, &allocCreateInfo, &vmaAlloc, nullptr ) );
+    return vmaAlloc;
+}
+
+HT_FORCEINLINE VkDeviceAddress VkGetDevicePtr( VkDevice vkDevice, VkBuffer vkBuffer )
+{
+    VkBufferDeviceAddressInfo deviceAddrInfo = {
+        .sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .buffer = vkBuffer
+    };
+    VkDeviceAddress devicePointer = vkGetBufferDeviceAddress( vkDevice, &deviceAddrInfo );
+    HT_ASSERT( devicePointer );
+    return devicePointer;
+}
+
 #endif // !__VK_UTILS_H__
 

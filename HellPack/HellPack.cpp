@@ -1,15 +1,14 @@
-#include <iostream>
 #include <filesystem>
 namespace fs = std::filesystem;
 
 #include <atomic>
 #include <thread>
-#include <barrier>
 #include <print>
 #include <span>
 #include <ranges>
-#include <format>
 #include <chrono>
+
+#include <ankerl/unordered_dense.h>
 
 #include <ht_core_types.h>
 #include <ht_error.h>
@@ -467,7 +466,6 @@ auto HpkSortNodes( std::vector<raw_node>&& rawNodes )
 
 i32 main( i32 argc, char** argv  )
 {
-    std::cout << std::unitbuf;
     std::setvbuf( stdout, nullptr, _IONBF, 0 );
 
     auto timeStart = std::chrono::steady_clock::now();
@@ -567,10 +565,19 @@ i32 main( i32 argc, char** argv  )
         std::println( stdout, "Running HpkSortNodesAndMeshes" );
         auto[ sortedNodes, sectorsVec ] = HpkSortNodes( MOV( rawNodes ) );
 
+        ankerl::unordered_dense::map<u64, u64> meshHashToIdxMap = {};
+        meshHashToIdxMap.reserve( std::size( meshDescVec ) );
+        for( const auto[ mi, md ] : meshDescVec | std::views::enumerate )
+        {
+            HT_ASSERT( meshHashToIdxMap.emplace( md.hashed, mi ).second );
+        }
+
         auto worldNodes = std::vector<world_node>( std::size( sortedNodes ) );
         for( auto[ n, raw ] : std::views::zip( worldNodes, sortedNodes ) )
         {
-            n = { .toWorld = raw.toWorld, .meshHash = raw.meshHash };
+            auto it = meshHashToIdxMap.find( raw.meshHash );
+            HT_ASSERT( std::cend( meshHashToIdxMap ) != it );
+            n = { .toWorld = raw.toWorld, .meshID = it->second };
         }
 
         u64 lodDescOffset   = hpkFileOut.WriteBlocking( AsBytes( lodDescVec ) );

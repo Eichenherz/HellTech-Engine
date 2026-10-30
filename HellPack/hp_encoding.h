@@ -72,7 +72,7 @@ inline float EncodeTanToAngle( float3 decodedNormal, float3 t )
 	return angle * std::numbers::inv_pi_v<float>; // [-1, 1] for snorm
 }
 
-static_assert( ( 2 * BIT_DEPTH_OCT_N + BIT_DEPTH_TAN_A + BIT_DEPTH_BTAN_S ) == BitCount<u32>() );
+static_assert( ( 2 * BIT_DEPTH_OCT_N + BIT_DEPTH_TAN_A + BIT_DEPTH_BTN_S ) == BitCount<u32>() );
 
 inline oct11x2s_a9_s1 EncodeTanFrame( float3 n, float3 t, float bs )
 {

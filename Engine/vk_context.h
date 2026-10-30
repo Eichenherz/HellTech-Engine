@@ -81,17 +81,17 @@ struct vk_desc_deletion
 
 struct vk_resc_deletion
 {
-	u64					frameTimelineVal;
+	u64					frameTimelineVal = 0;
 	union
 	{
-		vk_buffer		buff;
+		vk_buffer		buff = {};
 		vk_image		img;
 	};
-	vk_resource_type	type;
+	vk_resource_type	type = vk_resource_type::INVALID;
 
 	vk_resc_deletion() = default;
-	vk_resc_deletion( const vk_buffer& b, u64 counter ) : frameTimelineVal{ counter }, buff{ b }, type{ b.TYPE }  {}
-	vk_resc_deletion( const vk_image& i, u64 counter ) : frameTimelineVal{ counter }, img{ i }, type{ i.TYPE }  {}
+	vk_resc_deletion( const vk_buffer& b, u64 counter ) : frameTimelineVal{ counter }, buff{ b }, type{ b.TYPE }{}
+	vk_resc_deletion( const vk_image& i, u64 counter ) : frameTimelineVal{ counter }, img{ i }, type{ i.TYPE }{}
 };
 
 struct vk_desc_binding
@@ -189,14 +189,18 @@ struct vk_context
 
 	vk_swapchain_config                     scConfig;
 
-	vk_buffer           CreateBuffer( const buffer_info& buffInfo );
+	vk_buffer           CreateBuffer( const buffer_info& buffInfo, bool isVirtual = false );
+    VmaAllocation       AllocBuffMem( const vk_buffer& buff, u64 allocSzInBytes = ~0ull );
 	vk_image            CreateImage( const image_info& imgInfo );
 
 	void                PushResourceFree( const vk_resc_deletion& rscDeletion ) { rscDeletionQueue.push_back( rscDeletion ); }
 	void                PushDescriptorFree( const vk_desc_deletion& rscDeletion ) { descDeletionQueue.push_back( rscDeletion ); }
 
 	vk_shader           CreateShaderFromSpirv( std::span<const u8> spvByteCode );
-	void                DestroyShaderModule( VkShaderModule module ) { return vkDestroyShaderModule( device, module, nullptr ); }
+	void                DestroyShaderModule( VkShaderModule module )
+	{
+	    return vkDestroyShaderModule( device, module, nullptr );
+	}
 
 	// TODO: depth clamp ?
 	VkPipeline          CreateGfxPipeline(

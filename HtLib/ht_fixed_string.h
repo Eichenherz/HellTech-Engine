@@ -107,7 +107,10 @@ template<typename T, u64 N>
 void fixed_string_base<T, N>::resize( this fixed_string_base& self, u64 n, T val )
 {
     HT_ASSERT( n <= N );
-    if( n > self.sizeInElems ) std::fill( std::data( self.elems ) + self.sizeInElems, std::data( self.elems ) + n, val );
+    if( n > self.sizeInElems )
+    {
+        std::fill( std::data( self.elems ) + self.sizeInElems, std::data( self.elems ) + n, val );
+    }
     self.sizeInElems = n;
     self.elems[ n ]  = T{};
 }

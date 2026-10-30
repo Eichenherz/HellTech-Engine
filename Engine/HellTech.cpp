@@ -12,10 +12,8 @@
 #include "engine_types.h"
 #include "im_gui.h"
 
-// TODO: use our own
-#include <ankerl/unordered_dense.h>
 
-#include "System/sys_io_ring.h"
+#include <System/sys_io_ring.h>
 
 
 //==================CONSTEXPR===================//
@@ -41,7 +39,7 @@ struct virtual_camera
 	float4x4			proj		= {};
 	float4x4			view		= {};
 	float4x4			prevView	= {};
-	float3				worldPos	= { 0.0f, 0.0f, 0.0f };
+	float3				worldPos	= { 0.0f, 0.0f, 0.0f }; // NOTE: we always start at the world origin ( if centered )
 	float3				camViewDir	= {};
 	float2				viewportDim	= {};
 	PFN_LookAtCoord	    PfnLookAt	= nullptr;
@@ -63,9 +61,9 @@ struct virtual_camera
 		yaw     = ht::mod_angle( yaw + dRot.x );
 		pitch   = std::clamp( pitch + dRot.y, -HT_ALMOST_HALF_PI, HT_ALMOST_HALF_PI );
 
-		float3x3    rot         = RotMatFromPitchYawRoll( pitch, yaw, 0 );
-		float3      newWorldPos = worldPos + ht::mul( ht::normalize( camMove ), rot );
-		float3      camLookAt   = ht::mul( WORLD_FWD, rot );
+		float3x3   rot         = RotMatFromPitchYawRoll( pitch, yaw, 0 );
+		float3     newWorldPos = worldPos + ht::mul( ht::normalize( camMove ), rot );
+		float3     camLookAt   = ht::mul( WORLD_FWD, rot );
 
 		prevView    = view;
 		view        = PfnLookAt( newWorldPos, newWorldPos + camLookAt, WORLD_UP );
@@ -74,19 +72,19 @@ struct virtual_camera
 	}
 };
 
-inline view_data ViewData( const virtual_camera& virtCam )
+inline view_data ViewData( const virtual_camera& virtualCam )
 {
     return {
-        .proj			= virtCam.proj,
-        .mainView		= virtCam.view,
-        .prevView		= virtCam.prevView,
-        .mainViewProj	= virtCam.view * virtCam.proj,
-        .prevViewProj	= virtCam.prevView * virtCam.proj,
-        .worldPos		= virtCam.worldPos,
-        .zNear			= virtCam.zNear,
+        .proj			= virtualCam.proj,
+        .mainView		= virtualCam.view,
+        .prevView		= virtualCam.prevView,
+        .mainViewProj	= virtualCam.view * virtualCam.proj,
+        .prevViewProj	= virtualCam.prevView * virtualCam.proj,
+        .worldPos		= ( pkd_fp32x3 ) virtualCam.worldPos,
+        .zNear			= virtualCam.zNear,
         // NOTE: this must not be negative for LH coords
-        .camViewDir		= virtCam.camViewDir,
-        .lodTarget		= ( 2.0f / virtCam.proj[ 1 ][ 1 ] ) * ( 1.0f / float( virtCam.viewportDim.y ) )
+        .camViewDir		= ( pkd_fp32x3 ) virtualCam.camViewDir,
+        .lodTarget		= ( 2.0f / virtualCam.proj[ 1 ][ 1 ] ) * ( 1.0f / float( virtualCam.viewportDim.y ) )
     };
 }
 
@@ -153,7 +151,7 @@ inline move_cam_action GetMoveCamAction(
 		mvSpeed *= 0.4f;
 	}
 
-	if( ht::all( float3{} != camMove ) )
+	if( ht::any( float3{} != camMove ) )
 	{
 		camMove = ht::normalize( camMove ) * ( mvSpeed * elapsedTime );
 	}
@@ -210,17 +208,9 @@ void PfnRendererUploadJob( void* payload, linear_arena* arena )
 	pJob->pRI->UploadMeshes( &pJob->hUploadDoneSignal, pJob->meshUploads, *arena );
 }
 
-// TODO: use our own
-using hpk_dense_mesh_set    = ankerl::unordered_dense::set<hpk_mesh_desc, hpk_mesh_desc_key, hpk_mesh_desc_key>;
-using hpk_dense_sector_set  = ankerl::unordered_dense::set<hpk_sector_desc, hpk_sector_desc_key, hpk_sector_desc_key>;
-
 // Engine
 struct helltech final : helltech_interface
 {
-    hpk_dense_sector_set                secotrsSet      = {};
-    hpk_dense_mesh_set                  meshDescSet     = {};
-    std::span<hpk_lod_desc>             lodDescSpan     = {};
-
     virtual_camera                      mainActiveCam   = {};
     virtual_camera                      debugCam        = {};
 
@@ -234,6 +224,13 @@ struct helltech final : helltech_interface
 
 	borrowed_array<ht_timed_zone>		timedZones		= {};
 	borrowed_array<ht_pipeline_stats>	pipelinesStats	= {};
+
+    std::span<hpk_sector_desc>          sectorsSpan     = {};
+    std::span<world_node>               worldNodesSpan  = {};
+    std::span<hpk_mesh_desc>            meshDescSpan    = {};
+    std::span<hpk_lod_desc>             lodDescSpan     = {};
+
+
 
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
@@ -347,6 +344,13 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 
 	imGuiCtx = im_gui_ctx{ width, height };
 
+    // NOTE: arbitrary sized for now
+    drawables       = borrowed_array{ ArenaNewArray<instance_desc>( *pGameArena, 10'000 ) };
+    jobCache        = borrowed_array{ ArenaNewArray<upload_job_payload*>( *pGameArena, 1'000 ) };
+    timedZones      = borrowed_array{ ArenaNewArray<ht_timed_zone>( *pDebugArena, 256 ) };
+    pipelinesStats  = borrowed_array{ ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
+
+    // NOTE: hpk open
 	constexpr char assetFilePath[] = "D:/3d models/caldera.hpk";
 
     void* hHpkFile = ht_os_create_file( assetFilePath, file_permission_t::READ,
@@ -360,38 +364,30 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     hpk_file_header hpkHeader = {};
     {
         u64 readSize = FwdAlignPot( sizeof( hpk_file_header ), RAW_DISK_SECTOR_ALIGNMENT );
-        SysReadNBytesFromFileBlocking( hHpkFile, 0, readSize, ioReadBuff );
+        SysRawReadNBytesFromFileBlocking( hHpkFile, 0, readSize, ioReadBuff );
         std::memcpy( &hpkHeader, &ioReadBuff[ 0 ], sizeof( hpk_file_header ) );
     }
 
     HT_ASSERT( std::bit_cast<u64>( HPK_MAGIC ) == hpkHeader.magic );
     HT_ASSERT( HPK_FORMAT_VERSION == hpkHeader.fileFormatVersion );
-    HT_ASSERT( HPK_CONTENT_VERSION == hpkHeader.contentVersion );
+    //HT_ASSERT( HPK_CONTENT_VERSION == hpkHeader.contentVersion );
 
-    auto sectors    = std::span{ ArenaNewArray<hpk_sector_desc>( *pGameArena, hpkHeader.sectorsCount ) };
-    auto worldNodes = std::span{ ArenaNewArray<world_node>( *pGameArena, hpkHeader.nodeCount ) };
-    auto meshInfos  = std::span{ ArenaNewArray<hpk_mesh_desc>( *pGameArena, hpkHeader.meshDescCount ) };
-    auto lodInfos   = std::span{ ArenaNewArray<hpk_lod_desc>( *pGameArena, hpkHeader.lodDescCount ) };
-
-    auto LmbdRawReadHpkBuff = [ & ]( u64 dataOffsetBytes, u64 dataSzBytes, void* outBuff ) HT_LAMBDA_FORCEINLINE
+    auto LmbdRawReadHpkBuff = [ & ]<TRIVIAL_T T>( u64 dataOffsetBytes, u64 elemCount ) HT_LAMBDA_FORCEINLINE -> std::span<T>
     {
-        u64 readStart   = BwdAlignPot( dataOffsetBytes, RAW_DISK_SECTOR_ALIGNMENT );
-        u64 readEnd     = FwdAlignPot( dataOffsetBytes + dataSzBytes, RAW_DISK_SECTOR_ALIGNMENT );
-        SysReadNBytesFromFileBlocking( hHpkFile, readStart, readEnd - readStart, ioReadBuff );
-        std::memcpy( outBuff, &ioReadBuff[ 0 ] + dataOffsetBytes - readStart, dataSzBytes );
+        std::span out   = ArenaNewArray<T>( *pGameArena, elemCount );
+
+        u64 readBeg     = BwdAlignPot( dataOffsetBytes, RAW_DISK_SECTOR_ALIGNMENT );
+        u64 readEnd     = FwdAlignPot( dataOffsetBytes + BYTE_COUNT( out ), RAW_DISK_SECTOR_ALIGNMENT );
+        SysRawReadNBytesFromFileBlocking( hHpkFile, readBeg, readEnd - readBeg, ioReadBuff );
+        std::ranges::copy( ioReadBuff.subspan( dataOffsetBytes - readBeg, BYTE_COUNT( out ) ), ( u8* ) &out[ 0 ] );
+
+        return out;
     };
 
-    LmbdRawReadHpkBuff( hpkHeader.firstSectorsOffsetInBytes, BYTE_COUNT( sectors ), &sectors[ 0 ] );
-    LmbdRawReadHpkBuff( hpkHeader.firstNodeOffsetInBytes, BYTE_COUNT( worldNodes ), &worldNodes[ 0 ] );
-    LmbdRawReadHpkBuff( hpkHeader.firstMeshDescOffsetInBytes, BYTE_COUNT( meshInfos ), &meshInfos[ 0 ] );
-    LmbdRawReadHpkBuff( hpkHeader.firstLodDescOffsetInBytes, BYTE_COUNT( lodInfos ), &lodInfos[ 0 ] );
-
-
-    // NOTE: arbitrary sized for now
-    drawables       = borrowed_array{ ArenaNewArray<instance_desc>( *pGameArena, 10'000 ) };
-    jobCache        = borrowed_array{ ArenaNewArray<upload_job_payload*>( *pGameArena, 1'000 ) };
-    timedZones      = borrowed_array{ ArenaNewArray<ht_timed_zone>( *pDebugArena, 256 ) };
-    pipelinesStats  = borrowed_array{ ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
+    sectorsSpan     = LmbdRawReadHpkBuff.operator()<hpk_sector_desc>( hpkHeader.firstSectorsOffsetInBytes, hpkHeader.sectorsCount );
+    worldNodesSpan  = LmbdRawReadHpkBuff.operator()<world_node>( hpkHeader.firstNodeOffsetInBytes, hpkHeader.nodeCount );
+    meshDescSpan    = LmbdRawReadHpkBuff.operator()<hpk_mesh_desc>( hpkHeader.firstMeshDescOffsetInBytes, hpkHeader.meshDescCount );
+    lodDescSpan     = LmbdRawReadHpkBuff.operator()<hpk_lod_desc>( hpkHeader.firstLodDescOffsetInBytes, hpkHeader.lodDescCount );
 }
 
 // TODO: revisit this logic
@@ -484,11 +480,28 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 	}
 
 	mainActiveCam.Move( camMove, dRot );
-	[[ likely ]]
-	if( !rndDbgFlags.freezeMainView )
+	if( !rndDbgFlags.freezeMainView ) [[ likely ]]
 	{
 		debugCam = mainActiveCam;
 	}
+
+    inline_array<hpk_sector_desc, 256> inViewSectors = {};
+    for( const hpk_sector_desc& sector : sectorsSpan )
+    {
+        constexpr float PLAYER_VIEW_RAD = PLAYER_LOAD_RADIUS_METERS + 0.5f * GRID_SECTOR_DIM_IN_METERS;
+        float2 secCenter = ( ht::vec_cast<float2>( sector.secID ) + 0.5f ) * GRID_SECTOR_DIM_IN_METERS;
+        // NOTE: .xz bc of the conventions
+        if( ht::all( ht::abs( mainActiveCam.worldPos.xz - secCenter ) <= PLAYER_VIEW_RAD ) )
+        // NOTE: must "unload" when we cross the "frontier" + 1 / RAD + 1 --> evict
+        {
+            inViewSectors.push_back( sector );
+        }
+    }
+
+    for( const hpk_sector_desc& sec : inViewSectors )
+    {
+        std::span<world_node> secNodes = worldNodesSpan.subspan( sec.firstNodeIdx, sec.nodeCount );
+    }
 
 	view_data dbgViewData   = ViewData( debugCam );
 	view_data views[]       = { ViewData( mainActiveCam ), dbgViewData };
@@ -530,4 +543,4 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 	pRenderer->HostFrames( frameData, scratchArena, gpuData );
 }
 
-helltech_interface* MakeHelltech( linear_arena& arena ) { return ( helltech_interface* ) ArenaNew<helltech>( arena ); }
+helltech_interface* MakeHelltech( linear_arena& arena ) { return ArenaNew<helltech>( arena ); }

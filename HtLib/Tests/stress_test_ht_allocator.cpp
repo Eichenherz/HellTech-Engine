@@ -8,6 +8,7 @@
 #include <System/sys_timer.h>
 
 #include <ht_memory.h>
+#include <ht_hash.h>
 
 #include <array>
 #include <iostream>

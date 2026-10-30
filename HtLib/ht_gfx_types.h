@@ -55,7 +55,7 @@ struct vertex_attrs
 
 HT_DEF_STRUCT_W_HASH( world_node,
 	packed_trs	toWorld;
-	u64			meshHash;
+	u64			meshID;
 );
 
 enum alpha_mode : u8

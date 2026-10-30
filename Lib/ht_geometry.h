@@ -16,7 +16,7 @@ constexpr void ReverseTriangleWinding( Index* indices, u64 count )
 	for( u64 t = 0; t < count; t += 3 ) std::swap( indices[ t ], indices[ t + 2 ] );
 }
 // TODO: improve ?
-inline void GenerateIcosphere( std::vector<float3>& vtxData, std::vector<u32>& idxData, u64 numIters )
+inline void GenerateIcosphere( std::vector<pkd_fp32x3>& vtxData, std::vector<u32>& idxData, u64 numIters )
 {
 	using namespace DirectX;
 
@@ -44,7 +44,7 @@ inline void GenerateIcosphere( std::vector<float3>& vtxData, std::vector<u32>& i
 
 	//if constexpr( worldLeftHanded ) ReverseTriangleWinding( triangles, std::size( triangles ) );
 
-	std::vector<float3> vtxCache;
+	std::vector<pkd_fp32x3> vtxCache;
 	std::vector<u32> idxCache;
 
 	vtxCache = { std::begin( vertices ), std::end( vertices ) };
@@ -63,9 +63,9 @@ inline void GenerateIcosphere( std::vector<float3>& vtxData, std::vector<u32>& i
 			u32 i1 = idxData[ t + 1 ];
 			u32 i2 = idxData[ t + 2 ];
 
-			float3 v0 = vtxCache[ i0 ];
-			float3 v1 = vtxCache[ i1 ];
-			float3 v2 = vtxCache[ i2 ];
+			pkd_fp32x3 v0 = vtxCache[ i0 ];
+			pkd_fp32x3 v1 = vtxCache[ i1 ];
+			pkd_fp32x3 v2 = vtxCache[ i2 ];
 
 			v0 = ht::normalize( v0 + v1 );
 			v1 = ht::normalize( v1 + v2 );
@@ -124,7 +124,7 @@ inline void GenerateIcosphere( std::vector<float3>& vtxData, std::vector<u32>& i
 
 using box_vertices = std::array<dbg_vertex, 8u>;
 
-constexpr box_vertices GenerateDbgBoxFromBounds( float3 boxMin, float3 boxMax )
+constexpr box_vertices GenerateDbgBoxFromBounds( pkd_fp32x3 boxMin, pkd_fp32x3 boxMax )
 {
 	box_vertices box = {};
 	box[ 0 ].pos = { boxMax.x, boxMax.y, boxMax.z };
@@ -171,11 +171,11 @@ constexpr box_triangle_indices GenerateBoxTriIndices()
 	};
 }
 
-constexpr float3 BOX_MIN = { -0.5f, -0.5f, -0.5f };
-constexpr float3 BOX_MAX = { 0.5f,  0.5f,  0.5f };
+constexpr pkd_fp32x3 BOX_MIN = { -0.5f, -0.5f, -0.5f };
+constexpr pkd_fp32x3 BOX_MAX = { 0.5f,  0.5f,  0.5f };
 
-static_assert( ht::all( float3{ -0.5f, -0.5f, -0.5f } == BOX_MIN ) );
-static_assert( ht::all( float3{ 0.5f,  0.5f,  0.5f } == BOX_MAX ) );
+static_assert( ht::all( pkd_fp32x3{ -0.5f, -0.5f, -0.5f } == BOX_MIN ) );
+static_assert( ht::all( pkd_fp32x3{ 0.5f,  0.5f,  0.5f } == BOX_MAX ) );
 
 
 #endif // !__HT_GEOMETRY_H__

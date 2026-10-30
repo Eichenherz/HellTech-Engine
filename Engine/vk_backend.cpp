@@ -108,7 +108,7 @@ static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const
 		.flags			= VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
 		.maxSets		= maxSetCount,
 		.poolSizeCount	= ( u32 ) std::size( descPoolSizes ),
-		.pPoolSizes		= std::data( descPoolSizes )
+		.pPoolSizes		= &descPoolSizes[ 0 ]
 	};
 	VK_CHECK( vkCreateDescriptorPool( vkDevice, &descPoolInfo, 0, &vkDescPool ) );
 
@@ -136,14 +136,14 @@ static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const
 	VkDescriptorSetLayoutBindingFlagsCreateInfo descSetFlags = {
 		.sType			= VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
 		.bindingCount	= ( u32 ) std::size( bindingFlags ),
-		.pBindingFlags	= std::data( bindingFlags )
+		.pBindingFlags	= &bindingFlags[ 0 ]
 	};
 	VkDescriptorSetLayoutCreateInfo descSetLayoutInfo = {
 		.sType			= VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.pNext			= &descSetFlags,
 		.flags			= VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
 		.bindingCount	= ( u32 ) std::size( descSetLayout ),
-		.pBindings		= std::data( descSetLayout )
+		.pBindings		= &descSetLayout[ 0 ]
 	};
 
 	VkDescriptorSetLayout vkDescSetLayout;
@@ -196,7 +196,7 @@ static vk_instance VkMakeInstance()
 	u32 vkExtsNum = 0;
 	VK_CHECK( vkEnumerateInstanceExtensionProperties( nullptr, &vkExtsNum, nullptr ) );
 	std::span givenExts = ArenaNewArray<VkExtensionProperties>( scratchPad, vkExtsNum );
-	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, std::data( givenExts ) ) );
+	VK_CHECK( vkEnumerateInstanceExtensionProperties( 0, &vkExtsNum, &givenExts[ 0 ] ) );
 	for( std::string_view requiredExt : ENABLED_INST_EXTS )
 	{
 		bool foundExt = false;
@@ -214,7 +214,7 @@ static vk_instance VkMakeInstance()
 	u32 layerCount = 0;
 	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, nullptr ) );
     std::span layersAvailable = ArenaNewArray<VkLayerProperties>( scratchPad, layerCount );
-	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, std::data( layersAvailable ) ) );
+	VK_CHECK( vkEnumerateInstanceLayerProperties( &layerCount, &layersAvailable[ 0 ] ) );
 	for( std::string_view requiredLayer : LAYERS )
 	{
 		bool foundLayer = false;
@@ -329,7 +329,7 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	u32 numDevices = 0;
 	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, nullptr ) );
 	std::span availableDevices = ArenaNewArray<VkPhysicalDevice>( scratchPad, numDevices );
-	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, std::data( availableDevices ) ) );
+	VK_CHECK( vkEnumeratePhysicalDevices( vkInst, &numDevices, &availableDevices[ 0 ] ) );
 
 	VkPhysicalDeviceHostImageCopyProperties hostImgCopyProps =
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_PROPERTIES };
@@ -363,27 +363,25 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &gpuFeatures13 };
 	VkPhysicalDeviceVulkan11Features gpuFeatures11 = 
 	{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &gpuFeatures12 };
-	VkPhysicalDeviceFeatures2 gpuFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
+	VkPhysicalDeviceFeatures2 gpuFeatures2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &gpuFeatures11 };
 
-	// TODO: check for more stuff ?
-	VkPhysicalDevice    gpu         = nullptr;
-	u32                 deviceIdx   = 0;
-	for( ; deviceIdx < numDevices; ++deviceIdx )
+	VkPhysicalDevice gpu = nullptr;
+	for( VkPhysicalDevice currGpu : availableDevices )
 	{
-		vkGetPhysicalDeviceProperties2( availableDevices[ deviceIdx ], &gpuProps2 );
+		vkGetPhysicalDeviceProperties2( currGpu, &gpuProps2 );
 		if( gpuProps2.properties.apiVersion < VK_API_VERSION_1_4 ) continue;
 		if( gpuProps2.properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ) continue;
 		if( !gpuProps2.properties.limits.timestampComputeAndGraphics ) continue;
 
-		vkGetPhysicalDeviceFeatures2( availableDevices[ deviceIdx ], &gpuFeatures );
+		vkGetPhysicalDeviceFeatures2( currGpu, &gpuFeatures2 );
+
+	    if( !gpuFeatures2.features.sparseBinding || !gpuFeatures2.features.sparseResidencyBuffer ) continue;
 
 		u32 extsNum = 0;
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ],
-		    nullptr, &extsNum, nullptr ) || !extsNum ) continue;
+		if( vkEnumerateDeviceExtensionProperties( currGpu, 0, &extsNum, 0 ) || !extsNum ) continue;
 
 	    std::span availableExts = ArenaNewArray<VkExtensionProperties>( scratchPad, extsNum );
-		if( vkEnumerateDeviceExtensionProperties( availableDevices[ deviceIdx ],
-		    nullptr, &extsNum, std::data( availableExts ) ) ) continue;
+		if( vkEnumerateDeviceExtensionProperties( currGpu, 0, &extsNum, &availableExts[ 0 ] ) ) continue;
 
 		for( std::string_view requiredExt : ENABLED_DEVICE_EXTS )
 		{
@@ -402,13 +400,13 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 			}
 		}
 
-		gpu = availableDevices[ deviceIdx ];
-
+		gpu = currGpu;
 		break;
 
 	NEXT_DEVICE:;
 	}
 
+    //u32 deviceIdx = u32( &physicalDevice - &availableDevices[ 0 ] );
 	HT_ASSERT( gpu );
 
 	u32 queueFamNum = 0;
@@ -416,28 +414,28 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 	HT_ASSERT( queueFamNum );
 
     std::span queueFamProps = ArenaNewArray<VkQueueFamilyProperties>( scratchPad, queueFamNum );
-	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, std::data( queueFamProps ) );
+	vkGetPhysicalDeviceQueueFamilyProperties( gpu, &queueFamNum, &queueFamProps[ 0 ] );
 
 	constexpr float         queuePriorities     = 1.0f;
 	VkDeviceQueueCreateInfo queueCreateInfos[]  = {
 	    {
 	        .sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex	= VkGetQueueFamilyIndex(
-                queueFamProps, VK_QUEUE_GRAPHICS_BIT, VK_TRUE, gpu, vkSurf ),
+            .queueFamilyIndex	= VkGetQueueFamilyIndex( queueFamProps,
+                VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_SPARSE_BINDING_BIT, VK_TRUE, gpu, vkSurf ),
             .queueCount			= 1,
             .pQueuePriorities	= &queuePriorities
 	    },
 	    {
 	        .sType				= VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex	= VkGetQueueFamilyIndex(
-                queueFamProps, VK_QUEUE_COMPUTE_BIT, VK_TRUE, gpu, vkSurf ),
+            .queueFamilyIndex	= VkGetQueueFamilyIndex( queueFamProps,
+                VK_QUEUE_COMPUTE_BIT | VK_QUEUE_SPARSE_BINDING_BIT, VK_TRUE, gpu, vkSurf ),
             .queueCount			= 1,
             .pQueuePriorities	= &queuePriorities
 	    },
 	    {
 	        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex	= VkGetQueueFamilyIndex(
-                queueFamProps, VK_QUEUE_TRANSFER_BIT, VK_FALSE, gpu, vkSurf ),
+            .queueFamilyIndex	= VkGetQueueFamilyIndex( queueFamProps,
+                VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT, VK_FALSE, gpu, vkSurf ),
             .queueCount			= 1,
             .pQueuePriorities	= &queuePriorities
         }
@@ -446,7 +444,7 @@ static vk_device VkMakeDevice( VkInstance vkInst, VkSurfaceKHR vkSurf )
 
 	VkDeviceCreateInfo deviceInfo = {
 		.sType						= VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.pNext						= &gpuFeatures,
+		.pNext						= &gpuFeatures2,
 		.queueCreateInfoCount		= ( u32 ) std::size( queueCreateInfos ),
 		.pQueueCreateInfos			= queueCreateInfos,
 		.enabledExtensionCount		= ( u32 ) std::size( ENABLED_DEVICE_EXTS ),
@@ -642,7 +640,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	constexpr u32 MAX_QUERY_COUNT = 1024;
 
 	return {
-	    .rscDeletionQueue  = { ArenaNewArray<vk_resc_deletion>( *pPersistentArena, 128 ) },
+	    .rscDeletionQueue       = { ArenaNewArray<vk_resc_deletion>( *pPersistentArena, 128 ) },
         .descDeletionQueue      = { ArenaNewArray<vk_desc_deletion>( *pPersistentArena, 128 ) },
 		.descBindingSlots		= MOV( bindingSlots ),
 	    .descPendingUpdates     = { ArenaNewArray<vk_descriptor_write>( *pPersistentArena, 1'000 ) },
@@ -672,16 +670,16 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	};
 }
 
-#define GPU_CACHE_ALIGN( szInBytes ) FwdAlignPot( szInBytes, GPU_CACHELINE_SZ_IN_BYTES )
+constexpr VkBufferCreateFlags VK_VIRTUAL_BUFF = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
 
-vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
+vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual )
 {
     u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
-
     bool isVkConcurrentRsc = VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode;
 
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+	    .flags                  = isVirtual ? VK_VIRTUAL_BUFF : 0,
 		.size			        = buffInfo.sizeInBytes,
 		.usage			        = ( VkBufferUsageFlags ) buffInfo.usageFlags,
 	    // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
@@ -690,47 +688,51 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 	    .pQueueFamilyIndices    = isVkConcurrentRsc ? queueFamIdxCount : nullptr
 	};
 
-	VkMemoryPropertyFlags memPropFlags  = ( VkMemoryPropertyFlags ) buffInfo.memProps;
+    VkBuffer vkBuffer = nullptr;
+    VK_CHECK( vkCreateBuffer( device, &bufferCreateInfo, nullptr, &vkBuffer ) );
+
+    if( buffInfo.name ) { VkDbgNameObj( vkBuffer, device, buffInfo.name ); }
+
+    if( isVirtual )
+    {
+        return {
+            .hndl           = vkBuffer,
+            .sizeInBytes    = bufferCreateInfo.size,
+            .devicePointer  = ( buffInfo.usageFlags & buffer_usage::BDA ) ? VkGetDevicePtr( device, vkBuffer ) : 0,
+            .alignment      = buffInfo.alignment,
+            .memProps       = buffInfo.memProps
+        };
+    }
+
+	VmaAllocation hVmaAlloc = VmaAllocMemForBuff( device, vkBuffer, buffInfo.sizeInBytes, buffInfo.alignment,
+	    buffInfo.memProps, allocator );
+
+    VmaAllocationInfo allocInfo = {};
+    vmaGetAllocationInfo( allocator, hVmaAlloc, &allocInfo );
+
+    VK_CHECK( vkBindBufferMemory( device, vkBuffer, allocInfo.deviceMemory, allocInfo.offset ) );
+
+    u8* pHostMapped = nullptr;
     // TODO: do we do random access ?
-	VmaAllocationCreateFlags allocFlags = ( memPropFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT ) ?
-        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT : 0;
-
-	VmaAllocationCreateInfo allocCreateInfo = {
-		.flags = allocFlags | VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT,
-		.usage = VMA_MEMORY_USAGE_AUTO,
-		//.requiredFlags = memPropFlags,
-	};
-
-	VkBuffer            vkBuffer    = nullptr;
-	VmaAllocation       mem         = nullptr;
-	VmaAllocationInfo   allocInfo   = {};
-	VK_CHECK( vmaCreateBufferWithAlignment( allocator, &bufferCreateInfo, &allocCreateInfo,
-	    buffInfo.alignment, &vkBuffer, &mem, &allocInfo ) );
-
-	if( buffInfo.name ) { VkDbgNameObj( vkBuffer, device, buffInfo.name ); }
-
-	VkDeviceAddress devicePointer = 0;
-	if( bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT )
-	{
-		VkBufferDeviceAddressInfo deviceAddrInfo = {
-			.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-			.buffer = vkBuffer
-		};
-		devicePointer = vkGetBufferDeviceAddress( device, &deviceAddrInfo );
-		HT_ASSERT( devicePointer );
-	}
+    if( VkMemoryPropertyFlags( buffInfo.memProps ) & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
+    {
+        VK_CHECK( vmaMapMemory( allocator, hVmaAlloc, ( void** ) &pHostMapped ) );
+    }
 
     HT_ASSERT( IsAlignedToPot( ( u64 ) allocInfo.pMappedData, buffInfo.alignment ? buffInfo.alignment : 1 ) );
 
 	return {
-		.alloc			= mem,
+		.alloc			= hVmaAlloc,
 		.hndl			= vkBuffer,
 		.sizeInBytes	= bufferCreateInfo.size,
-		.hostVisible	= ( u8* ) allocInfo.pMappedData,
-		.devicePointer	= devicePointer,
-		.usgFlags		= bufferCreateInfo.usage
+		.hostVisible	= pHostMapped,
+	    .devicePointer  = ( buffInfo.usageFlags & buffer_usage::BDA ) ? VkGetDevicePtr( device, vkBuffer ) : 0,
+	    .alignment      = buffInfo.alignment,
+	    .memProps       = buffInfo.memProps
 	};
 }
+
+VmaAllocation vk_context::AllocBuffMem( const vk_buffer& buff, u64 allocSzInBytes ){}
 
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
@@ -913,7 +915,7 @@ VkPipeline vk_context::CreateGfxPipeline(
 
 vk_compute_pipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 {
-	HT_ASSERT( u32x3{} != shader.groupSize );
+	HT_ASSERT( ht::all( u32x3{} != shader.groupSize ) );
 
 	VkPipelineShaderStageRequiredSubgroupSizeCreateInfo subgroupSizeInfo = {
 		.sType					= VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
@@ -1034,6 +1036,7 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		if( frameSubmitsDone <= rsc.frameTimelineVal ) break;
 		if( vk_resource_type::BUFFER ==  rsc.type )
 		{
+		    if( rsc.buff.hostVisible ) { vmaUnmapMemory( allocator, rsc.buff.alloc ); }
 			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.alloc );
 		}
 		else if( vk_resource_type::IMAGE == rsc.type )
