@@ -71,7 +71,8 @@ constexpr vk_gfx_pso_config DEFAULT_PSO = {
 struct vk_swapchain_config
 {
 	VkFormat			format		= VK_FORMAT_B8G8R8A8_UNORM;
-	VkImageUsageFlags	imgUsage	= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+	VkImageUsageFlags	imgUsage	= VK_IMAGE_USAGE_TRANSFER_DST_BIT
+        | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
 	VkPresentModeKHR	presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 	u32					minNumImgs	= 3;
 };
@@ -110,22 +111,36 @@ enum class vk_queue_t : u32
 	COUNT
 };
 
-// NOTE: in Vk we must read a subrange ( or exact range ) of written queries otherwise we ain't getting anything back
-struct vk_query_pool
-{
-	VkQueryPool 	hndl;
-	VkQueryType 	type;
-	u32				queryStrideInSlots;
-	u32				queryCount;
-
-	u64 GetSizeInSlots() const { return queryCount * queryStrideInSlots; }
-};
-
 struct vk_cmd_pool
 {
     VkCommandPool		pool    = nullptr;
     VkCommandBuffer		buff    = nullptr;
     u64                 waitVal = 0;
+};
+
+// NOTE: in Vk we must read a subrange ( or exact range ) of written queries otherwise we ain't getting anything back
+struct vk_query_pool
+{
+    VkQueryPool 	hndl;
+    VkQueryType 	type;
+    u32				queryStrideInSlots;
+    u32				queryCount;
+
+    u64 GetSizeInSlots() const { return queryCount * queryStrideInSlots; }
+};
+
+struct vk_timestamp_query
+{
+    fixed_string<64>	name        = {};
+    u32 				begIdx : 16 = {};
+    u32 				endIdx : 16 = {};
+};
+
+struct vk_pipestats_query
+{
+    fixed_string<64>	name        = {};
+    u32 				begIdx : 16 = 0;
+    u32 				endIdx : 16 = 0;
 };
 
 #endif // !__VK_TYPES_H__

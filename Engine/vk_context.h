@@ -24,6 +24,11 @@
 #include <array>
 #include <span>
 
+constexpr u64 HT_GPU_CACHELINE_SZ_IN_BYTES    = 128;
+// NOTE: GPU_PAGE_SZ was picked from this: https://bsky.app/profile/pixeljetstream.bsky.social/post/3mvf6g54kck2x
+constexpr u64 GPU_PAGE_SZ = 2 * MB;
+static_assert( IsPowOf2( GPU_PAGE_SZ ) );
+
 struct vk_timeline
 {
 	VkSemaphore         sema                = nullptr;

@@ -15,6 +15,8 @@
 
 #include <System/sys_io_ring.h>
 
+#include <ankerl/unordered_dense.h>
+
 
 //==================CONSTEXPR===================//
 constexpr float YAW_SIGN   = FSignOf( ht::dot( ht::cross( WORLD_UP,    WORLD_FWD ), -WORLD_LEFT ) );
@@ -191,7 +193,7 @@ static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, u64 maxInstCap, 
     std::span<u8> meshMem   = mem.subspan( headerSzInBytes, meshSzInBytes );
     std::span<u8> instMem   = mem.subspan( headerSzInBytes + meshSzInBytes, instSzInBytes );
 
-    upload_job_payload* pPayload = ( upload_job_payload* ) std::data( mem );
+    upload_job_payload* pPayload = ( upload_job_payload* ) &mem[ 0 ];
     *pPayload = {
         .meshUploads        = { FromBytes<mesh_upload_req>( meshMem ) },
         .entitiesToPromote  = { FromBytes<instance_desc>( instMem ) },
@@ -230,14 +232,12 @@ struct helltech final : helltech_interface
     std::span<hpk_mesh_desc>            meshDescSpan    = {};
     std::span<hpk_lod_desc>             lodDescSpan     = {};
 
-
-
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
 
+
 	void Init( u64 hInst, u64 hWnd, u16 width, u16 height ) override;
-	void RunLoop( double elapsedTime, bool isRunning, linear_arena& scratchArena,
-	    const ht_input_state& inputState ) override;
+	void RunLoop( double elapsedTime, bool isRunning, linear_arena& scratchArena, const ht_input_state& inputState ) override;
 	void UploadAssets( linear_arena& virtualStack );
 };
 
@@ -370,6 +370,7 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
 
     HT_ASSERT( std::bit_cast<u64>( HPK_MAGIC ) == hpkHeader.magic );
     HT_ASSERT( HPK_FORMAT_VERSION == hpkHeader.fileFormatVersion );
+    // TODO: wtf ?
     //HT_ASSERT( HPK_CONTENT_VERSION == hpkHeader.contentVersion );
 
     auto LmbdRawReadHpkBuff = [ & ]<TRIVIAL_T T>( u64 dataOffsetBytes, u64 elemCount ) HT_LAMBDA_FORCEINLINE -> std::span<T>
@@ -390,60 +391,49 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     lodDescSpan     = LmbdRawReadHpkBuff.operator()<hpk_lod_desc>( hpkHeader.firstLodDescOffsetInBytes, hpkHeader.lodDescCount );
 }
 
-// TODO: revisit this logic
 void helltech::UploadAssets( linear_arena& scratchpadArena )
 {
-    /*
 	ht_mem_scope memScope = { scratchpadArena };
 
+    hpk_sector_desc mostBytesSec = *std::ranges::find_if( sectorsSpan, []( const auto& s ) {
+        return ht::all( i16x2{ 1, 1 } == s.secID );
+    } );
+
+    std::span<const world_node> nodes = worldNodesSpan.subspan( mostBytesSec.firstNodeIdx, mostBytesSec.nodeCount );
 
     // TODO: use our own
-	ankerl::unordered_dense::map<u64, HRNDMESH32> meshIdMap = {};
-    meshIdMap.reserve( std::ranges::distance( meshFiles ) );
+    ankerl::unordered_dense::set<u64> uniqueMeshes;
+    for( const world_node& n : nodes )
+    {
+        uniqueMeshes.emplace( n.meshID );
+    }
 
-    u64 totalMeshCount = std::ranges::distance( meshFiles );
-    u64 totalInstCount = 10'000; //std::ranges::distance( vec_of_vecs | std::views::join ); // NOTE: arbitrary size for now
+    upload_job_payload* pPayload = HtMakeUploadPayload(
+        std::size( uniqueMeshes ), std::size( nodes ), pRenderer );
+    for( const hpk_mesh_desc& meshDesc : ht::permuted_view( meshDescSpan, uniqueMeshes ) )
+    {
+        hpk_lod_desc coarsestLod = lodDescSpan[ meshDesc.firstLod + meshDesc.lodCount - 1 ];
+        std::span<const u8> rawBytes    = vfs.GetFileByteView( vpath );
+        hpk_mesh_view       mesh        = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
 
-    upload_job_payload* pPayload = HtMakeUploadPayload( totalMeshCount, totalInstCount, pRenderer );
+        pPayload->meshUploads.push_back( {
+            .mltAsBytes			= AsBytes( mesh.meshlets ),
+            .vtxPosAsBytes		= AsBytes( mesh.vtxPosBitstream ),
+            .vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs ),
+            .idxAsBytes			= AsBytes( mesh.indices ),
+            .hSlot				= pRenderer->AllocMeshSlot( mesh )
+        } );
+    }
 
-	for( const vfs_path& vpath : meshFiles )
-	{
-		u64 pathHash = std::hash<vfs_path>{}( vpath );
-		// TODO: might wanna check on content hash too
-		if( meshIdMap.contains( pathHash ) ) continue;
-
-		std::span<const u8> rawBytes    = vfs.GetFileByteView( vpath );
-		hpk_mesh_view       mesh        = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
-		HRNDMESH32          hMesh       = pRenderer->AllocMeshSlot( mesh );
-
-		pPayload->meshUploads.push_back( {
-			.mltAsBytes			= AsBytes( mesh.meshlets ),
-			.vtxPosAsBytes		= AsBytes( mesh.vtxPosBitstream ),
-			.vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs ),
-			.idxAsBytes			= AsBytes( mesh.indices ),
-			.hSlot				= hMesh
-		} );
-
-		meshIdMap.emplace( pathHash, hMesh );
-	}
-
-	for( const vfs_path& vpath : levelFiles )
-	{
-		std::span<const u8> rawBytes    = vfs.GetFileByteView( vpath );
-		hpk_level_view      lvl         = HpkDeserializeAsset<hpk_level_asset>( rawBytes );
-
-		for( const world_node& node : lvl.nodes )
-		{
-			auto it = meshIdMap.find( node.meshHash );
-			if( std::cend( meshIdMap ) == it ) continue;
-			pPayload->entitiesToPromote.push_back( { .transform = node.toWorld, .meshIdx = it->second } );
-		}
-	}
+    for( const world_node& n : nodes )
+    {
+        pPayload->entitiesToPromote.push_back( { .transform = n.toWorld, .meshIdx = ( u32 ) n.meshID } );
+    }
 
     jobCache.push_back( pPayload );
 
     g_pJobSys->SubmitJob( { .PfnJob = PfnRendererUploadJob, .payload = jobCache.back() } );
-    */
+
 }
 
 void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratchArena, const ht_input_state& inputState )
@@ -480,11 +470,9 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 	}
 
 	mainActiveCam.Move( camMove, dRot );
-	if( !rndDbgFlags.freezeMainView ) [[ likely ]]
-	{
-		debugCam = mainActiveCam;
-	}
+	if( !rndDbgFlags.freezeMainView ) [[ likely ]] { debugCam = mainActiveCam; }
 
+    /*
     inline_array<hpk_sector_desc, 256> inViewSectors = {};
     for( const hpk_sector_desc& sector : sectorsSpan )
     {
@@ -502,6 +490,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
     {
         std::span<world_node> secNodes = worldNodesSpan.subspan( sec.firstNodeIdx, sec.nodeCount );
     }
+    */
 
 	view_data dbgViewData   = ViewData( debugCam );
 	view_data views[]       = { ViewData( mainActiveCam ), dbgViewData };

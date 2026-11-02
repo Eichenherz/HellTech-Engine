@@ -51,20 +51,13 @@ HT_DEF_STRUCT_W_HASH( hpk_file_header,
     u64     lodDescCount;
 );
 
+// TODO: theoretically we can't have zero offsets for these; would mean empty file
 HT_DEF_STRUCT_W_HASH( hpk_lod_desc,
-    u64 fileOffsetInBytes    ;// = 0; // TODO: theoretically we can't have zero offsets for these; would mean empty file
-    u64 storedSzInBytes      ;// = 0;
-    u64 posSzInBytes     : 32;// = 0;
-    u64 normalsSzInBytes : 32;// = 0;
-    u64 idxBuffSzInBytes : 32;// = 0;
-    u64 mltsSzInBytes    : 32;// = 0;
+    u64 fileOffsetBytesMeshlets    ;// = 0;
+    u64 fileOffsetBytesPayloads    ;// = 0;
+    u64 meshletCount;
+    //u64 storedSzInBytes      ;// = 0;
 );
-
-inline bool HpkIsLodCompressed( const hpk_lod_desc& lod )
-{
-    u64 contentSzInBytes = lod.posSzInBytes + lod.normalsSzInBytes + lod.idxBuffSzInBytes + lod.mltsSzInBytes;
-    return lod.storedSzInBytes != contentSzInBytes;
-}
 
 HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,
     u64         hashed          ;//= 0;

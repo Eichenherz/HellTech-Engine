@@ -49,7 +49,7 @@ struct buffer_info
 	const char*         name        = nullptr;
 	buffer_usage        usageFlags  = {};
     VkSharingMode       sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	u64                 sizeInBytes = 0;
+	u64                 szInBytes   = 0;
 	buffer_mem_props    memProps    = {};
     u64                 alignment   = 0; // NOTE: 0 means VMA will default to the required API minAlignment
 };

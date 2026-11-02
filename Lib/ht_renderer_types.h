@@ -112,7 +112,30 @@ struct gpu_mesh_residency
     gpu_mesh_lod lods[ 4 ];
 };
 
-// NOTE: gpu_mesh_bounds & gpu_mesh_residency will be parallel arrays
+struct gpu_mesh
+{
+	float4	lod4Err; // NOTE: monotonically increasing x -> w
+
+	pkd_fp32x3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
+	pkd_fp32x3	aabbMax;
+
+	u32x2	packed16x4_meshletCounts;
+
+	u32		vtxPosOffsetInBytes;
+	u32		vtxAttrsOffset;
+	u32		idxOffset;
+	u32		meshletOffset;
+};
+
+struct gpu_mesh_w_lods
+{
+    pkd_fp32x4	    lod4Err; // NOTE: monotonically increasing x -> w
+
+    pkd_fp32x3	    aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
+    pkd_fp32x3	    aabbMax;
+
+    gpu_mesh_lod    lods[ 4 ];
+};
 
 #ifndef __cplusplus
 u32x4 UnpackLODMeshletCount( in gpu_mesh m )
@@ -130,16 +153,14 @@ CONSTEXPR u64 MLT_MAX_INDEX		= 1ull << 12;
 
 // NOTE: we will pack the data in the triangle buffer as such
 // ( ..., mlt N tris [ LOD 0, LOD 1 ], mlt N+1 tris[ LOD 0, LOD 1 ], ... )
+// NOTE: the payload will be LOCAL and laid as [ pos ][ attrs ][ idxLOD0 ][ idxLOD1 ]
 struct gpu_meshlet
 {
 	pkd_fp32x3	aabbMin;
 	pkd_fp32x3	aabbMax;
-	u32		    vtxPosOffsetBits;
-	u32		    vtxAttrsOffset;
-	u32		    idxOffset;
+    u64         payloadOffset; // NOTE: always 4 bytes aligned
 	u32		    packed8888_XYZ_Grid_BitDepth;
 	// NOTE: packed as: lowest bytes - [ 8 VtxCount | 12 lod0_Idx | 12 lod_1_Idx ] - highest bytes
-	// NOTE: both counts are local: idxOffsetLod1 = idxOffset + LOD0_idxCount
 	u32		    packed8_12_12_VtxCount_Lod_01_IdxCount;
 	float	    lodError;
 };

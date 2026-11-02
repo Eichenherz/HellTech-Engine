@@ -93,6 +93,9 @@ struct slot_array : ARRAY_T
     }
 };
 
+template<TRIVIAL_T T>
+using virtual_slot_array    = slot_array<T, virtual_array<ht_array_slot_t<T>>>;
+
 template<TRIVIAL_T T, arena_t ARENA_T = linear_arena>
 using arena_slot_array      = slot_array<T, arena_array<ht_array_slot_t<T>, ARENA_T>>;
 
@@ -101,12 +104,6 @@ using borrowed_slot_array   = slot_array<T, borrowed_array<ht_array_slot_t<T>>>;
 
 template<TRIVIAL_T T, u64 N>
 using inline_slot_array     = slot_array<T, inline_array<ht_array_slot_t<T>, N>>;
-
-template<TRIVIAL_T T>
-borrowed_slot_array<T> HtMakeSlotArray( arena_t auto& arena, u64 slotCount )
-{
-    return { ArenaNewArray<ht_array_slot_t<T>>( arena, slotCount ) };
-}
 
 template<typename...> struct ht_no_item {};
 

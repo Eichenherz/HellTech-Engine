@@ -680,7 +680,7 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual 
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 	    .flags                  = isVirtual ? VK_VIRTUAL_BUFF : 0,
-		.size			        = buffInfo.sizeInBytes,
+		.size			        = isVirtual ? FwdAlignPot( buffInfo.szInBytes, GPU_PAGE_SZ ) : buffInfo.szInBytes,
 		.usage			        = ( VkBufferUsageFlags ) buffInfo.usageFlags,
 	    // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
 		.sharingMode	        = buffInfo.sharingMode,
@@ -698,13 +698,14 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual 
         return {
             .hndl           = vkBuffer,
             .sizeInBytes    = bufferCreateInfo.size,
+            // NOTE: we need to call this per sparse/non-sparse bc non-sparse doesn't get an immediately available addr
             .devicePointer  = ( buffInfo.usageFlags & buffer_usage::BDA ) ? VkGetDevicePtr( device, vkBuffer ) : 0,
             .alignment      = buffInfo.alignment,
             .memProps       = buffInfo.memProps
         };
     }
 
-	VmaAllocation hVmaAlloc = VmaAllocMemForBuff( device, vkBuffer, buffInfo.sizeInBytes, buffInfo.alignment,
+	VmaAllocation hVmaAlloc = VmaAllocMemForBuff( device, vkBuffer, buffInfo.szInBytes, buffInfo.alignment,
 	    buffInfo.memProps, allocator );
 
     VmaAllocationInfo allocInfo = {};
@@ -732,7 +733,11 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual 
 	};
 }
 
-VmaAllocation vk_context::AllocBuffMem( const vk_buffer& buff, u64 allocSzInBytes ){}
+VmaAllocation vk_context::AllocBuffMem( const vk_buffer& buff, u64 allocSzInBytes )
+{
+    u64 szToAlloc = ( VK_WHOLE_SIZE == allocSzInBytes ) ?  buff.sizeInBytes : allocSzInBytes;
+    return VmaAllocMemForBuff( device, buff.hndl, szToAlloc, buff.alignment, buff.memProps, allocator );
+}
 
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {

@@ -56,8 +56,8 @@ struct bit_stream
     borrowed_array<u64>	qwords          = {};
     u64					cursorInBits    = 0;  // NOTE: lsb
 
-    u64* begin() { return std::data( qwords ); }
-    u64* end() { return std::data( qwords ) + ( ( cursorInBits + 63 ) >> 6 ); }
+    auto begin( this auto&& self ) { return std::data( self.qwords ); }
+    auto end( this auto&& self ) { return std::data( self.qwords ) + ( ( self.cursorInBits + 63 ) >> 6 ); }
 
     void Reset() { qwords.resize( 0 ); cursorInBits = 0; }
 
@@ -112,26 +112,21 @@ constexpr bool validateNormalEncoding   = true;
 // NOTE: this is contiguous
 struct hpk_quantized_lod
 {
-    std::span<u64>			posBitstream;
-    std::span<oct16x2>	    vtxNormals;
-    std::span<gpu_meshlet>  gpuMlts;
-    std::span<u8>		    idxBuff;
+    std::span<gpu_meshlet>  meshlets;
+    std::span<u8>			payload;
 };
 
 static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshlets, virtual_arena& backingArena )
 {
-    u64 totalMltCount   = std::size( meshlets );
-    u64 vtxPosBound     = totalMltCount * MAX_VTX_PER_MLT * QUANT_POS_BIT_DEPTH_BOUND;
-    u64 ctxNormBound    = totalMltCount * MAX_VTX_PER_MLT;
-    u64 idxBuffBound    = totalMltCount * MLT_MAX_INDEX * LODS_PER_MESHLET;
+    constexpr u64 vtxPosBound   = MAX_VTX_PER_MLT * QUANT_POS_BIT_DEPTH_BOUND;
+    constexpr u64 vtxNormBound  = MAX_VTX_PER_MLT;
+    constexpr u64 idxBuffBound  = MLT_MAX_INDEX * LODS_PER_MESHLET;
+    constexpr u64 payloadBound  = vtxPosBound + vtxNormBound + idxBuffBound;
 
-    // NOTE: the order is specific to minimize padding and stuff
-    auto posBuff        = bit_stream{ .qwords = ArenaNewArray<u64>( backingArena, vtxPosBound ) };
-    auto vtxNormals     = borrowed_array{ ArenaNewArray<oct16x2>( backingArena, ctxNormBound ) };
-    auto gpuMlts        = borrowed_array{ ArenaNewArray<gpu_meshlet>( backingArena, totalMltCount ) };
-    auto idxBuff        = borrowed_array{ ArenaNewArray<u8>( backingArena, idxBuffBound ) };
+    std::span gpuMlts = ArenaNewArray<gpu_meshlet>( backingArena, std::size( meshlets ) );
+    auto payloadsBuff = borrowed_array{ ArenaNewArray<u8>( backingArena, payloadBound * std::size( meshlets ) ) };
 
-	for( const hpk_meshlet& m : meshlets )
+	for( auto[ m, gpuMlt ] : std::views::zip( meshlets ) )
 	{
 		auto[ aabbMin, aabbMax ] = ComputeAabb( m.pos );
         // TODO: why this happens ? and can't we not prevent it ?
@@ -152,16 +147,8 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 			( std::size( m.idxLod ) < MLT_MAX_INDEX ) &&
 			( std::size( m.indices ) < MLT_MAX_INDEX ) );
 
-		gpuMlts.push_back( {
-			.aabbMin								= mltEncodingGrid.quantAabbMin,
-			.aabbMax								= mltEncodingGrid.quantAabbMax,
-			.vtxPosOffsetBits						= ( u32 ) posBuff.cursorInBits,
-			.vtxAttrsOffset							= ( u32 ) std::size( vtxNormals ),
-			.idxOffset								= ( u32 ) std::size( idxBuff ),
-			.packed8888_XYZ_Grid_BitDepth			= packed8888_XYZ_Grid_BitDepth,
-			.packed8_12_12_VtxCount_Lod_01_IdxCount	= packed8_12_12_VtxCount_Lod_01_IdxCount,
-			.lodError								= m.lodError
-		} );
+	    u64 posBitstreamBackingMem[ vtxPosBound ] = {};
+	    auto posBuff = bit_stream{ { posBitstreamBackingMem } };
 
 		for( pkd_fp32x3 p : m.pos )
 		{
@@ -174,6 +161,7 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 			//if constexpr( validatePosEncoding ) HT_ASSERT( HpkDecodeVerifyQuantized( p, enc, mltEncodingGrid ) );
 		}
 
+	    inline_array<oct16x2, vtxNormBound> vtxNormals = {};
 	    for( pkd_fp32x3 n : m.norm )
 	    {
 	        float2  octN        = EncodeOctaNormal( n );
@@ -187,30 +175,36 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 	        }
 	    }
 
-		//verticesAttrs.append_range( HpkMeshletPackVtxAttributes( m ) );
+	    inline_array<u8, idxBuffBound> idxBuff = {};
 		idxBuff.append_range( m.indices );
 	    idxBuff.append_range( ( FLT_MAX != m.lodError ) ? std::span{ m.idxLod } : std::span<const u8>{} );
+
+	    HT_ASSERT( std::ranges::size( posBuff ) && std::size( vtxNormals ) && std::size( idxBuff ) );
+
+	    gpuMlt = {
+	        .aabbMin								= ( pkd_fp32x3 ) mltEncodingGrid.quantAabbMin,
+            .aabbMax								= ( pkd_fp32x3 ) mltEncodingGrid.quantAabbMax,
+            .payloadOffset                          = std::size( payloadsBuff ),
+            .packed8888_XYZ_Grid_BitDepth			= packed8888_XYZ_Grid_BitDepth,
+            .packed8_12_12_VtxCount_Lod_01_IdxCount	= packed8_12_12_VtxCount_Lod_01_IdxCount,
+            .lodError								= m.lodError
+        };
+
+	    payloadsBuff.append_range( AsBytes( posBuff ) );
+	    // NOTE: on the gpu we need to read the indices and vertices aligned !
+	    HT_ASSERT( IsAlignedToPot( std::size( payloadsBuff ), sizeof( u32 ) ) );
+
+	    payloadsBuff.append_range( AsBytes( vtxNormals ) );
+	    payloadsBuff.append_range( AsBytes( idxBuff ) );
+
+	    payloadsBuff.resize( FwdAlignPot( std::size( payloadsBuff ), sizeof( u32 ) ), 0 );
+	    // NOTE: on the gpu we need to read the indices and vertices aligned !
+	    HT_ASSERT( IsAlignedToPot( std::size( payloadsBuff ), sizeof( u32 ) ) );
 	}
 
-    HT_ASSERT( std::ranges::size( posBuff ) && std::size( vtxNormals ) && std::size( idxBuff ) && std::size( gpuMlts ) );
+    HT_ASSERT( std::size( gpuMlts ) );
 
-    std::span<const u8> lodScratchBytes = {
-        ( const u8* ) std::data( posBuff.qwords ), ( const u8* ) ht::end_ptr( idxBuff.mem )
-    };
-
-    // NOTE: bc of ASan builds !
-    HT_UNPOISON( std::data( lodScratchBytes ), std::size( lodScratchBytes ) );
-
-    std::span<u64>          outPos      = { posBuff.qwords };
-    std::span<oct16x2>      outNormals  = HtMemCompact( outPos, vtxNormals );
-
-    std::span<gpu_meshlet>  outGpuMlts  = HtMemCompact( outNormals, gpuMlts );
-    std::span<u8>           outIdxBuff  = HtMemCompact( outGpuMlts, idxBuff );
-
-    u64 leftoverBytes = backingArena.Mark() - u64( ht::end_ptr( outIdxBuff ) - backingArena.mem );
-    backingArena.RewindBy( leftoverBytes );
-
-    return { .posBitstream = outPos, .vtxNormals = outNormals, .gpuMlts = outGpuMlts, .idxBuff = outIdxBuff };
+    return { .meshlets = gpuMlts, .payload = payloadsBuff };
 }
 
 struct hpk_file_buffer
@@ -379,17 +373,10 @@ static void HpkProcessMeshesParallelJob(
 
                 hpk_quantized_lod quantLod = HpkQuantizeLODLevel( mLod.meshlets, memScope2 );
 
-                std::span<const u8> rawView = {
-                    ( const u8* ) &quantLod.posBitstream[ 0 ], ht::end_ptr( quantLod.idxBuff )
-                };
-
                 lodInfos.push_back( {
-                    .fileOffsetInBytes  = fileBuff.WriteBlocking( rawView ),
-                    .storedSzInBytes    = std::size( rawView ),
-                    .posSzInBytes       = HtRangeSizeInBytes( quantLod.posBitstream ),
-                    .normalsSzInBytes   = HtRangeSizeInBytes( quantLod.vtxNormals ),
-                    .idxBuffSzInBytes   = HtRangeSizeInBytes( quantLod.idxBuff ),
-                    .mltsSzInBytes      = HtRangeSizeInBytes( quantLod.gpuMlts )
+                    .fileOffsetBytesMeshlets    = fileBuff.WriteBlocking( AsBytes( quantLod.meshlets ) ),
+                    .fileOffsetBytesPayloads    = fileBuff.WriteBlocking( quantLod.payload ),
+                    .meshletCount               = std::size( quantLod.meshlets )
                 } );
             }
 
@@ -546,7 +533,8 @@ i32 main( i32 argc, char** argv  )
                 for( const hpk_mesh_desc& mesh : batch )
                 {
                     if( mesh.lodCount <= lodIdx ) continue;
-                    hpkLODs[ batchIdx ][ mesh.firstLod + lodIdx ].fileOffsetInBytes += fileOffsetInBytes;
+                    hpkLODs[ batchIdx ][ mesh.firstLod + lodIdx ].fileOffsetBytesMeshlets += fileOffsetInBytes;
+                    hpkLODs[ batchIdx ][ mesh.firstLod + lodIdx ].fileOffsetBytesMeshlets += fileOffsetInBytes;
                 }
             }
         }

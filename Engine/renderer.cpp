@@ -31,10 +31,6 @@
 
 #include <System/sys_file.h>
 
-#include <DirectXPackedVector.h>
-
-namespace DXPacked = DirectX::PackedVector;
-
 #include <hell_pack.h>
 
 using offset_alloc_t = OffsetAllocator::Allocation;
@@ -72,13 +68,15 @@ static vk_context* pVkCtx = nullptr;
 
 //====================CONSTS====================//
 constexpr u64 				MAX_FIF					        = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
-constexpr u64 				MAX_TRIANGLES_IN_SCENE	        = 10'000'000;
-constexpr u64 				MAX_VERTICES_IN_SCENE	        = 5'000'000;
-constexpr u64 				MAX_MESHLETS_IN_SCENE	        = 100'000;
-constexpr u64 				MAX_INSTANCES_IN_SCENE	        = 10'000;
+
+constexpr u64 				MAX_INSTANCES_IN_SCENE	        = 5'000'000;
+constexpr u64               MAX_MESHES_IN_SCENE             = 600'000;
+constexpr u64 				MAX_MESHLETS_IN_SCENE	        = 10'000'000;
+constexpr u64 				MAX_TRIANGLES_IN_SCENE	        = MAX_MESHLETS_IN_SCENE * MAX_TRIS_PER_MLT;
+constexpr u64 				MAX_VERTICES_IN_SCENE	        = MAX_MESHLETS_IN_SCENE * MAX_VTX_PER_MLT;
+
 constexpr VkCullModeFlags	HT_CULL_MODE			        = IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
 constexpr VkFrontFace		HT_FRONT_FACE			        = IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
-constexpr u64               HT_GPU_CACHELINE_SZ_IN_BYTES    = 128;
 //==============================================//
 // TODO: cvars
 //====================CVARS=====================//
@@ -89,38 +87,24 @@ constexpr u64               HT_GPU_CACHELINE_SZ_IN_BYTES    = 128;
 
 //==============================================//
 
-struct timestamp_query
-{
-	fixed_string<64>	name        = {};
-	u32 				begIdx : 16 = {};
-	u32 				endIdx : 16 = {};
-};
-
-struct pipestats_query
-{
-	fixed_string<64>	name        = {};
-	u32 				begIdx : 16 = 0;
-	u32 				endIdx : 16 = 0;
-};
-
 struct ht_gpu_frame_profiler
 {
     // NOTE: these are 2 per query so we need std::size * 2
-	borrowed_array<timestamp_query>    timedZonesQueries       = {};
-	borrowed_array<pipestats_query>    pipelineStatsQueries    = {};
+	borrowed_array<vk_timestamp_query> timedZonesQueries       = {};
+	borrowed_array<vk_pipestats_query> pipelineStatsQueries    = {};
 	vk_buffer						   timestampQueryBuff      = {};
 	vk_buffer						   pipelineStatsQueryBuff  = {};
 
 	void ReadbackQueries( borrowed_array<ht_timed_zone>& timedGpuZones, borrowed_array<ht_pipeline_stats>& pipelinesStats )
 	{
-		timedGpuZones.append_range( timedZonesQueries | std::views::transform( [ this ]( const auto& q )
-		{
-			return ResolveTimestampQuery( q );
-		} ) );
-		pipelinesStats.append_range( pipelineStatsQueries | std::views::transform( [ this ]( const auto& q )
-		{
-			return ResolvePipelineStatsQuery( q );
-		} ) );
+	    for( const vk_timestamp_query& vkTsQuery : timedZonesQueries )
+	    {
+	        timedGpuZones.push_back( ResolveTimestampQuery( vkTsQuery ) );
+	    }
+	    for( const vk_pipestats_query& vkPsQuery : pipelineStatsQueries )
+	    {
+	        pipelinesStats.push_back( ResolvePipelineStatsQuery( vkPsQuery ) );
+	    }
 	}
 
 	void GPUReadAndResetQueryPools( vk_command_buffer& cmdBuff )
@@ -137,7 +121,7 @@ struct ht_gpu_frame_profiler
 		pipelineStatsQueries.resize( 0 );
 	}
 
-	ht_timed_zone ResolveTimestampQuery( const timestamp_query& hQuery ) const
+	ht_timed_zone ResolveTimestampQuery( const vk_timestamp_query& hQuery ) const
 	{
 		u32 startIdx	= hQuery.begIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
 		u32 endIdx		= hQuery.endIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
@@ -149,7 +133,7 @@ struct ht_gpu_frame_profiler
 		};
 	}
 
-	ht_pipeline_stats ResolvePipelineStatsQuery( const pipestats_query& hQuery ) const
+	ht_pipeline_stats ResolvePipelineStatsQuery( const vk_pipestats_query& hQuery ) const
 	{
 		u32 resultIdx = hQuery.begIdx * pVkCtx->pplnStatsQueryPool.queryStrideInSlots;
 
@@ -165,24 +149,24 @@ struct ht_gpu_frame_profiler
 		};
 	}
 
-	timestamp_query BeginTimedZone( vk_command_buffer& cmdBuff, const char* name )
+	vk_timestamp_query BeginTimedZone( vk_command_buffer& cmdBuff, const char* name )
 	{
 		// NOTE: these are 2 per query so we need std::size * 2
-		u16				currOffset	= ( u16 ) std::size( timedZonesQueries ) * 2;
-		timestamp_query hQuery		= { .name = name, .begIdx = currOffset, .endIdx = currOffset + 1u };
+		u16				    currOffset	= ( u16 ) std::size( timedZonesQueries ) * 2;
+		vk_timestamp_query  hQuery		= { .name = name, .begIdx = currOffset, .endIdx = currOffset + 1u };
 		cmdBuff.CmdWriteTimestamp( pVkCtx->timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.begIdx );
 		timedZonesQueries.push_back( hQuery );
 		return hQuery;
 	}
 
-	void EndTimedZone( vk_command_buffer& cmdBuff, const timestamp_query& hQuery )
+	void EndTimedZone( vk_command_buffer& cmdBuff, const vk_timestamp_query& hQuery )
 	{
 		cmdBuff.CmdWriteTimestamp( pVkCtx->timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.endIdx );
 	}
 
-	pipestats_query BeginStatsQuery( vk_command_buffer& cmdBuff, const char* name )
+	vk_pipestats_query BeginStatsQuery( vk_command_buffer& cmdBuff, const char* name )
 	{
-		pipestats_query hQuery = {
+		vk_pipestats_query hQuery = {
 			.name	= name,
 			.begIdx = ( u16 ) std::size( pipelineStatsQueries ),
 			.endIdx = u16( -1 )
@@ -192,7 +176,7 @@ struct ht_gpu_frame_profiler
 		return hQuery;
 	}
 
-	void EndStatsQuery( vk_command_buffer& cmdBuff, const pipestats_query& hQuery )
+	void EndStatsQuery( vk_command_buffer& cmdBuff, const vk_pipestats_query& hQuery )
 	{
 		cmdBuff.CmdQueryEnd( pVkCtx->pplnStatsQueryPool, hQuery.begIdx );
 	}
@@ -201,18 +185,18 @@ struct ht_gpu_frame_profiler
 static ht_gpu_frame_profiler HtMakeGpuFrameProfiler()
 {
 	return {
-	    .timedZonesQueries      = { ArenaNewArray<timestamp_query>( *pDebugArena, 1000 ) },
-	    .pipelineStatsQueries   = { ArenaNewArray<pipestats_query>( *pDebugArena, 128 ) },
+	    .timedZonesQueries      = borrowed_array{ ArenaNewArray<vk_timestamp_query>( *pDebugArena, 1000 ) },
+	    .pipelineStatsQueries   = borrowed_array{ ArenaNewArray<vk_pipestats_query>( *pDebugArena, 128 ) },
 		.timestampQueryBuff     = pVkCtx->CreateBuffer( {
 			.name			= "Buff_ReadbackTimestampQueries",
 			.usageFlags		= buffer_usage::XFER_DST,
-			.sizeInBytes	= pVkCtx->timestampQueryPool.GetSizeInSlots() * sizeof( u64 ),
+			.szInBytes	= pVkCtx->timestampQueryPool.GetSizeInSlots() * sizeof( u64 ),
 			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} ),
 		.pipelineStatsQueryBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_ReadbackTimestampQueries",
 			.usageFlags		= buffer_usage::XFER_DST,
-			.sizeInBytes	= pVkCtx->pplnStatsQueryPool.GetSizeInSlots() * sizeof( u64 ),
+			.szInBytes	= pVkCtx->pplnStatsQueryPool.GetSizeInSlots() * sizeof( u64 ),
 			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} )
 	};
@@ -286,7 +270,7 @@ struct imgui_pass
 
 		vk_buffer stagingBuff = pVkCtx->CreateBuffer( {
 			.usageFlags		= buffer_usage::XFER_SRC,
-			.sizeInBytes	= sizeInBytes,
+			.szInBytes	= sizeInBytes,
 			.memProps		= buffer_mem_props::STAGING
 		} );
 
@@ -322,7 +306,7 @@ struct imgui_pass
 		// Textures
 
 		if( drawData->TotalVtxCount <= 0 ) return;
-		
+
 		u64 vtxTotalSizeInBytes = std::bit_ceil( drawData->TotalVtxCount * sizeof( imgui_vertex ) );
 		u64 idxTotalSizeInBytes = std::bit_ceil( drawData->TotalIdxCount * sizeof( index_t ) );
 
@@ -334,7 +318,7 @@ struct imgui_pass
 			if( VK_NULL_HANDLE != refVtxBuff.hndl ) pVkCtx->PushResourceFree( vk_resc_deletion{ refVtxBuff, frameIdx } );
 			refVtxBuff = pVkCtx->CreateBuffer( {
 			    .usageFlags     = buffer_usage::STORAGE,
-				.sizeInBytes    = vtxTotalSizeInBytes,
+				.szInBytes    = vtxTotalSizeInBytes,
 			    .memProps       = buffer_mem_props::HOST_VISIBLE
 			} );
 		}
@@ -344,7 +328,7 @@ struct imgui_pass
 			if( VK_NULL_HANDLE != refIdxBuff.hndl ) pVkCtx->PushResourceFree( vk_resc_deletion{ refIdxBuff, frameIdx } );
 			refIdxBuff = pVkCtx->CreateBuffer( {
 			    .usageFlags     = buffer_usage::INDEX,
-				.sizeInBytes    = idxTotalSizeInBytes,
+				.szInBytes    = idxTotalSizeInBytes,
 			    .memProps       = buffer_mem_props::HOST_VISIBLE
 			} );
 		}
@@ -428,7 +412,7 @@ struct imgui_pass
 
 imgui_pass MakeImguiPass( VkFormat colDstFormat )
 {
-	VkSamplerCreateInfo samplerCreateInfo = { 
+	VkSamplerCreateInfo samplerCreateInfo = {
 		.sType						= VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.magFilter					= VK_FILTER_LINEAR,
 		.minFilter					= VK_FILTER_LINEAR,
@@ -456,7 +440,7 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 	descSetBindings[ 1 ].pImmutableSamplers = &fontSampler;
 	descSetBindings[ 1 ].binding			= 1;
 
-	VkDescriptorSetLayoutCreateInfo descSetInfo = { 
+	VkDescriptorSetLayoutCreateInfo descSetInfo = {
 		.sType			= VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.flags			= VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
 		.bindingCount	= std::size( descSetBindings ),
@@ -467,7 +451,7 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 	VK_CHECK( vkCreateDescriptorSetLayout( pVkCtx->device, &descSetInfo, 0, &descSetLayout ) );
 
 	VkPushConstantRange pushConst = { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof( float ) * 4 };
-	VkPipelineLayoutCreateInfo pipelineLayoutInfo = { 
+	VkPipelineLayoutCreateInfo pipelineLayoutInfo = {
 		.sType					= VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.setLayoutCount			= 1,
 		.pSetLayouts			= &descSetLayout,
@@ -491,7 +475,7 @@ imgui_pass MakeImguiPass( VkFormat colDstFormat )
 		};
 	}
 
-	VkDescriptorUpdateTemplateCreateInfo templateInfo = { 
+	VkDescriptorUpdateTemplateCreateInfo templateInfo = {
 		.sType						= VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO,
 		.descriptorUpdateEntryCount = std::size( entries ),
 		.pDescriptorUpdateEntries	= std::data( entries ),
@@ -630,7 +614,7 @@ struct debug_draw_passes
 		drawCountBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgDrawCount",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT | buffer_usage::XFER_DST,
-			.sizeInBytes	= 1 * sizeof( u32 ),
+			.szInBytes	= 1 * sizeof( u32 ),
 		    .memProps		= buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
@@ -638,14 +622,14 @@ struct debug_draw_passes
 		drawCmdsBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgDraws",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT,
-			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( draw_instanced_indexed_indirect ),
+			.szInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( draw_instanced_indexed_indirect ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 
 		gpuInstBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgGpuInst",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
+			.szInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		gpuInstBuffIdx = pVkCtx->AllocDescriptorIdx( gpuInstBuff );
@@ -653,7 +637,7 @@ struct debug_draw_passes
 		gpuInstCountBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgGpuInstCount",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT | buffer_usage::XFER_DST,
-			.sizeInBytes	= 1 * sizeof( u32 ),
+			.szInBytes	= 1 * sizeof( u32 ),
 		    .memProps		= buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
@@ -662,7 +646,7 @@ struct debug_draw_passes
 		cpuInstBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgCpuInst",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( dbg_aabb_instance ),
+			.szInBytes	= 10'000 * sizeof( dbg_aabb_instance ),
 			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} );
 		cpuInstView = { VkBufferHostView<dbg_aabb_instance>( cpuInstBuff ) };
@@ -675,14 +659,14 @@ struct debug_draw_passes
 		vtxBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgVtx",
 			.usageFlags		=  buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= 500 * sizeof( dbg_vertex ),
+			.szInBytes	= 500 * sizeof( dbg_vertex ),
 			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} );
 
 		idxBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DbgIdx",
 			.usageFlags		= buffer_usage::INDEX | buffer_usage::BDA,
-			.sizeInBytes	= 2000 * sizeof( u16 ),
+			.szInBytes	= 2000 * sizeof( u16 ),
 			.memProps		= buffer_mem_props::HOST_VISIBLE
 		} );
 
@@ -762,7 +746,7 @@ struct debug_draw_passes
 	// TODO: don't hardcode
 	void DbgDrawWireframeCPU( vk_command_buffer& cmdBuff, const vk_image& colorTarget, desc_hndl32 camIdx )
     {
-		if( 0 == std::size( cpuInstView ) ) return;
+		if( !std::size( cpuInstView ) ) return;
 
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "Dbg_DrawWireframeCPU", {} );
 
@@ -895,7 +879,7 @@ struct culling_pass
 		drawCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DrawCount",
 			.usageFlags 	= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT,
-			.sizeInBytes 	= 1 * sizeof( u32 ),
+			.szInBytes 	= 1 * sizeof( u32 ),
 			.memProps		= buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
@@ -904,7 +888,7 @@ struct culling_pass
 		drawCmds = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DrawCmds",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT ,
-			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_command ),
+			.szInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_command ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		drawCmdsIdx = pVkCtx->AllocDescriptorIdx( drawCmds );
@@ -912,7 +896,7 @@ struct culling_pass
 		drawData = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DrawData",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_cmd_data ),
+			.szInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( draw_meshlet_cmd_data ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		drawDataIdx = pVkCtx->AllocDescriptorIdx( drawData );
@@ -920,7 +904,7 @@ struct culling_pass
 		dispatchIndirect = pVkCtx->CreateBuffer( {
 			.name			= "Buff_DispatchIndirect",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA | buffer_usage::INDIRECT,
-			.sizeInBytes	= 1 * sizeof( dispatch_command ),
+			.szInBytes	= 1 * sizeof( dispatch_command ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		dispatchIndirectIdx = pVkCtx->AllocDescriptorIdx( dispatchIndirect );
@@ -928,7 +912,7 @@ struct culling_pass
 		visibleInstances = pVkCtx->CreateBuffer( {
 			.name			= "Buff_VisibleInstances",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( visible_instance ),
+			.szInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( visible_instance ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 
@@ -937,7 +921,7 @@ struct culling_pass
 		visibleInstCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_VisibleInstCounter",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= 1 * sizeof( u32 ),
+			.szInBytes	= 1 * sizeof( u32 ),
 			.memProps		= buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
@@ -947,7 +931,7 @@ struct culling_pass
 		occludedInstances = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedInstances",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( u32 ),
+			.szInBytes	= MAX_INSTANCES_IN_SCENE * sizeof( u32 ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 
@@ -956,7 +940,7 @@ struct culling_pass
 		occludedInstancesCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedInstCounter",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= 1 * sizeof( u32 ),
+			.szInBytes	= 1 * sizeof( u32 ),
 		    .memProps		= buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
@@ -966,7 +950,7 @@ struct culling_pass
 		meshletsToProcessBuff = pVkCtx->CreateBuffer( {
 			.name			= "Buff_MeshletsToProcess",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
+			.szInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		meshletsToProcessIdx = pVkCtx->AllocDescriptorIdx( meshletsToProcessBuff );
@@ -974,7 +958,7 @@ struct culling_pass
 		meshletsToProcessCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_MeshletsToProcessCount",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= 1 * sizeof( u32 ),
+			.szInBytes	= 1 * sizeof( u32 ),
 		    .memProps		= buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
@@ -983,7 +967,7 @@ struct culling_pass
 		occludedMeshlets = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedMeshlets",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
+			.szInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( meshlet_cull_wok_item ),
 			.memProps		= buffer_mem_props::GPU_ONLY
 		} );
 		occludedMeshletsIdx = pVkCtx->AllocDescriptorIdx( occludedMeshlets );
@@ -991,7 +975,7 @@ struct culling_pass
 		occludedMeshletsCounter = pVkCtx->CreateBuffer( {
 			.name			= "Buff_OccludedMeshletsCount",
 			.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-			.sizeInBytes	= 1 * sizeof( u32 ),
+			.szInBytes	= 1 * sizeof( u32 ),
 		    .memProps		= buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
@@ -1137,7 +1121,7 @@ struct tone_mapping_pass
 		averageLuminanceBuffer = pVkCtx->CreateBuffer( {
 			.name = "Buff_AvgLum",
 			.usageFlags = buffer_usage::STORAGE | buffer_usage::XFER_DST,
-			.sizeInBytes = 1 * sizeof( float ),
+			.szInBytes = 1 * sizeof( float ),
 			.memProps = buffer_mem_props::GPU_ONLY
 		} );
 		avgLumIdx = pVkCtx->AllocDescriptorIdx( averageLuminanceBuffer );
@@ -1145,7 +1129,7 @@ struct tone_mapping_pass
 		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
 			.name = "Buff_TonemappingAtomicWgCounter",
 			.usageFlags = buffer_usage::STORAGE | buffer_usage::XFER_DST,
-			.sizeInBytes = 1 * sizeof( u32 ),
+			.szInBytes = 1 * sizeof( u32 ),
 			.memProps = buffer_mem_props::GPU_ONLY
 		} );
 		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
@@ -1153,12 +1137,12 @@ struct tone_mapping_pass
 		luminanceHistogramBuffer = pVkCtx->CreateBuffer( {
 			.name = "Buff_LumHisto",
 			.usageFlags = buffer_usage::STORAGE | buffer_usage::XFER_DST,
-			.sizeInBytes = 4 * sizeof( u64 ),
-			.memProps = buffer_mem_props::GPU_ONLY } ); 
+			.szInBytes = 4 * sizeof( u64 ),
+			.memProps = buffer_mem_props::GPU_ONLY } );
 		lumHistoIdx = pVkCtx->AllocDescriptorIdx( luminanceHistogramBuffer );
 	}
 
-	void AverageLuminancePass( 
+	void AverageLuminancePass(
 		vk_command_buffer&		cmdBuff,
 		const vk_image&			colTarget,
 		desc_hndl32				hdrColSrcDesc,
@@ -1282,14 +1266,14 @@ struct depth_pyramid_pass
 		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
 			.name           = "Buff_DownsamplerAtomicWgCounter",
 			.usageFlags     = buffer_usage::STORAGE | buffer_usage::XFER_DST,
-			.sizeInBytes    = 1 * sizeof( u32 ),
+			.szInBytes    = 1 * sizeof( u32 ),
 		    .memProps       = buffer_mem_props::GPU_ONLY,
 		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
 
 
-		VkSamplerReductionModeCreateInfo reduxInfo = { 
+		VkSamplerReductionModeCreateInfo reduxInfo = {
 			.sType			= VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
 			.reductionMode	= VK_SAMPLER_REDUCTION_MODE_MIN,
 		};
@@ -1427,13 +1411,13 @@ struct vbuffer_pass
 {
 	static constexpr VkFormat	VBUFF_FORMAT = VK_FORMAT_R32G32_UINT;
 
-	vk_image					vbuffRG32Target;
+	vk_image				vbuffRG32Target;
 
-	VkPipeline					gfxVBuffPipeline;
-	vk_compute_pipeline			compDbgHashTriToScPipeline;
-	vk_compute_pipeline			compLambertianClay;
+	VkPipeline				gfxVBuffPipeline;
+	vk_compute_pipeline	    compDbgHashTriToScPipeline;
+	vk_compute_pipeline	    compLambertianClay;
 
-	desc_hndl32					vbuffRG32Srv;
+	desc_hndl32				vbuffRG32Srv;
 
 	void Init( VkFormat depthFormat, u16 width, u16 height )
 	{
@@ -1728,10 +1712,9 @@ struct fwd_pass
 
 struct ht_mesh_alloc_t
 {
-    offset_alloc_t hMlt;
-    offset_alloc_t hVtxPos;
-    offset_alloc_t hVtxAttrs;
-    offset_alloc_t hIdx;
+    gpu_mesh_w_lods meshWLODs   = {};
+    u32             meshID      = -1;
+    u32             refCount    = 0;
 };
 
 struct virtual_frame
@@ -1756,10 +1739,10 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 	fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
 
 	vk_buffer viewData = pVkCtx->CreateBuffer( {
-		.name			= std::data( name ),
-		.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-		.sizeInBytes	= sizeInBytes,
-		.memProps		= buffer_mem_props::HOST_VISIBLE
+		.name		= &name[ 0 ],
+		.usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
+		.szInBytes	= sizeInBytes,
+		.memProps	= buffer_mem_props::HOST_VISIBLE
 	} );
 
 	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 1024;
@@ -1767,27 +1750,27 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
     fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshResidencyTable{}", fifIdx };
 
     vk_buffer gpuMeshBoundsBuff = pVkCtx->CreateBuffer( {
-        .name			= std::data( meshBoundsName ),
-        .usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-        .sizeInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh_bounds ),
-        .memProps		= buffer_mem_props::HOST_VISIBLE
+        .name		= &meshBoundsName[ 0 ],
+        .usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
+        .szInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh_bounds ),
+        .memProps	= buffer_mem_props::HOST_VISIBLE
     } );
 
 	vk_buffer gpuMeshResidencyTable = pVkCtx->CreateBuffer( {
-		.name			= std::data( meshTableName ),
-		.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-		.sizeInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh_residency ),
-		.memProps		= buffer_mem_props::HOST_VISIBLE
+		.name		= &meshTableName[ 0 ],
+		.usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
+		.szInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh_residency ),
+		.memProps	= buffer_mem_props::HOST_VISIBLE
 	} );
 
 	constexpr u64 DEFAULT_INST_COUNT = 10'000;
 	fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
 
 	vk_buffer gpuInstances = pVkCtx->CreateBuffer( {
-		.name			= std::data( instName ),
-		.usageFlags		= buffer_usage::STORAGE | buffer_usage::BDA,
-		.sizeInBytes	= DEFAULT_INST_COUNT * sizeof( instance_desc ),
-		.memProps		= buffer_mem_props::HOST_VISIBLE
+		.name		= &instName[ 0 ],
+		.usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
+		.szInBytes	= DEFAULT_INST_COUNT * sizeof( instance_desc ),
+		.memProps	= buffer_mem_props::HOST_VISIBLE
 	} );
 
 	return {
@@ -1803,6 +1786,24 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 	};
 }
 
+// NOTE: inspired by https://substack.com/home/post/p-211773615
+// TODO: add page recount + deferred free when streaming
+struct gpu_virtual_buff
+{
+    vk_buffer       hndl    = {};
+    // TODO: do we need a concurrent bmp ?
+    std::span<u64>  pageBmp = {};
+
+    gpu_virtual_buff() = default;
+    gpu_virtual_buff( const buffer_info& buffInfo ) :
+        hndl{ pVkCtx->CreateBuffer( buffInfo, true ) },
+        pageBmp{ ArenaNewArray<u64>( *pPersistentArena, ( hndl.sizeInBytes / GPU_PAGE_SZ + 63 ) / 64 ) }
+    {
+        // NOTE: only THE allocated buffer has the correct alignment
+        HT_ASSERT( IsAlignedToPot( hndl.sizeInBytes, GPU_PAGE_SZ ) );
+    }
+};
+
 // NOTE: we always create a gpu_mesh descriptor before upload
 // the actual payload is uploaded on the transfer queue and the engine polls the associated fence,
 // when it triggers all the new associated instances will be promoted;
@@ -1810,9 +1811,6 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 // but the engine only issues the available instances and only valid data is accessed.
 struct renderer_context final : renderer_interface
 {
-    using ht_mesh_components = soa_slot_array<gpu_mesh_bounds, gpu_mesh_residency, ht_mesh_alloc_t>;
-	using HMESH32 = ht_mesh_components::hndl32;
-
 	alignas( 8 ) vk_renderer_config         config = {};
 
 	culling_pass							cullingPass;
@@ -1823,11 +1821,16 @@ struct renderer_context final : renderer_interface
 	vbuffer_pass							vBuffPass;
 	fwd_pass								fwdPass;
 
-	ht_mesh_components	                    meshComponents;
+	virtual_slot_array<ht_mesh_alloc_t>     meshResidencyTable;
 
 	std::array<virtual_frame, MAX_FIF>	    vrtFrames;
 
 	vk_buffer                               stagingBuff;
+
+    gpu_virtual_buff                        gpuVrtMltPayloadBuff;
+    gpu_virtual_buff                        gpuVrtMeshletBuff;
+    gpu_virtual_buff                        gpuVrtMeshBuff;
+    gpu_virtual_buff                        gpuVrtInstBuff;
 
 	vk_buffer                               megaGpuVtxPosBuff;
 	vk_buffer                               megaGpuVtxAttrsBuff;
@@ -1863,8 +1866,8 @@ struct renderer_context final : renderer_interface
 	bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) override
 	{
 	    // TODO: don't hardcode like this; but we know the upload flow here sooooo
-	    // NOTE: device-device deps maybe ? 
-	    // https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#synchronization-semaphores-waiting 
+	    // NOTE: device-device deps maybe ?
+	    // https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#synchronization-semaphores-waiting
 	    // search: "The second access scope includes all memory access performed by the device"
 	    return VkGetTimelineSemaValue( pVkCtx->device, pVkCtx->copyQueue.timelineSema ) >=
 	        SysAtomicRead64<sys_fence_t::ACQ>( hJobDoneSignal );
@@ -1916,9 +1919,9 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	pVkCtx = ArenaMake<vk_context>( *pPersistentArena, VkMakeContext( hInst, hWnd, config ) );
 
 	globalData = pVkCtx->CreateBuffer( {
-		.usageFlags		= buffer_usage::STORAGE,
-		.sizeInBytes	= sizeof( global_data ),
-		.memProps		= buffer_mem_props::HOST_VISIBLE
+		.usageFlags	= buffer_usage::STORAGE,
+		.szInBytes	= sizeof( global_data ),
+		.memProps	= buffer_mem_props::HOST_VISIBLE
 	} );
 	globalDataIdx = pVkCtx->AllocDescriptorIdx( globalData );
 	// NOTE: this is a workaround, must be first so we match idx 0
@@ -1932,25 +1935,54 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	imguiPass = MakeImguiPass( pVkCtx->scConfig.format );
 
 	stagingBuff = pVkCtx->CreateBuffer( {
-		.name			= "StagingBuff",
-		.usageFlags		= buffer_usage::XFER_SRC,
-		.sizeInBytes	= 256 * MB,
-		.memProps		= buffer_mem_props::STAGING,
+		.name		    = "StagingBuff",
+		.usageFlags	    = buffer_usage::XFER_SRC,
+		.szInBytes	    = 256 * MB,
+		.memProps	    = buffer_mem_props::STAGING,
 	    .alignment      = RAW_DISK_SECTOR_ALIGNMENT // NOTE: this is necessary if we use this as the io ring dst too
 	} );
+
+    gpuVrtMltPayloadBuff = gpu_virtual_buff{ {
+        .name           = "GpuVrtBuff_MltPayload",
+        .usageFlags     = buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA | buffer_usage::INDEX,
+        .sharingMode    = VK_SHARING_MODE_CONCURRENT,
+        .szInBytes      = FwdAlignPot( 2 * GB, sizeof( u32 ) ), // NOTE: u8 indices must be 4 byte aligned
+        .memProps       = buffer_mem_props::GPU_ONLY,
+    } };
+    gpuVrtMeshletBuff = gpu_virtual_buff{ {
+        .name           = "GpuVrtBuff_Mlt",
+        .usageFlags     = buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
+        .sharingMode    = VK_SHARING_MODE_CONCURRENT,
+        .szInBytes      = 2 * GB,
+        .memProps       = buffer_mem_props::GPU_ONLY,
+    } };
+    gpuVrtMeshBuff = gpu_virtual_buff{ {
+        .name           = "GpuVrtBuff_MeshTable",
+        .usageFlags     = buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
+        .sharingMode    = VK_SHARING_MODE_CONCURRENT,
+        .szInBytes      = 2 * GB,
+        .memProps       = buffer_mem_props::GPU_ONLY,
+    } };
+    gpuVrtInstBuff = gpu_virtual_buff{ {
+        .name           = "GpuVrtBuff_Inst",
+        .usageFlags     = buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
+        .sharingMode    = VK_SHARING_MODE_CONCURRENT,
+        .szInBytes      = 2 * GB,
+        .memProps       = buffer_mem_props::GPU_ONLY,
+    } };
 
 	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuMeshletBuff",
 		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		.sizeInBytes	= MAX_MESHLETS_IN_SCENE * sizeof( gpu_meshlet ),
+		.szInBytes	    = 10'000 * sizeof( gpu_meshlet ),
 		.memProps		= buffer_mem_props::GPU_ONLY,
 	} );
 	megaGpuVtxAttrsBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuVtxAttrsBuff",
 		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		.sizeInBytes	= MAX_VERTICES_IN_SCENE * sizeof( oct16x2 ),
+		.szInBytes	    = 10'000 * sizeof( oct16x2 ),
 		.memProps		= buffer_mem_props::GPU_ONLY
 	} );
 	megaGpuVtxPosBuff = pVkCtx->CreateBuffer( {
@@ -1958,7 +1990,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		// NOTE: to u32 bc we'll unpack via that in the shader
-		.sizeInBytes	= FwdAlignPot( MAX_VERTICES_IN_SCENE * sizeof( u32x3 ), sizeof( u32 ) ),
+		.szInBytes	    = FwdAlignPot( 10'000 * sizeof( u32x3 ), sizeof( u32 ) ),
 		.memProps		= buffer_mem_props::GPU_ONLY
 	} );
 	HT_ASSERT( IsAlignedToPot( megaGpuVtxPosBuff.sizeInBytes, sizeof( u32 ) ) );
@@ -1969,15 +2001,10 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
 		// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
 		// bounds accesses, essentially we'll read garbage data safely
-		.sizeInBytes	= FwdAlignPot( 3 * MAX_TRIANGLES_IN_SCENE * sizeof( index_t ), sizeof( u32 ) ),
+		.szInBytes	    = FwdAlignPot( 3 * 10'000 * sizeof( index_t ), sizeof( u32 ) ),
 		.memProps		= buffer_mem_props::GPU_ONLY
 	} );
 	HT_ASSERT( FwdAlignPot( megaGpuIdxBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuIdxBuff.sizeInBytes );
-
-	meshletAllocator    = { ( u32 ) megaGpuMeshletBuff.sizeInBytes };
-	vtxPosAllocator     = { ( u32 ) megaGpuVtxPosBuff.sizeInBytes };
-	vtxAttrsAllocator   = { ( u32 ) megaGpuVtxAttrsBuff.sizeInBytes };
-	idxAllocator	    = { ( u32 ) megaGpuIdxBuff.sizeInBytes };
 
 	// TODO: move
 	VkSamplerCreateInfo samplerCreateInfo = {
@@ -2004,37 +2031,22 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		globalHtGpuFrameProfiler[ fifIdx ]  = HtMakeGpuFrameProfiler();
 	}
 
-    meshComponents = ht_mesh_components{ *pPersistentArena, 5'000 };
+    meshResidencyTable = virtual_slot_array<ht_mesh_alloc_t>{ { 1 * GB } };
 }
 
 HRNDMESH32 renderer_context::AllocMeshSlot( const hpk_mesh_desc& mesh, const hpk_lod_desc& lod )
 {
-    gpu_mesh_bounds gpuMeshBounds = { .lod4Err = mesh.lodErrs, .aabbMin	= mesh.aabbMin, .aabbMax = mesh.aabbMax };
-
     ht_mesh_alloc_t meshAlloc = {
-        .hMlt       = meshletAllocator.Alloc( lod.mltsSzInBytes ),
-        .hVtxPos    = vtxPosAllocator.Alloc( lod.posSzInBytes ),
-        .hVtxAttrs  = vtxAttrsAllocator.Alloc( lod.normalsSzInBytes ),
-        .hIdx       = idxAllocator.Alloc( lod.idxBuffSzInBytes )
+        .meshWLODs  = gpu_mesh_w_lods{
+            .lod4Err    = mesh.lodErrs,
+            .aabbMin    = mesh.aabbMin,
+            .aabbMax    = mesh.aabbMax,
+            .lods       =
+        },
+        .refCount   =
     };
 
-	// TODO: move in the offset allocator and type it
-	HT_ASSERT( !( meshAlloc.hMlt.offset % sizeof( gpu_meshlet ) ) && !( meshAlloc.hVtxAttrs.offset % sizeof( oct16x2 ) ) );
-
-
-    // NOTE: this MUST be in elements bc we use it on the gpu as such
-    gpu_mesh_residency gpuMeshRes = {
-        .lods = { {}, {}, {},
-            gpu_mesh_lod{
-                .vtxPosOffsetInBytes = meshAlloc.hVtxPos.offset,
-                .vtxAttrsOffset		 = meshAlloc.hVtxAttrs.offset / ( u32 ) sizeof( oct16x2 ),
-                .idxOffset			 = meshAlloc.hIdx.offset,
-                .meshletOffset		 = meshAlloc.hMlt.offset / ( u32 ) sizeof( gpu_meshlet ),
-            }
-        }
-	};
-
-	return std::bit_cast<u32>( meshComponents.push_entry( gpuMeshBounds, gpuMeshRes, meshAlloc ) );
+	return std::bit_cast<u32>( meshResidencyTable.push_entry( gpuMeshBounds, gpuMeshRes, meshAlloc ) );
 }
 
 void renderer_context::UploadMeshes(
@@ -2090,9 +2102,9 @@ void renderer_context::UploadMeshes(
 u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )
 {
 	HtCopyFullRange( frameData.views, VkBufferHostView<view_data>( thisVFrame.viewData ) );
-	HtCopyFullRange( meshComponents.get<gpu_mesh_bounds>(),
+	HtCopyFullRange( meshResidencyTable.get<gpu_mesh_bounds>(),
 	    VkBufferHostView<gpu_mesh_bounds>( thisVFrame.gpuMeshBoundsBuff ) );
-	HtCopyFullRange( meshComponents.get<gpu_mesh_residency>(),
+	HtCopyFullRange( meshResidencyTable.get<gpu_mesh_residency>(),
 	    VkBufferHostView<gpu_mesh_residency>( thisVFrame.gpuMeshResidencyTable ) );
 
 
@@ -2135,7 +2147,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 
 	HtGetGpuFrameProfiler()->GPUReadAndResetQueryPools( thisFrameCmdBuff );
 
-	timestamp_query hQueryGPUFrame = HtGetGpuFrameProfiler()->BeginTimedZone( thisFrameCmdBuff, "GPU FrameTime" );
+	vk_timestamp_query hQueryGPUFrame = HtGetGpuFrameProfiler()->BeginTimedZone( thisFrameCmdBuff, "GPU FrameTime" );
 
 	static bool initResources = false;
 	if( !initResources )
