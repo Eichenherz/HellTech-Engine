@@ -126,7 +126,7 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
     std::span gpuMlts = ArenaNewArray<gpu_meshlet>( backingArena, std::size( meshlets ) );
     auto payloadsBuff = borrowed_array{ ArenaNewArray<u8>( backingArena, payloadBound * std::size( meshlets ) ) };
 
-	for( auto[ m, gpuMlt ] : std::views::zip( meshlets ) )
+	for( auto[ m, gpuMlt ] : std::views::zip( meshlets, gpuMlts ) )
 	{
 		auto[ aabbMin, aabbMax ] = ComputeAabb( m.pos );
         // TODO: why this happens ? and can't we not prevent it ?
@@ -270,14 +270,12 @@ inline std::span<u8> HpkZSTDCompress( ZSTD_CCtx *const pZstdCtx, std::span<const
     return copyMem.subspan( 0, compSize );
 }
 
-//#define HPK_DUMP_DBG
-
 static void HpkProcessMeshesParallelJob(
     std::string_view                        scratchDir,
     std::span<const sys_path>               glbFilePaths,
     std::span<virtual_array<raw_node>>      hpkNodes,
     std::span<virtual_array<hpk_mesh_desc>> hpkMeshes,
-    std::span<virtual_array<hpk_lod_desc>>  hpkLODs
+    std::span<virtual_array<gpu_meshlet>>   hpkMlts
 ) {
     constexpr u64 NLOD = MAX_LOD_LEVELS_COUNT;
 
@@ -302,32 +300,15 @@ static void HpkProcessMeshesParallelJob(
 
         virtual_array<raw_node>&        outNodes    = hpkNodes[ currJobIdx ];
         virtual_array<hpk_mesh_desc>&   outMeshes   = hpkMeshes[ currJobIdx ];
-        virtual_array<hpk_lod_desc>&    outLODs     = hpkLODs[ currJobIdx ];
+        virtual_array<gpu_meshlet>&     outMlts     = hpkMlts[ currJobIdx ];
 
         hpk_file_buffer fileBuffs[ NLOD ] = {
-            hpk_file_buffer{ sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 0 } },
-            hpk_file_buffer{ sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 1 } },
-            hpk_file_buffer{ sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 2 } },
-            hpk_file_buffer{ sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 3 } }
+            { sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 0 } },
+            { sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 1 } },
+            { sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 2 } },
+            { sys_path{ "{}\\__blob_{}_lod_{}.hpk", scratchDir, currJobIdx, 3 } }
         };
         defer { for( hpk_file_buffer& fileBuff : fileBuffs ) { HpkFileBufferClose( fileBuff ); } };
-
-#ifdef HPK_DUMP_DBG
-
-        auto dumpBuff = hpk_file_buffer{ sys_path{ "{}\\__dump_{}.bin", scratchDir, currJobIdx } };
-        defer { HpkFileBufferClose( dumpBuff ); };
-
-        auto reindexDumpBuff = hpk_file_buffer{ sys_path{ "{}\\__dump_reindex_{}.bin", scratchDir, currJobIdx } };
-        defer { HpkFileBufferClose( reindexDumpBuff ); };
-
-        hpk_file_buffer lodDumpBuffs[ NLOD ] = {
-            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 0 } },
-            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 1 } },
-            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 2 } },
-            hpk_file_buffer{ sys_path{ "{}\\__dump_{}_lod_{}.bin", scratchDir, currJobIdx, 3 } }
-        };
-        defer { for( hpk_file_buffer& lodDumpBuff : lodDumpBuffs ) { HpkFileBufferClose( lodDumpBuff ); } };
-#endif
 
         auto LmbdVisitGltfPrim = [ & ](
             const hpk_gltf_data&        gltfDataIn,
@@ -338,19 +319,7 @@ static void HpkProcessMeshesParallelJob(
             // NOTE: gltf can have shared accessors ! BUT that case is uninteresting and i made my pre export do "atomic" prims
             raw_mesh rawMesh = HpkProcessGltfPrim( gltfDataIn, gltfPrim, meshKey, outArena );
 
-#ifdef HPK_DUMP_DBG
-            dumpBuff.WriteBlocking( AsBytes( rawMesh.pos ) );
-            dumpBuff.WriteBlocking( AsBytes( rawMesh.norm ) );
-            dumpBuff.WriteBlocking( AsBytes( rawMesh.idx ) );
-#endif
-
             MeshoptReindexAndOptimizeMesh( rawMesh.pos, rawMesh.idx, rawMesh.norm, outArena );
-
-#ifdef HPK_DUMP_DBG
-            reindexDumpBuff.WriteBlocking( AsBytes( rawMesh.pos ) );
-            reindexDumpBuff.WriteBlocking( AsBytes( rawMesh.norm ) );
-            reindexDumpBuff.WriteBlocking( AsBytes( rawMesh.idx ) );
-#endif
 
             float radiusInMeters = ht::length( ( rawMesh.aabbMax - rawMesh.aabbMin ) * 0.5f );
 
@@ -358,30 +327,26 @@ static void HpkProcessMeshesParallelJob(
                 rawMesh.norm, rawMesh.idx, LOD_MESH_LEVEL_RATIO, radiusInMeters, meshlet_config{},
                 outArena, tmpArena );
 
-#ifdef HPK_DUMP_DBG
-            for( auto[ mLod, lodDumpBuff ] : std::views::zip( mltsWLod, lodDumpBuffs ) )
-            {
-                lodDumpBuff.WriteBlocking( AsBytes( mLod.meshlets ) );
-                lodDumpBuff.WriteBlocking( AsBytes( std::span{ &mLod.meshLevelError, 1 } ) );
-            }
-#endif
-
-            inline_array<hpk_lod_desc, NLOD> lodInfos = {};
-            for( auto[ mLod, fileBuff ] : std::views::zip( mltsWLod, fileBuffs ) )
+            std::array<hpk_lod_desc, NLOD> lodInfos = {};
+            for( auto[ mLod, fileBuff, lodInfo ] : std::views::zip( mltsWLod, fileBuffs, lodInfos ) )
             {
                 auto memScope2 = scoped_arena{ outArena };
 
                 hpk_quantized_lod quantLod = HpkQuantizeLODLevel( mLod.meshlets, memScope2 );
 
-                lodInfos.push_back( {
-                    .fileOffsetBytesMeshlets    = fileBuff.WriteBlocking( AsBytes( quantLod.meshlets ) ),
-                    .fileOffsetBytesPayloads    = fileBuff.WriteBlocking( quantLod.payload ),
-                    .meshletCount               = std::size( quantLod.meshlets )
-                } );
+                u64 currentPayloadOffset = fileBuff.WriteBlocking( quantLod.payload );
+
+                for( gpu_meshlet& gpuMlt : quantLod.meshlets ) { gpuMlt.payloadOffset += currentPayloadOffset; }
+
+                HT_ASSERT( std::size( quantLod.meshlets ) < ( 1 << 17 ) );
+
+                lodInfo = { .firstMlt = std::size( outMlts ), .mltCount = std::size( quantLod.meshlets ) };
+
+                outMlts.append_range( quantLod.meshlets );
             }
 
             float4 lodErrs = { FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX };
-            for( auto[ lei, lod ] : mltsWLod | std::views::enumerate )
+            for( const auto[ lei, lod ] : mltsWLod | std::views::enumerate )
             {
                 lodErrs[ lei ] = lod.meshLevelError;
             }
@@ -390,10 +355,8 @@ static void HpkProcessMeshesParallelJob(
                 .aabbMin    = ( pkd_fp32x3 ) rawMesh.aabbMin,
                 .aabbMax    = ( pkd_fp32x3 ) rawMesh.aabbMax,
                 .lodErrs    = ( pkd_fp32x4 ) lodErrs,
-                .firstLod   = std::size( outLODs ),
-                .lodCount   = std::size( lodInfos )
+                .lods       = lodInfos
             } );
-            outLODs.append_range( lodInfos );
         };
 
         HpkGltfProcessDrawablesHierarchy( gltfData, SysPathFileName( currInputFile ), tmpArena, outNodes,
@@ -481,13 +444,13 @@ i32 main( i32 argc, char** argv  )
 
         auto hpkNodes   = std::vector<virtual_array<raw_node>>( fileCount );
         auto hpkMeshes  = std::vector<virtual_array<hpk_mesh_desc>>( fileCount );
-        auto hpkLODs    = std::vector<virtual_array<hpk_lod_desc>>( fileCount );
-        for( auto[ n, m, l ]
-            : std::views::zip( hpkNodes, hpkMeshes, hpkLODs ) )
+        auto hpkMlts    = std::vector<virtual_array<gpu_meshlet>>( fileCount );
+        for( auto[ n, m, mlt ]
+            : std::views::zip( hpkNodes, hpkMeshes, hpkMlts ) )
         {
-            n = {{ 1 * GB }};
-            m = {{ 1 * GB }};
-            l = {{ 1 * GB }};
+            n   = {{ 1 * GB }};
+            m   = {{ 1 * GB }};
+            mlt = {{ 1 * GB }};
         }
 
         auto tmpDir = sys_path{ "{}\\tmpDir", dir };
@@ -506,7 +469,7 @@ i32 main( i32 argc, char** argv  )
             for( u64 _ : std::views::iota( 0u, g_ThreadCount ) )
             {
                 workers.emplace_back( HpkProcessMeshesParallelJob, tmpDir, std::span{ glbFilePaths },
-                    std::span{ hpkNodes }, std::span{ hpkMeshes }, std::span{ hpkLODs } );
+                    std::span{ hpkNodes }, std::span{ hpkMeshes }, std::span{ hpkMlts } );
             }
         }
 
@@ -532,22 +495,29 @@ i32 main( i32 argc, char** argv  )
                 u64 fileOffsetInBytes = hpkFileOut.WriteBlocking( partMMapped );
                 for( const hpk_mesh_desc& mesh : batch )
                 {
-                    if( mesh.lodCount <= lodIdx ) continue;
-                    hpkLODs[ batchIdx ][ mesh.firstLod + lodIdx ].fileOffsetBytesMeshlets += fileOffsetInBytes;
-                    hpkLODs[ batchIdx ][ mesh.firstLod + lodIdx ].fileOffsetBytesMeshlets += fileOffsetInBytes;
+                    const hpk_lod_desc& lod = mesh.lods[ lodIdx ];
+                    // NOTE: bc once we hit "0" lod we're done basically
+                    for( gpu_meshlet& mlt : std::span{ hpkMlts[ batchIdx ] }.subspan( lod.firstMlt, lod.mltCount ) )
+                    {
+                        mlt.payloadOffset += fileOffsetInBytes;
+                    }
                 }
             }
         }
 
-        std::vector<hpk_lod_desc>   lodDescVec  = HpkFlattenAndRelease( MOV( hpkLODs ) );
+        std::vector<gpu_meshlet>    meshletsVec = HpkFlattenAndRelease( MOV( hpkMlts ) );
         std::vector<hpk_mesh_desc>  meshDescVec = HpkFlattenAndRelease( MOV( hpkMeshes ) );
         std::vector<raw_node>       rawNodes    = HpkFlattenAndRelease( MOV( hpkNodes ) );
 
-        u64 firstLod = 0;
+        u64 firstMlt = 0;
         for( hpk_mesh_desc& mesh : meshDescVec )
         {
-            mesh.firstLod = firstLod;
-            firstLod += mesh.lodCount;
+            for( hpk_lod_desc& lod : mesh.lods )
+            {
+                if( 0 == std::bit_cast<u64>( lod ) ) continue;
+                lod.firstMlt = firstMlt;
+                firstMlt += lod.mltCount;
+            }
         }
 
         std::println( stdout, "Running HpkSortNodesAndMeshes" );
@@ -568,7 +538,7 @@ i32 main( i32 argc, char** argv  )
             n = { .toWorld = raw.toWorld, .meshID = it->second };
         }
 
-        u64 lodDescOffset   = hpkFileOut.WriteBlocking( AsBytes( lodDescVec ) );
+        u64 meshletsOffset  = hpkFileOut.WriteBlocking( AsBytes( meshletsVec ) );
         u64 meshDescOffset  = hpkFileOut.WriteBlocking( AsBytes( meshDescVec ) );
 
         u64 nodesOffset     = hpkFileOut.WriteBlocking( AsBytes( worldNodes ) );
@@ -589,8 +559,8 @@ i32 main( i32 argc, char** argv  )
             .firstMeshDescOffsetInBytes = meshDescOffset,
             .meshDescCount              = std::size( meshDescVec ),
 
-            .firstLodDescOffsetInBytes  = lodDescOffset,
-            .lodDescCount               = std::size( lodDescVec )
+            .firstMeshletsOffsetInBytes = meshletsOffset,
+            .meshletsCount              = std::size( meshletsVec )
         };
 
         hpkFileOut.RewindTo( 0 );

@@ -31,7 +31,7 @@ constexpr u64   ZSTD_COMPRESSION_LEVEL      = 19;
  *                                                                          |___HASH___|
  */
 // NOTE: .hpk format is an unaligned byte dump, so in order to properly read it must be ( mem )copied first
-constexpr char  HPK_MAGIC[ sizeof( u64 ) ] = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
+constexpr char HPK_MAGIC[ sizeof( u64 ) ] = { 'H', 'E', 'L', 'L', 'P', 'A', 'C', 'K' } ;
 
 HT_DEF_STRUCT_W_HASH( hpk_file_header,
     u64     magic;
@@ -47,26 +47,21 @@ HT_DEF_STRUCT_W_HASH( hpk_file_header,
     u64     firstMeshDescOffsetInBytes;
     u64     meshDescCount;
 
-    u64     firstLodDescOffsetInBytes;
-    u64     lodDescCount;
+    u64     firstMeshletsOffsetInBytes;
+    u64     meshletsCount;
 );
 
-// TODO: theoretically we can't have zero offsets for these; would mean empty file
 HT_DEF_STRUCT_W_HASH( hpk_lod_desc,
-    u64 fileOffsetBytesMeshlets    ;// = 0;
-    u64 fileOffsetBytesPayloads    ;// = 0;
-    u64 meshletCount;
-    //u64 storedSzInBytes      ;// = 0;
+    u64 firstMlt : 47;
+    u64 mltCount : 17;
 );
 
 HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,
-    u64         hashed          ;//= 0;
-    pkd_fp32x3  aabbMin         ;//= {};
-    pkd_fp32x3  aabbMax         ;//= {};
-    pkd_fp32x4  lodErrs         ;//= {};
-    u64         firstLod : 56   ;//= 0;
-    u64         lodCount : 8    ;//= 0;
-    u64         padding         ;//= 0;
+    u64                         hashed      ;//= 0;
+    pkd_fp32x3                  aabbMin     ;//= {};
+    pkd_fp32x3                  aabbMax     ;//= {};
+    pkd_fp32x4                  lodErrs     ;//= {};
+    std::array<hpk_lod_desc, 4> lods        ;//= 0;
 );
 
 HT_DEF_STRUCT_W_HASH( hpk_sector_desc,
