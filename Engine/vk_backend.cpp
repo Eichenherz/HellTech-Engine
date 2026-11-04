@@ -709,76 +709,6 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 	};
 }
 
-vk_sparse_buff vk_context::CreateSparseBuffer( const buffer_info& buffInfo )
-{
-    constexpr VkBufferCreateFlags VK_VIRTUAL_BUFF = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
-
-    u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
-    bool isVkConcurrentRsc = VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode;
-
-    VkBufferCreateInfo bufferCreateInfo = {
-        .sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .flags                  = VK_VIRTUAL_BUFF,
-        .size			        = FwdAlignPot( buffInfo.szInBytes, GPU_PAGE_SZ ),
-        .usage			        = ( VkBufferUsageFlags ) buffInfo.usageFlags,
-        // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
-        .sharingMode	        = buffInfo.sharingMode,
-        .queueFamilyIndexCount  = isVkConcurrentRsc ? ( u32 ) std::size( queueFamIdxCount ) : 0,
-        .pQueueFamilyIndices    = isVkConcurrentRsc ? queueFamIdxCount : nullptr
-    };
-
-    VkBuffer vkBuffer = nullptr;
-    VK_CHECK( vkCreateBuffer( device, &bufferCreateInfo, nullptr, &vkBuffer ) );
-
-    if( buffInfo.name ) { VkDbgNameObj( vkBuffer, device, buffInfo.name ); }
-
-    VmaVirtualBlockCreateInfo vmaVirtualBlockInfo = { .size = bufferCreateInfo.size };
-    VmaVirtualBlock vmaVirtualBlock = nullptr;
-    VK_CHECK( vmaCreateVirtualBlock( &vmaVirtualBlockInfo, &vmaVirtualBlock ) );
-
-    VkMemoryRequirements sparseMemReqs = {};
-    vkGetBufferMemoryRequirements( device, vkBuffer, &sparseMemReqs );
-
-    return {
-        .hndl               = vkBuffer,
-        .vmaVirtualBlock    = vmaVirtualBlock,
-        .devicePointer      = ( buffInfo.usageFlags & buffer_usage::BDA ) ? VkGetDevicePtr( device, vkBuffer ) : 0,
-        .memReqs            = sparseMemReqs,
-        .memProps           = ( VkMemoryPropertyFlags ) buffInfo.memProps
-    };
-}
-
-auto vk_context::AllocSparseMem( const vk_sparse_buff& buff, u64 allocSzInBytes )
-    -> std::tuple<VmaVirtualAllocation, VmaAllocation>
-{
-    VmaVirtualAllocationCreateInfo vrtAllocInfo = {
-        .size       = FwdAlignPot( allocSzInBytes, buff.memReqs.alignment ),
-        .alignment  = buff.memReqs.alignment,
-        .flags      = VMA_VIRTUAL_ALLOCATION_CREATE_STRATEGY_MIN_TIME_BIT
-    };
-    VmaVirtualAllocation    vmaVrtAlloc = nullptr;
-    VkDeviceSize            rscOffset   = ~0ull;
-    VK_CHECK( vmaVirtualAllocate( buff.vmaVirtualBlock, &vrtAllocInfo, &vmaVrtAlloc, &rscOffset ) );
-
-    VmaAllocationCreateInfo allocCreateInfo = {
-        .flags          = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_MIN_TIME_BIT,
-        .usage          = VMA_MEMORY_USAGE_UNKNOWN,
-        .requiredFlags  = buff.memProps,
-    };
-
-    VkMemoryRequirements allocMemReqs = {
-        .size = vrtAllocInfo.size,
-        .alignment = buff.memReqs.alignment,
-        .memoryTypeBits = buff.memReqs.memoryTypeBits
-    };
-
-    VmaAllocation       vmaAlloc    = nullptr;
-    VmaAllocationInfo   allocInfo   = {};
-    VK_CHECK( vmaAllocateMemory( vmaAllocator, &allocMemReqs, &allocCreateInfo, &vmaAlloc, &allocInfo ) );
-
-    return { vmaVrtAlloc, vmaAlloc };
-}
-
 vk_image vk_context::CreateImage( const image_info& imgInfo )
 {
 	VkCheckFormatProperties( gpu, ( VkImageUsageFlags ) imgInfo.usgFlags, imgInfo.format );
@@ -1274,32 +1204,4 @@ u64 vk_context::QueueSubmit(
         .pool = cb.cmdPool.pool, .buff = cb.cmdPool.buff, .waitVal = queue.submitCount } ) );
 
     return queue.submitCount; // NOTE: return this while under lock to make the submitCount "thread-safe"
-}
-
-u64 vk_context::QueueBindVirtualMem( vk_queue& queue, std::span<const VkSparseBufferMemoryBindInfo> binds )
-{
-    queue.submitLock.Acquire();
-    defer{ queue.submitLock.Release(); };
-
-    if( !std::size( binds ) ) return queue.submitCount;
-
-    queue.submitCount++;
-    VkTimelineSemaphoreSubmitInfo timelineSemaphoreSubmitInfo = {
-        .sType                      = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-        .signalSemaphoreValueCount  = 1,
-        .pSignalSemaphoreValues     = &queue.submitCount
-    };
-
-    VkBindSparseInfo bindSparseInfo = {
-        .sType                  = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO,
-        .pNext                  = &timelineSemaphoreSubmitInfo,
-        .bufferBindCount        = ( u32 ) std::size( binds ),
-        .pBufferBinds           = &binds[ 0 ],
-        .signalSemaphoreCount   = 1,
-        .pSignalSemaphores      = &queue.timelineSema
-    };
-
-    VK_CHECK( vkQueueBindSparse( queue.hndl, 1, &bindSparseInfo, VK_NULL_HANDLE ) );
-
-    return queue.submitCount;
 }

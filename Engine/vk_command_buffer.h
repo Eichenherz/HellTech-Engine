@@ -253,16 +253,13 @@ struct vk_command_buffer
 		vkCmdDrawIndexedIndirectCount( hndl, drawCmds.hndl, offsetof( T, cmd ), drawCount.hndl,
 			0, maxDrawCount, sizeof( T ) );
 	}
-    void CmdCopyBuffer( const vk_buffer& src, const vk_buffer& dst, std::span<const VkBufferCopy2> copyRegions )
-	{
-	    return CmdCopyBuffer( src.hndl, dst.hndl, copyRegions );
-	}
-	void CmdCopyBuffer( VkBuffer src, VkBuffer dst, std::span<const VkBufferCopy2> copyRegions )
+
+	void CmdCopyBuffer( const vk_buffer& src, const vk_buffer& dst, std::span<const VkBufferCopy2> copyRegions )
 	{
 		VkCopyBufferInfo2 cpyInfo = {
 			.sType			= VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
-			.srcBuffer		= src,
-			.dstBuffer		= dst,
+			.srcBuffer		= src.hndl,
+			.dstBuffer		= dst.hndl,
 			.regionCount	= ( u32 ) std::size( copyRegions ),
 			.pRegions		= &copyRegions[ 0 ]
 		};

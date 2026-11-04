@@ -194,10 +194,7 @@ struct vk_context
 
 	vk_swapchain_config                     scConfig;
 
-	auto CreateBuffer( const buffer_info& buffInfo ) -> vk_buffer;
-    auto CreateSparseBuffer( const buffer_info& buffInfo ) -> vk_sparse_buff;
-    auto AllocSparseMem( const vk_sparse_buff& buff, u64 allocSzInBytes ) -> std::tuple<VmaVirtualAllocation, VmaAllocation>;
-
+	vk_buffer           CreateBuffer( const buffer_info& buffInfo );
 	vk_image            CreateImage( const image_info& imgInfo );
 
 	void                PushResourceFree( const vk_resc_deletion& rscDeletion ) { rscDeletionQueue.push_back( rscDeletion ); }
@@ -249,7 +246,6 @@ struct vk_context
 		std::span<const VkSemaphoreSubmitInfo>  signals = {},
 		VkFence                                 vkFence = VK_NULL_HANDLE
 	);
-    u64                 QueueBindVirtualMem( vk_queue& queue, std::span<const VkSparseBufferMemoryBindInfo> binds );
 	void                QueuePresent( const vk_queue& queue, u32 imgIdx );
 };
 

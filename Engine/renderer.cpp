@@ -1710,15 +1710,18 @@ struct fwd_pass
 	}
 };
 
+struct ht_lod_alloc
+{
+    offset_alloc_t meshlets;
+    offset_alloc_t payload;
+};
+
 struct ht_mesh_alloc_t
 {
-    hpk_mesh_desc           mesh        = {};
-    VmaVirtualAllocation    hSparseMlt  = nullptr;
-    VmaVirtualAllocation    hSparsePld  = nullptr;
-    VmaAllocation           hAllocMlt   = nullptr;
-    VmaAllocation           hAllocPld   = nullptr;
-    u32                     meshID      = -1;
-    u32                     refCount    = 0;
+    hpk_mesh_desc   mesh        = {};
+    ht_lod_alloc    hLodAllocs[ MAX_LOD_LEVELS_COUNT ] = {};
+    u32             meshID      = -1;
+    u32             refCount    = 0;
 };
 
 struct virtual_frame
@@ -1814,27 +1817,20 @@ struct renderer_context final : renderer_interface
 
 	vk_buffer                               stagingBuff;
 
-    vk_sparse_buff                         gpuSprsMltPayloadBuff;
-    vk_sparse_buff                         gpuSprsMeshletBuff;
-    vk_sparse_buff                         gpuSprsMeshBuff;
-    vk_sparse_buff                         gpuSprsInstBuff;
-
-    VmaPool                                 vmaSparsePool;
-
-	vk_buffer                               megaGpuVtxPosBuff;
-	vk_buffer                               megaGpuVtxAttrsBuff;
-	vk_buffer                               megaGpuIdxBuff;
+    vk_buffer                               megaGpuPayloadBuff;
 	vk_buffer                               megaGpuMeshletBuff;
+
+    vk_buffer                               megaGpuVtxPosBuff;
+    vk_buffer                               megaGpuVtxAttrsBuff;
+    vk_buffer                               megaGpuIdxBuff;
+
+    offset_allocator_t						meshletAllocator;
+    offset_allocator_t						payloadAllocator;
 
 	vk_buffer								globalData;
 
 	vk_image								depthTarget;
 	vk_image								colorTarget;
-
-	offset_allocator_t						meshletAllocator;
-	offset_allocator_t						vtxPosAllocator;
-	offset_allocator_t						vtxAttrsAllocator;
-	offset_allocator_t						idxAllocator;
 
 	u64										vFrameIdx = 0;
 
@@ -1931,93 +1927,24 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	    .alignment      = RAW_DISK_SECTOR_ALIGNMENT // NOTE: this is necessary if we use this as the io ring dst too
 	} );
 
-    // TODO: prolly rename these as sparse since all VkDeviceMemory are "virtual"
-    // NOTE: this simplifies the memory allocation + it is has no implications on modern desktop GPUs
-    constexpr buffer_usage GPU_SPARSE_BUFF_USG =
-        buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA | buffer_usage::INDEX;
-
-    gpuSprsMltPayloadBuff = pVkCtx->CreateSparseBuffer( {
-        .name           = "GpuSparseBuff_MltPayload",
-        .usageFlags     = GPU_SPARSE_BUFF_USG,
+    megaGpuPayloadBuff = pVkCtx->CreateBuffer( {
+        .name			= "MegaGpuPayloadBuff",
+        .usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA | buffer_usage::INDEX,
         .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-        .szInBytes      = 8 * GB,
-        .memProps       = buffer_mem_props::GPU_ONLY,
+        .szInBytes	    = 3 * 128 * MB,
+        .memProps		= buffer_mem_props::GPU_ONLY,
     } );
-    gpuSprsMeshletBuff = pVkCtx->CreateSparseBuffer( {
-        .name           = "GpuSparseBuff_Mlt",
-        .usageFlags     = GPU_SPARSE_BUFF_USG,
-        .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-        .szInBytes      = 8 * GB,
-        .memProps       = buffer_mem_props::GPU_ONLY,
-    } );
-    gpuSprsMeshBuff = pVkCtx->CreateSparseBuffer( {
-        .name           = "GpuSparseBuff_MeshTable",
-        .usageFlags     = GPU_SPARSE_BUFF_USG,
-        .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-        .szInBytes      = 8 * GB,
-        .memProps       = buffer_mem_props::GPU_ONLY,
-    } );
-    gpuSprsInstBuff = pVkCtx->CreateSparseBuffer( {
-        .name           = "GpuSparseBuff_Inst",
-        .usageFlags     = GPU_SPARSE_BUFF_USG,
-        .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-        .szInBytes      = 8 * GB,
-        .memProps       = buffer_mem_props::GPU_ONLY,
-    } );
-
-    VmaAllocationCreateInfo sparseAllocInfo = {
-        .requiredFlags = gpuSprsMltPayloadBuff.memProps
-    };
-    u32 sparseMemTypeIdx = ~0u;
-    VK_CHECK( vmaFindMemoryTypeIndex( pVkCtx->vmaAllocator, gpuSprsMltPayloadBuff.memReqs.memoryTypeBits,
-        &sparseAllocInfo, &sparseMemTypeIdx ) );
-
-    VmaPoolCreateInfo sparsePoolInfo = {
-        .memoryTypeIndex        = sparseMemTypeIdx,
-        .flags                  = VMA_POOL_CREATE_IGNORE_BUFFER_IMAGE_GRANULARITY_BIT,
-        .blockSize              = 0, // NOTE: if == 0 we can let vma decide
-        .minBlockCount          = 0,
-        .maxBlockCount          = 6,
-        .minAllocationAlignment = gpuSprsMltPayloadBuff.memReqs.alignment,
-    };
-    VK_CHECK( vmaCreatePool( pVkCtx->vmaAllocator, &sparsePoolInfo, &vmaSparsePool ) );
-
-    HT_ASSERT( GPU_PAGE_SZ == sparsePoolInfo.minAllocationAlignment );
 
 	megaGpuMeshletBuff = pVkCtx->CreateBuffer( {
 		.name			= "MegaGpuMeshletBuff",
 		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		.szInBytes	    = 10'000 * sizeof( gpu_meshlet ),
+		.szInBytes	    = 256 * KB * sizeof( gpu_meshlet ),
 		.memProps		= buffer_mem_props::GPU_ONLY,
 	} );
-	megaGpuVtxAttrsBuff = pVkCtx->CreateBuffer( {
-		.name			= "MegaGpuVtxAttrsBuff",
-		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
-	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		.szInBytes	    = 10'000 * sizeof( oct16x2 ),
-		.memProps		= buffer_mem_props::GPU_ONLY
-	} );
-	megaGpuVtxPosBuff = pVkCtx->CreateBuffer( {
-		.name			= "MegaGpuVtxPosBuff",
-		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
-	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		// NOTE: to u32 bc we'll unpack via that in the shader
-		.szInBytes	    = FwdAlignPot( 10'000 * sizeof( u32x3 ), sizeof( u32 ) ),
-		.memProps		= buffer_mem_props::GPU_ONLY
-	} );
-	HT_ASSERT( IsAlignedToPot( megaGpuVtxPosBuff.sizeInBytes, sizeof( u32 ) ) );
 
-	megaGpuIdxBuff = pVkCtx->CreateBuffer( {
-		.name			= "MegaGpuIdxBuff",
-		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA | buffer_usage::INDEX,
-	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		// NOTE: we align to u32 bc we read it in 4 bytes chunks in the shader and this prevents any out of
-		// bounds accesses, essentially we'll read garbage data safely
-		.szInBytes	    = FwdAlignPot( 3 * 10'000 * sizeof( index_t ), sizeof( u32 ) ),
-		.memProps		= buffer_mem_props::GPU_ONLY
-	} );
-	HT_ASSERT( FwdAlignPot( megaGpuIdxBuff.sizeInBytes, sizeof( u32 ) ) == megaGpuIdxBuff.sizeInBytes );
+    meshletAllocator = offset_allocator_t{ ( u32 ) megaGpuMeshletBuff.sizeInBytes };
+    payloadAllocator = offset_allocator_t{ ( u32 ) megaGpuPayloadBuff.sizeInBytes };
 
 	// TODO: move
 	VkSamplerCreateInfo samplerCreateInfo = {
@@ -2049,7 +1976,33 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 HRNDMESH32 renderer_context::AllocMeshSlot( const hpk_mesh_desc& mesh )
 {
-    return std::bit_cast<u32>( meshResidencyTable.push_entry( { .mesh = mesh, .refCount = 1 } ) );
+    auto LmbdLodAlloc = [ & ] ( const hpk_lod_desc& lod ) -> ht_lod_alloc
+    {
+        if( 0 == lod.mltCount ) return {};
+
+        const ht_lod_alloc lodAlloc = {
+            .meshlets   = meshletAllocator.Alloc( ( u32 ) ( lod.mltCount * sizeof( gpu_meshlet ) ) ),
+            .payload    = payloadAllocator.Alloc( ( u32 ) lod.payloadSize )
+        };
+
+        // TODO: move in the offset allocator and type it ?
+        HT_ASSERT( !( lodAlloc.meshlets.offset % sizeof( gpu_meshlet ) ) );
+
+        return lodAlloc;
+    };
+
+    const ht_mesh_alloc_t meshAlloc = {
+        .mesh       = mesh,
+        .hLodAllocs = {
+            LmbdLodAlloc( mesh.lods[ 0 ] ),
+            LmbdLodAlloc( mesh.lods[ 1 ] ),
+            LmbdLodAlloc( mesh.lods[ 2 ] ),
+            LmbdLodAlloc( mesh.lods[ 3 ] )
+        },
+        .refCount = 1
+    };
+
+    return std::bit_cast<u32>( meshResidencyTable.push_entry( meshAlloc ) );
 }
 
 void renderer_context::UploadMeshes(
@@ -2066,8 +2019,6 @@ void renderer_context::UploadMeshes(
     u64     uploadsCount    = MAX_LOD_LEVELS_COUNT * std::size( meshUploadReqs );
 	auto mltRegionCopies    = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, uploadsCount ) };
     auto pldRegionCopies    = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, uploadsCount ) };
-    auto mltMemCommits      = borrowed_array{ ArenaNewArray<VkSparseMemoryBind>( tempArena, uploadsCount ) };
-    auto pldMemCommits      = borrowed_array{ ArenaNewArray<VkSparseMemoryBind>( tempArena, uploadsCount ) };
 
 	auto LmbdCopyScaffolding = [ & ] ( u64 offset, u64 szBytes, u64 dstOffset ) -> VkBufferCopy2
     {
@@ -2082,79 +2033,31 @@ void renderer_context::UploadMeshes(
 		return MakeVkBufferCopy2( &srcMltSpan[ 0 ] - ( u8* ) &stagingArr[ 0 ], dstOffset, szBytes );
 	};
 
-    auto LmbdSprsMemBind = [ & ] ( const vk_sparse_buff& buff, VmaVirtualAllocation vrtAlloc, VmaAllocation dvcAlloc ) -> VkSparseMemoryBind
-    {
-        VmaVirtualAllocationInfo vrtInfo = {};
-        vmaGetVirtualAllocationInfo( buff.vmaVirtualBlock, vrtAlloc, &vrtInfo );
-
-        VmaAllocationInfo allocInfo = {};
-        vmaGetAllocationInfo( pVkCtx->vmaAllocator, dvcAlloc, &allocInfo );
-
-        return {
-            .resourceOffset = vrtInfo.offset,
-            .size           = vrtInfo.size,
-            .memory         = allocInfo.deviceMemory,
-            .memoryOffset   = allocInfo.offset
-        };
-    };
-
 	for( const mesh_upload_req& meshUpload : meshUploadReqs )
 	{
 		const ht_mesh_alloc_t& htMesh = meshResidencyTable[ std::bit_cast<HMESH32>( meshUpload.hSlot ) ];
 
-	    for( const hpk_lod_desc& lod : htMesh.mesh.lods )
+	    for( const auto[ lod, hLodAlloc ] : std::views::zip( htMesh.mesh.lods, htMesh.hLodAllocs ) )
 	    {
 	        if( 0 == lod.mltCount ) break; // NOTE: in this scheme 0 means end-of LOD chain
 
-	        u64 mltSzInBytes = lod.mltCount * sizeof( gpu_meshlet );
-
-	        auto[ vrt0, dvc0 ] = pVkCtx->AllocSparseMem( gpuSprsMeshletBuff, mltSzInBytes );
-	        auto[ vrt1, dvc1 ] = pVkCtx->AllocSparseMem( gpuSprsMltPayloadBuff, lod.payloadSize );
-
-
-	        VkSparseMemoryBind mltBind = LmbdSprsMemBind( gpuSprsMeshletBuff, vrt0, dvc0 );
-	        VkSparseMemoryBind pldBind = LmbdSprsMemBind( gpuSprsMltPayloadBuff, vrt1, dvc1 );
-
-	        mltMemCommits.push_back( mltBind );
-	        pldMemCommits.push_back( pldBind );
-
 	        mltRegionCopies.push_back( LmbdCopyScaffolding( fileMltsOffset + lod.firstMlt * sizeof( gpu_meshlet ),
-	            mltSzInBytes, mltBind.resourceOffset ) );
+	            lod.mltCount * sizeof( gpu_meshlet ), hLodAlloc.meshlets.offset ) );
 	        pldRegionCopies.push_back( LmbdCopyScaffolding( lod.payloadBeg, lod.payloadSize,
-	            pldBind.resourceOffset ) );
+	            hLodAlloc.payload.offset ) );
 	    }
 	}
-
-    VkSparseBufferMemoryBindInfo memCommits[] = {
-	    {
-	        .buffer     = gpuSprsMeshletBuff.hndl,
-            .bindCount  = ( u32 ) std::size( mltMemCommits ),
-            .pBinds     = &mltMemCommits[ 0 ]
-	    },
-	    {
-	        .buffer     = gpuSprsMltPayloadBuff.hndl,
-            .bindCount  = ( u32 ) std::size( pldMemCommits ),
-            .pBinds     = &pldMemCommits[ 0 ]
-        }
-	};
-
-    u64 bindMemTimelineVal = pVkCtx->QueueBindVirtualMem( pVkCtx->copyQueue, memCommits );
 
 	vk_command_buffer copyCmdBuff = pVkCtx->AllocateCmdBufferForQueue( vk_queue_t::COPY );
 
 	copyCmdBuff.CmdBeginCmdBuffer();
 
-	copyCmdBuff.CmdCopyBuffer( stagingBuff.hndl, gpuSprsMeshletBuff.hndl, mltRegionCopies );
-	copyCmdBuff.CmdCopyBuffer( stagingBuff.hndl, gpuSprsMltPayloadBuff.hndl, pldRegionCopies );
+	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuMeshletBuff, mltRegionCopies );
+	copyCmdBuff.CmdCopyBuffer( stagingBuff, megaGpuPayloadBuff, pldRegionCopies );
 
 	copyCmdBuff.CmdEndCmdBuffer();
 
-    // NOTE: these need to be done under the same mutex otherwise we risk copying to unbound mem
-    VkSemaphoreSubmitInfo waitBind =  VkGetSemaSubmit( pVkCtx->copyQueue.timelineSema,
-        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, bindMemTimelineVal );
-
-    u64 waitValForCopyDone = pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff, std::array{ waitBind } );
-	SysAtomicWrite64<sys_fence_t::REL>( hJobDoneSignal, waitValForCopyDone );
+	SysAtomicWrite64<sys_fence_t::REL>( hJobDoneSignal, pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff ) );
 }
 
 u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )
