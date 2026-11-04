@@ -51,9 +51,12 @@ HT_DEF_STRUCT_W_HASH( hpk_file_header,
     u64     meshletsCount;
 );
 
+// NOTE: the meshlets & payloads of an lod level are contiguous
 HT_DEF_STRUCT_W_HASH( hpk_lod_desc,
     u64 firstMlt : 47;
     u64 mltCount : 17;
+    u64 payloadBeg;
+    u64 payloadSize;
 );
 
 HT_DEF_STRUCT_W_HASH( hpk_mesh_desc,

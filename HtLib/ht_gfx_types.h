@@ -15,7 +15,7 @@ struct trs_t
     quat4	r;
     float3	s;
 
-    constexpr operator float4x3() const { return TrsToFloat4x3RowMaj( t, r, s ); }
+    explicit constexpr operator float4x3() const { return TrsToFloat4x3RowMaj( t, r, s ); }
 };
 
 HT_FORCEINLINE trs_t GltfComposePackedTRS( trs_t parent, trs_t child )

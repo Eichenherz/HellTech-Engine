@@ -82,7 +82,6 @@ struct gpu_instance
 	float4x3	toWorld;
 	pkd_fp32x3	scale;
 	u32			meshIdx;
-	//u32			mtrlIdx;
 };
 
 STATIC_ASSERT( 64 == sizeof( gpu_instance ), "Size mismatch!" );
@@ -101,15 +100,8 @@ struct gpu_mesh_bounds
 
 struct gpu_mesh_lod
 {
-    u32		vtxPosOffsetInBytes;
-    u32		vtxAttrsOffset;
-    u32		idxOffset;
-    u32		meshletOffset;
-};
-
-struct gpu_mesh_residency
-{
-    gpu_mesh_lod lods[ 4 ];
+    u64 firstMlt : 47;
+    u64 mltCount : 17;
 };
 
 struct gpu_mesh
@@ -126,15 +118,15 @@ struct gpu_mesh
 	u32		idxOffset;
 	u32		meshletOffset;
 };
-
-struct gpu_mesh_w_lods
+// TODO: we should prolly just use the hell_pack for this stuff and enforce it as a format basically ?
+struct gpu_lodded_mesh
 {
-    pkd_fp32x4	    lod4Err; // NOTE: monotonically increasing x -> w
+    pkd_fp32x4	    lod4Err = {}; // NOTE: monotonically increasing x -> w
 
-    pkd_fp32x3	    aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
-    pkd_fp32x3	    aabbMax;
+    pkd_fp32x3	    aabbMin = {}; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
+    pkd_fp32x3	    aabbMax = {};
 
-    gpu_mesh_lod    lods[ 4 ];
+    gpu_mesh_lod    lods[ MAX_LOD_LEVELS_COUNT ] = {};
 };
 
 #ifndef __cplusplus

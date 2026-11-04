@@ -163,15 +163,15 @@ VkDbgUtilsMsgCallback(
 
 	if( msgSz >= VK_DBG_BUFF_SIZE )
 	{
-		fixed_string<VK_DBG_BUFF_SIZE> msgBuffer = { "[{}] {}\n{}\nMsg body truncated. Look it in VK spec",
-			severityStr, callbackData->messageIdNumber, pMsgIdName };
+		fixed_string<VK_DBG_BUFF_SIZE> msgBuffer = { "[{}] {:#010x}\n{}\nMsg body truncated. Look it in VK spec",
+			severityStr, ( u32 ) callbackData->messageIdNumber, pMsgIdName };
 		SysWriteToStdStream( ( const char* ) msgBuffer, sys_stream_t::OUTPUT );
 	}
 	else
 	{
 	    const char* pMsg = callbackData->pMessage ? callbackData->pMessage : "";
-		fixed_string<VK_DBG_BUFF_SIZE> msgBuffer = { "[{}] {}\n{}\n{}\n", severityStr,
-			callbackData->messageIdNumber, pMsgIdName, pMsg };
+		fixed_string<VK_DBG_BUFF_SIZE> msgBuffer = { "[{}] {:#010x}\n{}\n{}\n", severityStr,
+			( u32 ) callbackData->messageIdNumber, pMsgIdName, pMsg };
 		SysWriteToStdStream( ( const char* ) msgBuffer, sys_stream_t::OUTPUT );
 	}
 

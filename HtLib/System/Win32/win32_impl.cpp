@@ -288,7 +288,7 @@ void SysSemaphoreWait( sys_semaphore sema, u32 millisecs )
 // ---------------------------------------------------------------------------------------------------------------
 #include <System/sys_file.h>
 // ---------------------------------------------------------------------------------------------------------------
-u64 SysGetFileSizeInBytes( void* hFile )
+u64 SysFileGetSizeInBytes( void* hFile )
 {
     LARGE_INTEGER largeInt;
     WIN_CHECK( GetFileSizeEx( hFile, &largeInt ) );
@@ -302,7 +302,7 @@ std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena )
     HT_ASSERT( INVALID_HANDLE_VALUE != hFile );
     defer { WIN_CHECK( CloseHandle( hFile ) ); };
 
-    u64     szInBytes       = SysGetFileSizeInBytes( hFile );
+    u64     szInBytes       = SysFileGetSizeInBytes( hFile );
     void*   mem             = arena.Alloc( szInBytes, 1 );
     DWORD   readSzInBytes   = 0;
     WIN_CHECK( ReadFile( hFile, mem, ( DWORD ) szInBytes, &readSzInBytes, nullptr ) );
@@ -428,7 +428,7 @@ std::span<const u8> HtOsCreateROFileMapping( void* hFile )
     WIN_CHECK( hFileMapping );
     defer { WIN_CHECK( CloseHandle( hFileMapping ) ); };
 
-    u64     qwFileSize	= SysGetFileSizeInBytes( hFile );
+    u64     qwFileSize	= SysFileGetSizeInBytes( hFile );
     u8*     pData		= ( u8* ) MapViewOfFile( hFileMapping, FILE_MAP_READ, 0,
         0, qwFileSize );
     WIN_CHECK( pData );
@@ -438,7 +438,7 @@ std::span<const u8> HtOsCreateROFileMapping( void* hFile )
 
 void HtOSUnmapView( std::span<const u8> view ) { WIN_CHECK( UnmapViewOfFile( std::data( view ) ) ); }
 
-void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes )
+void SysFileWriteConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes )
 {
     HT_ASSERT( std::size( bytes ) <= MAXDWORD );
 
@@ -463,17 +463,26 @@ void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<c
     HT_ASSERT( std::size( bytes ) == writtenInBytes );
 }
 
-u64 SysRawReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff )
+std::span<u8> SysFileRawReadNBytesBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> ioReadBuff )
 {
-    u64 buffSzInBytes = std::size( outBuff );
-    HT_ASSERT( buffSzInBytes >= readSzInBytes );
+    u64 readBeg     = BwdAlignPot( fileOffsetInBytes, RAW_DISK_SECTOR_ALIGNMENT );
+    u64 readEnd     = FwdAlignPot( fileOffsetInBytes + readSzInBytes, RAW_DISK_SECTOR_ALIGNMENT );
+
+    u64 bytesToRead = readEnd - readBeg;
+    HT_ASSERT( std::size( ioReadBuff ) >= bytesToRead );
+
+    // NOTE: we need this for concurrent ops, otherwise the ops will wait on the file's state (?) which is not thread safe
+    HANDLE hEvent = CreateEventA( nullptr, TRUE, FALSE, nullptr );
+    WIN_CHECK( hEvent );
+    defer { WIN_CHECK( CloseHandle( hEvent ) ); };
 
     OVERLAPPED overlapped = {
-        .Offset       = ( DWORD ) fileOffsetInBytes,
-        .OffsetHigh   = ( DWORD ) ( fileOffsetInBytes >> 32 ),
+        .Offset     = ( DWORD ) readBeg,
+        .OffsetHigh = ( DWORD ) ( readBeg >> 32 ),
+        .hEvent     = hEvent
     };
 
-    if( !ReadFile( hFile, &outBuff[ 0 ], readSzInBytes, 0, &overlapped ) )
+    if( !ReadFile( hFile, &ioReadBuff[ 0 ], bytesToRead, 0, &overlapped ) )
     {
         WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
     }
@@ -481,10 +490,10 @@ u64 SysRawReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 re
     DWORD readByteCount = 0;
     WIN_CHECK( GetOverlappedResult( hFile, &overlapped, &readByteCount, TRUE ) );
 
-    return readByteCount;
+    return ioReadBuff.subspan( fileOffsetInBytes - readBeg, readSzInBytes );
 }
 
-void SysReadFileAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq )
+void SysFileReadAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq )
 {
     static_assert( sizeof( OVERLAPPED ) <= sizeof( ht_os_io_request ) );
     static_assert( alignof( OVERLAPPED ) <= alignof( ht_os_io_request ) );
@@ -534,7 +543,7 @@ ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs )
     return { std::from_range, cmplOverlapped | std::views::transform( LmbdToHtReq ) };
 }
 
-u64 SysGetFileTimestamp( void* hFile )
+u64 SysFileGetTimestamp( void* hFile )
 {
     FILETIME fileTime = {};
     WIN_CHECK( SUCCEEDED( GetFileTime( hFile, 0, 0, &fileTime ) ) );

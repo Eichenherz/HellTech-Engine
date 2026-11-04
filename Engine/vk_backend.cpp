@@ -83,19 +83,13 @@ static VmaAllocator MakeVmaAllocator( VkPhysicalDevice vkGpu, VkDevice vkDevice,
 		.vulkanApiVersion	= vkVersion
 	};
 
-	VmaAllocator vmaAllocator;
-	vmaCreateAllocator( &allocatorCreateInfo, &vmaAllocator );
+	VmaAllocator vmaAllocator = nullptr;
+	VK_CHECK( vmaCreateAllocator( &allocatorCreateInfo, &vmaAllocator ) );
 
 	return vmaAllocator;
 }
 
-struct vk_descriptor_set
-{
-	VkDescriptorPool		pool;
-	VkDescriptorSetLayout	setLayout;
-	VkDescriptorSet			set;
-};
-static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const VkDescriptorPoolSize> descPoolSizes ) 
+static auto VkMakeDescriptorSet( VkDevice vkDevice, std::span<const VkDescriptorPoolSize> descPoolSizes )
 {
     linear_arena&   scratchPad  = pThreadCtx->scratchArenas[ 0 ];
     ht_mem_scope    memScope    = { scratchPad };
@@ -159,20 +153,10 @@ static vk_descriptor_set VkMakeDescriptorSet( VkDevice vkDevice, std::span<const
 	VkDescriptorSet vkDescSet;
 	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &vkDescSet ) );
 
-	return {
-		.pool		= vkDescPool,
-		.setLayout	= vkDescSetLayout,
-		.set		= vkDescSet
-	};
+	return std::tuple{ vkDescPool, vkDescSetLayout, vkDescSet };
 }
 
-struct vk_instance
-{
-	VkInstance					hndl;
-	VkDebugUtilsMessengerEXT	dbgMsg;
-};
-
-static vk_instance VkMakeInstance()
+static auto VkMakeInstance()
 {
 	constexpr const char* ENABLED_INST_EXTS[] =
 	{
@@ -275,7 +259,7 @@ static vk_instance VkMakeInstance()
 
 	VK_CHECK( vkCreateDebugUtilsMessengerEXT( vkInstance, &vkDbgExt, nullptr, &vkDbgUtilsMsgExt ) );
 
-	return { .hndl = vkInstance, .dbgMsg = vkDbgUtilsMsgExt };
+	return std::tuple{ vkInstance, vkDbgUtilsMsgExt };
 }
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
@@ -605,22 +589,22 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 
 	const VkPhysicalDeviceLimits& vkGpuLimits = vkDevice.gpuProps.limits;
 	std::array<VkDescriptorPoolSize, vk_desc_binding_t::COUNT> poolSizes = {
-		VkDescriptorPoolSize { 
+		VkDescriptorPoolSize {
 			.type = VkDescBindingToType( vk_desc_binding_t::SAMPLER ), 
 			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
 			    vkGpuLimits.maxDescriptorSetSamplers )
 		},
-		VkDescriptorPoolSize { 
+		VkDescriptorPoolSize {
 			.type = VkDescBindingToType( vk_desc_binding_t::STORAGE_BUFFER ), 
 			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
 			    vkGpuLimits.maxDescriptorSetStorageBuffers )
 		},
-		VkDescriptorPoolSize { 
+		VkDescriptorPoolSize {
 			.type = VkDescBindingToType( vk_desc_binding_t::STORAGE_IMAGE ), 
 			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
 			    vkGpuLimits.maxDescriptorSetStorageImages )
 		},
-		VkDescriptorPoolSize { 
+		VkDescriptorPoolSize {
 			.type = VkDescBindingToType( vk_desc_binding_t::SAMPLED_IMAGE ), 
 			.descriptorCount = std::min( ( u32 ) cfg.MAX_DESCRIPTOR_COUNT_PER_TYPE,
 			    vkGpuLimits.maxDescriptorSetSampledImages )
@@ -637,8 +621,6 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		bindingSlots[ bi ] = { type };
 	}
 
-	constexpr u32 MAX_QUERY_COUNT = 1024;
-
 	return {
 	    .rscDeletionQueue       = { ArenaNewArray<vk_resc_deletion>( *pPersistentArena, 128 ) },
         .descDeletionQueue      = { ArenaNewArray<vk_desc_deletion>( *pPersistentArena, 128 ) },
@@ -646,13 +628,13 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	    .descPendingUpdates     = { ArenaNewArray<vk_descriptor_write>( *pPersistentArena, 1'000 ) },
 		.gfxQueue				= VkCreateQueue<vk_queue_t::GFX>( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
 		.copyQueue				= VkCreateQueue<vk_queue_t::COPY>( vkDevice.logical, vkDevice.transferQueueFamIdx ),
-		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_TIMESTAMP ),
-		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, MAX_QUERY_COUNT, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
-		.gpuFrameTimeline		= {
+		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, cfg.maxVkQueryCount, VK_QUERY_TYPE_TIMESTAMP ),
+		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, cfg.maxVkQueryCount, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
+		.gpuFrameTimeline		= vk_timeline{
 		    .sema               = VkMakeSemaphore( vkDevice.logical, true, 0 ),
 		    .submitsIssuedCount = 0
 		},
-		.allocator				= MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
+		.vmaAllocator			= MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
 		.descPool				= descPool,
 		.descSetLayout			= descSetLayout,
 		.descSet				= descSet,
@@ -670,17 +652,14 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	};
 }
 
-constexpr VkBufferCreateFlags VK_VIRTUAL_BUFF = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
-
-vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual )
+vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo )
 {
     u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
     bool isVkConcurrentRsc = VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode;
 
 	VkBufferCreateInfo bufferCreateInfo = { 
 		.sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-	    .flags                  = isVirtual ? VK_VIRTUAL_BUFF : 0,
-		.size			        = isVirtual ? FwdAlignPot( buffInfo.szInBytes, GPU_PAGE_SZ ) : buffInfo.szInBytes,
+		.size			        = buffInfo.szInBytes,
 		.usage			        = ( VkBufferUsageFlags ) buffInfo.usageFlags,
 	    // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
 		.sharingMode	        = buffInfo.sharingMode,
@@ -693,23 +672,20 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual 
 
     if( buffInfo.name ) { VkDbgNameObj( vkBuffer, device, buffInfo.name ); }
 
-    if( isVirtual )
-    {
-        return {
-            .hndl           = vkBuffer,
-            .sizeInBytes    = bufferCreateInfo.size,
-            // NOTE: we need to call this per sparse/non-sparse bc non-sparse doesn't get an immediately available addr
-            .devicePointer  = ( buffInfo.usageFlags & buffer_usage::BDA ) ? VkGetDevicePtr( device, vkBuffer ) : 0,
-            .alignment      = buffInfo.alignment,
-            .memProps       = buffInfo.memProps
-        };
-    }
+    VkMemoryRequirements buffMemReqs = {};
+    vkGetBufferMemoryRequirements( device, vkBuffer, &buffMemReqs );
 
-	VmaAllocation hVmaAlloc = VmaAllocMemForBuff( device, vkBuffer, buffInfo.szInBytes, buffInfo.alignment,
-	    buffInfo.memProps, allocator );
+    VmaAllocationCreateInfo allocCreateInfo = {
+        .flags          = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT,
+        .usage          = VMA_MEMORY_USAGE_UNKNOWN,
+        .requiredFlags  = ( VkMemoryPropertyFlags ) buffInfo.memProps,
+    };
 
+    buffMemReqs.alignment = std::max( buffMemReqs.alignment, buffInfo.alignment );
+
+    VmaAllocation hVmaAlloc = nullptr;
     VmaAllocationInfo allocInfo = {};
-    vmaGetAllocationInfo( allocator, hVmaAlloc, &allocInfo );
+    VK_CHECK( vmaAllocateMemory( vmaAllocator, &buffMemReqs, &allocCreateInfo, &hVmaAlloc, &allocInfo ) );
 
     VK_CHECK( vkBindBufferMemory( device, vkBuffer, allocInfo.deviceMemory, allocInfo.offset ) );
 
@@ -717,7 +693,7 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual 
     // TODO: do we do random access ?
     if( VkMemoryPropertyFlags( buffInfo.memProps ) & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )
     {
-        VK_CHECK( vmaMapMemory( allocator, hVmaAlloc, ( void** ) &pHostMapped ) );
+        VK_CHECK( vmaMapMemory( vmaAllocator, hVmaAlloc, ( void** ) &pHostMapped ) );
     }
 
     HT_ASSERT( IsAlignedToPot( ( u64 ) allocInfo.pMappedData, buffInfo.alignment ? buffInfo.alignment : 1 ) );
@@ -729,14 +705,78 @@ vk_buffer vk_context::CreateBuffer( const buffer_info& buffInfo, bool isVirtual 
 		.hostVisible	= pHostMapped,
 	    .devicePointer  = ( buffInfo.usageFlags & buffer_usage::BDA ) ? VkGetDevicePtr( device, vkBuffer ) : 0,
 	    .alignment      = buffInfo.alignment,
-	    .memProps       = buffInfo.memProps
+	    .memProps       = ( VkMemoryPropertyFlags ) buffInfo.memProps
 	};
 }
 
-VmaAllocation vk_context::AllocBuffMem( const vk_buffer& buff, u64 allocSzInBytes )
+vk_sparse_buff vk_context::CreateSparseBuffer( const buffer_info& buffInfo )
 {
-    u64 szToAlloc = ( VK_WHOLE_SIZE == allocSzInBytes ) ?  buff.sizeInBytes : allocSzInBytes;
-    return VmaAllocMemForBuff( device, buff.hndl, szToAlloc, buff.alignment, buff.memProps, allocator );
+    constexpr VkBufferCreateFlags VK_VIRTUAL_BUFF = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
+
+    u32 queueFamIdxCount[] = { gfxQueue.familyIdx, copyQueue.familyIdx };
+    bool isVkConcurrentRsc = VK_SHARING_MODE_CONCURRENT == buffInfo.sharingMode;
+
+    VkBufferCreateInfo bufferCreateInfo = {
+        .sType			        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .flags                  = VK_VIRTUAL_BUFF,
+        .size			        = FwdAlignPot( buffInfo.szInBytes, GPU_PAGE_SZ ),
+        .usage			        = ( VkBufferUsageFlags ) buffInfo.usageFlags,
+        // NOTE: bc we don't have fucking KHR_maintenance9 which allows this
+        .sharingMode	        = buffInfo.sharingMode,
+        .queueFamilyIndexCount  = isVkConcurrentRsc ? ( u32 ) std::size( queueFamIdxCount ) : 0,
+        .pQueueFamilyIndices    = isVkConcurrentRsc ? queueFamIdxCount : nullptr
+    };
+
+    VkBuffer vkBuffer = nullptr;
+    VK_CHECK( vkCreateBuffer( device, &bufferCreateInfo, nullptr, &vkBuffer ) );
+
+    if( buffInfo.name ) { VkDbgNameObj( vkBuffer, device, buffInfo.name ); }
+
+    VmaVirtualBlockCreateInfo vmaVirtualBlockInfo = { .size = bufferCreateInfo.size };
+    VmaVirtualBlock vmaVirtualBlock = nullptr;
+    VK_CHECK( vmaCreateVirtualBlock( &vmaVirtualBlockInfo, &vmaVirtualBlock ) );
+
+    VkMemoryRequirements sparseMemReqs = {};
+    vkGetBufferMemoryRequirements( device, vkBuffer, &sparseMemReqs );
+
+    return {
+        .hndl               = vkBuffer,
+        .vmaVirtualBlock    = vmaVirtualBlock,
+        .devicePointer      = ( buffInfo.usageFlags & buffer_usage::BDA ) ? VkGetDevicePtr( device, vkBuffer ) : 0,
+        .memReqs            = sparseMemReqs,
+        .memProps           = ( VkMemoryPropertyFlags ) buffInfo.memProps
+    };
+}
+
+auto vk_context::AllocSparseMem( const vk_sparse_buff& buff, u64 allocSzInBytes )
+    -> std::tuple<VmaVirtualAllocation, VmaAllocation>
+{
+    VmaVirtualAllocationCreateInfo vrtAllocInfo = {
+        .size       = FwdAlignPot( allocSzInBytes, buff.memReqs.alignment ),
+        .alignment  = buff.memReqs.alignment,
+        .flags      = VMA_VIRTUAL_ALLOCATION_CREATE_STRATEGY_MIN_TIME_BIT
+    };
+    VmaVirtualAllocation    vmaVrtAlloc = nullptr;
+    VkDeviceSize            rscOffset   = ~0ull;
+    VK_CHECK( vmaVirtualAllocate( buff.vmaVirtualBlock, &vrtAllocInfo, &vmaVrtAlloc, &rscOffset ) );
+
+    VmaAllocationCreateInfo allocCreateInfo = {
+        .flags          = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_MIN_TIME_BIT,
+        .usage          = VMA_MEMORY_USAGE_UNKNOWN,
+        .requiredFlags  = buff.memProps,
+    };
+
+    VkMemoryRequirements allocMemReqs = {
+        .size = vrtAllocInfo.size,
+        .alignment = buff.memReqs.alignment,
+        .memoryTypeBits = buff.memReqs.memoryTypeBits
+    };
+
+    VmaAllocation       vmaAlloc    = nullptr;
+    VmaAllocationInfo   allocInfo   = {};
+    VK_CHECK( vmaAllocateMemory( vmaAllocator, &allocMemReqs, &allocCreateInfo, &vmaAlloc, &allocInfo ) );
+
+    return { vmaVrtAlloc, vmaAlloc };
 }
 
 vk_image vk_context::CreateImage( const image_info& imgInfo )
@@ -762,7 +802,7 @@ vk_image vk_context::CreateImage( const image_info& imgInfo )
 	VkImage                 img;
 	VmaAllocation           mem;
 	VmaAllocationInfo       allocInfo;
-	VK_CHECK( vmaCreateImage( allocator, &imageInfo, &allocCreateInfo, &img, &mem, &allocInfo ) );
+	VK_CHECK( vmaCreateImage( vmaAllocator, &imageInfo, &allocCreateInfo, &img, &mem, &allocInfo ) );
 
 	if( imgInfo.name )
 	{
@@ -1041,13 +1081,13 @@ void vk_context::FlushDeletionQueues( u64 frameIdx )
 		if( frameSubmitsDone <= rsc.frameTimelineVal ) break;
 		if( vk_resource_type::BUFFER ==  rsc.type )
 		{
-		    if( rsc.buff.hostVisible ) { vmaUnmapMemory( allocator, rsc.buff.alloc ); }
-			vmaDestroyBuffer( allocator, rsc.buff.hndl, rsc.buff.alloc );
+		    if( rsc.buff.hostVisible ) { vmaUnmapMemory( vmaAllocator, rsc.buff.alloc ); }
+			vmaDestroyBuffer( vmaAllocator, rsc.buff.hndl, rsc.buff.alloc );
 		}
 		else if( vk_resource_type::IMAGE == rsc.type )
 		{
 			vkDestroyImageView( device, rsc.img.view, 0 );
-			vmaDestroyImage( allocator, rsc.img.hndl, rsc.img.alloc );
+			vmaDestroyImage( vmaAllocator, rsc.img.hndl, rsc.img.alloc );
 		}
 		it = rscDeletionQueue.erase( it );
 	}
@@ -1234,4 +1274,32 @@ u64 vk_context::QueueSubmit(
         .pool = cb.cmdPool.pool, .buff = cb.cmdPool.buff, .waitVal = queue.submitCount } ) );
 
     return queue.submitCount; // NOTE: return this while under lock to make the submitCount "thread-safe"
+}
+
+u64 vk_context::QueueBindVirtualMem( vk_queue& queue, std::span<const VkSparseBufferMemoryBindInfo> binds )
+{
+    queue.submitLock.Acquire();
+    defer{ queue.submitLock.Release(); };
+
+    if( !std::size( binds ) ) return queue.submitCount;
+
+    queue.submitCount++;
+    VkTimelineSemaphoreSubmitInfo timelineSemaphoreSubmitInfo = {
+        .sType                      = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+        .signalSemaphoreValueCount  = 1,
+        .pSignalSemaphoreValues     = &queue.submitCount
+    };
+
+    VkBindSparseInfo bindSparseInfo = {
+        .sType                  = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO,
+        .pNext                  = &timelineSemaphoreSubmitInfo,
+        .bufferBindCount        = ( u32 ) std::size( binds ),
+        .pBufferBinds           = &binds[ 0 ],
+        .signalSemaphoreCount   = 1,
+        .pSignalSemaphores      = &queue.timelineSema
+    };
+
+    VK_CHECK( vkQueueBindSparse( queue.hndl, 1, &bindSparseInfo, VK_NULL_HANDLE ) );
+
+    return queue.submitCount;
 }

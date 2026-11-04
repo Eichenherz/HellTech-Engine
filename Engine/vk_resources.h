@@ -83,13 +83,13 @@ struct vk_buffer
 {
     static constexpr vk_resource_type TYPE = vk_resource_type::BUFFER;
 
-	VmaAllocation		alloc           = nullptr;
-	VkBuffer			hndl            = nullptr;
-	u64					sizeInBytes     = 0;
-	u8*					hostVisible     = nullptr;
-	VkDeviceAddress		devicePointer   = 0;
-    u64                 alignment       = 0;
-    buffer_mem_props    memProps        = {};
+	VmaAllocation		    alloc           = nullptr;
+	VkBuffer			    hndl            = nullptr;
+	u64					    sizeInBytes     = 0;
+	u8*					    hostVisible     = nullptr;
+	VkDeviceAddress		    devicePointer   = 0;
+    u64                     alignment       = 0;
+    VkMemoryPropertyFlags   memProps        = {};
 };
 
 template<typename T>
@@ -105,6 +105,16 @@ std::span<const T> VkBufferHostView( const vk_buffer& vkBuff )
 }
 
 inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b ) { return { b.hndl, 0, b.sizeInBytes }; }
+
+// NOTE: inspired by https://substack.com/home/post/p-211773615
+struct vk_sparse_buff
+{
+    VkBuffer		        hndl            = nullptr;
+    VmaVirtualBlock         vmaVirtualBlock = {};
+    VkDeviceAddress	        devicePointer   = 0;
+    VkMemoryRequirements    memReqs         = {};
+    VkMemoryPropertyFlags   memProps        = 0;
+};
 
 struct vk_image
 {

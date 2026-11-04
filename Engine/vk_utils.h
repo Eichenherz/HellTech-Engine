@@ -15,12 +15,12 @@
 #include <dds.h>
 
 // NOTE: we flip Y here to make the engine and shaders API agnostic
-inline VkViewport VkCorrectedGetViewport( u32 width, u32 height )
+HT_FORCEINLINE VkViewport VkCorrectedGetViewport( u32 width, u32 height )
 {
 	return { 0.0f, ( float ) height, ( float ) width, -( float ) height, 0.0f, 1.0f };
 }
 
-inline VkRect2D VkGetScissor( u32 width, u32 height )
+HT_FORCEINLINE VkRect2D VkGetScissor( u32 width, u32 height )
 {
 	return { { 0, 0 }, { width, height } };
 }
@@ -144,7 +144,7 @@ inline image_info ImageInfoFromDds( const dds::Header& h, const char* nameStr )
 	};
 }
 
-inline VkBufferCopy2 MakeVkBufferCopy2( VkDeviceSize srcOffset, VkDeviceSize dstOffset, VkDeviceSize size )
+HT_FORCEINLINE VkBufferCopy2 MakeVkBufferCopy2( VkDeviceSize srcOffset, VkDeviceSize dstOffset, VkDeviceSize size )
 {
 	return {
 		.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
@@ -186,7 +186,7 @@ constexpr VkClearColorValue GetVBufferClearValue()
 }
 
 // NOTE: from Sascha Willems
-HT_FORCEINLINE u32 VkGetQueueFamilyIndex(
+inline u32 VkGetQueueFamilyIndex(
 	std::span<const VkQueueFamilyProperties>	queueFamProps,
 	VkQueueFlags								queueFlags,
 	VkBool32									mustPresent,
@@ -314,7 +314,7 @@ HT_FORCEINLINE u64 VkGetTimelineSemaValue( VkDevice vkDevice, VkSemaphore timeli
     return val;
 }
 
-inline VkSemaphoreSubmitInfo VkGetSemaSubmit( VkSemaphore sema, VkPipelineStageFlags2 stageMask, u64 waitVal = 0 )
+HT_FORCEINLINE VkSemaphoreSubmitInfo VkGetSemaSubmit( VkSemaphore sema, VkPipelineStageFlags2 stageMask, u64 waitVal = 0 )
 {
     return {
         .sType      = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
@@ -322,34 +322,6 @@ inline VkSemaphoreSubmitInfo VkGetSemaSubmit( VkSemaphore sema, VkPipelineStageF
         .value      = waitVal,
         .stageMask  = stageMask,
     };
-}
-
-HT_FORCEINLINE VmaAllocation VmaAllocMemForBuff(
-    VkDevice            vkDevice,
-    VkBuffer            hndl,
-    u64                 allocSzInBytes,
-    u64                 alignment,
-    buffer_mem_props    memProps,
-    VmaAllocator        vmaAllocator
-) {
-    VkMemoryRequirements buffMemReqs = {};
-    vkGetBufferMemoryRequirements( vkDevice, hndl, &buffMemReqs );
-
-    VkMemoryRequirements memReqs = {
-        .size           = std::max( allocSzInBytes, buffMemReqs.size ),
-        .alignment      = std::max( buffMemReqs.alignment, alignment ),
-        .memoryTypeBits = buffMemReqs.memoryTypeBits
-    };
-
-    VmaAllocationCreateInfo allocCreateInfo = {
-        .flags          = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_STRATEGY_BEST_FIT_BIT,
-        .usage          = VMA_MEMORY_USAGE_UNKNOWN,
-        .requiredFlags  = ( VkMemoryPropertyFlags ) memProps,
-    };
-
-    VmaAllocation vmaAlloc = nullptr;
-    VK_CHECK( vmaAllocateMemory( vmaAllocator, &memReqs, &allocCreateInfo, &vmaAlloc, nullptr ) );
-    return vmaAlloc;
 }
 
 HT_FORCEINLINE VkDeviceAddress VkGetDevicePtr( VkDevice vkDevice, VkBuffer vkBuffer )

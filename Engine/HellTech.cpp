@@ -175,39 +175,29 @@ void job_system_ctx::SubmitJob( ht_job_t job )
 struct upload_job_payload
 {
 	borrowed_array<mesh_upload_req>	meshUploads         = {};
-	borrowed_array<instance_desc>	entitiesToPromote   = {};
-	renderer_interface*			    pRI                 = nullptr;
+	std::span<const gpu_instance>   entitiesToPromote   = {};
 	atomic_u64					    hUploadDoneSignal   = ~0ull; // NOTE: bc we check it against the timeline sema
     u64                             allocSzInBytes      = 0; // NOTE: we need this bc we are responsible for the alloc handle
 };
 
-static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, u64 maxInstCap, renderer_interface* pRI )
+static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, std::span<const gpu_instance> nodesToPromote )
 {
     constexpr u64 headerSzInBytes = sizeof( upload_job_payload );
 
     u64 meshSzInBytes       = maxMeshCap * sizeof( mesh_upload_req );
-    u64 instSzInBytes       = maxInstCap * sizeof( instance_desc );
-    u64 requestSzInBytes    = std::max( BLOCK_SZ_IN_BYTES, headerSzInBytes + meshSzInBytes + instSzInBytes );
+    u64 requestSzInBytes    = std::max( BLOCK_SZ_IN_BYTES, headerSzInBytes + meshSzInBytes );
 
     std::span<u8> mem       = g_pVirtualAllocator->AllocVirtualBlock( requestSzInBytes, HtCurrentThreadIdx() );
     std::span<u8> meshMem   = mem.subspan( headerSzInBytes, meshSzInBytes );
-    std::span<u8> instMem   = mem.subspan( headerSzInBytes + meshSzInBytes, instSzInBytes );
 
     upload_job_payload* pPayload = ( upload_job_payload* ) &mem[ 0 ];
     *pPayload = {
-        .meshUploads        = { FromBytes<mesh_upload_req>( meshMem ) },
-        .entitiesToPromote  = { FromBytes<instance_desc>( instMem ) },
-        .pRI                = pRI,
+        .meshUploads        = borrowed_array{ FromBytes<mesh_upload_req>( meshMem ) },
+        .entitiesToPromote  = nodesToPromote,
         .allocSzInBytes     = std::size( mem )
     };
 
     return pPayload;
-}
-
-void PfnRendererUploadJob( void* payload, linear_arena* arena )
-{
-	upload_job_payload* pJob = ( upload_job_payload* ) payload;
-	pJob->pRI->UploadMeshes( &pJob->hUploadDoneSignal, pJob->meshUploads, *arena );
 }
 
 // Engine
@@ -228,9 +218,11 @@ struct helltech final : helltech_interface
 	borrowed_array<ht_pipeline_stats>	pipelinesStats	= {};
 
     std::span<hpk_sector_desc>          sectorsSpan     = {};
-    std::span<world_node>               worldNodesSpan  = {};
+    std::span<gpu_instance>             gpuInstSpan     = {};
     std::span<hpk_mesh_desc>            meshDescSpan    = {};
-    std::span<hpk_lod_desc>             lodDescSpan     = {};
+
+    void*                               diskAssetStore  = nullptr;
+    u64                                 meshletOffsetFile = 0;
 
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
@@ -332,17 +324,17 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     pGameArena      = &g_GameArena;
     pDebugArena     = &g_DebugArena;
 
-	constexpr float fovRads     = ht::to_rads( 70.0f );
-	constexpr float zNear	    = 0.5f;
+    constexpr float fovRads     = ht::to_rads( 70.0f );
+    constexpr float zNear	    = 0.5f;
     float2          viewportDim = ht::vec_cast<float2>( u16x2{ width, height } );
 
-	mainActiveCam	= virtual_camera{ viewportDim, fovRads, zNear, IS_WORLD_RH };
-	debugCam		= virtual_camera{ viewportDim, fovRads, zNear, IS_WORLD_RH };
-	pRenderer       = MakeRenderer( *pPersistentArena );
+    mainActiveCam	= virtual_camera{ viewportDim, fovRads, zNear, IS_WORLD_RH };
+    debugCam		= virtual_camera{ viewportDim, fovRads, zNear, IS_WORLD_RH };
+    pRenderer       = MakeRenderer( *pPersistentArena );
 
-	pRenderer->InitBackend( hInst, hWnd );
+    pRenderer->InitBackend( hInst, hWnd );
 
-	imGuiCtx = im_gui_ctx{ width, height };
+    imGuiCtx = im_gui_ctx{ width, height };
 
     // NOTE: arbitrary sized for now
     drawables       = borrowed_array{ ArenaNewArray<instance_desc>( *pGameArena, 10'000 ) };
@@ -351,7 +343,7 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     pipelinesStats  = borrowed_array{ ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
 
     // NOTE: hpk open
-	constexpr char assetFilePath[] = "D:/3d models/caldera.hpk";
+    constexpr char assetFilePath[] = "D:/3d models/caldera.hpk";
 
     void* hHpkFile = ht_os_create_file( assetFilePath, file_permission_t::READ,
         file_create_t::OPEN_IF_EXISTS, file_access_t::RAW_CONCURRENT );
@@ -364,7 +356,7 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     hpk_file_header hpkHeader = {};
     {
         u64 readSize = FwdAlignPot( sizeof( hpk_file_header ), RAW_DISK_SECTOR_ALIGNMENT );
-        SysRawReadNBytesFromFileBlocking( hHpkFile, 0, readSize, ioReadBuff );
+        SysFileRawReadNBytesBlocking( hHpkFile, 0, readSize, ioReadBuff );
         std::memcpy( &hpkHeader, &ioReadBuff[ 0 ], sizeof( hpk_file_header ) );
     }
 
@@ -373,22 +365,21 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     // TODO: wtf ?
     //HT_ASSERT( HPK_CONTENT_VERSION == hpkHeader.contentVersion );
 
-    auto LmbdRawReadHpkBuff = [ & ]<TRIVIAL_T T>( u64 dataOffsetBytes, u64 elemCount ) HT_LAMBDA_FORCEINLINE -> std::span<T>
+    auto LmbdReadHpkBuff = [ & ]<TRIVIAL_T T>( u64 dataOffset, u64 elemCount ) HT_LAMBDA_FORCEINLINE -> std::span<T>
     {
         std::span out   = ArenaNewArray<T>( *pGameArena, elemCount );
-
-        u64 readBeg     = BwdAlignPot( dataOffsetBytes, RAW_DISK_SECTOR_ALIGNMENT );
-        u64 readEnd     = FwdAlignPot( dataOffsetBytes + BYTE_COUNT( out ), RAW_DISK_SECTOR_ALIGNMENT );
-        SysRawReadNBytesFromFileBlocking( hHpkFile, readBeg, readEnd - readBeg, ioReadBuff );
-        std::ranges::copy( ioReadBuff.subspan( dataOffsetBytes - readBeg, BYTE_COUNT( out ) ), ( u8* ) &out[ 0 ] );
+        std::span<u8> data = SysFileRawReadNBytesBlocking( hHpkFile, dataOffset, BYTE_COUNT( out ), ioReadBuff );
+        std::ranges::copy( data, ( u8* ) &out[ 0 ] );
 
         return out;
     };
 
-    sectorsSpan     = LmbdRawReadHpkBuff.operator()<hpk_sector_desc>( hpkHeader.firstSectorsOffsetInBytes, hpkHeader.sectorsCount );
-    worldNodesSpan  = LmbdRawReadHpkBuff.operator()<world_node>( hpkHeader.firstNodeOffsetInBytes, hpkHeader.nodeCount );
-    meshDescSpan    = LmbdRawReadHpkBuff.operator()<hpk_mesh_desc>( hpkHeader.firstMeshDescOffsetInBytes, hpkHeader.meshDescCount );
-    lodDescSpan     = LmbdRawReadHpkBuff.operator()<hpk_lod_desc>( hpkHeader.firstLodDescOffsetInBytes, hpkHeader.lodDescCount );
+    sectorsSpan     = LmbdReadHpkBuff.operator()<hpk_sector_desc>( hpkHeader.firstSectorsOffsetInBytes, hpkHeader.sectorsCount );
+    gpuInstSpan     = LmbdReadHpkBuff.operator()<gpu_instance>( hpkHeader.firstNodeOffsetInBytes, hpkHeader.nodeCount );
+    meshDescSpan    = LmbdReadHpkBuff.operator()<hpk_mesh_desc>( hpkHeader.firstMeshDescOffsetInBytes, hpkHeader.meshDescCount );
+
+    diskAssetStore      = hHpkFile;
+    meshletOffsetFile   = hpkHeader.firstMeshletsOffsetInBytes;
 }
 
 void helltech::UploadAssets( linear_arena& scratchpadArena )
@@ -399,40 +390,28 @@ void helltech::UploadAssets( linear_arena& scratchpadArena )
         return ht::all( i16x2{ 1, 1 } == s.secID );
     } );
 
-    std::span<const world_node> nodes = worldNodesSpan.subspan( mostBytesSec.firstNodeIdx, mostBytesSec.nodeCount );
+    std::span<const gpu_instance> nodes = gpuInstSpan.subspan( mostBytesSec.firstNodeIdx, mostBytesSec.nodeCount );
 
     // TODO: use our own
     ankerl::unordered_dense::set<u64> uniqueMeshes;
-    for( const world_node& n : nodes )
+    for( const gpu_instance& n : nodes )
     {
-        uniqueMeshes.emplace( n.meshID );
+        uniqueMeshes.emplace( n.meshIdx );
     }
 
-    upload_job_payload* pPayload = HtMakeUploadPayload(
-        std::size( uniqueMeshes ), std::size( nodes ), pRenderer );
+    upload_job_payload* pPayload = HtMakeUploadPayload( std::size( uniqueMeshes ), nodes );
     for( const hpk_mesh_desc& meshDesc : ht::permuted_view( meshDescSpan, uniqueMeshes ) )
     {
-        hpk_lod_desc coarsestLod = lodDescSpan[ meshDesc.firstLod + meshDesc.lodCount - 1 ];
-        std::span<const u8> rawBytes    = vfs.GetFileByteView( vpath );
-        hpk_mesh_view       mesh        = HpkDeserializeAsset<hpk_mesh_asset>( rawBytes );
-
-        pPayload->meshUploads.push_back( {
-            .mltAsBytes			= AsBytes( mesh.meshlets ),
-            .vtxPosAsBytes		= AsBytes( mesh.vtxPosBitstream ),
-            .vtxAttrsAsBytes	= AsBytes( mesh.vertexAttrs ),
-            .idxAsBytes			= AsBytes( mesh.indices ),
-            .hSlot				= pRenderer->AllocMeshSlot( mesh )
-        } );
-    }
-
-    for( const world_node& n : nodes )
-    {
-        pPayload->entitiesToPromote.push_back( { .transform = n.toWorld, .meshIdx = ( u32 ) n.meshID } );
+        pPayload->meshUploads.push_back( { .hSlot = pRenderer->AllocMeshSlot( meshDesc ) } );
     }
 
     jobCache.push_back( pPayload );
 
-    g_pJobSys->SubmitJob( { .PfnJob = PfnRendererUploadJob, .payload = jobCache.back() } );
+    g_pJobSys->SubmitJob( [ pJob = jobCache.back(), pRI = pRenderer, diskAssetStore = diskAssetStore,
+        meshletOffsetFile = meshletOffsetFile ]( linear_arena* arena )
+    {
+        pRI->UploadMeshes( &pJob->hUploadDoneSignal, pJob->meshUploads, diskAssetStore, meshletOffsetFile, *arena );
+    } );
 
 }
 
@@ -506,7 +485,7 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 		upload_job_payload* pPayload = jobCache[ 0 ];
 		if( pRenderer->PollJobCompletion( &pPayload->hUploadDoneSignal ) )
 		{
-			drawables.append_range( pPayload->entitiesToPromote );
+			//drawables.append_range( pPayload->entitiesToPromote );
 		    jobCache.pop_back();
 
 		    g_pVirtualAllocator->FreeVirtualBlock( { ( u8* ) pPayload, pPayload->allocSzInBytes } );

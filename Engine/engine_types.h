@@ -37,11 +37,7 @@ enum class upload_t
 
 struct mesh_upload_req
 {
-	std::span<const u8>	mltAsBytes;
-	std::span<const u8>	vtxPosAsBytes;
-	std::span<const u8>	vtxAttrsAsBytes;
-	std::span<const u8>	idxAsBytes;
-	HRNDMESH32			hSlot;
+	HRNDMESH32  hSlot;
 };
 
 struct mesh_upload_resp

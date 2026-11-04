@@ -77,7 +77,6 @@ struct vk_swapchain_config
 	u32					minNumImgs	= 3;
 };
 
-// TODO:
 struct vk_renderer_config
 {
 	static constexpr u64		MAX_FRAMES_IN_FLIGHT_ALLOWED	= 2;
@@ -90,6 +89,7 @@ struct vk_renderer_config
     // NOTE: for now use same as SC //VK_FORMAT_R16G16B16A16_SFLOAT;
 	VkFormat				desiredColorFormat	= VK_FORMAT_B8G8R8A8_UNORM;
 	VkFormat				desiredHiZFormat	= VK_FORMAT_R32_SFLOAT;
+    u32                     maxVkQueryCount     = 1024;
 	u16             		renderWidth;
 	u16             		renderHeight;
 };

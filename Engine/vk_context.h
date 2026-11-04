@@ -26,7 +26,7 @@
 
 constexpr u64 HT_GPU_CACHELINE_SZ_IN_BYTES    = 128;
 // NOTE: GPU_PAGE_SZ was picked from this: https://bsky.app/profile/pixeljetstream.bsky.social/post/3mvf6g54kck2x
-constexpr u64 GPU_PAGE_SZ = 2 * MB;
+constexpr u64 GPU_PAGE_SZ = 64 * KB;
 static_assert( IsPowOf2( GPU_PAGE_SZ ) );
 
 struct vk_timeline
@@ -170,7 +170,7 @@ struct vk_context
 
 	vk_timeline							    gpuFrameTimeline;
 
-	VmaAllocator							allocator;
+	VmaAllocator							vmaAllocator;
 
 	VkSwapchainKHR		                    swapchain;
 
@@ -194,8 +194,10 @@ struct vk_context
 
 	vk_swapchain_config                     scConfig;
 
-	vk_buffer           CreateBuffer( const buffer_info& buffInfo, bool isVirtual = false );
-    VmaAllocation       AllocBuffMem( const vk_buffer& buff, u64 allocSzInBytes = ~0ull );
+	auto CreateBuffer( const buffer_info& buffInfo ) -> vk_buffer;
+    auto CreateSparseBuffer( const buffer_info& buffInfo ) -> vk_sparse_buff;
+    auto AllocSparseMem( const vk_sparse_buff& buff, u64 allocSzInBytes ) -> std::tuple<VmaVirtualAllocation, VmaAllocation>;
+
 	vk_image            CreateImage( const image_info& imgInfo );
 
 	void                PushResourceFree( const vk_resc_deletion& rscDeletion ) { rscDeletionQueue.push_back( rscDeletion ); }
@@ -247,6 +249,7 @@ struct vk_context
 		std::span<const VkSemaphoreSubmitInfo>  signals = {},
 		VkFence                                 vkFence = VK_NULL_HANDLE
 	);
+    u64                 QueueBindVirtualMem( vk_queue& queue, std::span<const VkSparseBufferMemoryBindInfo> binds );
 	void                QueuePresent( const vk_queue& queue, u32 imgIdx );
 };
 

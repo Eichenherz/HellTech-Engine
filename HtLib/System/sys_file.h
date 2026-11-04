@@ -61,16 +61,21 @@ std::span<const u8> HtOsCreateROFileMapping( void* hFile );
 void HtOSUnmapView( std::span<const u8> view );
 
 // NOTE: hFile must have been opened with file_access_flags::CONCURRENT, else the kernel serializes per handle
-void SysWriteFileConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes );
+void SysFileWriteConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<const u8> bytes );
 
-u64 SysRawReadNBytesFromFileBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> outBuff );
+// NOTE: raw reads need to be sector aligned;
+// ioReadBuff must have enough space to hold the sec aligned data, but we only expose the requested data
+std::span<u8> SysFileRawReadNBytesBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> ioReadBuff );
+
+// NOTE: this is helpful for ht_array/ cursors
+struct alignas( RAW_DISK_SECTOR_ALIGNMENT ) ht_disk_sector { u8 bytes[ RAW_DISK_SECTOR_ALIGNMENT ]; };
 
 struct HT_CACHE_ALIGN ht_os_io_request
 {
     alignas( HT_CACHE_LINE_SZ ) u8 opaque[ HT_CACHE_LINE_SZ ] = {};
 };
 
-void SysReadFileAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq );
+void SysFileReadAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq );
 
 struct ht_os_io_completion
 {
@@ -83,8 +88,8 @@ ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs );
 
 using sys_path = fixed_string<SYS_MAX_PATH_LEN>;
 
-u64	SysGetFileTimestamp( void* hFile );
-u64 SysGetFileSizeInBytes( void* hFile );
+u64	SysFileGetTimestamp( void* hFile );
+u64 SysFileGetSizeInBytes( void* hFile );
 
 constexpr std::string_view SysPathFileName( std::string_view path )
 {

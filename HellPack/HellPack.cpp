@@ -109,7 +109,7 @@ static std::vector<packed_vtx_attr> HpkMeshletPackVtxAttributes( const hpk_meshl
 constexpr bool validatePosEncoding      = true;
 constexpr bool validateNormalEncoding   = true;
 
-// NOTE: this is contiguous
+// NOTE: these are contiguous
 struct hpk_quantized_lod
 {
     std::span<gpu_meshlet>  meshlets;
@@ -222,7 +222,7 @@ struct hpk_file_buffer
     {
         u64 offsetInBytes = cursor;
         cursor += std::size( rawBytes );
-        SysWriteFileConcurrentBlocking( hFile, offsetInBytes, rawBytes );
+        SysFileWriteConcurrentBlocking( hFile, offsetInBytes, rawBytes );
         return offsetInBytes;
     }
 
@@ -340,7 +340,12 @@ static void HpkProcessMeshesParallelJob(
 
                 HT_ASSERT( std::size( quantLod.meshlets ) < ( 1 << 17 ) );
 
-                lodInfo = { .firstMlt = std::size( outMlts ), .mltCount = std::size( quantLod.meshlets ) };
+                lodInfo = {
+                    .firstMlt       = std::size( outMlts ),
+                    .mltCount       = std::size( quantLod.meshlets ),
+                    .payloadBeg     = currentPayloadOffset,
+                    .payloadSize    = std::size( quantLod.payload )
+                };
 
                 outMlts.append_range( quantLod.meshlets );
             }
@@ -493,14 +498,16 @@ i32 main( i32 argc, char** argv  )
                 defer { HtOSUnmapView( partMMapped ); ht_os_close_file( hPartFile ); };
 
                 u64 fileOffsetInBytes = hpkFileOut.WriteBlocking( partMMapped );
-                for( const hpk_mesh_desc& mesh : batch )
+                for( hpk_mesh_desc& mesh : batch )
                 {
-                    const hpk_lod_desc& lod = mesh.lods[ lodIdx ];
+                    hpk_lod_desc& lod = mesh.lods[ lodIdx ];
+                    if( 0 == lod.mltCount ) continue;
                     // NOTE: bc once we hit "0" lod we're done basically
                     for( gpu_meshlet& mlt : std::span{ hpkMlts[ batchIdx ] }.subspan( lod.firstMlt, lod.mltCount ) )
                     {
                         mlt.payloadOffset += fileOffsetInBytes;
                     }
+                    lod.payloadBeg += fileOffsetInBytes;
                 }
             }
         }
@@ -514,34 +521,38 @@ i32 main( i32 argc, char** argv  )
         {
             for( hpk_lod_desc& lod : mesh.lods )
             {
-                if( 0 == std::bit_cast<u64>( lod ) ) continue;
+                if( 0 == lod.mltCount ) continue;
                 lod.firstMlt = firstMlt;
                 firstMlt += lod.mltCount;
             }
         }
 
+        HT_ASSERT( std::size( meshDescVec ) < u64( ~0u ) );
+
         std::println( stdout, "Running HpkSortNodesAndMeshes" );
         auto[ sortedNodes, sectorsVec ] = HpkSortNodes( MOV( rawNodes ) );
 
-        ankerl::unordered_dense::map<u64, u64> meshHashToIdxMap = {};
+        ankerl::unordered_dense::map<u64, u32> meshHashToIdxMap = {};
         meshHashToIdxMap.reserve( std::size( meshDescVec ) );
         for( const auto[ mi, md ] : meshDescVec | std::views::enumerate )
         {
             HT_ASSERT( meshHashToIdxMap.emplace( md.hashed, mi ).second );
         }
 
-        auto worldNodes = std::vector<world_node>( std::size( sortedNodes ) );
-        for( auto[ n, raw ] : std::views::zip( worldNodes, sortedNodes ) )
+        // TODO: maybe rename to render_node ??
+        // TODO: when we will add more stuff we'll need to keep a proxy/world_node{ renderNodeIdx; physicsNodeIdx, etc };
+        auto renderNodes = std::vector<gpu_instance>( std::size( sortedNodes ) );
+        for( auto[ n, raw ] : std::views::zip( renderNodes, sortedNodes ) )
         {
             auto it = meshHashToIdxMap.find( raw.meshHash );
             HT_ASSERT( std::cend( meshHashToIdxMap ) != it );
-            n = { .toWorld = raw.toWorld, .meshID = it->second };
+            n = { .toWorld = ( float4x3 ) raw.toWorld, .meshIdx = it->second };
         }
 
         u64 meshletsOffset  = hpkFileOut.WriteBlocking( AsBytes( meshletsVec ) );
         u64 meshDescOffset  = hpkFileOut.WriteBlocking( AsBytes( meshDescVec ) );
 
-        u64 nodesOffset     = hpkFileOut.WriteBlocking( AsBytes( worldNodes ) );
+        u64 nodesOffset     = hpkFileOut.WriteBlocking( AsBytes( renderNodes ) );
 
         u64 secDescOffset   = hpkFileOut.WriteBlocking( AsBytes( sectorsVec ) );
 
@@ -554,7 +565,7 @@ i32 main( i32 argc, char** argv  )
             .sectorsCount               = std::size( sectorsVec ),
 
             .firstNodeOffsetInBytes     = nodesOffset,
-            .nodeCount                  = std::size( worldNodes ),
+            .nodeCount                  = std::size( renderNodes ),
 
             .firstMeshDescOffsetInBytes = meshDescOffset,
             .meshDescCount              = std::size( meshDescVec ),
