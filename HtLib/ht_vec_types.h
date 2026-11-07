@@ -3,6 +3,8 @@
 #ifndef HELLTECH_HT_VEC_TYPES_H
 #define HELLTECH_HT_VEC_TYPES_H
 
+#ifdef __cplusplus
+
 #define _XM_NO_XMVECTOR_OVERLOADS_
 #include <DirectXMath.h>
 
@@ -237,5 +239,36 @@ HT_FORCEINLINE DirectX::XMVECTOR XM_CALLCONV DX_XMLoadFloat4( float4 v )
 	DirectX::XMFLOAT4 xm = { v.x, v.y, v.z, v.w };
 	return DirectX::XMLoadFloat4( &xm );
 }
+
+#else
+
+#include <ht_core_types.h>
+
+typedef int16_t2    i16x2;
+typedef int16_t4    i16x4;
+
+typedef uint16_t2   u16x2;
+typedef uint16_t4   u16x4;
+
+typedef int2        i32x2;
+typedef int3        i32x3;
+typedef int4        i32x4;
+
+typedef uint2       u32x2;
+typedef uint3       u32x3;
+typedef uint4       u32x4;
+
+typedef float4      quat4;
+
+typedef int2        b32x2;
+typedef int3        b32x3;
+typedef int4        b32x4;
+
+typedef int3        pkd_i32x3;
+typedef uint3       pkd_u32x3;
+typedef float3      pkd_fp32x3;
+typedef float4      pkd_fp32x4;
+
+#endif
 
 #endif // !HELLTECH_HT_VEC_TYPES_H

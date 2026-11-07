@@ -1,10 +1,13 @@
 #pragma once
 
-#ifndef __HT_CORE_TYPES_H__
-#define __HT_CORE_TYPES_H__
+#ifndef HT_CORE_TYPES_H
+#define HT_CORE_TYPES_H
+
+#ifdef __cplusplus
 
 #include <stdint.h>
 #include <concepts>
+#include <compare>
 
 using u8    = uint8_t;
 using u16   = uint16_t;
@@ -36,8 +39,6 @@ struct alignas( 16 ) tagged_ptr
     u64 tag = 0;
 };
 
-#define INVALID_IDX -1
-
 template<typename T>
 concept INTEGER_T = std::integral<T>;
 
@@ -45,19 +46,46 @@ template<typename T>
 concept UINT_T = std::unsigned_integral<T>;
 
 template<INTEGER_T T>
-bool IsIndexValid( T idx )
-{ 
-    constexpr T INVALID = T( INVALID_IDX );
-    return INVALID != idx;
-}
+bool IsIndexValid( T idx ) { return ~T( 0 ) != idx; }
 
 template<typename T>
 concept TRIVIAL_T = std::is_trivially_destructible_v<T> && std::is_trivially_copyable_v<T>;
 
 template<typename T>
-consteval T BitCount()
-{
-    return sizeof( T ) * 8;
-}
+consteval T BitCount() { return sizeof( T ) * 8; }
 
-#endif // !__HT_CORE_TYPES_H__
+#else
+
+typedef uint16_t    u16;
+typedef uint        u32;
+typedef uint64_t    u64;
+
+typedef int16_t     i16;
+typedef int         i32;
+typedef int64_t     i64;
+
+#endif
+
+#include <ht_macros.h>
+
+template<typename T, u64 IDX_BIT_WIDTH, u64 GEN_BIT_WIDTH>
+struct generic_hndl32_t
+{
+    CONSTEXPR u64 MAX_IDX = 1ull << IDX_BIT_WIDTH;
+    CONSTEXPR u64 MAX_GEN = ( 1ull << GEN_BIT_WIDTH ) - 1;
+
+    u32 idx     : IDX_BIT_WIDTH;
+    u32 gen     : GEN_BIT_WIDTH;
+    u32 inUse   : 1;
+
+#ifdef __cplusplus
+    auto operator<=>( const generic_hndl32_t& ) const = default;
+#endif
+
+};
+
+#define RHNDL32( T ) generic_hndl32_t<T, 20, 11>
+
+STATIC_ASSERT( sizeof( u32 ) == sizeof( RHNDL32( u32 ) ), "" );
+
+#endif // !HT_CORE_TYPES_H

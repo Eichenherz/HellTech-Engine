@@ -97,6 +97,7 @@ if(MSVC)
         set(HT_CL_LTO_LINK_FLAG /mllvm:-enable-matrix)
         set(HT_CL_DEBUG_DEFS "")
         set(HT_CL_DEBUG_DBGINFO_FLAGS /Zi -gno-inline-line-tables)
+        set(HT_CL_BITFIELD_TRAP_FLAGS /clang:-fsanitize=implicit-bitfield-conversion /clang:-fsanitize-trap=implicit-bitfield-conversion)
 
         # NOTE: cl's /fsanitize=address embeds the ASan runtime libs in the .obj; clang-cl only adds them when its
         #       own driver links. CMake calls lld-link directly, so pass what `clang-cl -### /MD /fsanitize=address` does.
@@ -123,6 +124,7 @@ if(MSVC)
         set(HT_CL_LTO_LINK_FLAG /LTCG)
         set(HT_CL_DEBUG_DEFS _DEBUG)
         set(HT_CL_DEBUG_DBGINFO_FLAGS /Zi)
+        set(HT_CL_BITFIELD_TRAP_FLAGS "")
         set(HT_CL_ASAN_COMPILE_FLAGS /fsanitize=address)
         set(HT_CL_ASAN_LINK_FLAGS "")
     endif()
@@ -181,6 +183,7 @@ if(MSVC)
         "$<$<CONFIG:Release,RelWithDebInfo>:${HT_CL_OPT_FLAGS}>"
         $<$<CONFIG:Release,RelWithDebInfo>:${HT_CL_LTO_COMPILE_FLAG}>        # whole-program optimization (pairs with /LTCG)
         "$<$<CONFIG:RelWithDebInfo>:${HT_CL_OPT_DBGINFO_FLAGS}>"
+        "$<$<CONFIG:Debug,RelWithDebInfo>:${HT_CL_BITFIELD_TRAP_FLAGS}>"
     )
 
     add_link_options(

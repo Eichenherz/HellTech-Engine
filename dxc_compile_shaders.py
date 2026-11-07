@@ -84,7 +84,7 @@ for shader_path in SRC_DIR.glob("*.hlsl"):
     cmd = [
         DXC,
         "-spirv",
-        "-I", str(Path(__file__).parent / "Lib"),
+        "-I", str(Path(__file__).parent / "HtLib"),
         "-I", str(Path(VULKAN_SDK) / "Include" ),
         f"-fspv-target-env={args.vk}",
         "-fspv-use-vulkan-memory-model",

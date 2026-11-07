@@ -102,8 +102,8 @@ visibility_res TestVisibility(
 	in SamplerState         quadMin,
 	in bool                 isLatePass
 ) {
-	bool intersectsZNear = false;
-	bool inFrustum = true;
+	bool intersectsZNear    = false;
+	bool inFrustum          = true;
 
 	if( !isLatePass )
 	{
@@ -160,8 +160,8 @@ float SqDistCamToAabbInObjSpace(
 	float3		camPosRel	= camPos - toWorld[ 3 ];
 	float3      invScale	= rcp( instScale );
 
-	float3  aabbCenter = ( ( aabbMin + aabbMax ) * 0.5f );
-	float3  aabbExtent = ( ( aabbMax - aabbMin ) * 0.5f );
+	float3      aabbCenter  = ( aabbMin + aabbMax ) * 0.5f;
+	float3      aabbExtent  = ( aabbMax - aabbMin ) * 0.5f;
 	// NOTE: in HLSL mul( M, v ) == mul( v, transpose( M ) )
 	// NOTE: R is ortho : inv( R ) == transp( R ); transp( S * R ) = tranps( R ) * S
 	float3 camInObjSpace = mul( rotScale, camPosRel ) * invScale * invScale;
@@ -169,15 +169,14 @@ float SqDistCamToAabbInObjSpace(
 	return dot( dist, dist );
 }
 
-// NOTE: .x == offset, .y = count
-u32x2 SelectOffsetAndCountFromLod4( in float3 errSqLod3, float threshold, in u32x4 lods4  )
+// NOTE: .x == available; .y = desired
+u32x2 ComputeDesiredAndAvailableLODs( in float3 errSqLod3, float threshold, u32 residencyMask )
 {
 	// NOTE: bc LOD0.err is always 0.0f and false == 0.0f < 0.0f
-	u32x4   selMask     = u32x4( 1, ( u32x3 ) ( errSqLod3 < threshold ) );
-	u32x4   exclMask    = u32x4( selMask.yzw, 0 ); // NOTE: drop the last one basically
-	u32x4   highestPass = selMask - exclMask;
-	u32x2	offsetCount = { dot( exclMask, lods4 ), dot( highestPass, lods4 ) };
-	return offsetCount;
+    u32 errMask     = 1u | dot( u32x3( errSqLod3 < threshold ), u32x3( 2, 4, 8 ) );
+    u32 desired     = firstbithigh( errMask );
+    u32 resident    = firstbithigh( errMask & residencyMask );
+	return u32x2( resident, desired );
 }
 
 #endif // !__HT_CULLING_H__

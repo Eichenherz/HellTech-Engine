@@ -5,7 +5,7 @@
 
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
-#include <ht_renderer_types.h>
+#include <../HtLib/ht_renderer_types.h>
 
 #include <ht_fixed_string.h>
 

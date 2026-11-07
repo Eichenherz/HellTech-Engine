@@ -8,10 +8,11 @@ indirect_dispatcher_params pushBlock;
 [numthreads( 1, 1, 1 )]
 void IndirectDispatcherCsMain()
 {
-    u32 workItemsCount = BufferLoad<u32>( pushBlock.counterBufferIdx, 0 );
-    dispatch_command dispatchCmd;
-    dispatchCmd.localSizeX = ( workItemsCount + pushBlock.cullShaderWorkGrX - 1 ) / pushBlock.cullShaderWorkGrX;
-    dispatchCmd.localSizeY = 1;
-    dispatchCmd.localSizeZ = 1;
-    BufferStore<dispatch_command>( pushBlock.dispatchCmdBuffIdx, dispatchCmd, 0 );
+    u32 workItemsCount = device_ptr<u32>( pushBlock.counterBufferAddr )[ 0 ];
+    dispatch_command dispatchCmd = {
+        ( workItemsCount + pushBlock.cullShaderWorkGrX - 1 ) / pushBlock.cullShaderWorkGrX,
+        1,
+        1
+    };
+    device_ptr<dispatch_command>( pushBlock.dispatchCmdBuffAddr ).Store( 0, dispatchCmd );
 }

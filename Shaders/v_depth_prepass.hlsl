@@ -14,13 +14,14 @@ precise float4 DepthPrepassVsMain(
     in u32 drawId   : DRAW_ID
 ) : SV_Position {
 
-    draw_meshlet_cmd_data drawData = BufferLoad<draw_meshlet_cmd_data>( pushBlock.drawDataIdx, drawId );
+    draw_meshlet_cmd_data drawData = device_ptr<draw_meshlet_cmd_data>( pushBlock.drawDataAddr )[ drawId ];
 
-    gpu_meshlet mlt = device_ptr<gpu_meshlet>( gGlobData.mltAddr )[ drawData.globalMltId ];
-    float3 pos = DecodeVertexFromMegaBuff( mlt, drawData.vtxPosOffsetInBits, vtxID );
+    gpu_meshlet mlt = device_ptr<gpu_meshlet>( g_GlobalData.mltAddr )[ drawData.globalMltId ];
+    u64 localPayloadAddr = g_GlobalData.pldAddr + drawData.meshPayloadStartInBytes + mlt.offsetInPayload;
+    float3 pos = DecodeVertexFromMegaBuff( mlt, device_ptr<u32>( localPayloadAddr ), vtxID );
 
-    gpu_instance inst = BufferLoad<gpu_instance>( pushBlock.instBuffIdx, drawData.globalInstId );
-    view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
+    gpu_instance inst = device_ptr<gpu_instance>( g_GlobalData.instAddr )[ drawData.globalInstId ];
+    view_data cam = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
 
     return mul( float4( pos, 1.0f ), mul( f4x3_To_f4x4_Affine( inst.toWorld ), cam.mainViewProj ) );
 }

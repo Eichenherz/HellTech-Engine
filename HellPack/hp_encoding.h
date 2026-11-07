@@ -8,7 +8,7 @@
 #include <meshoptimizer.h>
 
 #include <ht_math.h>
-#include "ht_renderer_types.h"
+#include <../HtLib/ht_renderer_types.h>
 
 inline float SignNonZero( float e )
 {
@@ -25,48 +25,41 @@ constexpr u32 SnormBits( float v )
 inline float2 EncodeOctaNormal( float3 n )
 {
 	// NOTE: Project the sphere onto the octahedron, and then onto the xy plane
-	float absLen = std::fabsf( n.x ) + std::fabsf( n.y ) + std::fabsf( n.z );
-	float absNorm = ( absLen == 0.0f ) ? 0.0f : 1.0f / absLen;
-	float nx = n.x * absNorm;
-	float ny = n.y * absNorm;
+	float   absLen  = ht::dot( ht::abs( n ), float3( 1.0f ) );
+	float2  xy      = n.xy * ( ( 0.0f == absLen ) ? 0.0f : 1.0f / absLen );
 
 	// NOTE: Reflect the folds of the lower hemisphere over the diagonals
-	float octaX = ( n.z >= 0.f ) ? nx : ( 1.0f - std::fabsf( ny ) ) * SignNonZero( nx );
-	float octaY = ( n.z >= 0.f ) ? ny : ( 1.0f - std::fabsf( nx ) ) * SignNonZero( ny );
-
-	return { octaX, octaY };
+	return ( n.z >= 0.0f ) ? xy : ht::copysign( 1.0f - ht::abs( xy.yx ), xy );
 }
 // NOTE: Rune Stubbe's version : https://twitter.com/Stubbesaurus/status/937994790553227264
 inline float3 DecodeOctaNormal( float2 octa )
 {
-	using namespace DirectX;
+	float3 n = { octa.x, octa.y, 1.0f - ht::dot( ht::abs( octa ), float2( 1.0f ) ) };
+	n.xy    -= ht::copysign( float2( ht::max( -n.z, 0.0f ) ), octa );
 
-	float3  n = { octa.x, octa.y, 1.0f - std::fabsf( octa.x ) - std::fabsf( octa.y ) };
-	float   t = std::fmaxf( -n.z, 0.0f );
-	n.x += ( n.x >= 0.0f ) ? t : -t;
-	n.y += ( n.y >= 0.0f ) ? t : -t;
-
-	return DX_XMStoreFloat3( XMVector3Normalize( DX_XMLoadFloat3( n ) ) );
+	return ht::normalize( n );
 }
 
 // NOTE: https://zeux.io/2026/04/30/quantizing-tangent-frames/
 // NOTE: from `Building an Orthonormal Basis, Revisited`
-inline void BuildBasisFromNormalDuffFrisvad( float3 n, float3& oTan, float3& oBitan )
+inline auto BuildBasisFromNormalDuffFrisvad( float3 n )
 {
 	float sign  = SignNonZero( n.z );
 	float a     = -1.0f / ( sign + n.z );
 	float b     = n.x * n.y * a;
-	oTan        = { 1.0f + sign * n.x * n.x * a, sign * b, -sign * n.x };
-	oBitan	    = { b, sign + n.y * n.y * a, -n.y };
-
+    return std::tuple{
+        float3{ 1.0f + sign * n.x * n.x * a, sign * b, -sign * n.x },
+        float3{ b, sign + n.y * n.y * a, -n.y }
+    };
 }
 // NOTE: must use reconstructed normal not original
 inline float EncodeTanToAngle( float3 decodedNormal, float3 t )
 {
-	float3 tanRef, bitanRef; BuildBasisFromNormalDuffFrisvad( decodedNormal, tanRef, bitanRef );
+	auto[ tanRef, btnRef
+	    ] = BuildBasisFromNormalDuffFrisvad( decodedNormal );
 
 	float cosA  = t.x * tanRef.x + t.y * tanRef.y + t.z * tanRef.z;
-	float sinA  = t.x * bitanRef.x  + t.y * bitanRef.y  + t.z * bitanRef.z;
+	float sinA  = t.x * btnRef.x  + t.y * btnRef.y  + t.z * btnRef.z;
 	float angle = std::atan2f( sinA, cosA );  // [-π, π]
 
 	return angle * std::numbers::inv_pi_v<float>; // [-1, 1] for snorm

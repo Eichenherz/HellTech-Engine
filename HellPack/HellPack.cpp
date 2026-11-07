@@ -184,7 +184,7 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 	    gpuMlt = {
 	        .aabbMin								= ( pkd_fp32x3 ) mltEncodingGrid.quantAabbMin,
             .aabbMax								= ( pkd_fp32x3 ) mltEncodingGrid.quantAabbMax,
-            .payloadOffset                          = std::size( payloadsBuff ),
+            .offsetInPayload                          = std::size( payloadsBuff ),
             .packed8888_XYZ_Grid_BitDepth			= packed8888_XYZ_Grid_BitDepth,
             .packed8_12_12_VtxCount_Lod_01_IdxCount	= packed8_12_12_VtxCount_Lod_01_IdxCount,
             .lodError								= m.lodError
@@ -336,7 +336,7 @@ static void HpkProcessMeshesParallelJob(
 
                 u64 currentPayloadOffset = fileBuff.WriteBlocking( quantLod.payload );
 
-                for( gpu_meshlet& gpuMlt : quantLod.meshlets ) { gpuMlt.payloadOffset += currentPayloadOffset; }
+                for( gpu_meshlet& gpuMlt : quantLod.meshlets ) { gpuMlt.offsetInPayload += currentPayloadOffset; }
 
                 HT_ASSERT( std::size( quantLod.meshlets ) < ( 1 << 17 ) );
 
@@ -541,7 +541,7 @@ i32 main( i32 argc, char** argv  )
         {
             auto it = meshHashToIdxMap.find( raw.meshHash );
             HT_ASSERT( std::cend( meshHashToIdxMap ) != it );
-            n = { .toWorld = ( float4x3 ) raw.toWorld, .meshIdx = it->second };
+            n = { .toWorld = ( float4x3 ) raw.toWorld, .scale = raw.toWorld.s, .meshIdx = it->second };
         }
 
         // NOTE: DO NOT MOVE THE ORDER !!!!! otherwise the offset code breaks

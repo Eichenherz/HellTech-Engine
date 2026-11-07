@@ -1,50 +1,11 @@
 #pragma once
 
-#ifndef __HT_RENDERER_TYPES_H__
-#define __HT_RENDERER_TYPES_H__
+#ifndef HT_RENDERER_TYPES_H
+#define HT_RENDERER_TYPES_H
 
-#ifdef __cplusplus
-
-#include "ht_core_types.h"
-#include "../HtLib/ht_vec_types.h"
-
-#define ALIGNAS( x ) alignas( x )
-
-#define CONSTEXPR constexpr
-
-#define STATIC_ASSERT( expr, str ) static_assert( expr, str )
-
-#else
-
-typedef int			i32;
-
-typedef uint64_t	u64;
-typedef uint		u32;
-typedef uint16_t	u16;
-//typedef uint8_t		u8;
-
-typedef int4		i32x4;
-typedef int3		i32x3;
-typedef int2		i32x2;
-
-typedef uint4		u32x4;
-typedef uint3		u32x3;
-typedef uint2		u32x2;
-
-// NOTE: we're using scalar layout
-typedef float3      pkd_fp32x3;
-
-typedef uint16_t2	u16x2;
-
-//typedef float16_t2	fp16x2;
-
-#define ALIGNAS( x )
-// TODO: remove when hlsl gets a constexpr
-#define CONSTEXPR static const
-
-#define STATIC_ASSERT( expr, str )
-
-#endif
+#include <ht_core_types.h>
+#include <ht_vec_types.h>
+#include <ht_macros.h>
 
 #define MAX_DESCRIPTOR_COUNT ( 1 << 16 )
 
@@ -86,14 +47,14 @@ struct gpu_instance
 
 STATIC_ASSERT( 64 == sizeof( gpu_instance ), "Size mismatch!" );
 
-CONSTEXPR u64 MAX_LOD_LEVELS_COUNT = 4;
+CONSTEXPR u64 MAX_LOD_LEVELS_COUNT  = 4;
 CONSTEXPR u64 MAX_MESHLETS_PER_MESH = ~u16( 0 );
 
 // NOTE: we can pack x4 bc we know the exact count of LODs; this is tailored to 4 lods only !!!!
 
 struct gpu_mesh_bounds
 {
-	float4	    lod4Err; // NOTE: monotonically increasing x -> w
+	pkd_fp32x4  lod4Err; // NOTE: monotonically increasing x -> w
 	pkd_fp32x3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
 	pkd_fp32x3	aabbMax;
 };
@@ -108,37 +69,25 @@ struct gpu_mesh_lod
     //u64 mltCount : 16;
 };
 
+// TODO: we should prolly just use the hell_pack for this stuff and enforce it as a format basically ?
 struct gpu_mesh
 {
-	float4	lod4Err; // NOTE: monotonically increasing x -> w
-
-	pkd_fp32x3	aabbMin; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
-	pkd_fp32x3	aabbMax;
-
-	u32x2	packed16x4_meshletCounts;
-
-	u32		vtxPosOffsetInBytes;
-	u32		vtxAttrsOffset;
-	u32		idxOffset;
-	u32		meshletOffset;
-};
-// TODO: we should prolly just use the hell_pack for this stuff and enforce it as a format basically ?
-struct gpu_lodded_mesh
-{
-    pkd_fp32x4	    lod4Err = {}; // NOTE: monotonically increasing x -> w
-
-    pkd_fp32x3	    aabbMin = {}; // NOTE: we only quantize the meshlet aabbs be they're the main "draw primitive"
-    pkd_fp32x3	    aabbMax = {};
-
-    gpu_mesh_lod    lods[ MAX_LOD_LEVELS_COUNT ] = {};
+    pkd_fp32x4	    lod4Err; // NOTE: monotonically increasing x -> w
+    pkd_fp32x3	    aabbMin; // NOTE: we only quantize the meshlet aabbs bc they're the main "draw primitive"
+    pkd_fp32x3	    aabbMax;
+    gpu_mesh_lod    lods[ MAX_LOD_LEVELS_COUNT ];
 };
 
 #ifndef __cplusplus
-u32x4 UnpackLODMeshletCount( in gpu_mesh m )
+u32 GPUMeshGetLodMask( in gpu_mesh mesh )
 {
-	u32x2 packed16x4LOD = m.packed16x4_meshletCounts;
-	u32x4 unpackShifted = { packed16x4LOD.x, ( packed16x4LOD.x >> 16 ), packed16x4LOD.y, ( packed16x4LOD.y >> 16 ) };
-	return unpackShifted & 0xffff;
+    u32 resMask = 0;
+    [unroll] for( u32 li = 0; li < MAX_LOD_LEVELS_COUNT; ++li )
+    {
+        u32x3 lodAsVec = u32x3( mesh.lods[ li ].payloadStartInBytes, mesh.lods[ li ].firstMlt, mesh.lods[ li ].mltCount );
+        resMask |= ( ( u32 ) any( u32x3( 0, 0, 0 ) != lodAsVec ) ) << li;
+    }
+    return resMask;
 }
 #endif
 
@@ -147,14 +96,12 @@ CONSTEXPR u64 MAX_TRIS_PER_MLT	= 128;
 CONSTEXPR u64 MLT_MAX_INDEX		= 1ull << 12;
 // NOTE: this 2 level LOD scheme is inspired by https://x.com/zeuxcg/status/1810841187433205817
 
-// NOTE: we will pack the data in the triangle buffer as such
-// ( ..., mlt N tris [ LOD 0, LOD 1 ], mlt N+1 tris[ LOD 0, LOD 1 ], ... )
 // NOTE: the payload will be LOCAL and laid as [ pos ][ attrs ][ idxLOD0 ][ idxLOD1 ]
 struct gpu_meshlet
 {
 	pkd_fp32x3	aabbMin;
 	pkd_fp32x3	aabbMax;
-    u64         payloadOffset; // NOTE: always 4 bytes aligned
+    u64         offsetInPayload; // NOTE: always 4 bytes aligned
 	u32		    packed8888_XYZ_Grid_BitDepth;
 	// NOTE: packed as: lowest bytes - [ 8 VtxCount | 12 lod0_Idx | 12 lod_1_Idx ] - highest bytes
 	u32		    packed8_12_12_VtxCount_Lod_01_IdxCount;
@@ -168,6 +115,16 @@ u32x3 UnpackMeshletVtxAndLodIdxCount( in gpu_meshlet mlt )
 	u32x3	unpackShifted	= { packed_8_12x2, packed_8_12x2 >> 8, packed_8_12x2 >> 20 }; // 0, + 8, + 12
 	u32		lodMask			= ( 1u << 12 ) - 1;
 	return unpackShifted & u32x3( 0xff, lodMask, lodMask );
+}
+
+u32x2 GPUMeshletComputeVtxStreamSizes( in gpu_meshlet mlt )
+{
+    u32x4   xyz_Grid_BitDepth   = unpack_u8u32( mlt.packed8888_XYZ_Grid_BitDepth );
+    u64     bitsPerPos          = xyz_Grid_BitDepth.x + xyz_Grid_BitDepth.y + xyz_Grid_BitDepth.z;
+    u64     vtxCount            = mlt.packed8_12_12_VtxCount_Lod_01_IdxCount & 0xff;
+    u64     posBitstreamSzBytes = ( ( bitsPerPos * vtxCount + 63 ) / 64 ) * 8;
+
+    return u32x2( posBitstreamSzBytes, sizeof( oct16x2 ) * vtxCount );
 }
 #endif
 
@@ -200,10 +157,11 @@ struct draw_meshlet_command
 
 struct draw_meshlet_cmd_data
 {
-	u32 globalInstId;
-	u32 globalMltId;
-	u32 vtxAttrOffset;
-	u32 vtxPosOffsetInBits;
+    u32 meshPayloadStartInBytes;
+	u32 globalInstId    : 28;
+	u32 lodIdx          : 4;
+	u32 globalMltId     : 28;
+    u32 padding         : 4;
 };
 
 struct draw_instanced_indexed_indirect
@@ -261,112 +219,64 @@ struct luminance_histogram
 
 struct visible_instance
 {
-	u32 instId;
+    u32 meshPayloadStartInBytes;
+	u32 instId : 28;
+	u32 lodIdx : 4;
 	u32 meshletOffset;
 	u32 meshletCount;
-	u32 vtxPosOffsetInBytes;
-	u32 vtxAttrsOffset;
-	u32 idxOffset;
 };
 
 struct meshlet_cull_wok_item
 {
-	u32 instId;
+    u32 meshPayloadStartInBytes;
+	u32 instId : 28;
+	u32 lodIdx : 4;
 	u32 globMltId;
-	u32 vtxPosOffsetInBytes;
-	u32 vtxAttrsOffset;
-	u32 idxOffset;
 };
 
-struct culling_params
+struct culling_pass_params
 {
-	u32 instCount;
-	u32 occludedInstCounterIdx; // NOTE: will be used in the 2nd pass
+    u64 visibleInstAddr;
+    u64 visibleInstCounterAddr;
+    u64 occludedInstAddr;
+    u64 occludedInstCounterAddr;
 
-	u32 occludedInstBuffIdx;
-	u32 instDescIdx;
-	u32 meshDescIdx;
-	u32 viewBuffIdx;
-	u32 camIdx; // NOTE: for debug purposes
-	u32 hizTexIdx;
-	u32 hizSamplerIdx;
-	u32 visibleItemsCountIdx;
-	u32 visibleItemsIdx;
+    u64 mltToTestAddr;
+    u64 mltToTestCounterAddr;
+    u64 occludedMltAddr;
+    u64 occludedMltCounterAddr;
 
-	u32	isLatePass;
-	u32 enableCulling;
-	u32 enableLod;
-};
-// TODO: rename
-struct draw_expansion_params
-{
-	u32 workCounterIdxConst;
-	u32 srcBufferIdx;
-	u32 expandedItemsBuffIdx;
-	u32 expandedItemsCountIdx;
-};
+    u64 dispatchCmdsAddr;
+    u64 drawCmdsAddr;
+    u64 drawDataAddr;
+    u64 drawCounterAddr;
 
-struct indirect_dispatcher_params
-{
-	u32 cullShaderWorkGrX;
-	u32 dispatchCmdBuffIdx;
-	u32 counterBufferIdx;
-};
+    u32 hizTexIdx;
+    u32 hizSamplerIdx;
 
-struct meshlet_cull_params
-{
-	u32 mltCountIdx;
-	u32 expandedMltsIdx;
+    u32 instCount;
+    u32 isLatePass;
+    u32 instCullWorkGrX;
 
-	u32 occludedMltBuffIdx;
-	u32 occludedMltCountIdx;
-
-	u32 instDescIdx;
-	u32 viewBuffIdx;
-	u32 camIdx; // NOTE: for debug purposes
-	u32 hizTexIdx;
-	u32 hizSamplerIdx;
-
-	u32 drawCountIdx;
-	u32 drawCmsIdx;
-	u32 drawDataIdx;
-
-	u32	isLatePass;
-	u32 enableCulling;
-	u32 enableLod;
-};
-
-struct culling_init_params
-{
-	u32 visibleInstCounterIdx;
-	u32 occludedInstCounterIdx;
-	u32 visibleMeshletsCounterIdx;
-	u32 occludedMeshletsCounterIdx;
-	u32 drawCounterIdx;
-	u32 cullShaderWorkGrX;
-	u32 dispatchCmdBuffIdx;
-	u32 instCount;
-	u32 isLatePass;
+    // DBG
+    u32 enableInstCull;
+    u32 enableMltCull;
+    u32 enableMeshLod;
+    u32 enableMltLod;
 };
 
 struct vbuffer_params
 {
-	u32 drawDataIdx;
-	u32 instBuffIdx;
-	u32 camIdx;
+	u64 drawDataAddr;
 };
-// TODO: maybe use the same struct here ?
+
 struct depth_prepass_params
 {
-	u32 drawDataIdx;
-	u32 instBuffIdx;
-	u32 camIdx;
+	u64 drawDataAddr;
 };
 struct meshlet_pass_params
 {
-	u32 drawDataIdx;
-	u32 instBuffIdx;
-	u32 camIdx;
+    u64 drawDataAddr;
 };
 
 // NOTE: src and dst assumed to be the same dimensions, asserted on the host
@@ -382,9 +292,6 @@ struct lambertian_clay_params
 	u32x2	vbuffRes;
 	u32		vbuffIdx; // NOTE: asserted in the renderer that they're eq size
 	u32		dstIdx;
-	u32		instBuffIdx;
-	u32		meshDescIdx;
-	u32		camIdx;
 };
 
 struct dbg_box_params
@@ -432,14 +339,26 @@ struct multi_pass_downsampler_params
 	u32     isMip0FromNonPot;
 };
 
+struct indirect_dispatcher_params
+{
+    u64 dispatchCmdBuffAddr;
+    u64 counterBufferAddr;
+    u32 cullShaderWorkGrX;
+};
+
 struct global_data
 {
 	u64 mltAddr;
-	u64 vtxPosAddr;
-	u64 vtxAttrsAddr;
-	u64 idxAddr;
+	u64 pldAddr;
+	u64 meshDescAddr;
+    u64 meshRefAddr;
+	u64 instAddr;
+    u64 viewsAddr;
+    u64 lodRequestsAddr;
+
+    u32 mainCamIdx;
 };
 
 CONSTEXPR u64 GLOB_DATA_BINDING_SLOT = 0;
 
-#endif // !__HT_RENDERER_TYPES_H__
+#endif // !HT_RENDERER_TYPES_H

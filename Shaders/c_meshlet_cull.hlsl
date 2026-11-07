@@ -2,34 +2,31 @@
 
 #include "ht_hlsl_lang.h"
 #include "ht_hlsl_math.h"
-#include "ht_unpacking.h"
 #include "ht_culling.h"
 
 
 [[vk::push_constant]]
-meshlet_cull_params pushBlock;
+culling_pass_params pushBlock;
 
 
 [shader( "compute" )]
 [numthreads( 128, 1, 1 )]
 void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 {
-    u32 mltCount = BufferLoad<u32>( pushBlock.mltCountIdx, 0 );
-
     u32 mltId = globalDispatchID.x;
-    if( mltId >= mltCount )
-    {
-    	return;
-    }
+
+    u32 mltCount = device_ptr<u32>( pushBlock.mltToTestCounterAddr )[ 0 ];
+    if( mltId >= mltCount ) return;
 
     const bool isLatePass       = bool( pushBlock.isLatePass );
-    const bool enableCulling    = bool( pushBlock.enableCulling );
+    const bool enableCulling    = bool( pushBlock.enableMltCull );
+    const bool enableLod        = bool( pushBlock.enableMltLod );
 
-    meshlet_cull_wok_item   mltWorkItem = BufferLoad<meshlet_cull_wok_item>( pushBlock.expandedMltsIdx, mltId );
-    gpu_instance            currInst    = BufferLoad<gpu_instance>( pushBlock.instDescIdx, mltWorkItem.instId );
-    gpu_meshlet             currMlt     = device_ptr<gpu_meshlet>( gGlobData.mltAddr )[ mltWorkItem.globMltId ];
+    meshlet_cull_wok_item   mltWorkItem = device_ptr<meshlet_cull_wok_item>( pushBlock.mltToTestAddr )[ mltId ];
+    gpu_instance            currInst    = device_ptr<gpu_instance>( g_GlobalData.instAddr )[ mltWorkItem.instId ];
+    gpu_meshlet             currMlt     = device_ptr<gpu_meshlet>( g_GlobalData.mltAddr )[ mltWorkItem.globMltId ];
      // NOTE: we use camIdx here bc we'll have a debug camera
-    view_data               cam         = BufferLoad<view_data>( pushBlock.viewBuffIdx, pushBlock.camIdx );
+    view_data               cam         = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
 
     bool visible = true;
     if( enableCulling )
@@ -43,50 +40,53 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
         if( !isLatePass )
         {
-            bool mltIsOccluded  = !mltVisRes.notOccluded;
-            u32 occSlotIdx      = HTWaveReserveGlobalSlot( mltIsOccluded, pushBlock.occludedMltCountIdx );
+            bool mltIsOccluded = !mltVisRes.notOccluded;
+            u32 occSlotIdx = HTWaveReserveGlobalSlot( mltIsOccluded, device_ptr<u32>( pushBlock.occludedMltCounterAddr ) );
             if( mltIsOccluded )
             {
-                BufferStore<meshlet_cull_wok_item>( pushBlock.occludedMltBuffIdx, mltWorkItem, occSlotIdx );
+                device_ptr<meshlet_cull_wok_item>( pushBlock.occludedMltAddr ).Store( occSlotIdx, mltWorkItem );
             }
         }
 
         visible = mltVisRes.inFrustum && mltVisRes.notOccluded;
     }
 
-    u32 slotIdx = HTWaveReserveGlobalSlot( visible, pushBlock.drawCountIdx );
+    u32 slotIdx = HTWaveReserveGlobalSlot( visible, device_ptr<u32>( pushBlock.drawCounterAddr ) );
 
     if( visible )
     {
-        float distSq    = SqDistCamToAabbInObjSpace( currInst.toWorld, currMlt.aabbMin, currMlt.aabbMax, currInst.scale,
-                                                        cam.worldPos );
+        float distSq = SqDistCamToAabbInObjSpace( currInst.toWorld, currMlt.aabbMin, currMlt.aabbMax, currInst.scale,
+                                                  cam.worldPos );
+
         float threshold = distSq * cam.lodTarget * cam.lodTarget;
         float lodErrSqq = currMlt.lodError * currMlt.lodError;
 
-        u32x3 vtxLod01IdxCounts = UnpackMeshletVtxAndLodIdxCount( currMlt );
+        u32x2   lod01IdxCounts  = UnpackMeshletVtxAndLodIdxCount( currMlt ).yz;
+        bool    lodSwitch       = enableLod && ( lodErrSqq < threshold );
+        u32     lodIdxOffset    = lodSwitch ? lod01IdxCounts.x : 0;
+        u32     lodIdxCount     = lodSwitch ? lod01IdxCounts.y : lod01IdxCounts.x;
 
-        bool    lodSwitch       = bool( pushBlock.enableLod ) && ( lodErrSqq < threshold );
-        u32     lodIdxOffset    = lodSwitch ? vtxLod01IdxCounts.y : 0;
-        u32     lodIdxCount     = lodSwitch ? vtxLod01IdxCounts.z : vtxLod01IdxCounts.y;
+        u32x2 mltVtxStreamSizes = GPUMeshletComputeVtxStreamSizes( currMlt );
 
-        draw_meshlet_command drawMltCmd = ( draw_meshlet_command ) 0;
+        draw_meshlet_command drawMltCmd = {
+            lodIdxCount,
+            1,
+            mltWorkItem.meshPayloadStartInBytes + mltVtxStreamSizes.x + mltVtxStreamSizes.y + lodIdxOffset,
+            // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,
+            // so we need to manually compute it in the shader
+            0,
+            0
+        };
 
-        drawMltCmd.indexCount     = lodIdxCount;
-        drawMltCmd.instanceCount  = 1;
-        drawMltCmd.firstIndex     = currMlt.idxOffset + mltWorkItem.idxOffset + lodIdxOffset;
-        // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,
-        // so we need to manually compute it in the shader
-        drawMltCmd.vertexOffset   = 0;
-        drawMltCmd.firstInstance  = 0;
+        draw_meshlet_cmd_data drawMltData = {
+            mltWorkItem.meshPayloadStartInBytes,
+            mltWorkItem.instId,
+            mltWorkItem.lodIdx,
+            mltWorkItem.globMltId,
+            0
+        };
 
-        draw_meshlet_cmd_data drawMltData = ( draw_meshlet_cmd_data ) 0;
-
-        drawMltData.globalInstId        = mltWorkItem.instId;
-        drawMltData.globalMltId         = mltWorkItem.globMltId;
-        drawMltData.vtxAttrOffset       = mltWorkItem.vtxAttrsOffset;
-        drawMltData.vtxPosOffsetInBits  = mltWorkItem.vtxPosOffsetInBytes * 8u;
-
-    	BufferStore<draw_meshlet_command>( pushBlock.drawCmsIdx, drawMltCmd, slotIdx );
-    	BufferStore<draw_meshlet_cmd_data>( pushBlock.drawDataIdx, drawMltData, slotIdx );
+    	device_ptr<draw_meshlet_command>( pushBlock.drawCmdsAddr ).Store( slotIdx, drawMltCmd );
+    	device_ptr<draw_meshlet_cmd_data>( pushBlock.drawDataAddr ).Store( slotIdx, drawMltData );
     }
 }

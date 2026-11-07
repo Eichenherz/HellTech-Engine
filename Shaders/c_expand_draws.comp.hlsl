@@ -4,7 +4,7 @@
 #define WG_SIZE 128
 
 [[vk::push_constant]]
-draw_expansion_params           pushBlock;
+culling_pass_params             pushBlock;
 
 groupshared u32                 ldsWgOffset;
 groupshared u32                 ldsWgMltTotalCount;
@@ -34,21 +34,21 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
 {
 	if( 0 == groupFlatIdx )
 	{
-		ldsWgOffset = 0;
-		ldsWgMltTotalCount = 0;
+		ldsWgOffset         = 0;
+		ldsWgMltTotalCount  = 0;
 	}
 	GroupMemoryBarrierWithGroupSync();
 
-	u32 workItems = BufferLoad<u32>( pushBlock.workCounterIdxConst, 0 );
+	u32 workItems = device_ptr<u32>( pushBlock.visibleInstCounterAddr )[ 0 ];
 	visible_instance thisVisInstance = ( visible_instance ) 0;
     if( globalDispatchID.x < workItems )
 	{
-		thisVisInstance = BufferLoad<visible_instance>( pushBlock.srcBufferIdx, globalDispatchID.x );
+		thisVisInstance = device_ptr<visible_instance>( pushBlock.visibleInstAddr )[ globalDispatchID.x ];
 	}
 	ldsWgVisInst[ groupFlatIdx ] = thisVisInstance;
 
-	u32 waveMltOffset = WavePrefixSum( thisVisInstance.meshletCount );
-    u32 waveMltTotal = WaveActiveSum( thisVisInstance.meshletCount );
+	u32 waveMltOffset   = WavePrefixSum( thisVisInstance.meshletCount );
+    u32 waveMltTotal    = WaveActiveSum( thisVisInstance.meshletCount );
     if( WaveIsFirstLane() )
     {
         ldsWavePrefix[ groupFlatIdx / WaveGetLaneCount() ] = waveMltTotal;
@@ -64,15 +64,15 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
         }
 
         ldsWgMltTotalCount = total;
-        ldsWgOffset = BufferAtomicAdd( pushBlock.expandedItemsCountIdx, ldsWgMltTotalCount );
+        ldsWgOffset = AtomicAdd( device_ptr<u32>( pushBlock.mltToTestCounterAddr ), ldsWgMltTotalCount );
 
 
         u32 exclusivePrefix = 0;
         [unroll] for( u32 wi = 0; wi < HT_WAVE_COUNT_PER_WG; ++wi )
         {
-            u32 currentWaveTotal = ldsWavePrefix[ wi ];
-            ldsWavePrefix[ wi ] = exclusivePrefix;
-            exclusivePrefix += currentWaveTotal;
+            u32 currentWaveTotal    = ldsWavePrefix[ wi ];
+            ldsWavePrefix[ wi ]     = exclusivePrefix;
+            exclusivePrefix         += currentWaveTotal;
         }
     }
     GroupMemoryBarrierWithGroupSync();
@@ -90,14 +90,15 @@ void ExpandDrawsCsMain( u32x3 globalDispatchID : SV_DispatchThreadID, u32 groupF
         visible_instance visInst = ldsWgVisInst[ srcThreadId ];
         u32 globalMltId = visInst.meshletOffset + localMlt;
 
-        meshlet_cull_wok_item mltWorkItem = ( meshlet_cull_wok_item ) 0;
-        mltWorkItem.instId              = visInst.instId;
-        mltWorkItem.globMltId           = globalMltId;
-        mltWorkItem.vtxPosOffsetInBytes = visInst.vtxPosOffsetInBytes;
-        mltWorkItem.vtxAttrsOffset      = visInst.vtxAttrsOffset;
-        mltWorkItem.idxOffset           = visInst.idxOffset;
+        meshlet_cull_wok_item mltWorkItem = {
+            visInst.meshPayloadStartInBytes,
+            visInst.instId,
+            visInst.lodIdx,
+            globalMltId
+        };
+
 
         u32 writeSlotIdx = ldsWgOffset + perWgMltId;
-        BufferStore<meshlet_cull_wok_item>( pushBlock.expandedItemsBuffIdx, mltWorkItem, writeSlotIdx );
+        device_ptr<meshlet_cull_wok_item>( pushBlock.mltToTestAddr ).Store( writeSlotIdx, mltWorkItem );
 	}
 }

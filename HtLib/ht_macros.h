@@ -1,7 +1,30 @@
 #pragma once
 
-#ifndef __HT_MACROS_H__
-#define __HT_MACROS_H__
+#ifndef HT_MACROS_H
+#define HT_MACROS_H
+
+#define STRINGIZE( x ) STRINGIZE2( x )
+#define STRINGIZE2( x ) #x
+#define LINE_STR STRINGIZE( __LINE__ )
+
+#define HT_CONCAT_( a, b ) a##b
+#define HT_CONCAT( a, b )  HT_CONCAT_( a, b )
+
+#ifndef __cplusplus
+
+#define ALIGNAS( x )
+// TODO: remove when hlsl gets a constexpr
+#define CONSTEXPR static const
+
+#define STATIC_ASSERT( expr, str )
+
+#else
+
+#define ALIGNAS( x ) alignas( x )
+
+#define CONSTEXPR static constexpr
+
+#define STATIC_ASSERT( expr, str ) static_assert( expr, str )
 
 #if defined(__clang__)
 #define HT_FORCEINLINE inline __attribute__((always_inline))
@@ -19,10 +42,6 @@
 #define EMBED_TYPE [[no_unique_address]]
 
 #endif
-
-#define STRINGIZE( x ) STRINGIZE2( x )
-#define STRINGIZE2( x ) #x
-#define LINE_STR STRINGIZE( __LINE__ )
 
 #define RUNTIME_ERR_LINE_FILE_STR ">>>RUNTIME_ERROR<<<\nLine: " LINE_STR", File: " __FILE__
 
@@ -60,8 +79,6 @@ __ht_defer_guard<F> operator->*( __ht_defer_tag, F&& f )
     return __ht_defer_guard<F>( MOV( f ) );
 }
 
-#define HT_CONCAT_( a, b ) a##b
-#define HT_CONCAT( a, b )  HT_CONCAT_( a, b )
 #define defer auto HT_CONCAT( __ht_defer_, __COUNTER__ ) = __ht_defer_tag{} ->* [ & ]()
 
 struct ht_no_copy
@@ -87,4 +104,6 @@ struct name { __VA_ARGS__ };                                                    
 constexpr u64 name##_LAYOUT_HASH = MurmurHash64( #name "{" #__VA_ARGS__ "}" )       \
     ^ SplitmixHash64( ( u64( sizeof( name ) ) << 32 ) | u64( alignof( name ) ) )
 
-#endif // !__HT_MACROS_H__
+#endif
+
+#endif // !HT_MACROS_H

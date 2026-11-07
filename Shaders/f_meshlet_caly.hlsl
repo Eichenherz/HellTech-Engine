@@ -15,7 +15,7 @@ float4 MeshletClayPassPsMain( in meshlet_vs_out vsOut ) : SV_Target
     // NOTE: orthonormalize t wrt n
     t = normalize( t - dot( t, n ) * n );
 
-    view_data cam = BufferLoad<view_data>( pushBlock.camIdx );
+    view_data cam = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
 
     float3 L   = normalize( float3( 0.5f, 1.0f, 0.3f ) );
     float3 V   = normalize( cam.worldPos - vsOut.wrldPos );   // view dir

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ht_renderer_types.h"
+#include <ht_renderer_types.h>
 
 namespace spv
 {
@@ -24,8 +24,8 @@ namespace spv
 }
 
 
-#ifndef __HELLTECH_HT_HLSL_LANG_H__
-#define __HELLTECH_HT_HLSL_LANG_H__
+#ifndef HELLTECH_HT_HLSL_LANG_H
+#define HELLTECH_HT_HLSL_LANG_H
 
 #define NOINTERP nointerpolation
 
@@ -109,26 +109,10 @@ void BufferStore( u32 buffIdx, T value, u32 idx = 0, u32 offsetInBytes = 0 )
 	storageBuffers[ buffIdx ].Store<T>( idx * sizeof( T ) + offsetInBytes, value );
 }
 
-//template<typename T>
 u32 BufferAtomicAdd( u32 buffIdx, u32 newValue, u32 idx = 0, u32 offsetInBytes = 0 )
 {
 	u32 oldValue;
-	//if( is_same<T, uint>() || is_same<T, int>() )
-	//{
-		storageBuffers[ buffIdx ].InterlockedAdd( idx * sizeof( u32 ) + offsetInBytes, newValue, oldValue );
-	//}
-	//else if( is_same<T, uint64_t>() || is_same<T, int64_t>() )
-	//{
-		//storageBuffersRW[ buffIdx ].InterlockedAdd64( ( idx + offset ) * sizeof( T ), newValue, oldValue );
-	//}
-	//else if( is_same<T, float>() )
-	//{
-		//storageBuffersRW[ buffIdx ].InterlockedAddFloat( ( idx + offset ) * sizeof( T ), newValue, oldValue );
-	//}
-	//else
-	//{
-	//	static_assert(false, "Unsupported atomic type");
-	//}
+    storageBuffers[ buffIdx ].InterlockedAdd( idx * sizeof( u32 ) + offsetInBytes, newValue, oldValue );
 	return oldValue;
 }
 
@@ -139,7 +123,7 @@ u32 BufferAtomicOr( u32 buffIdx, u32 newValue, u32 idx = 0, u32 offsetInBytes = 
 	return oldValue;
 }
 
-static const global_data gGlobData = BufferLoad<global_data>( GLOB_DATA_BINDING_SLOT );
+static const global_data g_GlobalData = BufferLoad<global_data>( GLOB_DATA_BINDING_SLOT );
 
 template<typename T>
 struct device_ptr
@@ -150,6 +134,14 @@ struct device_ptr
 
 	void Store( u64 idx, T val ) { vk::BufferPointer<T>( addr + idx * sizeof( T ) ).Get() = val; }
 };
+
+template<typename T>
+T AtomicAdd( device_ptr<T> ptr, T val, u64 idx = 0 )
+{
+	T oldValue;
+	InterlockedAdd( vk::BufferPointer<T>( ptr.addr + idx * sizeof( T ) ).Get(), val, oldValue );
+	return oldValue;
+}
 
 float HTLoadCoherentImageFloat( u32 imgIdx, i32x2 pix )
 {
@@ -178,15 +170,15 @@ bool HTIsQuadLeader( u32x2 quadID )
 	return all( 0 == ( quadID & 1 ) );
 }
 
-u32 HTWaveReserveGlobalSlot( in bool cond, in u32 counterDescIdx )
+u32 HTWaveReserveGlobalSlot( in bool cond, in device_ptr<u32> pCounter )
 {
-	u32 lanesTrue = WaveActiveCountBits( cond );
-	u32 offsetForWave = 0;
+	u32 lanesTrue       = WaveActiveCountBits( cond );
+	u32 offsetForWave   = 0;
 	if( lanesTrue > 0 )
 	{
 		if( WaveIsFirstLane() )
 		{
-			offsetForWave = BufferAtomicAdd( counterDescIdx, lanesTrue );
+			offsetForWave = AtomicAdd( pCounter, lanesTrue );
 		}
 	}
 
@@ -194,4 +186,4 @@ u32 HTWaveReserveGlobalSlot( in bool cond, in u32 counterDescIdx )
 	return WaveReadLaneFirst( offsetForWave ) + laneOffset;
 }
 
-#endif //!__HELLTECH_HT_HLSL_LANG_H__
+#endif //!HELLTECH_HT_HLSL_LANG_H

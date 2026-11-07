@@ -9,5 +9,6 @@ vbuffer_params pushBlock;
 [shader("pixel")]
 vbuffer_ps_out VBufferPsMain( in vbuffer_vs_out vsOut, in u32 primId : SV_PrimitiveID )
 {
-    return vbuffer_ps_out( VBufferPackPixel( vsOut.globalMltIdx, primId, vsOut.globalInstIdx ) );
+    vbuffer_pixel pixel = { vsOut.globalMltIdx, primId, vsOut.globalInstIdx, vsOut.lodIdx };
+    return vbuffer_ps_out( ( u32x2 ) pixel );
 }

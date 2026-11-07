@@ -2,7 +2,7 @@
 #include <ht_memory.h>
 #include <ht_array.h>
 #include <ht_math.h>
-#include <ht_renderer_types.h>
+#include <../HtLib/ht_renderer_types.h>
 
 #include <System/sys_file.h>
 #include <System/sys_sync.h>
@@ -198,7 +198,6 @@ struct helltech final : helltech_interface
     std::span<hpk_mesh_desc>            meshDescSpan    = {};
 
     void*                               diskAssetStore  = nullptr;
-    u64                                 meshletOffsetFile = 0;
 
 	float								moveSpeed		= 1.2f;
 	float								mouseSensitivity = 0.002f;
@@ -355,7 +354,6 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     meshDescSpan    = LmbdReadHpkBuff.operator()<hpk_mesh_desc>( hpkHeader.firstMeshDescOffsetInBytes, hpkHeader.meshDescCount );
 
     diskAssetStore      = hHpkFile;
-    meshletOffsetFile   = hpkHeader.firstMeshletsOffsetInBytes;
 }
 
 void helltech::UploadAssets( linear_arena& scratchpadArena )

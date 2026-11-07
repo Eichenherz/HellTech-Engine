@@ -7,7 +7,7 @@
 #include <vulkan.h>
 
 #include <ht_core_types.h>
-#include <ht_renderer_types.h>
+#include <../HtLib/ht_renderer_types.h>
 #include "vk_error.h"
 #include "vk_types.h"
 

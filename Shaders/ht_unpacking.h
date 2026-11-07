@@ -1,9 +1,9 @@
 #pragma once
 
-#ifndef __HELLTECH_HT_UNPACKING_H__
-#define __HELLTECH_HT_UNPACKING_H__
+#ifndef HELLTECH_HT_UNPACKING_H
+#define HELLTECH_HT_UNPACKING_H
 
-#include "ht_renderer_types.h"
+#include "../HtLib/ht_renderer_types.h"
 #include "ht_hlsl_lang.h"
 #include "ht_hlsl_math.h"
 
@@ -14,23 +14,27 @@ i32 RestoreSign( u32 comp, u32 bitDepth )
     return i32( ( comp ^ bitmask ) - bitmask );
 }
 
+template<u32 BIT_COUNT>
+float SnormFromBits( u32 bits )
+{
+    const u32 MASK = ( 1u << BIT_COUNT ) - 1u;
+    return float( RestoreSign( bits & MASK, BIT_COUNT ) ) / float( ( 1u << ( BIT_COUNT - 1u ) ) - 1u );
+}
+
 struct unpacked_tbn
 {
     float octNx;
     float octNy;
     float tanAngle;
-    float bitanSign;
+    float btnSign;
 };
 
 unpacked_tbn UnpackTBN( oct11x2s_a9_s1 enc )
 {
-    const u32 OCT_MASK = ( 1u << BIT_DEPTH_OCT_N ) - 1u;
-    const u32 TAN_MASK = ( 1u << BIT_DEPTH_TAN_A ) - 1u;
-
-    float ox = RestoreSign( enc & OCT_MASK, BIT_DEPTH_OCT_N );
-    float oy = RestoreSign( ( enc >>  BIT_DEPTH_OCT_N ) & OCT_MASK, BIT_DEPTH_OCT_N );
-    float ta = RestoreSign( ( enc >> ( 2 * BIT_DEPTH_OCT_N ) ) & TAN_MASK, BIT_DEPTH_TAN_A );
-    float bs = ( ( enc >> 31 ) & 1u)  ? -1.0f : 1.0f;
+    float ox = SnormFromBits<BIT_DEPTH_OCT_N>( enc );
+    float oy = SnormFromBits<BIT_DEPTH_OCT_N>( enc >> BIT_DEPTH_OCT_N );
+    float ta = SnormFromBits<BIT_DEPTH_TAN_A>( enc >> ( 2 * BIT_DEPTH_OCT_N ) );
+    float bs = ( ( enc >> 31 ) & 1u )  ? -1.0f : 1.0f;
 
     unpacked_tbn result = { ox, oy, ta, bs };
     return result;
@@ -50,7 +54,7 @@ float3 DecodeOctaNormal( float2 octa )
 {
     float3 n = float3( octa, 1.0f - abs( octa.x ) - abs( octa.y ) );
     float2 t = float2( max( -n.z, 0.0f ), max( -n.z, 0.0f ) );
-    n.xy += select( n.xy < 0.0f, -t, t );
+    n.xy += select( n.xy < 0.0f, t, -t );
 
     return normalize( n );
 }
@@ -62,48 +66,47 @@ float3 DecodeTanFromAngle( float3 n, float tanAngle )
     return tanRef * cs + bitanRef * sn;
 }
 
-u32x3 FetchTriangleIndicesFromMegaBuff( u64 globalIdxInBytes )
+u32x3 FetchTriangleIndicesFromMegaBuff( in device_ptr<u32> localPayload, u64 triStartInBytes )
 {
-    device_ptr<u32> idxBuff = { gGlobData.idxAddr };
-    u64 lo = idxBuff[ globalIdxInBytes >> 2 ];
-    u64 hi = idxBuff[ ( globalIdxInBytes >> 2 ) + 1 ];
-    u64 shift = ( globalIdxInBytes & 3 ) * 8;
-    u64 raw = ( ( hi << 32 ) | lo ) >> shift;
+    u64 lo      = localPayload[ triStartInBytes >> 2 ];
+    u64 hi      = localPayload[ ( triStartInBytes >> 2 ) + 1 ];
+    u64 shift   = ( triStartInBytes & 3 ) * 8;
+    u64 raw     = ( ( hi << 32 ) | lo ) >> shift;
     return unpack_u8u32( u32( raw & 0x00FFFFFF ) ).xyz;
 }
 
-u32 UnpackFromBitstream( in device_ptr<u32> packedPosMegaBuff, in u32 bitDepth, in u32 globalOffsetInBits )
+u32 UnpackFromBitstream( in device_ptr<u32> localPayload, in u32 bitDepth, in u32 bitOffsetInMltPayload )
 {
-    u32 bucketIdx       = globalOffsetInBits >> 5;
-    u32 bitIdxInBucket  = globalOffsetInBits & 31;
+    u32 bucketIdx       = bitOffsetInMltPayload >> 5;
+    u32 bitIdxInBucket  = bitOffsetInMltPayload & 31;
 
-    u32 w0 = packedPosMegaBuff[ bucketIdx ];
-    u32 w1 = packedPosMegaBuff[ bucketIdx + 1 ];
+    u32 w0 = localPayload[ bucketIdx ];
+    u32 w1 = localPayload[ bucketIdx + 1 ];
 
     u32 lo = w0 >> bitIdxInBucket;
 
     u32 shiftAmount = 32u - bitIdxInBucket;
     u32 hi = ( 32u == shiftAmount ) ? 0u : ( w1 << shiftAmount );
 
-    u32 mask = ( 32u == bitDepth ) ? 0xFFFFFFFFu : ( ( 1u << bitDepth ) - 1u );
+    u32 mask = ( 32u == bitDepth ) ? 0xffffffffu : ( ( 1u << bitDepth ) - 1u );
     return ( lo | hi ) & mask;
 }
 
-float3 DecodeVertexFromMegaBuff( in gpu_meshlet mlt, in u32 globalOffsetInBits, in u32 vtxId )
+float3 DecodeVertexFromMegaBuff( in gpu_meshlet mlt, in device_ptr<u32> localPayload, in u32 vtxId )
 {
-    device_ptr<u32> posBuff = { gGlobData.vtxPosAddr };
     u32x4 xyz_Grid_BitDepth = unpack_u8u32( mlt.packed8888_XYZ_Grid_BitDepth );
 
     u32 bitsPerVtx = xyz_Grid_BitDepth.x + xyz_Grid_BitDepth.y + xyz_Grid_BitDepth.z;
-    u32 vtxBase    = globalOffsetInBits + mlt.vtxPosOffsetBits + vtxId * bitsPerVtx;
+    u32 vtxBase    = vtxId * bitsPerVtx;
 
-    u32 x = UnpackFromBitstream( posBuff, xyz_Grid_BitDepth.x, vtxBase );
-    u32 y = UnpackFromBitstream( posBuff, xyz_Grid_BitDepth.y, vtxBase + xyz_Grid_BitDepth.x );
-    u32 z = UnpackFromBitstream( posBuff, xyz_Grid_BitDepth.z,
+    u32 x = UnpackFromBitstream( localPayload, xyz_Grid_BitDepth.x, vtxBase );
+    u32 y = UnpackFromBitstream( localPayload, xyz_Grid_BitDepth.y,
+        vtxBase + xyz_Grid_BitDepth.x );
+    u32 z = UnpackFromBitstream( localPayload, xyz_Grid_BitDepth.z,
         vtxBase + xyz_Grid_BitDepth.x + xyz_Grid_BitDepth.y );
 
     i32x3 exp = i32x3( -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w, -xyz_Grid_BitDepth.w );
     return ldexp( float3( x, y, z ), exp ) + mlt.aabbMin;
 }
 
-#endif //!__HELLTECH_HT_UNPACKING_H__
+#endif //!HELLTECH_HT_UNPACKING_H
