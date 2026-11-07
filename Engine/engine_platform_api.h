@@ -122,9 +122,8 @@ u64 HtCurrentThreadIdx();
 struct renderer_interface
 {
     virtual void		    InitBackend( u64 hInst, u64 hWnd ) = 0;
-    virtual HRNDMESH32	    AllocMeshSlot( const hpk_mesh_desc& ) = 0;
     virtual bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) = 0;
-    virtual void		    UploadMeshes( atomic_u64*, std::span<const mesh_upload_req>, void*, u64, linear_arena& ) = 0;
+    virtual void		    UploadMeshes( atomic_u64*, std::span<const mesh_upload_req>, void*, linear_arena& ) = 0;
     virtual void		    HostFrames( const frame_data&, linear_arena&, gpu_data& ) = 0;
     virtual std::span<u8>   GetDmaBuffer() = 0;
 };

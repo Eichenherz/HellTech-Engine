@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HT_SLOT_ARRAY_H__
-#define __HT_SLOT_ARRAY_H__
+#ifndef HT_SLOT_ARRAY_H
+#define HT_SLOT_ARRAY_H
 
 #include <ht_core_types.h>
 #include <ht_error.h>
@@ -15,7 +15,6 @@
 constexpr u64   HT_SLOT_BIT_WIDTH_MAX_IDX   = 20;
 constexpr u64   HT_SLOT_BIT_WIDTH_MAX_GENS  = 11;
 
-constexpr u64   HT_SLOT_MAX_ENTRIES         = 1ull << HT_SLOT_BIT_WIDTH_MAX_IDX;
 constexpr u32   HT_SLOT_MAX_GEN             = ( 1ull << HT_SLOT_BIT_WIDTH_MAX_GENS ) - 1;
 
 using ht_freelist_cursor = u32;
@@ -31,37 +30,48 @@ struct ht_array_slot_t
     };
 };
 
-template<TRIVIAL_T T, typename ARRAY_T> requires std::same_as<typename ARRAY_T::value_type, ht_array_slot_t<T>>
+template<typename T>
+struct hndl32
+{
+    static constexpr u64 MAX_ENTRIES = 1ull << HT_SLOT_BIT_WIDTH_MAX_IDX;
+
+    u32 slotIdx     : HT_SLOT_BIT_WIDTH_MAX_IDX;
+    u32 generation  : HT_SLOT_BIT_WIDTH_MAX_GENS;
+    u32 inUse       : 1;
+
+    auto operator<=>( const hndl32& ) const = default;
+};
+
+template<typename ARRAY_T>
 struct slot_array : ARRAY_T
 {
-    using ARRAY_T::ARRAY_T;
-
-    struct hndl32
-    {
-        u32 slotIdx    : HT_SLOT_BIT_WIDTH_MAX_IDX;
-        u32 generation : HT_SLOT_BIT_WIDTH_MAX_GENS;
-        u32 padding    : 1;
-    };
+    using T = decltype( ARRAY_T::value_type::item );
+    using hndl_t = hndl32<T>;
 
     ht_freelist_cursor  freelistHead = ~0u;
 
-    auto&   operator[]( this auto&& self, hndl32 h )
+    slot_array() = default;
+
+    slot_array( ARRAY_T arr ) : ARRAY_T{ arr } { HT_ASSERT( this->capacity() <= hndl_t::MAX_ENTRIES ); }
+
+    auto&   operator[]( this auto&& self, const hndl_t h )
     {
+        HT_ASSERT( h.inUse );
         HT_ASSERT( h.slotIdx < std::size( self ) );
 
         auto& slot = std::data( self )[ h.slotIdx ];
         HT_ASSERT( slot.hasItem );
-        HT_ASSERT( slot.generation == h.generation );
+        HT_ASSERT( h.generation == slot.generation );
 
         return slot.item;
     }
 
-    hndl32  push_entry( this auto&& self, const T& val )
+    hndl_t  push_entry( this auto&& self, const T& val )
     {
         if( ~0u == self.freelistHead )
         {
             auto& newSlot = self.push_back( { .hasItem = true, .item = val } );
-            return hndl32{ .slotIdx = u32( &newSlot - std::data( self ) ), .generation = newSlot.generation };
+            return { .slotIdx = u32( &newSlot - std::data( self ) ), .generation = newSlot.generation, .inUse = 1 };
         }
 
         u32     currentFreeSlotIdx  = self.freelistHead;
@@ -71,19 +81,14 @@ struct slot_array : ARRAY_T
         self.freelistHead   = currentFreeSlot.nextFree;
         currentFreeSlot     = { .generation = currentFreeSlot.generation, .hasItem = true, .item = val };
 
-        return hndl32{ .slotIdx = currentFreeSlotIdx, .generation = currentFreeSlot.generation };
+        return { .slotIdx = currentFreeSlotIdx, .generation = currentFreeSlot.generation, .inUse = 1 };
     }
 
-    T       remove_entry( this auto&& self, hndl32 h )
+    T       remove_entry( this auto&& self, hndl_t h )
     {
-        HT_ASSERT( h.slotIdx < std::size( self ) );
+        T removedItem = self.slot_array::operator[]( h );
 
         auto& slot = std::data( self )[ h.slotIdx ];
-        HT_ASSERT( slot.hasItem );
-        HT_ASSERT( slot.generation == h.generation );
-
-        T removedItem = slot.item;
-
         HT_ASSERT( ( slot.generation + 1 ) < HT_SLOT_MAX_GEN );
 
         slot = { .generation = slot.generation + 1, .hasItem = false, .nextFree = self.freelistHead };
@@ -94,16 +99,13 @@ struct slot_array : ARRAY_T
 };
 
 template<TRIVIAL_T T>
-using virtual_slot_array    = slot_array<T, virtual_array<ht_array_slot_t<T>>>;
-
-template<TRIVIAL_T T, arena_t ARENA_T = linear_arena>
-using arena_slot_array      = slot_array<T, arena_array<ht_array_slot_t<T>, ARENA_T>>;
+using virtual_slot_array    = slot_array<virtual_array<ht_array_slot_t<T>>>;
 
 template<TRIVIAL_T T>
-using borrowed_slot_array   = slot_array<T, borrowed_array<ht_array_slot_t<T>>>;
+using borrowed_slot_array   = slot_array<borrowed_array<ht_array_slot_t<T>>>;
 
 template<TRIVIAL_T T, u64 N>
-using inline_slot_array     = slot_array<T, inline_array<ht_array_slot_t<T>, N>>;
+using inline_slot_array     = slot_array<inline_array<ht_array_slot_t<T>, N>>;
 
 template<typename...> struct ht_no_item {};
 
@@ -111,7 +113,7 @@ template<TRIVIAL_T... COMP_T>
 struct soa_slot_array : borrowed_slot_array<ht_no_item<COMP_T...>>
 {
     using slot_array_t  = borrowed_slot_array<ht_no_item<COMP_T...>>;
-    using hndl32        = slot_array_t::hndl32;
+    using hndl_t        = slot_array_t::hndl_t;
 
     std::tuple<std::span<COMP_T>...> components;
 
@@ -121,24 +123,22 @@ struct soa_slot_array : borrowed_slot_array<ht_no_item<COMP_T...>>
         slot_array_t{ ArenaNewArray<typename slot_array_t::value_type>( arena, slotCount ) },
         components{ ArenaNewArray<COMP_T>( arena, slotCount )... } {}
 
-    hndl32  push_entry( this auto&& self, const COMP_T&... vals )
+    hndl_t  push_entry( this auto&& self, const COMP_T&... vals )
     {
-        hndl32 h = self.slot_array_t::push_entry( {} );
+        hndl_t h = self.slot_array_t::push_entry( {} );
         ( ( std::get<std::span<COMP_T>>( self.components )[ h.slotIdx ] = vals ), ... );
         return h;
     }
 
-    template<typename T>
-    auto&   get( this auto&& self, hndl32 h )
+    template<TRIVIAL_T T>
+    auto&   get( this auto&& self, hndl_t h )
     {
         self.slot_array_t::operator[]( h );
         return std::get<std::span<T>>( self.components )[ h.slotIdx ];
     }
 
-    template<typename T>
+    template<TRIVIAL_T T>
     auto    get( this auto&& self ) { return std::get<std::span<T>>( self.components ).first( std::size( self ) ); }
-    
-    void    remove_entry( this auto&& self, hndl32 h ) { self.slot_array_t::remove_entry( h ); }
 };
 
-#endif // !__HT_SLOT_ARRAY_H__
+#endif // !HT_SLOT_ARRAY_H

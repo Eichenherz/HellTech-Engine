@@ -100,8 +100,12 @@ struct gpu_mesh_bounds
 
 struct gpu_mesh_lod
 {
-    u64 firstMlt : 47;
-    u64 mltCount : 17;
+    u32 payloadStartInBytes; // NOTE: 4 GBs of geometry is plenty i guess
+    u32 firstMlt;
+    u32 mltCount;
+    //u64 payloadStartIn8Bytes : 27;
+    //u64 firstMlt : 21;
+    //u64 mltCount : 16;
 };
 
 struct gpu_mesh

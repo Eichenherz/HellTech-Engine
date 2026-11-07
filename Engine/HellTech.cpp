@@ -15,8 +15,6 @@
 
 #include <System/sys_io_ring.h>
 
-#include <ankerl/unordered_dense.h>
-
 
 //==================CONSTEXPR===================//
 constexpr float YAW_SIGN   = FSignOf( ht::dot( ht::cross( WORLD_UP,    WORLD_FWD ), -WORLD_LEFT ) );
@@ -164,7 +162,7 @@ inline move_cam_action GetMoveCamAction(
 
 // Job system
 job_system_ctx::job_system_ctx()
-    : queue{ ArenaNewArray<ht_job_t>( *pPersistentArena, 128 ) } {}
+    : queue{ ArenaNewArray<ht_job_t>( *pPersistentArena, 256 ) } {}
 void job_system_ctx::SubmitJob( ht_job_t job )
 {
 	HT_ASSERT( queue.TryPush( job ) );
@@ -172,33 +170,11 @@ void job_system_ctx::SubmitJob( ht_job_t job )
 }
 
 // Uploads
-struct upload_job_payload
+struct alignas( HT_CACHE_LINE_SZ ) upload_job_payload
 {
-	borrowed_array<mesh_upload_req>	meshUploads         = {};
 	std::span<const gpu_instance>   entitiesToPromote   = {};
 	atomic_u64					    hUploadDoneSignal   = ~0ull; // NOTE: bc we check it against the timeline sema
-    u64                             allocSzInBytes      = 0; // NOTE: we need this bc we are responsible for the alloc handle
 };
-
-static upload_job_payload* HtMakeUploadPayload( u64 maxMeshCap, std::span<const gpu_instance> nodesToPromote )
-{
-    constexpr u64 headerSzInBytes = sizeof( upload_job_payload );
-
-    u64 meshSzInBytes       = maxMeshCap * sizeof( mesh_upload_req );
-    u64 requestSzInBytes    = std::max( BLOCK_SZ_IN_BYTES, headerSzInBytes + meshSzInBytes );
-
-    std::span<u8> mem       = g_pVirtualAllocator->AllocVirtualBlock( requestSzInBytes, HtCurrentThreadIdx() );
-    std::span<u8> meshMem   = mem.subspan( headerSzInBytes, meshSzInBytes );
-
-    upload_job_payload* pPayload = ( upload_job_payload* ) &mem[ 0 ];
-    *pPayload = {
-        .meshUploads        = borrowed_array{ FromBytes<mesh_upload_req>( meshMem ) },
-        .entitiesToPromote  = nodesToPromote,
-        .allocSzInBytes     = std::size( mem )
-    };
-
-    return pPayload;
-}
 
 // Engine
 struct helltech final : helltech_interface
@@ -211,7 +187,7 @@ struct helltech final : helltech_interface
 	renderer_dbg_draw					rndDbgFlags		= {};
 	renderer_interface*                 pRenderer		= {};
     // NOTE: these are hard capped, we don't care to grow free the mem OS will do it for us on program exit
-    borrowed_array<instance_desc>		drawables		= {};
+    borrowed_array<gpu_instance>		drawables		= {};
 	borrowed_array<upload_job_payload*> jobCache		= {};
 
 	borrowed_array<ht_timed_zone>		timedZones		= {};
@@ -337,7 +313,7 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     imGuiCtx = im_gui_ctx{ width, height };
 
     // NOTE: arbitrary sized for now
-    drawables       = borrowed_array{ ArenaNewArray<instance_desc>( *pGameArena, 10'000 ) };
+    drawables       = borrowed_array{ ArenaNewArray<gpu_instance>( *pGameArena, 10'000 ) };
     jobCache        = borrowed_array{ ArenaNewArray<upload_job_payload*>( *pGameArena, 1'000 ) };
     timedZones      = borrowed_array{ ArenaNewArray<ht_timed_zone>( *pDebugArena, 256 ) };
     pipelinesStats  = borrowed_array{ ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
@@ -392,25 +368,20 @@ void helltech::UploadAssets( linear_arena& scratchpadArena )
 
     std::span<const gpu_instance> nodes = gpuInstSpan.subspan( mostBytesSec.firstNodeIdx, mostBytesSec.nodeCount );
 
-    // TODO: use our own
-    ankerl::unordered_dense::set<u64> uniqueMeshes;
-    for( const gpu_instance& n : nodes )
-    {
-        uniqueMeshes.emplace( n.meshIdx );
-    }
-
-    upload_job_payload* pPayload = HtMakeUploadPayload( std::size( uniqueMeshes ), nodes );
-    for( const hpk_mesh_desc& meshDesc : ht::permuted_view( meshDescSpan, uniqueMeshes ) )
-    {
-        pPayload->meshUploads.push_back( { .hSlot = pRenderer->AllocMeshSlot( meshDesc ) } );
-    }
-
-    jobCache.push_back( pPayload );
+    jobCache.push_back( ArenaNew<upload_job_payload>( *pPersistentArena ) );
 
     g_pJobSys->SubmitJob( [ pJob = jobCache.back(), pRI = pRenderer, diskAssetStore = diskAssetStore,
-        meshletOffsetFile = meshletOffsetFile ]( linear_arena* arena )
+       nodes = nodes, meshDescSpan = meshDescSpan ]( linear_arena* arena )
     {
-        pRI->UploadMeshes( &pJob->hUploadDoneSignal, pJob->meshUploads, diskAssetStore, meshletOffsetFile, *arena );
+        auto memScope = scoped_arena{ *arena };
+
+        std::span<mesh_upload_req> meshUploads = ArenaNewArray<mesh_upload_req>( *arena, std::size( nodes ) );
+        for( auto[ node, req ] : std::views::zip( nodes, meshUploads ) )
+        {
+            req = { .hpkMesh = meshDescSpan[ node.meshIdx ], .meshID = node.meshIdx };
+        }
+
+        pRI->UploadMeshes( &pJob->hUploadDoneSignal, meshUploads, diskAssetStore, *arena );
     } );
 
 }
@@ -485,10 +456,10 @@ void helltech::RunLoop( double elapsedTime, bool isRunning, linear_arena& scratc
 		upload_job_payload* pPayload = jobCache[ 0 ];
 		if( pRenderer->PollJobCompletion( &pPayload->hUploadDoneSignal ) )
 		{
-			//drawables.append_range( pPayload->entitiesToPromote );
+			drawables.append_range( pPayload->entitiesToPromote );
 		    jobCache.pop_back();
 
-		    g_pVirtualAllocator->FreeVirtualBlock( { ( u8* ) pPayload, pPayload->allocSzInBytes } );
+		    //g_pVirtualAllocator->FreeVirtualBlock( { ( u8* ) pPayload, pPayload->allocSzInBytes } );
 		}
 	}
 

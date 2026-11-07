@@ -123,6 +123,18 @@ std::span<T> ArenaNewArray( arena_t auto& arena, u64 elemCount )
 	return { new ( arena.Alloc( sizeof( T ) * elemCount, alignof( T ) ) ) T[ elemCount ], elemCount };
 }
 
+template<typename T>
+std::span<T> ArenaNewArray( arena_t auto& arena, u64 elemCount, auto&& PfnCtor )
+{
+    // NOTE: this doesn't run ctors
+    std::span<T> array = { ( T* ) arena.Alloc( sizeof( T ) * elemCount, alignof( T ) ), elemCount };
+    for( T& elem : array )
+    {
+        new ( &elem ) T{ PfnCtor() };
+    }
+    return array;
+}
+
 // TODO: fold into scoped_arena
 template<arena_t Arena>
 struct ht_mem_scope

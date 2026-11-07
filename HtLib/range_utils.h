@@ -3,40 +3,10 @@
 
 #include <ht_core_types.h>
 #include <ht_error.h>
-#include <ht_utils.h>
 
 #include <algorithm>
 #include <ranges>
 #include <numeric>
-
-template<typename T>
-struct typed_view
-{
-	static constexpr u32 STRIDE = sizeof( T );
-
-	const T*	ptr = nullptr;
-	u64			count = 0;
-
-	constexpr const T* data()  const { return ptr; }
-	constexpr u64      size()  const { return count; }
-	constexpr const T* begin() const { return ptr; }
-	constexpr const T* end()   const { return ptr + count; }
-	
-	constexpr const T& operator[]( u64 i ) const
-	{
-		HT_ASSERT( i < count );
-		return ptr[ i ];
-	}
-};
-
-using byte_view = typed_view<u8>;
-
-template<typename T>
-byte_view AsBytes( typed_view<T> v )
-{
-	static_assert( std::is_trivially_copyable_v<T> );
-	return { ( const u8* ) std::data( v ), ( u32 ) std::size( v ) * sizeof( T ) };
-}
 
 template<typename T, u64 Extent>
 std::span<const u8> AsBytes( std::span<T, Extent> s )
@@ -56,32 +26,6 @@ std::span<T> FromBytes( std::span<u8, Extent> s )
 {
     HT_ASSERT( 0 == ( ( u64 ) std::data( s ) % alignof( T ) ) );
     return { ( T* ) std::data( s ), std::size( s ) / sizeof( T ) };
-}
-
-template<typename T>
-typed_view<T> MakeTypedView( std::span<const T> s )
-{
-	return { std::data( s ), ( u32 ) std::size( s ) };
-}
-
-template<typename T>
-typed_view<T> MakeTypedView( const u8* pData, u64 sizeInBytes )
-{
-	return { ( const T* ) pData, sizeInBytes / sizeof( T ) };
-}
-
-template<std::ranges::contiguous_range R>
-byte_view MakeByteView( const R& r )
-{
-	using T = std::ranges::range_value_t<R>;
-
-	static_assert( std::is_trivially_copyable_v<T> );
-	return { ( const u8* ) std::data( r ), ( u32 ) std::size( r ) * sizeof( T ) };
-}
-
-inline byte_view MakeByteView( const u8* pData, u64 sizeInBytes )
-{
-	return { pData, sizeInBytes };
 }
 
 constexpr bool ByteEqual( const std::ranges::contiguous_range auto& a, const std::ranges::contiguous_range auto& b )
@@ -148,18 +92,6 @@ template<std::ranges::contiguous_range R>
 std::span<const u8> AsBytes( const R& r )
 {
     return { ( const u8* ) std::ranges::data( r ), HtRangeSizeInBytes( r ) };
-}
-
-template<TRIVIAL_T U>
-auto HtMemCompact( std::span<U> prev, std::ranges::contiguous_range auto&& src )
-{
-    using T = std::ranges::range_value_t<decltype( src )>;
-
-    T* pDst = ( T* ) FwdAlignPot( u64( ht::end_ptr( prev ) ), alignof( T ) );
-    HT_ASSERT( ( const void* ) pDst <= ( const void* ) std::ranges::data( src ) );
-
-    std::memmove( pDst, std::ranges::data( src ), HtRangeSizeInBytes( src ) );
-    return std::span<T>{ pDst, std::ranges::size( src ) };
 }
 
 constexpr auto HtCopyFullRange( std::ranges::contiguous_range auto&& src, std::ranges::contiguous_range auto&& dst )

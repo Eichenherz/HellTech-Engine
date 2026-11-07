@@ -67,16 +67,17 @@ struct offset_allocator_t
 static vk_context* pVkCtx = nullptr;
 
 //====================CONSTS====================//
-constexpr u64 				MAX_FIF					        = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
+constexpr u64 				MAX_FIF	                = vk_renderer_config::MAX_FRAMES_IN_FLIGHT_ALLOWED;
 
-constexpr u64 				MAX_INSTANCES_IN_SCENE	        = 5'000'000;
-constexpr u64               MAX_MESHES_IN_SCENE             = 600'000;
-constexpr u64 				MAX_MESHLETS_IN_SCENE	        = 10'000'000;
-constexpr u64 				MAX_TRIANGLES_IN_SCENE	        = MAX_MESHLETS_IN_SCENE * MAX_TRIS_PER_MLT;
-constexpr u64 				MAX_VERTICES_IN_SCENE	        = MAX_MESHLETS_IN_SCENE * MAX_VTX_PER_MLT;
+// TODO: don't guess and actually get these numbers form the data; sure some of the numbers are gonna come off measurements
+constexpr u64               MAX_PAYLOAD_SZ_IN_BYTES = 900 * MB;
+constexpr u64               MAX_INSTANCES_IN_SCENE  = 1'400'000;
+constexpr u64               MAX_MESHES_IN_SCENE     = 16 << 10;
+constexpr u64               MAX_MESHES_CAP          = 64 << 10;
+constexpr u64               MAX_MESHLETS_IN_SCENE   = 1'200'000;
 
-constexpr VkCullModeFlags	HT_CULL_MODE			        = IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
-constexpr VkFrontFace		HT_FRONT_FACE			        = IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+constexpr VkCullModeFlags	HT_CULL_MODE            = IS_WORLD_RH ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
+constexpr VkFrontFace		HT_FRONT_FACE           = IS_WORLD_RH ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
 //==============================================//
 // TODO: cvars
 //====================CVARS=====================//
@@ -202,12 +203,12 @@ static ht_gpu_frame_profiler HtMakeGpuFrameProfiler()
 	};
 }
 
-static u32                                          globalCurrentFifIdx         = 0;
-static std::array<ht_gpu_frame_profiler, MAX_FIF>   globalHtGpuFrameProfiler    = {};
+static u32                                          g_CurrentFifIdx         = 0;
+static std::array<ht_gpu_frame_profiler, MAX_FIF>   g_HtGpuFrameProfiler    = {};
 
 HT_FORCEINLINE ht_gpu_frame_profiler *const HtGetGpuFrameProfiler()
 {
-	return &globalHtGpuFrameProfiler[ globalCurrentFifIdx ];
+	return &g_HtGpuFrameProfiler[ g_CurrentFifIdx ];
 }
 
 #define HT_TIMED_ZONE( cmdBuff, name, code )										 \
@@ -1716,9 +1717,8 @@ struct ht_lod_alloc
     offset_alloc_t payload;
 };
 
-struct ht_mesh_alloc_t
+struct ht_mesh_alloc
 {
-    hpk_mesh_desc   mesh        = {};
     ht_lod_alloc    hLodAllocs[ MAX_LOD_LEVELS_COUNT ] = {};
     u32             meshID      = -1;
     u32             refCount    = 0;
@@ -1727,69 +1727,70 @@ struct ht_mesh_alloc_t
 struct virtual_frame
 {
 	VkSemaphore                 canGetImgSema;
+
 	vk_buffer	                viewData;
-
-	vk_buffer					gpuMeshBoundsBuff;
-	vk_buffer                   gpuMeshResidencyTable;
-
+	vk_buffer                   gpuMeshRefs; // NOTE: this does the gpuMeshRefs[ node.meshId ] -----> meshDesc
+    vk_buffer                   gpuMeshTable;
 	vk_buffer                   gpuInstances;
 
 	desc_hndl32                 viewDataIdx;
-	desc_hndl32					gpuMeshBoundsDesc;
-    desc_hndl32					gpuMeshResidencyTableDesc;
-
+    desc_hndl32					gpuMeshTableDesc;
 	desc_hndl32                 instDesc;
 };
 
-static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
-{
+static virtual_frame MakeVirtualFrame(
+    u64 viewsCount,
+    u64 maxMeshes,
+    u64 maxLiveMeshes,
+    u64 instCount,
+    u32 fifIdx
+) {
 	fixed_string<64> name = { "Buff_VirtualFrame_ViewBuff{}", fifIdx };
 
 	vk_buffer viewData = pVkCtx->CreateBuffer( {
 		.name		= &name[ 0 ],
 		.usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
-		.szInBytes	= sizeInBytes,
+		.szInBytes	= viewsCount * sizeof( view_data ),
 		.memProps	= buffer_mem_props::HOST_VISIBLE
 	} );
 
-	constexpr u64 DEFAULT_MESH_TABLE_SIZE = 1024;
-	fixed_string<64> meshBoundsName = { "Buff_VirtualFrame_MeshBounds{}", fifIdx };
-    fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshResidencyTable{}", fifIdx };
+    fixed_string<64> meshRefsName = { "Buff_VirtualFrame_MeshRefs{}", fifIdx };
 
-    vk_buffer gpuMeshBoundsBuff = pVkCtx->CreateBuffer( {
-        .name		= &meshBoundsName[ 0 ],
+	vk_buffer gpuMeshRefs = pVkCtx->CreateBuffer( {
+		.name		= &meshRefsName[ 0 ],
+		.usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
+		.szInBytes	= maxMeshes * sizeof( u32 ), // NOTE: should be plenty for any work size
+		.memProps	= buffer_mem_props::HOST_VISIBLE
+	} );
+
+    fixed_string<64> meshTableName = { "Buff_VirtualFrame_MeshTable{}", fifIdx };
+
+    vk_buffer gpuMeshTable = pVkCtx->CreateBuffer( {
+        .name		= &meshTableName[ 0 ],
         .usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
-        .szInBytes	= DEFAULT_MESH_TABLE_SIZE * sizeof( gpu_mesh_bounds ),
+        .szInBytes	= maxLiveMeshes * sizeof( gpu_lodded_mesh ),
         .memProps	= buffer_mem_props::HOST_VISIBLE
     } );
 
-	vk_buffer gpuMeshResidencyTable = pVkCtx->CreateBuffer( {
-		.name		= &meshTableName[ 0 ],
-		.usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
-		.szInBytes	= DEFAULT_MESH_TABLE_SIZE,
-		.memProps	= buffer_mem_props::HOST_VISIBLE
-	} );
-
-	constexpr u64 DEFAULT_INST_COUNT = 10'000;
 	fixed_string<64> instName = { "Buff_VirtualFrame_Instances{}", fifIdx };
 
 	vk_buffer gpuInstances = pVkCtx->CreateBuffer( {
 		.name		= &instName[ 0 ],
 		.usageFlags	= buffer_usage::STORAGE | buffer_usage::BDA,
-		.szInBytes	= DEFAULT_INST_COUNT * sizeof( instance_desc ),
+		.szInBytes	= instCount * sizeof( gpu_instance ),
 		.memProps	= buffer_mem_props::HOST_VISIBLE
 	} );
 
 	return {
-		.canGetImgSema		        = pVkCtx->CreateBinarySemaphore(),
-		.viewData			        = viewData,
-		.gpuMeshBoundsBuff		    = gpuMeshBoundsBuff,
-	    .gpuMeshResidencyTable      = gpuMeshResidencyTable,
-		.gpuInstances		        = gpuInstances,
-		.viewDataIdx		        = pVkCtx->AllocDescriptorIdx( viewData ),
-		.gpuMeshBoundsDesc	        = pVkCtx->AllocDescriptorIdx( gpuMeshBoundsBuff ),
-	    .gpuMeshResidencyTableDesc  = pVkCtx->AllocDescriptorIdx( gpuMeshResidencyTable ),
-		.instDesc			        = pVkCtx->AllocDescriptorIdx( gpuInstances )
+		.canGetImgSema		= pVkCtx->CreateBinarySemaphore(),
+		.viewData			= viewData,
+	    .gpuMeshRefs        = gpuMeshRefs,
+	    .gpuMeshTable       = gpuMeshTable,
+		.gpuInstances		= gpuInstances,
+
+		.viewDataIdx		= pVkCtx->AllocDescriptorIdx( viewData ),
+	    .gpuMeshTableDesc   = pVkCtx->AllocDescriptorIdx( gpuMeshTable ),
+		.instDesc		    = pVkCtx->AllocDescriptorIdx( gpuInstances )
 	};
 }
 
@@ -1800,54 +1801,55 @@ static virtual_frame MakeVirtualFrame( u64 sizeInBytes, u32 fifIdx )
 // but the engine only issues the available instances and only valid data is accessed.
 struct renderer_context final : renderer_interface
 {
-	alignas( 8 ) vk_renderer_config         config = {};
+	alignas( 8 ) vk_renderer_config                 config = {};
 
-	culling_pass							cullingPass;
-	imgui_pass								imguiPass;
-	depth_pyramid_pass						hzbPass;
-	tone_mapping_pass						tonemappingPass;
-	debug_draw_passes						dbgPass;
-	vbuffer_pass							vBuffPass;
-	fwd_pass								fwdPass;
+	culling_pass							        cullingPass;
+	imgui_pass								        imguiPass;
+	depth_pyramid_pass						        hzbPass;
+	tone_mapping_pass						        tonemappingPass;
+	debug_draw_passes						        dbgPass;
+	vbuffer_pass							        vBuffPass;
+	fwd_pass								        fwdPass;
 
-	virtual_slot_array<ht_mesh_alloc_t>     meshResidencyTable;
-    using HMESH32 = decltype( meshResidencyTable )::hndl32;
+	soa_slot_array<ht_mesh_alloc, gpu_lodded_mesh>  meshTable;
+    using HMESH32 = decltype( meshTable )::hndl_t;
 
-	std::array<virtual_frame, MAX_FIF>	    vrtFrames;
+    std::span<HMESH32>                              cpuMeshRefs;
 
-	vk_buffer                               stagingBuff;
+	std::array<virtual_frame, MAX_FIF>	            vrtFrames;
 
-    vk_buffer                               megaGpuPayloadBuff;
-	vk_buffer                               megaGpuMeshletBuff;
+	vk_buffer                                       stagingBuff;
 
-    vk_buffer                               megaGpuVtxPosBuff;
-    vk_buffer                               megaGpuVtxAttrsBuff;
-    vk_buffer                               megaGpuIdxBuff;
+    vk_buffer                                       megaGpuPayloadBuff;
+	vk_buffer                                       megaGpuMeshletBuff;
 
-    offset_allocator_t						meshletAllocator;
-    offset_allocator_t						payloadAllocator;
+    vk_buffer                                       megaGpuVtxPosBuff;
+    vk_buffer                                       megaGpuVtxAttrsBuff;
+    vk_buffer                                       megaGpuIdxBuff;
 
-	vk_buffer								globalData;
+    offset_allocator_t						        meshletAllocator;
+    offset_allocator_t						        payloadAllocator;
 
-	vk_image								depthTarget;
-	vk_image								colorTarget;
+	vk_buffer								        globalData;
 
-	u64										vFrameIdx = 0;
+	vk_image								        depthTarget;
+	vk_image								        colorTarget;
 
-	VkSampler								pbrSampler;
-	desc_hndl32								pbrSamplerIdx;
+	u64										        vFrameIdx = 0;
 
-	desc_hndl32								globalDataIdx;
+	VkSampler								        pbrSampler;
+	desc_hndl32								        pbrSamplerIdx;
 
-	desc_hndl32								depthSrv;
-	desc_hndl32								colorDesc;
+	desc_hndl32								        globalDataIdx;
 
-	const u32								framesInFlight = MAX_FIF;
+	desc_hndl32								        depthSrv;
+	desc_hndl32								        colorDesc;
+
+	const u32								        framesInFlight = MAX_FIF;
 
 
 	void            InitBackend( u64 hInst, u64 hWnd ) override;
 
-	HRNDMESH32      AllocMeshSlot( const hpk_mesh_desc& mesh ) override;
 	bool            PollJobCompletion( atomic_u64* hJobDoneSignal ) override
 	{
 	    // TODO: don't hardcode like this; but we know the upload flow here sooooo
@@ -1858,13 +1860,22 @@ struct renderer_context final : renderer_interface
 	        SysAtomicRead64<sys_fence_t::ACQ>( hJobDoneSignal );
 	}
 	void            UploadMeshes( atomic_u64* hJobDoneSignal, std::span<const mesh_upload_req> meshAssets,
-	                                void* diskAssetStore, u64 fileMltsOffset, linear_arena& arena ) override;
+	                                void* diskAssetStore, linear_arena& arena ) override;
 
 	void            HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData ) override;
 
     std::span<u8>   GetDmaBuffer() override { return VkBufferHostView<u8>( stagingBuff ); }
 
-	u32             UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData ); /* numValidInstances */
+	u32             UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData ) /* numValidInstances */
+    {
+	    std::ranges::copy( frameData.views, ( view_data* ) thisVFrame.viewData.hostVisible );
+	    std::ranges::copy( meshTable.get<gpu_lodded_mesh>(), ( gpu_lodded_mesh* ) thisVFrame.gpuMeshTable.hostVisible );
+	    std::ranges::copy( cpuMeshRefs, ( HMESH32* ) thisVFrame.gpuMeshRefs.hostVisible );
+	    std::ranges::copy( frameData.instances, ( gpu_instance* ) thisVFrame.gpuInstances.hostVisible );
+
+	    return 0; //( u32 ) std::size( frameData.instances );
+    }
+
 	void            CreateGlobalTargets( u16 width, u16 height )
 	{
 		depthTarget = pVkCtx->CreateImage( {
@@ -1919,6 +1930,14 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 	imguiPass = MakeImguiPass( pVkCtx->scConfig.format );
 
+    meshTable = decltype( meshTable ){ *pGameArena, MAX_MESHES_IN_SCENE };
+    static_assert( ( 1 << HT_SLOT_BIT_WIDTH_MAX_IDX ) > MAX_MESHES_IN_SCENE );
+
+    // NOTE: this serves as a CPU dupe for our mesh refs;  u32 idxOfMeshDesc = meshRefs[ node.meshID ];
+    cpuMeshRefs = ArenaNewArray<HMESH32>( *pGameArena, MAX_MESHES_CAP );
+    std::ranges::fill( cpuMeshRefs, HMESH32{} );
+
+
 	stagingBuff = pVkCtx->CreateBuffer( {
 		.name		    = "StagingBuff",
 		.usageFlags	    = buffer_usage::XFER_SRC,
@@ -1931,7 +1950,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
         .name			= "MegaGpuPayloadBuff",
         .usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA | buffer_usage::INDEX,
         .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-        .szInBytes	    = 3 * 128 * MB,
+        .szInBytes	    = MAX_PAYLOAD_SZ_IN_BYTES,
         .memProps		= buffer_mem_props::GPU_ONLY,
     } );
 
@@ -1939,7 +1958,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 		.name			= "MegaGpuMeshletBuff",
 		.usageFlags		= buffer_usage::STORAGE | buffer_usage::XFER_DST | buffer_usage::BDA,
 	    .sharingMode    = VK_SHARING_MODE_CONCURRENT,
-		.szInBytes	    = 256 * KB * sizeof( gpu_meshlet ),
+		.szInBytes	    = MAX_MESHLETS_IN_SCENE * sizeof( gpu_meshlet ),
 		.memProps		= buffer_mem_props::GPU_ONLY,
 	} );
 
@@ -1967,15 +1986,27 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 	for( u32 fifIdx = 0; fifIdx < MAX_FIF; ++fifIdx )
 	{
-		vrtFrames[ fifIdx ]                 = MakeVirtualFrame( 4 * sizeof( view_data ), fifIdx );
-		globalHtGpuFrameProfiler[ fifIdx ]  = HtMakeGpuFrameProfiler();
+		vrtFrames[ fifIdx ] = MakeVirtualFrame( 4, MAX_MESHES_CAP,
+		    MAX_MESHES_IN_SCENE, MAX_INSTANCES_IN_SCENE, fifIdx );
+		g_HtGpuFrameProfiler[ fifIdx ] = HtMakeGpuFrameProfiler();
 	}
-
-    meshResidencyTable = virtual_slot_array<ht_mesh_alloc_t>{ { 1 * GB } };
 }
 
-HRNDMESH32 renderer_context::AllocMeshSlot( const hpk_mesh_desc& mesh )
-{
+// NOTE: we are keeping all baked stuff relative so now, when uploading, we assign new offsets at the lod level
+void renderer_context::UploadMeshes(
+	atomic_u64*					        hJobDoneSignal,
+	std::span<const mesh_upload_req>	meshUploadReqs,
+	void*                               diskAssetStore,
+	linear_arena&						arena
+) {
+	auto    tempArena       = scoped_arena{ arena };
+
+	auto    stagingArray    = borrowed_array{ FromBytes<ht_disk_sector>( GetDmaBuffer() ) };
+
+    u64     uploadsCount    = MAX_LOD_LEVELS_COUNT * std::size( meshUploadReqs );
+	auto    mltRegionCopies = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, uploadsCount ) };
+    auto    pldRegionCopies = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, uploadsCount ) };
+
     auto LmbdLodAlloc = [ & ] ( const hpk_lod_desc& lod ) -> ht_lod_alloc
     {
         if( 0 == lod.mltCount ) return {};
@@ -1991,60 +2022,74 @@ HRNDMESH32 renderer_context::AllocMeshSlot( const hpk_mesh_desc& mesh )
         return lodAlloc;
     };
 
-    const ht_mesh_alloc_t meshAlloc = {
-        .mesh       = mesh,
-        .hLodAllocs = {
-            LmbdLodAlloc( mesh.lods[ 0 ] ),
-            LmbdLodAlloc( mesh.lods[ 1 ] ),
-            LmbdLodAlloc( mesh.lods[ 2 ] ),
-            LmbdLodAlloc( mesh.lods[ 3 ] )
-        },
-        .refCount = 1
-    };
-
-    return std::bit_cast<u32>( meshResidencyTable.push_entry( meshAlloc ) );
-}
-
-void renderer_context::UploadMeshes(
-	atomic_u64*					        hJobDoneSignal,
-	std::span<const mesh_upload_req>	meshUploadReqs,
-	void*                               diskAssetStore,
-	u64                                 fileMltsOffset,
-	linear_arena&						arena
-) {
-	auto tempArena          = scoped_arena{ arena };
-
-	auto stagingArr         = borrowed_array{ VkBufferHostView<ht_disk_sector>( stagingBuff ) };
-
-    u64     uploadsCount    = MAX_LOD_LEVELS_COUNT * std::size( meshUploadReqs );
-	auto mltRegionCopies    = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, uploadsCount ) };
-    auto pldRegionCopies    = borrowed_array{ ArenaNewArray<VkBufferCopy2>( tempArena, uploadsCount ) };
-
 	auto LmbdCopyScaffolding = [ & ] ( u64 offset, u64 szBytes, u64 dstOffset ) -> VkBufferCopy2
     {
-	    constexpr u64 SEC_ALIGNMENT = alignof( decltype( stagingArr )::value_type );
+	    constexpr u64 SEC_ALIGNMENT = alignof( decltype( stagingArray )::value_type );
 
 	    u64 secCount = ( offset % SEC_ALIGNMENT + szBytes + SEC_ALIGNMENT - 1 ) / SEC_ALIGNMENT;
-	    u64 firstSec = stagingArr.grow_by( secCount );
+	    u64 firstSec = stagingArray.grow_by( secCount );
 
 	    std::span<u8> srcMltSpan = SysFileRawReadNBytesBlocking( diskAssetStore, offset, szBytes,
-	        AsBytesWritable( std::span{ &stagingArr[ firstSec ], secCount } ) );
+	        AsBytesWritable( std::span{ &stagingArray[ firstSec ], secCount } ) );
 
-		return MakeVkBufferCopy2( &srcMltSpan[ 0 ] - ( u8* ) &stagingArr[ 0 ], dstOffset, szBytes );
+		return MakeVkBufferCopy2( &srcMltSpan[ 0 ] - ( u8* ) &stagingArray[ 0 ], dstOffset, szBytes );
 	};
 
-	for( const mesh_upload_req& meshUpload : meshUploadReqs )
+	for( const auto&[ hpkMesh, meshID ] : meshUploadReqs )
 	{
-		const ht_mesh_alloc_t& htMesh = meshResidencyTable[ std::bit_cast<HMESH32>( meshUpload.hSlot ) ];
-
-	    for( const auto[ lod, hLodAlloc ] : std::views::zip( htMesh.mesh.lods, htMesh.hLodAllocs ) )
+	    if( HMESH32{} != cpuMeshRefs[ meshID ] )
 	    {
-	        if( 0 == lod.mltCount ) break; // NOTE: in this scheme 0 means end-of LOD chain
+	        auto& refHtMeshAlloc = meshTable.get<ht_mesh_alloc>( cpuMeshRefs[ meshID ] );
+	        refHtMeshAlloc.refCount++;
+	        continue;
+	    }
 
-	        mltRegionCopies.push_back( LmbdCopyScaffolding( fileMltsOffset + lod.firstMlt * sizeof( gpu_meshlet ),
-	            lod.mltCount * sizeof( gpu_meshlet ), hLodAlloc.meshlets.offset ) );
-	        pldRegionCopies.push_back( LmbdCopyScaffolding( lod.payloadBeg, lod.payloadSize,
-	            hLodAlloc.payload.offset ) );
+	    ht_mesh_alloc meshAlloc = {
+	        .hLodAllocs = {
+	            LmbdLodAlloc( hpkMesh.lods[ 0 ] ), LmbdLodAlloc( hpkMesh.lods[ 1 ] ),
+                LmbdLodAlloc( hpkMesh.lods[ 2 ] ), LmbdLodAlloc( hpkMesh.lods[ 3 ] )
+            },
+            .refCount = 1
+        };
+
+	    gpu_lodded_mesh meshWLODs = {
+	        .lod4Err    = hpkMesh.lodErrs,
+            .aabbMin    = hpkMesh.aabbMin,
+            .aabbMax    = hpkMesh.aabbMax,
+            .lods       = {
+                gpu_mesh_lod{
+                    .payloadStartInBytes    = meshAlloc.hLodAllocs[ 0 ].payload.offset,
+                    .firstMlt               = meshAlloc.hLodAllocs[ 0 ].meshlets.offset / ( u32 ) sizeof( gpu_meshlet ),
+                    .mltCount               = ( u32 ) hpkMesh.lods[ 0 ].mltCount
+                },
+                gpu_mesh_lod{
+                    .payloadStartInBytes    = meshAlloc.hLodAllocs[ 1 ].payload.offset,
+                    .firstMlt               = meshAlloc.hLodAllocs[ 1 ].meshlets.offset / ( u32 ) sizeof( gpu_meshlet ),
+                    .mltCount               = ( u32 ) hpkMesh.lods[ 1 ].mltCount
+                },
+                gpu_mesh_lod{
+                    .payloadStartInBytes    = meshAlloc.hLodAllocs[ 2 ].payload.offset,
+                    .firstMlt               = meshAlloc.hLodAllocs[ 2 ].meshlets.offset / ( u32 ) sizeof( gpu_meshlet ),
+                    .mltCount               = ( u32 ) hpkMesh.lods[ 2 ].mltCount
+                },
+                gpu_mesh_lod{
+                    .payloadStartInBytes    = meshAlloc.hLodAllocs[ 3 ].payload.offset,
+                    .firstMlt               = meshAlloc.hLodAllocs[ 3 ].meshlets.offset / ( u32 ) sizeof( gpu_meshlet ),
+                    .mltCount               = ( u32 ) hpkMesh.lods[ 3 ].mltCount
+                }
+            }
+	    };
+
+	    cpuMeshRefs[ meshID ] = meshTable.push_entry( meshAlloc, meshWLODs );
+
+	    for( const auto[ hpkLod, hLodAlloc ] : std::views::zip( hpkMesh.lods, meshAlloc.hLodAllocs ) )
+	    {
+	        if( 0 == hpkLod.mltCount ) break; // NOTE: in this scheme 0 means end-of LOD chain
+
+	        mltRegionCopies.push_back( LmbdCopyScaffolding( hpkLod.firstMltOffestInBytes,
+                hpkLod.mltCount * sizeof( gpu_meshlet ), hLodAlloc.meshlets.offset ) );
+	        pldRegionCopies.push_back( LmbdCopyScaffolding( hpkLod.payloadBeginInBytes,
+	            hpkLod.payloadSize, hLodAlloc.payload.offset ) );
 	    }
 	}
 
@@ -2060,29 +2105,6 @@ void renderer_context::UploadMeshes(
 	SysAtomicWrite64<sys_fence_t::REL>( hJobDoneSignal, pVkCtx->QueueSubmit( pVkCtx->copyQueue, copyCmdBuff ) );
 }
 
-u32 renderer_context::UpdateSceneData( virtual_frame& thisVFrame, const frame_data& frameData )
-{
-	//HtCopyFullRange( frameData.views, VkBufferHostView<view_data>( thisVFrame.viewData ) );
-	//HtCopyFullRange( meshResidencyTable.get<gpu_mesh_bounds>(),
-	//    VkBufferHostView<gpu_mesh_bounds>( thisVFrame.gpuMeshBoundsBuff ) );
-	//HtCopyFullRange( meshResidencyTable.get<gpu_mesh_residency>(),
-	//    VkBufferHostView<gpu_mesh_residency>( thisVFrame.gpuMeshResidencyTable ) );
-//
-//
-	//borrowed_array<gpu_instance> gpuInstList = VkBufferHostView<gpu_instance>( thisVFrame.gpuInstances );
-//
-	//for( const instance_desc& sceneNode : frameData.instances )
-	//{
-	//	gpuInstList.push_back( {
-	//		.toWorld	= TrsToFloat4x3RowMaj( sceneNode.transform.t, sceneNode.transform.r, sceneNode.transform.s ),
-	//		.scale		= sceneNode.transform.s,
-	//		.meshIdx	= std::bit_cast<HMESH32>( sceneNode.meshIdx ).slotIdx
-	//	} );
-	//}
-
-	return 0; //( u32 ) std::size( gpuInstList );
-}
-
 void renderer_context::HostFrames( const frame_data& frameData, linear_arena& scratchArena, gpu_data& gpuData )
 {
 	scoped_arena tempArena              = { scratchArena };
@@ -2090,7 +2112,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 	const u64 currentFrameIdx			= vFrameIdx++;
 	const u32 currentFrameInFlightIdx	= currentFrameIdx % framesInFlight;
 
-	globalCurrentFifIdx                 = currentFrameInFlightIdx;
+	g_CurrentFifIdx                 = currentFrameInFlightIdx;
 
     HT_ASSERT( VK_TIMEOUT > pVkCtx->TimelineTryWaitFor( pVkCtx->gpuFrameTimeline, framesInFlight, ~0ull )  );
 
@@ -2153,7 +2175,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 		.dbgGpuInstCountBuff	= dbgPass.gpuInstCountBuff,
 		.instCount				= instCount,
 		.instBuffIdx			= thisVFrame.instDesc,
-		.meshTableIdx			= thisVFrame.gpuMeshBoundsDesc,
+		.meshTableIdx			= thisVFrame.gpuMeshTableDesc,
 		.viewBuffIdx			= thisVFrame.viewDataIdx,
 		.camIdx					= !frameData.dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here ?
 		.hizDesc				= hzbPass.hzbDesc,
@@ -2236,7 +2258,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 	if( !frameData.dbgDrawFlags.vBuffPixelHash )
 	{
 		vBuffPass.DbgDrawAsLamberitanClay( thisFrameCmdBuff, colorTarget, colorDesc,
-			thisVFrame.instDesc, thisVFrame.gpuMeshBoundsDesc, thisVFrame.viewDataIdx );
+			thisVFrame.instDesc, thisVFrame.gpuMeshTableDesc, thisVFrame.viewDataIdx );
 
 		// TODO: tonemapping
 	}

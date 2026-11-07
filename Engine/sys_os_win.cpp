@@ -270,8 +270,8 @@ INT32 WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
     for( thread_ctx& tctx : threadCtxArray )
     {
         tctx.scratchArenas = {
-            g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ),
-            g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 )
+            g_pVirtualAllocator->AllocVirtualBlock( 20 * MB, 0 ),
+            g_pVirtualAllocator->AllocVirtualBlock( 20 * MB, 0 )
         };
     }
     pThreadCtx	        = &threadCtxArray[ 0 ];

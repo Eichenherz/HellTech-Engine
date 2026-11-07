@@ -37,19 +37,8 @@ enum class upload_t
 
 struct mesh_upload_req
 {
-	HRNDMESH32  hSlot;
-};
-
-struct mesh_upload_resp
-{
-	HRNDMESH32	hSlot;
-};
-
-struct instance_desc
-{
-	packed_trs	transform;
-	HRNDMESH32	meshIdx;
-	u16			materialIdx;
+	hpk_mesh_desc   hpkMesh;
+    u32             meshID;
 };
 
 struct renderer_dbg_draw
@@ -68,7 +57,7 @@ struct renderer_dbg_draw
 struct frame_data
 {
 	std::span<const view_data>		views;
-	std::span<const instance_desc>	instances;
+	std::span<const gpu_instance>	instances;
 	float4x4						frustTransf;
 	float							elapsedSeconds;
 	renderer_dbg_draw				dbgDrawFlags;

@@ -60,8 +60,10 @@ endforeach()
 
 set(THIRD_PARTY "${CMAKE_SOURCE_DIR}/3rdParty")
 add_library(ThirdPartyIncludes INTERFACE)
-target_include_directories(ThirdPartyIncludes INTERFACE
+target_include_directories(ThirdPartyIncludes SYSTEM INTERFACE
     ${THIRD_PARTY}/VulkanMemoryAllocator/include
+)
+target_include_directories(ThirdPartyIncludes INTERFACE
     ${THIRD_PARTY}/imgui
     ${THIRD_PARTY}/ImGuiFileDialog
     ${THIRD_PARTY}/dds

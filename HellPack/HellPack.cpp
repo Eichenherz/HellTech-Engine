@@ -341,10 +341,10 @@ static void HpkProcessMeshesParallelJob(
                 HT_ASSERT( std::size( quantLod.meshlets ) < ( 1 << 17 ) );
 
                 lodInfo = {
-                    .firstMlt       = std::size( outMlts ),
-                    .mltCount       = std::size( quantLod.meshlets ),
-                    .payloadBeg     = currentPayloadOffset,
-                    .payloadSize    = std::size( quantLod.payload )
+                    .firstMltOffestInBytes  = BYTE_COUNT( outMlts ),
+                    .mltCount               = std::size( quantLod.meshlets ),
+                    .payloadBeginInBytes    = currentPayloadOffset,
+                    .payloadSize            = std::size( quantLod.payload )
                 };
 
                 outMlts.append_range( quantLod.meshlets );
@@ -501,13 +501,8 @@ i32 main( i32 argc, char** argv  )
                 for( hpk_mesh_desc& mesh : batch )
                 {
                     hpk_lod_desc& lod = mesh.lods[ lodIdx ];
-                    if( 0 == lod.mltCount ) continue;
-                    // NOTE: bc once we hit "0" lod we're done basically
-                    for( gpu_meshlet& mlt : std::span{ hpkMlts[ batchIdx ] }.subspan( lod.firstMlt, lod.mltCount ) )
-                    {
-                        mlt.payloadOffset += fileOffsetInBytes;
-                    }
-                    lod.payloadBeg += fileOffsetInBytes;
+                    if( 0 == lod.mltCount ) continue; // NOTE: bc once we hit "0" lod we're done basically
+                    lod.payloadBeginInBytes += fileOffsetInBytes;
                 }
             }
         }
@@ -516,14 +511,14 @@ i32 main( i32 argc, char** argv  )
         std::vector<hpk_mesh_desc>  meshDescVec = HpkFlattenAndRelease( MOV( hpkMeshes ) );
         std::vector<raw_node>       rawNodes    = HpkFlattenAndRelease( MOV( hpkNodes ) );
 
-        u64 firstMlt = 0;
+        u64 firstMltOffsetBytes = hpkFileOut.cursor;
         for( hpk_mesh_desc& mesh : meshDescVec )
         {
             for( hpk_lod_desc& lod : mesh.lods )
             {
                 if( 0 == lod.mltCount ) continue;
-                lod.firstMlt = firstMlt;
-                firstMlt += lod.mltCount;
+                lod.firstMltOffestInBytes = firstMltOffsetBytes;
+                firstMltOffsetBytes += lod.mltCount;
             }
         }
 
@@ -549,6 +544,7 @@ i32 main( i32 argc, char** argv  )
             n = { .toWorld = ( float4x3 ) raw.toWorld, .meshIdx = it->second };
         }
 
+        // NOTE: DO NOT MOVE THE ORDER !!!!! otherwise the offset code breaks
         u64 meshletsOffset  = hpkFileOut.WriteBlocking( AsBytes( meshletsVec ) );
         u64 meshDescOffset  = hpkFileOut.WriteBlocking( AsBytes( meshDescVec ) );
 
