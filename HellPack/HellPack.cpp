@@ -336,8 +336,6 @@ static void HpkProcessMeshesParallelJob(
 
                 u64 currentPayloadOffset = fileBuff.WriteBlocking( quantLod.payload );
 
-                for( gpu_meshlet& gpuMlt : quantLod.meshlets ) { gpuMlt.offsetInPayload += currentPayloadOffset; }
-
                 HT_ASSERT( std::size( quantLod.meshlets ) < ( 1 << 17 ) );
 
                 lodInfo = {
@@ -511,6 +509,7 @@ i32 main( i32 argc, char** argv  )
         std::vector<hpk_mesh_desc>  meshDescVec = HpkFlattenAndRelease( MOV( hpkMeshes ) );
         std::vector<raw_node>       rawNodes    = HpkFlattenAndRelease( MOV( hpkNodes ) );
 
+        // TODO: revisit
         u64 firstMltOffsetBytes = hpkFileOut.cursor;
         for( hpk_mesh_desc& mesh : meshDescVec )
         {
@@ -518,7 +517,7 @@ i32 main( i32 argc, char** argv  )
             {
                 if( 0 == lod.mltCount ) continue;
                 lod.firstMltOffestInBytes = firstMltOffsetBytes;
-                firstMltOffsetBytes += lod.mltCount;
+                firstMltOffsetBytes += lod.mltCount * sizeof( gpu_meshlet );
             }
         }
 

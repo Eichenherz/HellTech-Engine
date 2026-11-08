@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HT_MEMORY_H__
-#define __HT_MEMORY_H__
+#ifndef HT_MEMORY_H
+#define HT_MEMORY_H
 
 #include <span>
 
@@ -81,4 +81,4 @@ struct ht_virtual_allocator
 void HtInitMemorySystem();
 extern ht_virtual_allocator* g_pVirtualAllocator;
 
-#endif // !__HT_MEMORY_H__
+#endif // !HT_MEMORY_H

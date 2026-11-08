@@ -265,7 +265,9 @@ HT_FORCEINLINE void VkCheckFormatProperties( VkPhysicalDevice vkGpu, VkImageUsag
 	// Fallback to a different format or use other means of uploading data
 }
 
-HT_FORCEINLINE VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, u64 initialTimelineVal )
+constexpr u64 INVALID_TIMELINE_VAL = ~0ull;
+
+HT_FORCEINLINE VkSemaphore VkMakeSemaphore( VkDevice vkDevice, u64 initialTimelineVal, const char* pName )
 {
     VkSemaphoreTypeCreateInfo timelineInfo = {
         .sType			= VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
@@ -274,11 +276,13 @@ HT_FORCEINLINE VkSemaphore VkMakeSemaphore( VkDevice vkDevice, bool isTimeline, 
     };
     VkSemaphoreCreateInfo timelineSemaInfo = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = isTimeline ? &timelineInfo : nullptr
+        .pNext = ( INVALID_TIMELINE_VAL != initialTimelineVal ) ? &timelineInfo : nullptr
     };
 
     VkSemaphore timelineSema;
     VK_CHECK( vkCreateSemaphore( vkDevice, &timelineSemaInfo, 0, &timelineSema ) );
+
+    if( pName ) { VkDbgNameObj( timelineSema, vkDevice, pName ); }
 
     return timelineSema;
 }

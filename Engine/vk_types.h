@@ -107,9 +107,20 @@ enum class vk_queue_t : u32
 {
 	GFX = 0,
 	COPY,
-	//COMP,
+	COMP,
 	COUNT
 };
+
+constexpr const char* VkQueueTypeToStr( vk_queue_t queueType )
+{
+    switch( queueType )
+    {
+        case vk_queue_t::GFX: return "GFX";
+        case vk_queue_t::COPY: return "COPY";
+        case vk_queue_t::COMP: return "COMP";
+    }
+    return "UNKNOWN";
+}
 
 struct vk_cmd_pool
 {

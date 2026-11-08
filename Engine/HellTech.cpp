@@ -270,7 +270,6 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 	                },
 	                .type   = imgui_widget_type::TEXT
 	            }
-
 	        },
             .name	= "Engine Stats",
             .flags	= ImGuiWindowFlags_NoScrollbar
@@ -306,18 +305,18 @@ void helltech::Init( u64 hInst, u64 hWnd, u16 width, u16 height )
     mainActiveCam	= virtual_camera{ viewportDim, fovRads, zNear, IS_WORLD_RH };
     debugCam		= virtual_camera{ viewportDim, fovRads, zNear, IS_WORLD_RH };
     pRenderer       = MakeRenderer( *pPersistentArena );
+    // NOTE: need to init before the renderer which inits the render pass
+    imGuiCtx = im_gui_ctx{ width, height };
 
     pRenderer->InitBackend( hInst, hWnd );
 
-    imGuiCtx = im_gui_ctx{ width, height };
-
+    drawables       = borrowed_array{ ArenaNewArray<gpu_instance>( *pGameArena, MAX_INSTANCES_IN_SCENE ) };
     // NOTE: arbitrary sized for now
-    drawables       = borrowed_array{ ArenaNewArray<gpu_instance>( *pGameArena, 10'000 ) };
     jobCache        = borrowed_array{ ArenaNewArray<upload_job_payload*>( *pGameArena, 1'000 ) };
     timedZones      = borrowed_array{ ArenaNewArray<ht_timed_zone>( *pDebugArena, 256 ) };
     pipelinesStats  = borrowed_array{ ArenaNewArray<ht_pipeline_stats>( *pDebugArena, 64 ) };
 
-    // NOTE: hpk open
+    // NOTE: hpk open func
     constexpr char assetFilePath[] = "D:/3d models/caldera.hpk";
 
     void* hHpkFile = ht_os_create_file( assetFilePath, file_permission_t::READ,
@@ -366,7 +365,9 @@ void helltech::UploadAssets( linear_arena& scratchpadArena )
 
     std::span<const gpu_instance> nodes = gpuInstSpan.subspan( mostBytesSec.firstNodeIdx, mostBytesSec.nodeCount );
 
-    jobCache.push_back( ArenaNew<upload_job_payload>( *pPersistentArena ) );
+    upload_job_payload*& pUploadJob = jobCache.push_back( ArenaNew<upload_job_payload>( *pPersistentArena ) );
+
+    pUploadJob->entitiesToPromote = nodes;
 
     g_pJobSys->SubmitJob( [ pJob = jobCache.back(), pRI = pRenderer, diskAssetStore = diskAssetStore,
        nodes = nodes, meshDescSpan = meshDescSpan ]( linear_arena* arena )

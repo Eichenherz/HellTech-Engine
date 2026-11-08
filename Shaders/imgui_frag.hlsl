@@ -1,5 +1,8 @@
-[[vk::binding( 1 )]] Texture2D fontAtlas;
-[[vk::binding( 1 )]] SamplerState fontSampler;
+#include "ht_renderer_types.h"
+#include "ht_hlsl_lang.h"
+
+[[vk::push_constant]]
+imgui_pass_args pushBlock;
 
 [shader("pixel")]
 float4 ImGuiPsMain(
@@ -9,5 +12,7 @@ float4 ImGuiPsMain(
 	in float2 uv : TEXCOORD0
 ) : SV_Target
 {
+    Texture2D<float4>   fontAtlas   = gTexture2D_float4[ pushBlock.texAtlasIdx ];
+    SamplerState        fontSampler = samplers[ pushBlock.samplerIdx ];
     return col * fontAtlas.Sample( fontSampler, uv );
 }

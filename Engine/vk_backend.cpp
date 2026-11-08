@@ -54,7 +54,7 @@ static vk_queue VkCreateQueue( VkDevice vkDevice, u32 queueFamilyIndex )
 
 	return {
 		.hndl			= hndl,
-		.timelineSema	= VkMakeSemaphore( vkDevice, true, 0 ),
+		.timelineSema	= VkMakeSemaphore( vkDevice, 0, VkQueueTypeToStr( QUEUE_T ) ),
 		.submitCount    = 0,
 	    .queueType      = QUEUE_T,
 		.familyIdx		= queueFamilyIndex,
@@ -631,7 +631,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, cfg.maxVkQueryCount, VK_QUERY_TYPE_TIMESTAMP ),
 		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, cfg.maxVkQueryCount, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
 		.gpuFrameTimeline		= vk_timeline{
-		    .sema               = VkMakeSemaphore( vkDevice.logical, true, 0 ),
+		    .sema               = VkMakeSemaphore( vkDevice.logical, 0, "TimelineSema_GPUFrame" ),
 		    .submitsIssuedCount = 0
 		},
 		.vmaAllocator			= MakeVmaAllocator( vkDevice.gpu, vkDevice.logical, vkInst, VK_API_VERSION_1_4 ),
@@ -920,10 +920,7 @@ vk_compute_pipeline vk_context::CreateComputePipeline( const vk_shader& shader )
 	return { .hndl = pipeline, .groupSize = shader.groupSize };
 }
 
-VkSemaphore vk_context::CreateBinarySemaphore()
-{
-	return VkMakeSemaphore( device, false, -1 );
-}
+VkSemaphore vk_context::CreateBinarySemaphore() { return VkMakeSemaphore( device, -1, nullptr ); }
 
 desc_hndl32 vk_context::AllocDescriptorIdx( const vk_descriptor_info& rscDescInfo )
 {
@@ -1087,7 +1084,7 @@ void vk_context::CreateSwapchain()
 		    VK_IMAGE_VIEW_TYPE_2D, 0, 1 );
 
 		scImgs.push_back( {
-			.canPresentSema = VkMakeSemaphore( device, false, -1 ),
+			.canPresentSema = VkMakeSemaphore( device, -1, nullptr ),
 			.img = { 
 				.hndl		= img,
 				.view		= view,

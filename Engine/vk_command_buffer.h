@@ -152,6 +152,8 @@ struct vk_command_buffer
 
 	vk_scoped_label CmdIssueScopedLabel( const char* labelName, float4 col = {} ) { return { hndl, labelName, col }; }
 
+    void CmdSetScissor( VkRect2D scissor ) { return vkCmdSetScissor( hndl, 0, 1, &scissor ); }
+
 	vk_scoped_renderpass CmdIssueScopedRenderPass(
 		const vk_rendering_info&	renderingInfo,
 		// NOTE: while very small, we pass it as a ptr to mean not used

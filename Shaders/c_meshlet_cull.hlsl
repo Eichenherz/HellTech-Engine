@@ -66,12 +66,12 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
         u32     lodIdxOffset    = lodSwitch ? lod01IdxCounts.x : 0;
         u32     lodIdxCount     = lodSwitch ? lod01IdxCounts.y : lod01IdxCounts.x;
 
-        u32x2 mltVtxStreamSizes = GPUMeshletComputeVtxStreamSizes( currMlt );
-
+        u32x2   mltVtxStreamSizes   = GPUMeshletComputeVtxStreamSizes( currMlt );
+        u64     localIdxBuffOffset  = currMlt.offsetInPayload + mltVtxStreamSizes.x + mltVtxStreamSizes.y;
         draw_meshlet_command drawMltCmd = {
             lodIdxCount,
             1,
-            mltWorkItem.meshPayloadStartInBytes + mltVtxStreamSizes.x + mltVtxStreamSizes.y + lodIdxOffset,
+            mltWorkItem.meshPayloadStartInBytes + localIdxBuffOffset + lodIdxOffset,
             // NOTE: bc we use bitstreams for pos encoding we can't use an "item" based offset,
             // so we need to manually compute it in the shader
             0,

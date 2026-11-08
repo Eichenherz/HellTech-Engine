@@ -31,7 +31,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 
     u32x2 mltVtxStreamSizes = GPUMeshletComputeVtxStreamSizes( mlt );
 
-    u64 mltPayloadAddr      = g_GlobalData.pldAddr + mesh.lods[ vBuffPixel.lodId ].payloadStartInBytes + mlt.offsetInPayload;
+    u64 mltPayloadAddr      = g_GlobalData.pldAddr + meshDesc.lods[ vBuffPixel.lodId ].payloadStartInBytes + mlt.offsetInPayload;
 
     u32 triStartInBytes     = vBuffPixel.triId * 3 + dot( u32x2( 1, 1 ), mltVtxStreamSizes );
     u32x3 vtxIDs    = FetchTriangleIndicesFromMegaBuff( device_ptr<u32>( mltPayloadAddr ), triStartInBytes );

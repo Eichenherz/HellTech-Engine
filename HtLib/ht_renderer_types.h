@@ -7,6 +7,15 @@
 #include <ht_vec_types.h>
 #include <ht_macros.h>
 
+//======================CONSTS======================//
+// TODO: don't guess and actually get these numbers form the data; sure some of the numbers are gonna come off measurements
+CONSTEXPR u64 MAX_PAYLOAD_SZ_IN_BYTES = 900 << 20;
+CONSTEXPR u64 MAX_INSTANCES_IN_SCENE  = 1400 << 10;
+CONSTEXPR u64 MAX_MESHES_IN_SCENE     = 16 << 10;
+CONSTEXPR u64 MAX_MESHES_CAP          = 64 << 10;
+CONSTEXPR u64 MAX_MESHLETS_IN_SCENE   = 1200 << 10;
+//=================================================//
+
 #define MAX_DESCRIPTOR_COUNT ( 1 << 16 )
 
 struct view_data
@@ -204,13 +213,6 @@ struct dbg_aabb_instance
 	pkd_fp32x3	maxAabb;
 };
 
-struct imgui_vertex
-{
-	float	x, y;
-	float	u, v;
-	u32		rgba8Unorm;
-};
-
 struct luminance_histogram
 {
 	u32 finalLumSum;
@@ -344,6 +346,22 @@ struct indirect_dispatcher_params
     u64 dispatchCmdBuffAddr;
     u64 counterBufferAddr;
     u32 cullShaderWorkGrX;
+};
+
+struct imgui_vertex
+{
+    float   x, y;
+    float   u, v;
+    u32     rgba8Unorm;
+};
+
+struct imgui_pass_args
+{
+    float2  scale;
+    float2  translate;
+    u64     vtxAddr;
+    u32     texAtlasIdx;
+    u32     samplerIdx;
 };
 
 struct global_data
