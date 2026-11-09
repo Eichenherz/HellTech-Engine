@@ -153,7 +153,22 @@ static auto VkMakeDescriptorSet( VkDevice vkDevice, std::span<const VkDescriptor
 	VkDescriptorSet vkDescSet;
 	VK_CHECK( vkAllocateDescriptorSets( vkDevice, &descSetInfo, &vkDescSet ) );
 
-	return std::tuple{ vkDescPool, vkDescSetLayout, vkDescSet };
+	VkDescriptorSetLayoutBinding pushDescBinding = {
+		.binding = 0,
+		.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+		.descriptorCount = 1,
+		.stageFlags = VK_SHADER_STAGE_ALL
+	};
+	VkDescriptorSetLayoutCreateInfo pushDescSetLayoutInfo = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT,
+		.bindingCount = 1,
+		.pBindings = &pushDescBinding
+	};
+	VkDescriptorSetLayout vkPushDescSetLayout;
+	VK_CHECK( vkCreateDescriptorSetLayout( vkDevice, &pushDescSetLayoutInfo, 0, &vkPushDescSetLayout ) );
+
+	return std::tuple{ vkDescPool, vkDescSetLayout, vkPushDescSetLayout, vkDescSet };
 }
 
 static auto VkMakeInstance()
@@ -548,39 +563,6 @@ static vk_surface_info VkCheckSwapchainRequirementsAgainstSurface(
 	};
 }
 
-vk_query_pool VkMakeQueryPool( VkDevice vkDevice, u32 maxQueryCount, VkQueryType queryType )
-{
-	constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags =
-	    VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT
-		| VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
-
-	constexpr u32 statFlagsCount = std::popcount( ( u32 ) pipelineStatsFlags );
-
-	VkQueryPoolCreateInfo queryPoolInfo = {
-		.sType				= VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-		.queryType			= queryType,
-		.queryCount			= maxQueryCount,
-		.pipelineStatistics = ( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ) ? pipelineStatsFlags : 0
-	};
-
-	VkQueryPool queryPool = {};
-	VK_CHECK( vkCreateQueryPool( vkDevice, &queryPoolInfo, nullptr, &queryPool ) );
-
-	vkResetQueryPool( vkDevice, queryPool, 0, queryPoolInfo.queryCount );
-
-	return {
-		.hndl				= queryPool,
-		.type				= queryPoolInfo.queryType,
-		.queryStrideInSlots	= VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ? statFlagsCount : 1u,
-		.queryCount			= ( u16 ) queryPoolInfo.queryCount
-	};
-}
-
 vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_config& cfg )
 {
 	auto[ vkInst, vkDbgMsg ] = VkMakeInstance();
@@ -611,7 +593,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		}
 	};
 
-	auto[ descPool, descSetLayout, descSet ] = VkMakeDescriptorSet( vkDevice.logical, poolSizes );
+	auto[ descPool, descSetLayout, pushDescSetLayout, descSet ] = VkMakeDescriptorSet( vkDevice.logical, poolSizes );
 
 	std::array<vk_desc_binding, vk_desc_binding_t::COUNT> bindingSlots;
 	for( u64 bi = 0; bi < std::size( poolSizes ); ++bi )
@@ -621,6 +603,8 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		bindingSlots[ bi ] = { type };
 	}
 
+	auto setLayouts = std::array{ descSetLayout, pushDescSetLayout };
+
 	return {
 	    .rscDeletionQueue       = { ArenaNewArray<vk_resc_deletion>( *pPersistentArena, 128 ) },
         .descDeletionQueue      = { ArenaNewArray<vk_desc_deletion>( *pPersistentArena, 128 ) },
@@ -628,8 +612,6 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 	    .descPendingUpdates     = { ArenaNewArray<vk_descriptor_write>( *pPersistentArena, 1'000 ) },
 		.gfxQueue				= VkCreateQueue<vk_queue_t::GFX>( vkDevice.logical, vkDevice.gfxQueueFamIdx ),
 		.copyQueue				= VkCreateQueue<vk_queue_t::COPY>( vkDevice.logical, vkDevice.transferQueueFamIdx ),
-		.timestampQueryPool		= VkMakeQueryPool( vkDevice.logical, cfg.maxVkQueryCount, VK_QUERY_TYPE_TIMESTAMP ),
-		.pplnStatsQueryPool		= VkMakeQueryPool( vkDevice.logical, cfg.maxVkQueryCount, VK_QUERY_TYPE_PIPELINE_STATISTICS ),
 		.gpuFrameTimeline		= vk_timeline{
 		    .sema               = VkMakeSemaphore( vkDevice.logical, 0, "TimelineSema_GPUFrame" ),
 		    .submitsIssuedCount = 0
@@ -644,7 +626,7 @@ vk_context VkMakeContext( uintptr_t hInst, uintptr_t hWnd, const vk_renderer_con
 		.inst					= vkInst,
 		.dbgMsg					= vkDbgMsg,
 		.surf					= vkSurf,
-		.globalPipelineLayout	= VkMakeGlobalPipelineLayout( vkDevice.logical, descSetLayout, vkDevice.gpuProps ),
+		.globalPipelineLayout	= VkMakeGlobalPipelineLayout( vkDevice.logical, setLayouts, vkDevice.gpuProps ),
 		.deviceMask				= vkDevice.deviceMask,
 		.timestampPeriod		= vkDevice.gpuProps.limits.timestampPeriod,
 		.waveSize				= vkDevice.waveSize,
@@ -785,7 +767,40 @@ vk_shader vk_context::CreateShaderFromSpirv( std::span<const u8> spvByteCode )
 	};
 }
 
-VkPipeline vk_context::CreateGfxPipeline( 
+vk_query_pool vk_context::CreateQueryPool( u32 maxQueryCount, VkQueryType queryType )
+{
+    constexpr VkQueryPipelineStatisticFlags pipelineStatsFlags =
+        VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT
+        | VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
+        | VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT
+        | VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT
+        | VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT
+        | VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT
+        | VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
+
+    constexpr u32 statFlagsCount = std::popcount( pipelineStatsFlags );
+
+    VkQueryPoolCreateInfo queryPoolInfo = {
+        .sType				= VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType			= queryType,
+        .queryCount			= maxQueryCount,
+        .pipelineStatistics = ( VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ) ? pipelineStatsFlags : 0
+    };
+
+    VkQueryPool queryPool = {};
+    VK_CHECK( vkCreateQueryPool( device, &queryPoolInfo, nullptr, &queryPool ) );
+
+    vkResetQueryPool( device, queryPool, 0, queryPoolInfo.queryCount );
+
+    return {
+        .hndl				= queryPool,
+        .type				= queryPoolInfo.queryType,
+        .queryStrideInSlots	= VK_QUERY_TYPE_PIPELINE_STATISTICS == queryType ? statFlagsCount : 1u,
+        .queryCount			= ( u16 ) queryPoolInfo.queryCount
+    };
+}
+
+VkPipeline vk_context::CreateGfxPipeline(
 	std::span<const vk_gfx_shader_stage>	shaderStages,
 	std::span<const VkDynamicState>			dynamicStates,
 	std::span<const VkFormat>				colorAttachmentFormats,
@@ -1192,7 +1207,7 @@ u64 vk_context::QueueSubmit(
 		.commandBufferInfoCount		= 1,
 		.pCommandBufferInfos		= &cmdInfo,
 		.signalSemaphoreInfoCount	= ( u32 ) std::size( vecSignals ),
-		.pSignalSemaphoreInfos		= std::data( vecSignals ),
+		.pSignalSemaphoreInfos		= &vecSignals[ 0 ],
 	};
 	VK_CHECK( vkQueueSubmit2( queue.hndl, 1, &submitInfo, vkFence ) );
 

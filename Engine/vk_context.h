@@ -165,9 +165,6 @@ struct vk_context
 	vk_queue								gfxQueue;
 	vk_queue								copyQueue;
 
-	vk_query_pool							timestampQueryPool;
-	vk_query_pool							pplnStatsQueryPool;
-
 	vk_timeline							    gpuFrameTimeline;
 
 	VmaAllocator							vmaAllocator;
@@ -205,6 +202,8 @@ struct vk_context
 	{
 	    return vkDestroyShaderModule( device, module, nullptr );
 	}
+
+    vk_query_pool       CreateQueryPool( u32 maxQueryCount, VkQueryType queryType );
 
 	// TODO: depth clamp ?
 	VkPipeline          CreateGfxPipeline(
@@ -262,7 +261,8 @@ inline VkResult vk_context::TimelineTryWaitFor( const vk_timeline& timeline, u64
 
     if( timeline.submitsIssuedCount >= maxDiffAllowed + submissionsCompleted )
     {
-        u64 targetCount = timeline.submitsIssuedCount;
+        // NOTE: when all the slots are busy we just wait one
+        u64 targetCount = timeline.submitsIssuedCount - maxDiffAllowed + 1;
         VkSemaphoreWaitInfo waitInfo = {
             .sType			= VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
             .semaphoreCount = 1,

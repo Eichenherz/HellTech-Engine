@@ -377,6 +377,4 @@ struct global_data
     u32 mainCamIdx;
 };
 
-CONSTEXPR u64 GLOB_DATA_BINDING_SLOT = 0;
-
 #endif // !HT_RENDERER_TYPES_H

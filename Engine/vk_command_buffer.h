@@ -213,6 +213,27 @@ struct vk_command_buffer
 		vkCmdPushConstants2( hndl, &pushConstInfo );
 	}
 
+	void CmdPushGlobalData( const vk_buffer& buff, u64 offset, u64 size )
+	{
+		VkDescriptorBufferInfo buffInfo = { buff.hndl, offset, size };
+		VkWriteDescriptorSet write = {
+			.sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding         = 0,
+			.descriptorCount    = 1,
+			.descriptorType     = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.pBufferInfo        = &buffInfo
+		};
+		VkPushDescriptorSetInfo pushDescInfo = {
+			.sType                  = VK_STRUCTURE_TYPE_PUSH_DESCRIPTOR_SET_INFO,
+			.stageFlags             = VK_SHADER_STAGE_ALL,
+			.layout                 = bindlessPipelineLayout,
+			.set                    = 1,
+			.descriptorWriteCount   = 1,
+			.pDescriptorWrites      = &write
+		};
+		vkCmdPushDescriptorSet2( hndl, &pushDescInfo );
+	}
+
 	template<typename T>
 	void DispatchCompute( const vk_compute_pipeline& compPipe, const T& pushConst, u32x3 numWorkgroups )
 	{

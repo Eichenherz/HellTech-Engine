@@ -288,9 +288,9 @@ HT_FORCEINLINE VkSemaphore VkMakeSemaphore( VkDevice vkDevice, u64 initialTimeli
 }
 
 HT_FORCEINLINE VkPipelineLayout VkMakeGlobalPipelineLayout(
-    VkDevice							vkDevice,
-    VkDescriptorSetLayout				descSetLayout,
-    const VkPhysicalDeviceProperties&	props
+    VkDevice							    vkDevice,
+    std::span<const VkDescriptorSetLayout>  descSetLayout,
+    const VkPhysicalDeviceProperties&	    props
 ) {
     VkPushConstantRange pushConstRange = {
         .stageFlags = VK_SHADER_STAGE_ALL,
@@ -299,8 +299,8 @@ HT_FORCEINLINE VkPipelineLayout VkMakeGlobalPipelineLayout(
     };
     VkPipelineLayoutCreateInfo pipeLayoutInfo = {
         .sType					= VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount			= 1,
-        .pSetLayouts			= &descSetLayout,
+        .setLayoutCount			= ( u32 ) std::size( descSetLayout ),
+        .pSetLayouts			= &descSetLayout[ 0 ],
         .pushConstantRangeCount = 1,
         .pPushConstantRanges	= &pushConstRange
     };

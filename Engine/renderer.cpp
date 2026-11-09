@@ -80,13 +80,15 @@ constexpr VkFrontFace       HT_FRONT_FACE   = IS_WORLD_RH ? VK_FRONT_FACE_COUNTE
 
 //==============================================//
 
-struct ht_gpu_frame_profiler
+struct vk_gpu_frame_profiler
 {
+    vk_query_pool					    timestampQueryPool      = {};
+    vk_query_pool					    pplnStatsQueryPool      = {};
     // NOTE: these are 2 per query so we need std::size * 2
-	borrowed_array<vk_timestamp_query> timedZonesQueries       = {};
-	borrowed_array<vk_pipestats_query> pipelineStatsQueries    = {};
-	vk_buffer						   timestampQueryBuff      = {};
-	vk_buffer						   pipelineStatsQueryBuff  = {};
+	borrowed_array<vk_timestamp_query>  timedZonesQueries       = {};
+	borrowed_array<vk_pipestats_query>  pipelineStatsQueries    = {};
+	vk_buffer						    timestampQueryBuff      = {};
+	vk_buffer						    pipelineStatsQueryBuff  = {};
 
 	void ReadbackQueries( borrowed_array<ht_timed_zone>& timedGpuZones, borrowed_array<ht_pipeline_stats>& pipelinesStats )
 	{
@@ -102,13 +104,13 @@ struct ht_gpu_frame_profiler
 
 	void GPUReadAndResetQueryPools( vk_command_buffer& cmdBuff )
 	{
-		cmdBuff.CmdReadQueryPoolResults( pVkCtx->timestampQueryPool, timestampQueryBuff,
+		cmdBuff.CmdReadQueryPoolResults( timestampQueryPool, timestampQueryBuff,
 			0, ( u32 ) std::size( timedZonesQueries ) * 2 );
-		cmdBuff.CmdReadQueryPoolResults( pVkCtx->pplnStatsQueryPool, pipelineStatsQueryBuff,
+		cmdBuff.CmdReadQueryPoolResults( pplnStatsQueryPool, pipelineStatsQueryBuff,
 			0, ( u32 ) std::size( pipelineStatsQueries ) );
 
-		cmdBuff.CmdResetQueryPool( pVkCtx->timestampQueryPool );
-		cmdBuff.CmdResetQueryPool( pVkCtx->pplnStatsQueryPool );
+		cmdBuff.CmdResetQueryPool( timestampQueryPool );
+		cmdBuff.CmdResetQueryPool( pplnStatsQueryPool );
 
 		timedZonesQueries.resize( 0 );
 		pipelineStatsQueries.resize( 0 );
@@ -116,8 +118,8 @@ struct ht_gpu_frame_profiler
 
 	ht_timed_zone ResolveTimestampQuery( const vk_timestamp_query& hQuery ) const
 	{
-		u32 startIdx	= hQuery.begIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
-		u32 endIdx		= hQuery.endIdx * pVkCtx->timestampQueryPool.queryStrideInSlots;
+		u32 startIdx	= hQuery.begIdx * timestampQueryPool.queryStrideInSlots;
+		u32 endIdx		= hQuery.endIdx * timestampQueryPool.queryStrideInSlots;
 		u64 endTs		= VkBufferHostView<u64>( timestampQueryBuff )[ endIdx ];
 		u64 startTs		= VkBufferHostView<u64>( timestampQueryBuff )[ startIdx ];
 		return {
@@ -128,7 +130,7 @@ struct ht_gpu_frame_profiler
 
 	ht_pipeline_stats ResolvePipelineStatsQuery( const vk_pipestats_query& hQuery ) const
 	{
-		u32 resultIdx = hQuery.begIdx * pVkCtx->pplnStatsQueryPool.queryStrideInSlots;
+		u32 resultIdx = hQuery.begIdx * pplnStatsQueryPool.queryStrideInSlots;
 
 		return {
 			.name						= hQuery.name,
@@ -147,14 +149,14 @@ struct ht_gpu_frame_profiler
 		// NOTE: these are 2 per query so we need std::size * 2
 		u16				    currOffset	= ( u16 ) std::size( timedZonesQueries ) * 2;
 		vk_timestamp_query  hQuery		= { .name = name, .begIdx = currOffset, .endIdx = currOffset + 1u };
-		cmdBuff.CmdWriteTimestamp( pVkCtx->timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.begIdx );
+		cmdBuff.CmdWriteTimestamp( timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.begIdx );
 		timedZonesQueries.push_back( hQuery );
 		return hQuery;
 	}
 
 	void EndTimedZone( vk_command_buffer& cmdBuff, const vk_timestamp_query& hQuery )
 	{
-		cmdBuff.CmdWriteTimestamp( pVkCtx->timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.endIdx );
+		cmdBuff.CmdWriteTimestamp( timestampQueryPool, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, hQuery.endIdx );
 	}
 
 	vk_pipestats_query BeginStatsQuery( vk_command_buffer& cmdBuff, const char* name )
@@ -164,41 +166,46 @@ struct ht_gpu_frame_profiler
 			.begIdx = ( u16 ) std::size( pipelineStatsQueries ),
 			.endIdx = u16( -1 )
 		};
-		cmdBuff.CmdQueryBegin( pVkCtx->pplnStatsQueryPool, hQuery.begIdx );
+		cmdBuff.CmdQueryBegin( pplnStatsQueryPool, hQuery.begIdx );
 		pipelineStatsQueries.push_back( hQuery );
 		return hQuery;
 	}
 
 	void EndStatsQuery( vk_command_buffer& cmdBuff, const vk_pipestats_query& hQuery )
 	{
-		cmdBuff.CmdQueryEnd( pVkCtx->pplnStatsQueryPool, hQuery.begIdx );
+		cmdBuff.CmdQueryEnd( pplnStatsQueryPool, hQuery.begIdx );
 	}
 };
 
-static ht_gpu_frame_profiler HtMakeGpuFrameProfiler()
+static vk_gpu_frame_profiler HtMakeGpuFrameProfiler( u32 maxQueryCount )
 {
+    vk_query_pool timestampQueryPool = pVkCtx->CreateQueryPool( maxQueryCount, VK_QUERY_TYPE_TIMESTAMP );
+    vk_query_pool pplnStatsQueryPool = pVkCtx->CreateQueryPool( maxQueryCount, VK_QUERY_TYPE_PIPELINE_STATISTICS );
+
 	return {
+	    .timestampQueryPool     = timestampQueryPool,
+	    .pplnStatsQueryPool     = pplnStatsQueryPool,
 	    .timedZonesQueries      = borrowed_array{ ArenaNewArray<vk_timestamp_query>( *pDebugArena, 1000 ) },
 	    .pipelineStatsQueries   = borrowed_array{ ArenaNewArray<vk_pipestats_query>( *pDebugArena, 128 ) },
 		.timestampQueryBuff     = pVkCtx->CreateBuffer( {
-			.name			= "Buff_ReadbackTimestampQueries",
-			.usageFlags		= buffer_usage::XFER_DST,
-			.szInBytes	= pVkCtx->timestampQueryPool.GetSizeInSlots() * sizeof( u64 ),
-			.memProps		= buffer_mem_props::HOST_VISIBLE
+			.name		= "Buff_ReadbackTimestampQueries",
+			.usageFlags	= buffer_usage::XFER_DST,
+			.szInBytes	= timestampQueryPool.GetSizeInSlots() * sizeof( u64 ),
+			.memProps	= buffer_mem_props::HOST_VISIBLE
 		} ),
 		.pipelineStatsQueryBuff = pVkCtx->CreateBuffer( {
-			.name			= "Buff_ReadbackTimestampQueries",
-			.usageFlags		= buffer_usage::XFER_DST,
-			.szInBytes	= pVkCtx->pplnStatsQueryPool.GetSizeInSlots() * sizeof( u64 ),
-			.memProps		= buffer_mem_props::HOST_VISIBLE
+			.name		= "Buff_ReadbackPipelineStatsQueries",
+			.usageFlags	= buffer_usage::XFER_DST,
+			.szInBytes	= pplnStatsQueryPool.GetSizeInSlots() * sizeof( u64 ),
+			.memProps	= buffer_mem_props::HOST_VISIBLE
 		} )
 	};
 }
 
 static u32                                          g_CurrentFifIdx         = 0;
-static std::array<ht_gpu_frame_profiler, MAX_FIF>   g_HtGpuFrameProfiler    = {};
+static std::array<vk_gpu_frame_profiler, MAX_FIF>   g_HtGpuFrameProfiler    = {};
 
-HT_FORCEINLINE ht_gpu_frame_profiler *const HtGetGpuFrameProfiler()
+HT_FORCEINLINE vk_gpu_frame_profiler *const HtGetGpuFrameProfiler()
 {
 	return &g_HtGpuFrameProfiler[ g_CurrentFifIdx ];
 }
@@ -1119,11 +1126,11 @@ struct depth_pyramid_pass
 		}
 
 		atomicWgCounterBuff = pVkCtx->CreateBuffer( {
-			.name           = "Buff_DownsamplerAtomicWgCounter",
-			.usageFlags     = buffer_usage::STORAGE | buffer_usage::XFER_DST,
-			.szInBytes      = 1 * sizeof( u32 ),
-		    .memProps       = buffer_mem_props::GPU_ONLY,
-		    .alignment      = HT_GPU_CACHELINE_SZ_IN_BYTES
+			.name       = "Buff_DownsamplerAtomicWgCounter",
+			.usageFlags = buffer_usage::STORAGE | buffer_usage::XFER_DST,
+			.szInBytes  = 1 * sizeof( u32 ),
+		    .memProps   = buffer_mem_props::GPU_ONLY,
+		    .alignment  = HT_GPU_CACHELINE_SZ_IN_BYTES
 		} );
 		atomicWgCounterIdx = pVkCtx->AllocDescriptorIdx( atomicWgCounterBuff );
 
@@ -1170,7 +1177,7 @@ struct depth_pyramid_pass
 		pointSamplerIdx = pVkCtx->AllocDescriptorIdx( { pointSampler } );
 	}
 
-	void Execute( vk_command_buffer& cmdBuff, const vk_image& depthTarget, desc_hndl32	depthIdx )
+	void Execute( vk_command_buffer& cmdBuff, const vk_image& depthTarget, desc_hndl32 depthIdx )
     {
 		vk_scoped_label label = cmdBuff.CmdIssueScopedLabel( "HZB Single Pass", {} );
 
@@ -1743,12 +1750,9 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 
 	globalData = pVkCtx->CreateBuffer( {
 		.usageFlags	= buffer_usage::STORAGE,
-		.szInBytes	= sizeof( global_data ),
+		.szInBytes	= MAX_FIF * sizeof( global_data ),
 		.memProps	= buffer_mem_props::HOST_VISIBLE
 	} );
-	globalDataIdx = pVkCtx->AllocDescriptorIdx( globalData );
-	// NOTE: this is a workaround, must be first so we match idx 0
-	HT_ASSERT( GLOB_DATA_BINDING_SLOT == globalDataIdx.slot );
 
 	cullingPass.Init();
 	tonemappingPass.Init();
@@ -1814,7 +1818,7 @@ void renderer_context::InitBackend( u64 hInst, u64 hWnd )
 	{
 		vrtFrames[ fifIdx ] = MakeVirtualFrame( 4, MAX_MESHES_CAP,
 		    MAX_MESHES_IN_SCENE, MAX_INSTANCES_IN_SCENE, fifIdx );
-		g_HtGpuFrameProfiler[ fifIdx ] = HtMakeGpuFrameProfiler();
+		g_HtGpuFrameProfiler[ fifIdx ] = HtMakeGpuFrameProfiler( config.maxVkQueryCount );
 	}
 }
 
@@ -1979,7 +1983,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
 
 	pVkCtx->FlushPendingDescriptorUpdates();
 
-    global_data& refGlobalData = *( global_data* ) globalData.hostVisible;
+    global_data& refGlobalData = ( ( global_data* ) globalData.hostVisible )[ currentFIFIdx ];
     refGlobalData = {
         .mltAddr		= megaGpuMeshletBuff.devicePointer,
         .pldAddr		= megaGpuPayloadBuff.devicePointer,
@@ -1990,6 +1994,7 @@ void renderer_context::HostFrames( const frame_data& frameData, linear_arena& sc
         //.lodRequestsAddr =
         .mainCamIdx     = !frameData.dbgDrawFlags.freezeMainView ? 0u : 1u, // TODO: don't hardcode here ?
     };
+    thisCmdBuff.CmdPushGlobalData( globalData, currentFIFIdx * sizeof( refGlobalData ), sizeof( refGlobalData ) );
 
 	const culling_pass_args cullPassArgs = {
 		.dbgGpuInstBuff			= dbgPass.gpuInstBuff,

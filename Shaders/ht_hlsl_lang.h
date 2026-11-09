@@ -123,7 +123,8 @@ u32 BufferAtomicOr( u32 buffIdx, u32 newValue, u32 idx = 0, u32 offsetInBytes = 
 	return oldValue;
 }
 
-static const global_data g_GlobalData = BufferLoad<global_data>( GLOB_DATA_BINDING_SLOT );
+[[vk::binding( 0, 1 )]] ByteAddressBuffer globalDataBuff;
+static const global_data g_GlobalData = globalDataBuff.Load<global_data>( 0 );
 
 template<typename T>
 struct device_ptr
