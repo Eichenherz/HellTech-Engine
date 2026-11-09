@@ -11,8 +11,8 @@
 // TODO: don't guess and actually get these numbers form the data; sure some of the numbers are gonna come off measurements
 CONSTEXPR u64 MAX_PAYLOAD_SZ_IN_BYTES = 900 << 20;
 CONSTEXPR u64 MAX_INSTANCES_IN_SCENE  = 1400 << 10;
-CONSTEXPR u64 MAX_MESHES_IN_SCENE     = 16 << 10;
-CONSTEXPR u64 MAX_MESHES_CAP          = 64 << 10;
+CONSTEXPR u64 MAX_MESHES_IN_SCENE     = 24 << 10;
+CONSTEXPR u64 MAX_MESHES_CAP          = 72 << 10;
 CONSTEXPR u64 MAX_MESHLETS_IN_SCENE   = 1200 << 10;
 //=================================================//
 

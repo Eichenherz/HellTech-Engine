@@ -15,7 +15,7 @@ struct vbuffer_vs_out
 
 struct vbuffer_ps_out
 {
-    u32x2 pixel : SV_Target0;
+
 };
 
 struct vbuffer_pixel
@@ -24,13 +24,21 @@ struct vbuffer_pixel
     u32 triId   : 7; // local to the cluster
     u32 instId  : 26;
     u32 lodId   : 6;
-
-    operator u32x2() { return u32x2( triId << 25 | mltId, lodId << 26 | instId ); }
 };
+
+u32x2 VBufferPackPixel( vbuffer_pixel pixel )
+{
+    return u32x2( pixel.triId << 25 | pixel.mltId, pixel.lodId << 26 | pixel.instId );
+}
 
 vbuffer_pixel VBufferUnpackPixel( u32x2 packed )
 {
-    vbuffer_pixel pixel = { packed.x & ( ( 1u << 25 ) - 1u ), packed.x >> 25, packed.y & ( ( 1u << 26 ) - 1u ), packed.y >> 26 };
+    vbuffer_pixel pixel = {
+        packed.x & ( ( 1u << 25 ) - 1u ),
+        packed.x >> 25,
+        packed.y & ( ( 1u << 26 ) - 1u ),
+        packed.y >> 26
+    };
     return pixel;
 }
 

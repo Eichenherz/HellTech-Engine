@@ -68,6 +68,7 @@ typedef int64_t     i64;
 
 #include <ht_macros.h>
 
+#ifdef __cplusplus
 template<typename T, u64 IDX_BIT_WIDTH, u64 GEN_BIT_WIDTH>
 struct generic_hndl32_t
 {
@@ -78,14 +79,21 @@ struct generic_hndl32_t
     u32 gen     : GEN_BIT_WIDTH;
     u32 inUse   : 1;
 
-#ifdef __cplusplus
     auto operator<=>( const generic_hndl32_t& ) const = default;
-#endif
-
 };
 
 #define RHNDL32( T ) generic_hndl32_t<T, 20, 11>
 
 STATIC_ASSERT( sizeof( u32 ) == sizeof( RHNDL32( u32 ) ), "" );
+#else
+struct gpu_hndl32
+{
+    u32 idx : 20;
+    u32 gen : 11;
+    u32 inUse : 1;
+};
+
+#define RHNDL32( T ) gpu_hndl32
+#endif
 
 #endif // !HT_CORE_TYPES_H

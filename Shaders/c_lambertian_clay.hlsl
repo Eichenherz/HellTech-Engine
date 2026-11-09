@@ -21,7 +21,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
         return;
     }
 
-    vbuffer_pixel vBuffPixel = VBufferUnpackPixel( rawPixel );
+    vbuffer_pixel       vBuffPixel  = VBufferUnpackPixel( rawPixel );
 
     gpu_meshlet         mlt         = device_ptr<gpu_meshlet>( g_GlobalData.mltAddr )[ vBuffPixel.mltId ];
     gpu_instance        inst        = device_ptr<gpu_instance>( g_GlobalData.instAddr )[ vBuffPixel.instId ];

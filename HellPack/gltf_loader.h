@@ -61,9 +61,12 @@ inline auto HpkGltfProcessDrawablesHierarchy(
     {
         if( !node.extensions.KHR_node_visibility.visible ) return;
         if( ~0u != node.skin ) return;
-        if( ( ~0u != node.mesh )
-            && ( caldera_prim_purpose_t::NONE != data.meshes[ node.mesh ].extensions.CALDERA_mesh_purpose.purpose )
-         ) return;
+        if( ~0u != node.mesh )
+        {
+            caldera_prim_purpose_t primPurpose = data.meshes[ node.mesh ].extensions.CALDERA_mesh_purpose.purpose;
+            if( ( caldera_prim_purpose_t::NONE != primPurpose )
+                && ( caldera_prim_purpose_t::INTERPOLATED_PATCH != primPurpose ) ) return;
+        }
 
         trs_t trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );
 

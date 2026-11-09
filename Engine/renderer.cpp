@@ -319,7 +319,7 @@ struct imgui_pass
         {
             buff = pVkCtx->CreateBuffer( {
                 .usageFlags = buffer_usage::STORAGE | buffer_usage::BDA,
-                .szInBytes  = 24 * KB,
+                .szInBytes  = 56 * KB,
                 .memProps   = buffer_mem_props::HOST_VISIBLE
             } );
         }
@@ -328,7 +328,7 @@ struct imgui_pass
         {
             buff = pVkCtx->CreateBuffer( {
                 .usageFlags = buffer_usage::INDEX,
-                .szInBytes  = 4 * KB,
+                .szInBytes  = 16 * KB,
                 .memProps   = buffer_mem_props::HOST_VISIBLE
             } );
         }
@@ -1707,7 +1707,7 @@ struct renderer_context final : renderer_interface
 	    std::ranges::copy( cpuMeshRefs, ( HMESH32* ) thisVFrame.gpuMeshRefs.hostVisible );
 	    std::ranges::copy( frameData.instances, ( gpu_instance* ) thisVFrame.gpuInstances.hostVisible );
 
-	    return 0;// /* numValidInstances */ ( u32 ) std::size( frameData.instances );
+	    return /* numValidInstances */ ( u32 ) std::size( frameData.instances );
     }
 
 	void            CreateGlobalTargets( u16 width, u16 height )
@@ -1860,6 +1860,8 @@ void renderer_context::UploadMeshes(
 	    }
 
 	    ht_lod_alloc lodAllocs[ MAX_LOD_LEVELS_COUNT ] = {};
+	    // NOTE: BC OffsetAllocator's default alloc is NOT zero
+	    std::memset( lodAllocs, 0, BYTE_COUNT( lodAllocs ) );
 	    for( const auto[ hpkLod, hLodAlloc ] : std::views::zip( hpkMesh.lods, lodAllocs ) )
 	    {
 	        if( 0 == hpkLod.mltCount ) break; // NOTE: in this scheme 0 means end-of LOD chain

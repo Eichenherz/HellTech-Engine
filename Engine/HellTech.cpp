@@ -72,6 +72,8 @@ struct virtual_camera
 	}
 };
 
+constexpr float LOD_PIXEL_FOOTPRINT_TOLERANCE = 8;
+
 inline view_data ViewData( const virtual_camera& virtualCam )
 {
     return {
@@ -84,7 +86,8 @@ inline view_data ViewData( const virtual_camera& virtualCam )
         .zNear			= virtualCam.zNear,
         // NOTE: this must not be negative for LH coords
         .camViewDir		= ( pkd_fp32x3 ) virtualCam.camViewDir,
-        .lodTarget		= ( 2.0f / virtualCam.proj[ 1 ][ 1 ] ) * ( 1.0f / float( virtualCam.viewportDim.y ) )
+        .lodTarget		= LOD_PIXEL_FOOTPRINT_TOLERANCE *
+            ( 2.0f / virtualCam.proj[ 1 ][ 1 ] ) * ( 1.0f / float( virtualCam.viewportDim.y ) )
     };
 }
 
@@ -101,6 +104,7 @@ struct ht_demo_action_map
 	u16 up;
 	u16 down;
 	u16 slowDown;
+    u16 sprint;
 	u16 frustumDbg;
 	u16 xrayDraw;
 	u16 instCull;
@@ -117,6 +121,7 @@ constexpr ht_demo_action_map GLOB_ACTION_MAP = {
 	.up				= HT_SC_SPACE,
 	.down			= HT_SC_C,
 	.slowDown		= HT_SC_LCTRL,
+    .sprint         = HT_SC_LSHIFT,
 	.frustumDbg 	= HT_SC_F,
 	.xrayDraw		= HT_SC_X,
 	.instCull		= HT_SC_I,
@@ -150,13 +155,18 @@ inline move_cam_action GetMoveCamAction(
 	{
 		mvSpeed *= 0.4f;
 	}
+    else if( inputState.IsButtonHeld( GLOB_ACTION_MAP.sprint ) )
+	{
+        mvSpeed *= 2.4f;
+	}
+
 
 	if( ht::any( float3{} != camMove ) )
 	{
 		camMove = ht::normalize( camMove ) * ( mvSpeed * elapsedTime );
 	}
 
-	float2 yawPitch = YAW_SIGN * mouseSensitivity * ( float2 ) inputState.dPosMouse;
+	float2 yawPitch = YAW_SIGN * mouseSensitivity * ht::vec_cast<float2>( inputState.dPosMouse );
 	return { .camMove = camMove, .dRot = yawPitch };
 }
 
@@ -250,6 +260,14 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 	    imgui_window{
 	        .widgets = {
 	            {
+	                .pData = ( const void* ) g_pVirtualAllocator->committedInBytes,
+	                .Action = []( const void* pData )
+	                {
+	                    ImGuiTxt( fixed_string<128>{ "Commited VMem MiB : {}", ( u64 ) pData / MB } );
+	                },
+	                .type   = imgui_widget_type::TEXT
+	            },
+	            {
 	                .pData  = pTimedZones,
 	                .Action = []( const void* pData )
 	                {
@@ -261,15 +279,7 @@ void HTAssembleUI( renderer_dbg_draw& rndDbgFlags, void* pTimedZones, void*	pPip
 	                },
 	                .type   = imgui_widget_type::TEXT
 	            },
-                { .pData = pPipeStats, .Action = ImGuiPrintPipelineStats, .type = imgui_widget_type::TEXT },
-	            {
-	                .pData = ( const void* ) g_pVirtualAllocator->committedInBytes,
-	                .Action = []( const void* pData )
-	                {
-	                    ImGuiTxt( fixed_string<128>{ "Commited VMem MiB : {}", ( u64 ) pData / MB } );
-	                },
-	                .type   = imgui_widget_type::TEXT
-	            }
+                { .pData = pPipeStats, .Action = ImGuiPrintPipelineStats, .type = imgui_widget_type::TEXT }
 	        },
             .name	= "Engine Stats",
             .flags	= ImGuiWindowFlags_NoScrollbar

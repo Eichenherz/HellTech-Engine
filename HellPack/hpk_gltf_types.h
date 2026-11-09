@@ -14,7 +14,21 @@
 #include <span>
 #include <string_view>
 
-enum class caldera_prim_purpose_t : u8 { NONE = 0, COLLISION, SHADOW, SKY, DECAL, GUIDE, INVISIBLE, INTERPOLATED_PATCH, BRUSH, DEGENERATE, UNKNOWN };
+enum class caldera_prim_purpose_t : u8
+{
+    NONE = 0, 
+    COLLISION, 
+    SHADOW, 
+    SKY, 
+    DECAL, 
+    GUIDE, 
+    INVISIBLE, 
+    INTERPOLATED_PATCH, 
+    BRUSH, 
+    DEGENERATE, 
+    PLAYER_BREADCRUMBS, 
+    UNKNOWN
+};
 
 enum class hpk_gltf_geom_type : u8 { NONE = 0, TERRAIN };
 
@@ -220,8 +234,8 @@ template<>
 struct glz::meta<caldera_prim_purpose_t>
 {
     using enum caldera_prim_purpose_t;
-    static constexpr std::array keys = { "collision"sv, "shadow"sv, "sky"sv, "decal"sv, "guide"sv, "invisible"sv, "interpolated_patch"sv, "brush"sv, "degenerate"sv };
-    static constexpr std::array value = { COLLISION, SHADOW, SKY, DECAL, GUIDE, INVISIBLE, INTERPOLATED_PATCH, BRUSH, DEGENERATE };
+    static constexpr std::array keys = { "collision"sv, "shadow"sv, "sky"sv, "decal"sv, "guide"sv, "invisible"sv, "interpolated_patch"sv, "brush"sv, "degenerate"sv, "player_breadcrumbs"sv };
+    static constexpr std::array value = { COLLISION, SHADOW, SKY, DECAL, GUIDE, INVISIBLE, INTERPOLATED_PATCH, BRUSH, DEGENERATE, PLAYER_BREADCRUMBS };
 };
 
 template<>

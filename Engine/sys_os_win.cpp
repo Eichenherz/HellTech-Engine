@@ -261,7 +261,7 @@ INT32 WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
 
     HtInitMemorySystem();
 
-    persistentArena  = { g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ) };
+    persistentArena     = linear_arena{ g_pVirtualAllocator->AllocVirtualBlock( 2 * MB, 0 ) };
     pPersistentArena    = &persistentArena;
 
     g_NumCores          = SysGetPhysicalCoreCount();
@@ -270,8 +270,8 @@ INT32 WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
     for( thread_ctx& tctx : threadCtxArray )
     {
         tctx.scratchArenas = {
-            g_pVirtualAllocator->AllocVirtualBlock( 20 * MB, 0 ),
-            g_pVirtualAllocator->AllocVirtualBlock( 20 * MB, 0 )
+            g_pVirtualAllocator->AllocVirtualBlock( 48 * MB, 0 ),
+            g_pVirtualAllocator->AllocVirtualBlock( 48 * MB, 0 )
         };
     }
     pThreadCtx	        = &threadCtxArray[ 0 ];

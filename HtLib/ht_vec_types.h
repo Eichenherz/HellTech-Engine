@@ -141,6 +141,7 @@ namespace ht
 	constexpr auto hmin( auto v ) { return __builtin_reduce_min( v ); }
 	constexpr auto hmax( auto v ) { return __builtin_reduce_max( v ); }
 
+	// NOTE: C casts on clang vecs are actually BIT casts WTF ????
 	template<typename dst_vec_t>
 	constexpr dst_vec_t vec_cast( auto v ) { return __builtin_convertvector( v, dst_vec_t ); }
 
