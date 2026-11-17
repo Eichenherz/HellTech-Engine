@@ -1,7 +1,7 @@
 #pragma once 
 
-#ifndef __VK_ERROR_H__
-#define __VK_ERROR_H__
+#ifndef VK_ERROR_H
+#define VK_ERROR_H
 
 #include <System/Win32/DEFS_WIN32_NO_BS.h>
 #define VK_USE_PLATFORM_WIN32_KHR
@@ -10,7 +10,6 @@
 
 #include <Volk/volk.h>
 
-#include <cstdlib>
 #include <format>
 #include <type_traits>
 #include <string_view>
@@ -23,7 +22,8 @@
 
 inline std::string_view VkResErrorString( VkResult errorCode )
 {
-	switch( errorCode )			{
+	switch( errorCode )
+	{
 #define VK_RES_STR( r ) case VK_ ##r: return #r
 		VK_RES_STR( NOT_READY );
 		VK_RES_STR( TIMEOUT );
@@ -64,8 +64,9 @@ inline std::string_view VkResErrorString( VkResult errorCode )
 		VK_RES_STR( PIPELINE_COMPILE_REQUIRED_EXT );
 		VK_RES_STR( RESULT_MAX_ENUM );
 #undef VK_RES_STR
-	default: return "VK_UNKNOWN_INTERNAL_ERROR";
 	}
+
+    return "VK_UNKNOWN_INTERNAL_ERROR";
 }
 
 #define VK_CHECK( vk )																	\
@@ -111,13 +112,12 @@ constexpr VkObjectType VkGetObjTypeFromHandle()
 	return VK_OBJECT_TYPE_UNKNOWN;
 }
 
-template<typename VKH>
-void VkDbgNameObj( VKH vkHandle, VkDevice vkDevice, const char* name )
+HT_FORCEINLINE void VkDbgNameObj( auto vkHandle, VkDevice vkDevice, const char* name )
 {
 	static_assert( sizeof( vkHandle ) == sizeof( u64 ) );
 	VkDebugUtilsObjectNameInfoEXT nameInfo = { 
 		.sType			= VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
-		.objectType		= VkGetObjTypeFromHandle<VKH>(),
+		.objectType		= VkGetObjTypeFromHandle<decltype( vkHandle )>(),
 		.objectHandle	= ( u64 ) vkHandle,
 		.pObjectName	= name
 	};
@@ -150,12 +150,11 @@ VkDbgUtilsMsgCallback(
 	if( 0xe8616bf2 == callbackData->messageIdNumber ) return VK_FALSE;
 
 	constexpr i32 IGNORE_MESSAGE_IDS[] = {
-		499644646, /* NSight mem binding err */
-		7798123, /* NSight mem binding err */
+		499644646,  /* NSight mem binding err */
+		7798123,    /* NSight mem binding err */
 	};
 
-	if( std::ranges::find( IGNORE_MESSAGE_IDS, callbackData->messageIdNumber )
-		!= std::ranges::end( IGNORE_MESSAGE_IDS ) ) return VK_FALSE;
+	if( std::ranges::contains( IGNORE_MESSAGE_IDS, callbackData->messageIdNumber ) ) return VK_FALSE;
 
 	u64			msgSz		= std::strlen( callbackData->pMessage );
 	const char* severityStr = VkSeverityTagStr( msgSeverity );
@@ -175,12 +174,9 @@ VkDbgUtilsMsgCallback(
 		SysWriteToStdStream( ( const char* ) msgBuffer, sys_stream_t::OUTPUT );
 	}
 
-	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT )
-	{
-		std::abort();
-	} 
+	if( msgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ) { std::abort(); }
 
 	return VK_FALSE;
 }
 
-#endif // !__VK_ERROR_H__
+#endif // !VK_ERROR_H

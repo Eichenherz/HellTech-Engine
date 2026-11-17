@@ -11,7 +11,7 @@
 #include <range_utils.h>
 
 #include <ht_fixed_string.h>
-#include <System/sys_file.h>
+#include <System/sys_disk_io.h>
 
 #include "hpk_gltf_types.h"
 #include "gltf_helper.h"
@@ -65,7 +65,7 @@ inline auto HpkGltfProcessDrawablesHierarchy(
         {
             caldera_prim_purpose_t primPurpose = data.meshes[ node.mesh ].extensions.CALDERA_mesh_purpose.purpose;
             if( ( caldera_prim_purpose_t::NONE != primPurpose )
-                && ( caldera_prim_purpose_t::INTERPOLATED_PATCH != primPurpose ) ) return;
+                && ( caldera_prim_purpose_t::MATERIAL_PROXY != primPurpose ) ) return;
         }
 
         trs_t trs = GltfComposePackedTRS( parentTrs, GetTrsFromNode( node ) );

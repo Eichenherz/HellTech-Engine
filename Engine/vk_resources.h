@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __VK_RESOURCES_H__
-#define __VK_RESOURCES_H__
+#ifndef VK_RESOURCES_H
+#define VK_RESOURCES_H
 
 #define VK_NO_PROTOTYPES
 #include <vulkan.h>
@@ -54,6 +54,21 @@ struct buffer_info
     u64                 alignment   = 0; // NOTE: 0 means VMA will default to the required API minAlignment
 };
 
+struct vk_buffer
+{
+    static constexpr vk_resource_type TYPE = vk_resource_type::BUFFER;
+
+    VmaAllocation		    alloc           = nullptr;
+    VkBuffer			    hndl            = nullptr;
+    u64					    sizeInBytes     = 0;
+    u8*					    hostVisible     = nullptr;
+    VkDeviceAddress		    devicePointer   = 0;
+    u64                     alignment       = 0;
+    VkMemoryPropertyFlags   memProps        = {};
+};
+
+HT_FORCEINLINE std::span<u8> HostView( const vk_buffer& buff ) { return { buff.hostVisible, buff.sizeInBytes }; }
+
 enum class image_usage : u32
 {
 	XFER_SRC		= VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -77,43 +92,6 @@ struct image_info
 	u16					height;
 	u8					layerCount;
 	u8					mipCount;
-};
-
-struct vk_buffer
-{
-    static constexpr vk_resource_type TYPE = vk_resource_type::BUFFER;
-
-	VmaAllocation		    alloc           = nullptr;
-	VkBuffer			    hndl            = nullptr;
-	u64					    sizeInBytes     = 0;
-	u8*					    hostVisible     = nullptr;
-	VkDeviceAddress		    devicePointer   = 0;
-    u64                     alignment       = 0;
-    VkMemoryPropertyFlags   memProps        = {};
-};
-
-template<typename T>
-std::span<T> VkBufferHostView( vk_buffer& vkBuff )
-{
-	return { ( T* ) vkBuff.hostVisible, vkBuff.sizeInBytes / sizeof( T ) };
-}
-
-template<typename T>
-std::span<const T> VkBufferHostView( const vk_buffer& vkBuff )
-{
-	return { ( const T* ) vkBuff.hostVisible, vkBuff.sizeInBytes / sizeof( T ) };
-}
-
-inline VkDescriptorBufferInfo Descriptor( const vk_buffer& b ) { return { b.hndl, 0, b.sizeInBytes }; }
-
-// NOTE: inspired by https://substack.com/home/post/p-211773615
-struct vk_sparse_buff
-{
-    VkBuffer		        hndl            = nullptr;
-    VmaVirtualBlock         vmaVirtualBlock = {};
-    VkDeviceAddress	        devicePointer   = 0;
-    VkMemoryRequirements    memReqs         = {};
-    VkMemoryPropertyFlags   memProps        = 0;
 };
 
 struct vk_image
@@ -264,4 +242,4 @@ enum render_target_op : u32
     STORE		= VK_ATTACHMENT_STORE_OP_STORE
 };
 
-#endif // !__VK_RESOURCES_H__
+#endif // !VK_RESOURCES_H
