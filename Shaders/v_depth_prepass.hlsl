@@ -21,7 +21,7 @@ precise float4 DepthPrepassVsMain(
     float3 pos = DecodeVertexFromMegaBuff( mlt, device_ptr<u32>( localPayloadAddr ), vtxID );
 
     gpu_instance inst = device_ptr<gpu_instance>( g_GlobalData.instAddr )[ drawData.globalInstId ];
-    view_data cam = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
+    view_data cam = device_ptr<view_data>( g_GlobalData.viewsAddr )[ pushBlock.camIdx ];
 
     return mul( float4( pos, 1.0f ), mul( f4x3_To_f4x4_Affine( inst.toWorld ), cam.mainViewProj ) );
 }

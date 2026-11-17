@@ -26,7 +26,8 @@ enum class caldera_prim_purpose_t : u8
     INTERPOLATED_PATCH, 
     BRUSH, 
     DEGENERATE, 
-    PLAYER_BREADCRUMBS, 
+    PLAYER_BREADCRUMBS,
+    MATERIAL_PROXY,
     UNKNOWN
 };
 
@@ -234,8 +235,23 @@ template<>
 struct glz::meta<caldera_prim_purpose_t>
 {
     using enum caldera_prim_purpose_t;
-    static constexpr std::array keys = { "collision"sv, "shadow"sv, "sky"sv, "decal"sv, "guide"sv, "invisible"sv, "interpolated_patch"sv, "brush"sv, "degenerate"sv, "player_breadcrumbs"sv };
-    static constexpr std::array value = { COLLISION, SHADOW, SKY, DECAL, GUIDE, INVISIBLE, INTERPOLATED_PATCH, BRUSH, DEGENERATE, PLAYER_BREADCRUMBS };
+    static constexpr std::array keys = {
+        "collision"sv,
+        "shadow"sv,
+        "sky"sv,
+        "decal"sv,
+        "guide"sv,
+        "invisible"sv,
+        "interpolated_patch"sv,
+        "brush"sv,
+        "degenerate"sv,
+        "player_breadcrumbs"sv,
+        "material_proxy"sv
+    };
+    static constexpr std::array value = {
+        COLLISION, SHADOW, SKY, DECAL, GUIDE, INVISIBLE, INTERPOLATED_PATCH, BRUSH, DEGENERATE, PLAYER_BREADCRUMBS,
+        MATERIAL_PROXY
+    };
 };
 
 template<>
@@ -354,7 +370,12 @@ hpk_gltf_data HpkGltfParseFromBytes( std::span<const u8> bytes, arena_t auto& ar
     auto ctx = hpk_glz_ctx{ .pArena = &arena };
     hpk_gltf_data data = {};
     glz::error_ctx err = glz::read<HPK_GLB_GLZ_OPTS>( data, jsonView, ctx );
-    HT_ASSERT( !err );
+    if( err )
+    {
+        std::println( stdout, "{} @ {}: {}", glz::meta<glz::error_code>::keys[ u32( err.ec ) ], err.count,
+            err.custom_error_message );
+        HT_ASSERT( !err );
+    }
 
     data.binChunk = std::span{ pCursor, binHdr.length };
     return data;

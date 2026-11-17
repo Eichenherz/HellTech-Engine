@@ -24,6 +24,8 @@ void*	ht_os_virtual_commit( void* mem, u64 sizeInBytes );
 void	ht_os_virtual_decommit( void* mem, u64 sizeInBytes );
 void*   ht_os_virtual_alloc( u64 sizeInBytes );
 
+// NOTE: this leaks the mapping handles but should be fine
+std::span<u8> ht_os_virtual_alloc_mirrored_buffer( u64 mirrorSizeInBytes );
 
 #ifndef HT_BLOCK_SZ_IN_BYTES
 #define HT_BLOCK_SZ_IN_BYTES	( 256 * KB )

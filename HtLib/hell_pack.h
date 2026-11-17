@@ -16,7 +16,7 @@ constexpr u64   PLAYER_LOAD_RADIUS_IN_CELLS = 2;
 // NOTE: we keep RAD + 1 cell for load/unload hystersis: <= R - load, > R + 1 - unload
 constexpr u64   SECTOR_CACHE_DIM_IN_CELLS   = 2 * ( PLAYER_LOAD_RADIUS_IN_CELLS + 1 ) + 1;
 
-constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 256;
+constexpr u64   GRID_SECTOR_DIM_IN_METERS   = 128;
 constexpr u64   PLAYER_LOAD_RADIUS_METERS   = PLAYER_LOAD_RADIUS_IN_CELLS * GRID_SECTOR_DIM_IN_METERS;
 constexpr float GRID_INV_SCALE              = 1.0f / float( GRID_SECTOR_DIM_IN_METERS );
 

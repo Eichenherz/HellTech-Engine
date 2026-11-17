@@ -18,7 +18,7 @@ namespace fs = std::filesystem;
 #include <hell_pack.h>
 
 #include <ht_math.h>
-#include <System/sys_file.h>
+#include <System/sys_disk_io.h>
 
 #include "hpk_gltf_types.h"
 #include "hpk_meshopt_pipeline.h"
@@ -123,13 +123,15 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
     constexpr u64 idxBuffBound  = MLT_MAX_INDEX * LODS_PER_MESHLET;
     constexpr u64 payloadBound  = vtxPosBound + vtxNormBound + idxBuffBound;
 
-    std::span gpuMlts = ArenaNewArray<gpu_meshlet>( backingArena, std::size( meshlets ) );
-    auto payloadsBuff = borrowed_array{ ArenaNewArray<u8>( backingArena, payloadBound * std::size( meshlets ) ) };
+    u64  mltCount   = std::size( meshlets );
 
-	for( auto[ m, gpuMlt ] : std::views::zip( meshlets, gpuMlts ) )
+    auto gpuMlts    = borrowed_array{ ArenaNewArray<gpu_meshlet>( backingArena, mltCount ) };
+    auto gpuPayload = borrowed_array{ ArenaNewArray<u8>( backingArena, payloadBound * mltCount ) };
+
+	for( const hpk_meshlet& m : meshlets )
 	{
 		auto[ aabbMin, aabbMax ] = ComputeAabb( m.pos );
-        // TODO: why this happens ? and can't we not prevent it ?
+        // NOTE: skip meshlets that collapse to a point
 	    if( ht::all( float3{} == ( aabbMax - aabbMin ) ) ) continue;
 
 		mlt_quantized_grid mltEncodingGrid = HpkMakeMltQuantizedGrid( aabbMin, aabbMax );
@@ -143,9 +145,9 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 			| ( u32( std::size( m.indices ) ) << 8 )
 			| ( u32( std::size( m.idxLod ) ) << 20 ); // TODO: check this !
 
-		HT_ASSERT( ( m.vtxCount < 256 ) &&
-			( std::size( m.idxLod ) < MLT_MAX_INDEX ) &&
-			( std::size( m.indices ) < MLT_MAX_INDEX ) );
+		HT_ASSERT( ( m.vtxCount < 256 )
+		    && ( std::size( m.idxLod ) < MLT_MAX_INDEX )
+		    && ( std::size( m.indices ) < MLT_MAX_INDEX ) );
 
 	    u64 posBitstreamBackingMem[ vtxPosBound ] = {};
 	    auto posBuff = bit_stream{ { posBitstreamBackingMem } };
@@ -181,30 +183,30 @@ static hpk_quantized_lod HpkQuantizeLODLevel( std::span<const hpk_meshlet> meshl
 
 	    HT_ASSERT( std::ranges::size( posBuff ) && std::size( vtxNormals ) && std::size( idxBuff ) );
 
-	    gpuMlt = {
+	    gpuMlts.push_back( {
 	        .aabbMin								= ( pkd_fp32x3 ) mltEncodingGrid.quantAabbMin,
             .aabbMax								= ( pkd_fp32x3 ) mltEncodingGrid.quantAabbMax,
-            .offsetInPayload                          = std::size( payloadsBuff ),
+            .offsetInPayload                          = std::size( gpuPayload ),
             .packed8888_XYZ_Grid_BitDepth			= packed8888_XYZ_Grid_BitDepth,
             .packed8_12_12_VtxCount_Lod_01_IdxCount	= packed8_12_12_VtxCount_Lod_01_IdxCount,
             .lodError								= m.lodError
-        };
+        } );
 
-	    payloadsBuff.append_range( AsBytes( posBuff ) );
+	    gpuPayload.append_range( AsBytes( posBuff ) );
 	    // NOTE: on the gpu we need to read the indices and vertices aligned !
-	    HT_ASSERT( IsAlignedToPot( std::size( payloadsBuff ), sizeof( u32 ) ) );
+	    HT_ASSERT( IsAlignedToPot( std::size( gpuPayload ), sizeof( u32 ) ) );
 
-	    payloadsBuff.append_range( AsBytes( vtxNormals ) );
-	    payloadsBuff.append_range( AsBytes( idxBuff ) );
+	    gpuPayload.append_range( AsBytes( vtxNormals ) );
+	    gpuPayload.append_range( AsBytes( idxBuff ) );
 
-	    payloadsBuff.resize( FwdAlignPot( std::size( payloadsBuff ), sizeof( u32 ) ), 0 );
+	    gpuPayload.resize( FwdAlignPot( std::size( gpuPayload ), sizeof( u32 ) ), 0 );
 	    // NOTE: on the gpu we need to read the indices and vertices aligned !
-	    HT_ASSERT( IsAlignedToPot( std::size( payloadsBuff ), sizeof( u32 ) ) );
+	    HT_ASSERT( IsAlignedToPot( std::size( gpuPayload ), sizeof( u32 ) ) );
 	}
 
     HT_ASSERT( std::size( gpuMlts ) );
 
-    return { .meshlets = gpuMlts, .payload = payloadsBuff };
+    return { .meshlets = gpuMlts, .payload = gpuPayload };
 }
 
 struct hpk_file_buffer

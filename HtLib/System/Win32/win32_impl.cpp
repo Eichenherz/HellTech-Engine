@@ -75,6 +75,29 @@ void*   ht_os_virtual_alloc( u64 sizeInBytes )
 	WIN_CHECK( mem );
 	return mem;
 }
+
+std::span<u8> ht_os_virtual_alloc_mirrored_buffer( u64 mirrorSizeInBytes )
+{
+    HANDLE hFileMapping = CreateFileMappingA( INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+        ( DWORD ) ( mirrorSizeInBytes >> 32 ), ( DWORD ) mirrorSizeInBytes,
+        nullptr );
+    WIN_CHECK( hFileMapping );
+
+    defer { CloseHandle( hFileMapping ); };
+
+    u8* mem = ( u8* ) VirtualAlloc2( nullptr, nullptr, 2 * mirrorSizeInBytes,
+        MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
+        nullptr, 0 );
+    WIN_CHECK( mem );
+
+    WIN_CHECK( VirtualFree( mem, mirrorSizeInBytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER ) );
+    WIN_CHECK( MapViewOfFile3( hFileMapping, nullptr, mem, 0, mirrorSizeInBytes,
+        MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0 ) );
+    WIN_CHECK( MapViewOfFile3( hFileMapping, nullptr, mem + mirrorSizeInBytes, 0, mirrorSizeInBytes,
+        MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0 ) );
+
+    return { mem, 2 * mirrorSizeInBytes };
+}
 // ---------------------------------------------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -286,7 +309,7 @@ void SysSemaphoreWait( sys_semaphore sema, u32 millisecs )
 // ---------------------------------------------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------------------------------------------
-#include <System/sys_file.h>
+#include <System/sys_disk_io.h>
 // ---------------------------------------------------------------------------------------------------------------
 u64 SysFileGetSizeInBytes( void* hFile )
 {
@@ -465,10 +488,8 @@ void SysFileWriteConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<c
 
 std::span<u8> SysFileRawReadNBytesBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> ioReadBuff )
 {
-    u64 readBeg     = BwdAlignPot( fileOffsetInBytes, RAW_DISK_SECTOR_ALIGNMENT );
-    u64 readEnd     = FwdAlignPot( fileOffsetInBytes + readSzInBytes, RAW_DISK_SECTOR_ALIGNMENT );
+    auto[ readBeg, bytesToRead ] = SysAlignReadToDiskSector( fileOffsetInBytes, readSzInBytes );
 
-    u64 bytesToRead = readEnd - readBeg;
     HT_ASSERT( std::size( ioReadBuff ) >= bytesToRead );
 
     // NOTE: we need this for concurrent ops, otherwise the ops will wait on the file's state (?) which is not thread safe
@@ -493,55 +514,92 @@ std::span<u8> SysFileRawReadNBytesBlocking( void* hFile, u64 fileOffsetInBytes, 
     return ioReadBuff.subspan( fileOffsetInBytes - readBeg, readSzInBytes );
 }
 
-void SysFileReadAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq )
+
+void* SysMakeIoRing( u64 maxRequests, void* hFile, std::span<u8> readBuffer )
 {
-    static_assert( sizeof( OVERLAPPED ) <= sizeof( ht_os_io_request ) );
-    static_assert( alignof( OVERLAPPED ) <= alignof( ht_os_io_request ) );
+    IORING_CAPABILITIES ioRingCaps = {};
+    WIN_CHECK( SUCCEEDED( QueryIoRingCapabilities( &ioRingCaps ) ) );
 
-    HT_ASSERT( hFile && std::data( outBytes ) && std::size( outBytes ) );
-    HT_ASSERT( IsAlignedToPot( ( u64 ) std::data( outBytes ), OS_UNBUFFERED_IO_MEM_ALIGNMENT ) );
-    HT_ASSERT( IsAlignedToPot( std::size( outBytes ), OS_UNBUFFERED_IO_MEM_ALIGNMENT ) );
-    HT_ASSERT( IsAlignedToPot( offsetInBytes, OS_UNBUFFERED_IO_MEM_ALIGNMENT ) );
+    HIORING hIORing = nullptr;
+    WIN_CHECK( SUCCEEDED( CreateIoRing( ioRingCaps.MaxVersion, {}, maxRequests,
+        2 * maxRequests, &hIORing ) ) );
 
-    OVERLAPPED* pOverlapped = ( OVERLAPPED* ) pIOReq;
-    *pOverlapped = {
-        .Offset       = ( DWORD ) offsetInBytes,
-        .OffsetHigh   = ( DWORD ) ( offsetInBytes >> 32 ),
+    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterFileHandles( hIORing, 1, &hFile, 0 ) ) );
+
+    IORING_BUFFER_INFO ioReadBuffInfo = {
+        .Address    = &readBuffer[ 0 ],
+        .Length     = ( u32 ) std::size( readBuffer )
     };
 
-    if( !ReadFile( hFile, std::data( outBytes ), std::size( outBytes ),
-        nullptr, pOverlapped ) )
+    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterBuffers( hIORing, 1, &ioReadBuffInfo, 0 ) ) );
+
+    // NOTE: win internals says that those buffers will dangle is we don't submit here
+    WIN_CHECK( SUCCEEDED( SubmitIoRing( hIORing, IORING_SUBMIT_WAIT_ALL, INFINITE, nullptr ) ) );
+
+    // NOTE: drain the registered reqs
+    for( u64 cmpi = 0; cmpi < 2; cmpi++ )
     {
-        WIN_CHECK( ERROR_IO_PENDING == GetLastError() );
+        for( void* pUserData = nullptr; !SysIoRingPollCompletion( hIORing, &pUserData ); );
     }
+
+    return hIORing;
 }
 
-ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs )
+bool SysTryPushIoRingRequest(
+    void*   hIORing,
+    u64     readBuffIdx,
+    u32     readBuffOffset,
+    u64     fileOffset,
+    u32     readSize,
+    void*   userData
+) {
+    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( 0 ),
+        IoRingBufferRefFromIndexAndOffset( readBuffIdx, readBuffOffset ), readSize, fileOffset,
+        ( UINT_PTR ) userData, IOSQE_FLAGS_NONE );
+
+    if( IORING_E_SUBMISSION_QUEUE_FULL == res ) return false;
+
+    WIN_CHECK( SUCCEEDED( res ) );
+
+    return true;
+}
+
+bool SysTryPushIoRingRequestWRawBuffer( void* hIORing, void* rawBuffer, u64 fileOffset, u32 readSize, void* userData )
 {
-    OVERLAPPED_ENTRY    entries[ OS_MAX_ASYNC_IO_REQS_IN_FLIGHT ] = {};
-    ULONG               entryCount = 0;
-    if( !GetQueuedCompletionStatusEx( hPort, entries, std::size( entries ), &entryCount,
-        waitInMilliSecs, FALSE ) )
-    {
-        WIN_CHECK( WAIT_TIMEOUT == GetLastError() );
-    }
+    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( 0 ),
+        IoRingBufferRefFromPointer( rawBuffer ), readSize, fileOffset, ( UINT_PTR ) userData, IOSQE_FLAGS_NONE );
 
-    std::span cmplOverlapped = { entries, entryCount };
-    for( const OVERLAPPED_ENTRY& cov : cmplOverlapped )
-    {
-        WIN_CHECK( !cov.lpOverlapped->Internal );
-    }
+    if( IORING_E_SUBMISSION_QUEUE_FULL == res ) return false;
 
-    auto LmbdToHtReq = []( const OVERLAPPED_ENTRY& cov ) HT_LAMBDA_FORCEINLINE -> ht_os_io_completion
-    {
-        return {
-            .pReq = ( ht_os_io_request* ) cov.lpOverlapped,
-            .numBytesTransferred = cov.dwNumberOfBytesTransferred
-        };
-    };
+    WIN_CHECK( SUCCEEDED( res ) );
 
-    return { std::from_range, cmplOverlapped | std::views::transform( LmbdToHtReq ) };
+    return true;
 }
+
+u64 SysIoRingSubmit( void* hIORing, u64 waitInMs )
+{
+    u32     subsInQueue = 0;
+    HRESULT res         = SubmitIoRing( ( HIORING ) hIORing, 0, waitInMs, &subsInQueue );
+    //if( IORING_E_WAIT_TIMEOUT == res ) return false;
+
+    WIN_CHECK( SUCCEEDED( res ) );
+
+    return subsInQueue;
+}
+
+bool SysIoRingPollCompletion( void *__restrict hIORing, void **__restrict pUserDataOut )
+{
+    IORING_CQE ioRingCQE = {};
+    if( S_OK == PopIoRingCompletion( ( HIORING ) hIORing, &ioRingCQE ) )
+    {
+        WIN_CHECK( SUCCEEDED( ioRingCQE.ResultCode ) );
+        *pUserDataOut = ( void* ) ioRingCQE.UserData;
+        return true;
+    }
+    *pUserDataOut = nullptr;
+    return false;
+}
+
 
 u64 SysFileGetTimestamp( void* hFile )
 {
@@ -618,99 +676,5 @@ void SysErrMsgBox( const char* str )
 	MessageBoxA( nullptr, str, TEXT( "Error" ), MB_OK | MB_ICONERROR | MB_APPLMODAL );
 }
 // ---------------------------------------------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------------------------------------------
-#include <System/sys_io_ring.h>
-// ---------------------------------------------------------------------------------------------------------------
-
-void* SysMakeIoRing( u64 maxRequests, void* hFile, std::span<const std::span<u8>> readBuffers )
-{
-    IORING_CAPABILITIES ioRingCaps = {};
-    WIN_CHECK( SUCCEEDED( QueryIoRingCapabilities( &ioRingCaps ) ) );
-
-    HIORING hIORing = nullptr;
-    WIN_CHECK( SUCCEEDED( CreateIoRing( ioRingCaps.MaxVersion, {}, maxRequests,
-        2 * maxRequests, &hIORing ) ) );
-
-    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterFileHandles( hIORing, 1, &hFile, 0 ) ) );
-
-    inline_array<IORING_BUFFER_INFO, 8> ioRingBuffInfos = {};
-    for( const std::span<u8> buff : readBuffers )
-    {
-        HT_ASSERT( UINT32_MAX >= std::size( buff ) );
-        ioRingBuffInfos.push_back( {
-            .Address = &buff[ 0 ],
-            .Length = ( u32 ) std::size( buff )
-        } );
-    }
-
-    WIN_CHECK( SUCCEEDED( BuildIoRingRegisterBuffers( hIORing, ( UINT32 ) std::size( ioRingBuffInfos ),
-        &ioRingBuffInfos[ 0 ], 0 ) ) );
-
-    // NOTE: win internals says that those buffers will dangle is we don't submit here
-    WIN_CHECK( SUCCEEDED( SubmitIoRing( hIORing, IORING_SUBMIT_WAIT_ALL, INFINITE, nullptr ) ) );
-
-    // NOTE: drain the registered reqs
-    for( u64 cmpi = 0; cmpi < 2; cmpi++ )
-    {
-        IORING_CQE ioRingCQE = {};
-        while( S_OK != PopIoRingCompletion( ( HIORING ) hIORing, &ioRingCQE ) ) {}
-        WIN_CHECK( SUCCEEDED( ioRingCQE.ResultCode ) );
-    }
-
-    return hIORing;
-}
-
-bool SysTryPushIoRingRequest(
-    void*   hIORing,
-    u64     readBuffIdx,
-    u32     readBuffOffset,
-    u64     fileOffset,
-    u32     readSize
-) {
-    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( 0 ),
-        IoRingBufferRefFromIndexAndOffset( readBuffIdx, readBuffOffset ),
-        readSize, fileOffset, 0, IOSQE_FLAGS_NONE );
-
-    if( IORING_E_SUBMISSION_QUEUE_FULL == res ) return false;
-
-    WIN_CHECK( SUCCEEDED( res ) );
-
-    return true;
-}
-
-bool SysTryPushIoRingRequestWRawBuffer( void* hIORing, void* rawBuffer, u64 fileOffset, u32 readSize )
-{
-    HRESULT res = BuildIoRingReadFile( ( HIORING ) hIORing, IoRingHandleRefFromIndex( 0 ),
-        IoRingBufferRefFromPointer( rawBuffer ), readSize, fileOffset, 0, IOSQE_FLAGS_NONE );
-
-    if( IORING_E_SUBMISSION_QUEUE_FULL == res ) return false;
-
-    WIN_CHECK( SUCCEEDED( res ) );
-
-    return true;
-}
-
-u64 SysIoRingSubmit( void* hIORing, u64 waitInMs )
-{
-    u32 subsInQueue = 0;
-    HRESULT res = SubmitIoRing( ( HIORING ) hIORing, 0, waitInMs, &subsInQueue );
-    //if( IORING_E_WAIT_TIMEOUT == res ) return false;
-
-    WIN_CHECK( SUCCEEDED( res ) );
-
-    return subsInQueue;
-}
-
-bool SysIoRingPollCompletion( void* hIORing )
-{
-    IORING_CQE ioRingCQE = {};
-    if( S_OK == PopIoRingCompletion( ( HIORING ) hIORing, &ioRingCQE ) )
-    {
-        WIN_CHECK( SUCCEEDED( ioRingCQE.ResultCode ) );
-        return true;
-    }
-    return false;
-}
 
 // ---------------------------------------------------------------------------------------------------------------

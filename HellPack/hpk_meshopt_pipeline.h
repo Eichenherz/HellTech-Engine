@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __HPK_MESHOPT_PIPELINE_H__
-#define __HPK_MESHOPT_PIPELINE_H__
+#ifndef HPK_MESHOPT_PIPELINE_H
+#define HPK_MESHOPT_PIPELINE_H
 
 #include <ht_core_types.h>
 #include <ht_vec_types.h>
@@ -231,7 +231,6 @@ inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMesh
 
         HT_ASSERT( std::size( meshlets ) < MAX_MESHLETS_PER_MESH );
 
-
         std::span mltsOut = ArenaNewArray<hpk_meshlet>( outArena, std::size( meshlets ) );
         for( auto[ meshopMlt, outMlt ] : std::views::zip( meshlets, mltsOut ) )
         {
@@ -270,4 +269,4 @@ inline inline_array<hpk_meshlets_w_lod, MAX_LOD_LEVELS_COUNT> MeshoptMakeHpkMesh
 	return lodLevels;
 }
 
-#endif //!__HPK_MESHOPT_PIPELINE_H__
+#endif //!HPK_MESHOPT_PIPELINE_H

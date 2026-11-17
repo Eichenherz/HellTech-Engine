@@ -40,7 +40,7 @@ void LambertianClayCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     float3 p1       = DecodeVertexFromMegaBuff( mlt, device_ptr<u32>( mltPayloadAddr ), vtxIDs.y );
     float3 p2       = DecodeVertexFromMegaBuff( mlt, device_ptr<u32>( mltPayloadAddr ), vtxIDs.z );
 
-    view_data cam   = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
+    view_data cam   = device_ptr<view_data>( g_GlobalData.viewsAddr )[ pushBlock.camIdx ];
     float4x4 mvp    = mul( f4x3_To_f4x4_Affine( inst.toWorld ), cam.mainViewProj );
 
     float4 clip0    = mul( float4( p0, 1.0f ), mvp );

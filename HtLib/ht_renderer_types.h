@@ -9,11 +9,11 @@
 
 //======================CONSTS======================//
 // TODO: don't guess and actually get these numbers form the data; sure some of the numbers are gonna come off measurements
-CONSTEXPR u64 MAX_PAYLOAD_SZ_IN_BYTES = 900 << 20;
-CONSTEXPR u64 MAX_INSTANCES_IN_SCENE  = 1400 << 10;
-CONSTEXPR u64 MAX_MESHES_IN_SCENE     = 24 << 10;
-CONSTEXPR u64 MAX_MESHES_CAP          = 72 << 10;
-CONSTEXPR u64 MAX_MESHLETS_IN_SCENE   = 1200 << 10;
+CONSTEXPR u64 MAX_PAYLOAD_SZ_IN_BYTES = 1000 << 20;
+CONSTEXPR u64 MAX_INSTANCES_IN_SCENE  = 542 << 10;
+CONSTEXPR u64 MAX_MESHES_IN_SCENE     = 87 << 10;
+CONSTEXPR u64 MAX_MESHES_CAP          = 400 << 10;
+CONSTEXPR u64 MAX_MESHLETS_IN_SCENE   = 709 << 10;
 //=================================================//
 
 #define MAX_DESCRIPTOR_COUNT ( 1 << 16 )
@@ -252,14 +252,16 @@ struct culling_pass_params
     u64 drawCmdsAddr;
     u64 drawDataAddr;
     u64 drawCounterAddr;
-
+    
     u32 hizTexIdx;
     u32 hizSamplerIdx;
 
     u32 instCount;
     u32 isLatePass;
     u32 instCullWorkGrX;
-
+    
+    u32 camIdx;
+    
     // DBG
     u32 enableInstCull;
     u32 enableMltCull;
@@ -270,15 +272,18 @@ struct culling_pass_params
 struct vbuffer_params
 {
 	u64 drawDataAddr;
+	u32 camIdx;
 };
 
 struct depth_prepass_params
 {
 	u64 drawDataAddr;
+	u32 camIdx;
 };
 struct meshlet_pass_params
 {
     u64 drawDataAddr;
+    u32 camIdx;
 };
 
 // NOTE: src and dst assumed to be the same dimensions, asserted on the host
@@ -294,6 +299,7 @@ struct lambertian_clay_params
 	u32x2	vbuffRes;
 	u32		vbuffIdx; // NOTE: asserted in the renderer that they're eq size
 	u32		dstIdx;
+	u32		camIdx;
 };
 
 struct dbg_box_params
@@ -373,8 +379,9 @@ struct global_data
 	u64 instAddr;
     u64 viewsAddr;
     u64 lodRequestsAddr;
-
-    u32 mainCamIdx;
+    u64 padding; // TODO: fix this on the CPU size
 };
+
+STATIC_ASSERT( 64 == sizeof( global_data ), "" );
 
 #endif // !HT_RENDERER_TYPES_H

@@ -17,7 +17,7 @@ meshlet_vs_out MeshletPassVsMain(
     draw_meshlet_cmd_data drawData = device_ptr<draw_meshlet_cmd_data>( pushBlock.drawDataAddr )[ drawId ];
 
     gpu_instance inst = device_ptr<gpu_instance>( g_GlobalData.instAddr )[ drawData.globalInstId ];
-    view_data cam = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
+    view_data cam = device_ptr<view_data>( g_GlobalData.viewsAddr )[ pushBlock.camIdx ];
 
     gpu_meshlet mlt = device_ptr<gpu_meshlet>( g_GlobalData.mltAddr )[ drawData.globalMltId ];
     u64 localPayloadAddr = g_GlobalData.pldAddr + drawData.meshPayloadStartInBytes + mlt.offsetInPayload;

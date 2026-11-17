@@ -1,7 +1,7 @@
 #pragma once
 
-#ifndef __SYS_FILE_H__
-#define __SYS_FILE_H__
+#ifndef SYS_FILE_H
+#define SYS_FILE_H
 
 #include <ht_core_types.h>
 #include <ht_mem_arena.h>
@@ -10,11 +10,10 @@
 
 #include <System/sys_consts.h>
 
-#include <ht_array.h>
-
 constexpr u64 RAW_DISK_SECTOR_ALIGNMENT = 4 << 10;
 
-std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena );
+// NOTE: this is helpful for ht_array/ cursors
+struct alignas( RAW_DISK_SECTOR_ALIGNMENT ) ht_disk_sector { u8 bytes[ RAW_DISK_SECTOR_ALIGNMENT ]; };
 
 enum class file_permission_t : u64
 {
@@ -44,10 +43,6 @@ enum class file_access_t : u64
 	RAW_CONCURRENT
 };
 
-constexpr u64 OS_MAX_ASYNC_IO_REQS_IN_FLIGHT    = 16;
-constexpr u64 OS_UNBUFFERED_IO_MEM_ALIGNMENT    = 4 * KB;
-constexpr u64 OS_MAX_TRANSFER_LEN_IN_BYTES      = 1 * MB;
-
 void* ht_os_create_file(
     const char*		    filePath,
     file_permission_t   permissionFlags,
@@ -67,24 +62,28 @@ void SysFileWriteConcurrentBlocking( void* hFile, u64 offsetInBytes, std::span<c
 // ioReadBuff must have enough space to hold the sec aligned data, but we only expose the requested data
 std::span<u8> SysFileRawReadNBytesBlocking( void* hFile, u64 fileOffsetInBytes, u64 readSzInBytes, std::span<u8> ioReadBuff );
 
-// NOTE: this is helpful for ht_array/ cursors
-struct alignas( RAW_DISK_SECTOR_ALIGNMENT ) ht_disk_sector { u8 bytes[ RAW_DISK_SECTOR_ALIGNMENT ]; };
+std::span<u8> SysReadWholeFile( const char* path, arena_t auto& arena );
 
-struct HT_CACHE_ALIGN ht_os_io_request
-{
-    alignas( HT_CACHE_LINE_SZ ) u8 opaque[ HT_CACHE_LINE_SZ ] = {};
-};
 
-void SysFileReadAsyncUnbuffered( void* hFile, u64 offsetInBytes, std::span<u8> outBytes, ht_os_io_request* pIOReq );
 
-struct ht_os_io_completion
-{
-    ht_os_io_request*   pReq;
-    u64                 numBytesTransferred;
-};
+void* SysMakeIoRing( u64 maxRequests, void* hFile, std::span<u8> readBuffer );
 
-using ht_io_comp_array = inline_array<ht_os_io_completion, OS_MAX_ASYNC_IO_REQS_IN_FLIGHT>;
-ht_io_comp_array SysPollIOCompletionsStatus( void* hPort, u64 waitInMilliSecs );
+bool SysTryPushIoRingRequest(
+    void*   hIORing,
+    u64     readBuffIdx,
+    u32     readBuffOffset,
+    u64     fileOffset,
+    u32     readSize,
+    void*   userData );
+
+// NOTE: this is intended for one off/rare stuff, using an unregistered buffer is costly
+bool SysTryPushIoRingRequestWRawBuffer( void* hIORing, void* rawBuffer, u64 fileOffset, u32 readSize, void* userData );
+
+u64 SysIoRingSubmit( void* hIORing, u64 waitInMs = 1 );
+
+bool SysIoRingPollCompletion( void *__restrict hIORing, void **__restrict pUserDataOut );
+
+
 
 using sys_path = fixed_string<SYS_MAX_PATH_LEN>;
 
@@ -109,4 +108,12 @@ constexpr std::string_view SysPathStem( std::string_view path )
 	return name.substr( 0, name.find_last_of( '.' ) );
 }
 
-#endif // !__SYS_FILE_H__
+HT_FORCEINLINE auto SysAlignReadToDiskSector( u64 fileOffsetInBytes, u64 readSzInBytes )
+{
+    u64 readBeg = BwdAlignPot( fileOffsetInBytes, RAW_DISK_SECTOR_ALIGNMENT );
+    u64 readEnd = FwdAlignPot( fileOffsetInBytes + readSzInBytes, RAW_DISK_SECTOR_ALIGNMENT );
+
+    return std::tuple{ readBeg, readEnd - readBeg };
+}
+
+#endif // !SYS_FILE_H

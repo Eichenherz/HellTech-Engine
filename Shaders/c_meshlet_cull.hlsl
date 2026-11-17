@@ -26,7 +26,7 @@ void MeshletCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
     gpu_instance            currInst    = device_ptr<gpu_instance>( g_GlobalData.instAddr )[ mltWorkItem.instId ];
     gpu_meshlet             currMlt     = device_ptr<gpu_meshlet>( g_GlobalData.mltAddr )[ mltWorkItem.globMltId ];
      // NOTE: we use camIdx here bc we'll have a debug camera
-    view_data               cam         = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
+    view_data               cam         = device_ptr<view_data>( g_GlobalData.viewsAddr )[ pushBlock.camIdx ];
 
     bool visible = true;
     if( enableCulling )

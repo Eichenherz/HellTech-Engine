@@ -28,7 +28,7 @@ void InstCullCsMain( u32x3 globalDispatchID : SV_DispatchThreadID )
 	RHNDL32( gpu_mesh ) hMesh       = device_ptr<RHNDL32( gpu_mesh )>( g_GlobalData.meshRefAddr )[ currentInst.meshIdx ];
 	gpu_mesh            meshDesc    = device_ptr<gpu_mesh>( g_GlobalData.meshDescAddr )[ hMesh.idx ];
      // NOTE: we use camIdx here bc we'll have a debug camera
-    view_data           cam         = device_ptr<view_data>( g_GlobalData.viewsAddr )[ g_GlobalData.mainCamIdx ];
+    view_data           cam         = device_ptr<view_data>( g_GlobalData.viewsAddr )[ pushBlock.camIdx ];
 
     bool visible = true;
     if( enableCulling )
